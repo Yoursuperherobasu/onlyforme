@@ -1,6 +1,6 @@
 import * as Form from "@radix-ui/react-form";
 import { useContext, useState } from "react";
-import LangBuilderLogo from "@/assets/LangBuilderLogo.svg?react";
+import { Mail, Lock } from 'lucide-react';
 import { useLoginUser } from "@/controllers/API/queries/auth";
 import { CustomLink } from "@/customization/components/custom-link";
 import InputComponent from "../../components/core/parameterRenderComponent/components/inputComponent";
@@ -11,10 +11,13 @@ import { CONTROL_LOGIN_STATE } from "../../constants/constants";
 import { AuthContext } from "../../contexts/authContext";
 import useAlertStore from "../../stores/alertStore";
 import type { LoginType } from "../../types/api";
+import MothersonLogo from "@/assets/mothersonLogo.svg?react";
 import type {
   inputHandlerEventType,
   loginInputStateType,
 } from "../../types/components";
+import { DotPattern} from "./components/DotPattern";
+import { Starfield } from "./components/StarField";
 
 export default function LoginPage(): JSX.Element {
   const [inputState, setInputState] =
@@ -40,7 +43,7 @@ export default function LoginPage(): JSX.Element {
 
     mutate(user, {
       onSuccess: (data) => {
-        login(data.access_token, "login", data.refresh_token);
+        login(data.access_token, data.refresh_token);
       },
       onError: (error) => {
         setErrorData({
@@ -52,90 +55,129 @@ export default function LoginPage(): JSX.Element {
   }
 
   return (
-    <Form.Root
-      onSubmit={(event) => {
-        if (password === "") {
-          event.preventDefault();
-          return;
-        }
-        signIn();
-        const _data = Object.fromEntries(new FormData(event.currentTarget));
-        event.preventDefault();
-      }}
-      className="h-screen w-full"
-    >
-      <div className="flex h-full w-full flex-col items-center justify-center bg-muted">
-        <div className="flex w-72 flex-col items-center justify-center gap-2">
-          <LangBuilderLogo
-            title="LangBuilder logo"
-            className="mb-4 h-10 w-10 scale-[1.5]"
-          />
-          <span className="mb-6 text-2xl font-semibold text-primary">
-            Sign in to LangBuilder
-          </span>
-          <div className="mb-3 w-full">
-            <Form.Field name="username">
-              <Form.Label className="data-[invalid]:label-invalid">
-                Username <span className="font-medium text-destructive">*</span>
-              </Form.Label>
+    <div className="min-h-screen bg-[#0a0a0a] text-white overflow-hidden relative">
+      {/* Dotted Background Pattern */}
+      <DotPattern />
+      
+      {/* Animated Starfield Background */}
+      <Starfield />
 
-              <Form.Control asChild>
-                <Input
-                  type="username"
-                  onChange={({ target: { value } }) => {
-                    handleInput({ target: { name: "username", value } });
-                  }}
-                  value={username}
-                  className="w-full"
-                  required
-                  placeholder="Username"
-                />
-              </Form.Control>
-
-              <Form.Message match="valueMissing" className="field-invalid">
-                Please enter your username
-              </Form.Message>
-            </Form.Field>
+      {/* Main Content */}
+      <div className="relative z-10 min-h-screen flex flex-col lg:flex-row">
+        {/* Left Side - Branding */}
+        <div className="flex-1 flex flex-col justify-center px-6 sm:px-12 lg:px-16 xl:px-24 py-12 lg:py-0">
+          {/* Logo */}
+          <div className="mb-3 lg:mb-4">
+            <div className="mb-3 lg:mb-4">
+            <MothersonLogo className="h-10 sm:h-12 w-auto"/>
           </div>
-          <div className="mb-3 w-full">
-            <Form.Field name="password">
-              <Form.Label className="data-[invalid]:label-invalid">
-                Password <span className="font-medium text-destructive">*</span>
-              </Form.Label>
-
-              <InputComponent
-                onChange={(value) => {
-                  handleInput({ target: { name: "password", value } });
-                }}
-                value={password}
-                isForm
-                password={true}
-                required
-                placeholder="Password"
-                className="w-full"
-              />
-
-              <Form.Message className="field-invalid" match="valueMissing">
-                Please enter your password
-              </Form.Message>
-            </Form.Field>
           </div>
-          <div className="w-full">
-            <Form.Submit asChild>
-              <Button className="mr-3 mt-6 w-full" type="submit">
-                Sign in
-              </Button>
-            </Form.Submit>
+
+          {/* Heading */}
+          <div className="max-w-md">
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl mb-4 sm:mb-6 font-bold">
+              Build AI Agents, faster.
+            </h1>
+            <p className="text-gray-400 text-base sm:text-lg">
+              Connect your ideas to reality with AgentCore's powerful platform.
+            </p>
           </div>
-          <div className="w-full">
-            <CustomLink to="/signup">
-              <Button className="w-full" variant="outline" type="button">
-                Don't have an account?&nbsp;<b>Sign Up</b>
-              </Button>
-            </CustomLink>
+        </div>
+
+        {/* Right Side - Login Form */}
+        <div className="flex-1 flex items-center justify-center px-6 sm:px-12 lg:px-16 py-12 lg:py-0">
+          <div className="w-full max-w-md">
+            {/* Welcome Text */}
+            <div className="mb-8">
+              <h2 className="text-2xl sm:text-3xl mb-2 font-semibold">Welcome back.</h2>
+              <p className="text-gray-400 text-sm sm:text-base">
+                Sign in to your AgentCore account to continue.
+              </p>
+            </div>
+
+            {/* Login Form */}
+            <Form.Root
+              onSubmit={(event) => {
+                if (password === "") {
+                  event.preventDefault();
+                  return;
+                }
+                signIn();
+                const _data = Object.fromEntries(new FormData(event.currentTarget));
+                event.preventDefault();
+              }}
+              className="space-y-4"
+            >
+              {/* Username Input */}
+              <div>
+                <Form.Field name="username">
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 z-10" />
+                    <Form.Control asChild>
+                      <Input
+                        type="text"
+                        onChange={({ target: { value } }) => {
+                          handleInput({ target: { name: "username", value } });
+                        }}
+                        value={username}
+                        className="w-full pl-11 h-12 bg-[#1a1a1a] border-gray-700 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
+                        required
+                        placeholder="Username"
+                      />
+                    </Form.Control>
+                  </div>
+                  <Form.Message match="valueMissing" className="text-sm text-red-400 mt-1">
+                    Please enter your username
+                  </Form.Message>
+                </Form.Field>
+              </div>
+
+              {/* Password Input */}
+              <div>
+                <Form.Field name="password">
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 z-10" />
+                    <InputComponent
+                      onChange={(value) => {
+                        handleInput({ target: { name: "password", value } });
+                      }}
+                      value={password}
+                      isForm
+                      password={true}
+                      required
+                      placeholder="Password"
+                      className="w-full pl-11 h-12 bg-[#1a1a1a] border-gray-700 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
+                    />
+                  </div>
+                  <Form.Message className="text-sm text-red-400 mt-1" match="valueMissing">
+                    Please enter your password
+                  </Form.Message>
+                </Form.Field>
+              </div>
+
+              {/* Sign In Button */}
+              <Form.Submit asChild>
+                <Button
+                  type="submit"
+                  className="w-full h-12 bg-purple-600 hover:bg-purple-700 text-white text-base font-medium"
+                >
+                  SignIn
+                </Button>
+              </Form.Submit>
+
+              {/* Sign Up Link */}
+              <div className="text-center pt-2">
+                <p className="text-sm text-gray-400">
+                  New to AgentCore?{' '}
+                  <CustomLink to="/signup" className="text-purple-500 hover:text-purple-400 font-medium">
+                    Create an account
+                  </CustomLink>
+                </p>
+              </div>
+            </Form.Root>
           </div>
         </div>
       </div>
-    </Form.Root>
+    </div>
   );
 }
