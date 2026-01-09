@@ -8,7 +8,7 @@ import {
   CustomParameterLabel,
   getCustomParameterTitle,
 } from "@/customization/components/custom-parameter";
-import { useIsAutoLogin } from "@/hooks/use-is-auto-login";
+
 import useAuthStore from "@/stores/authStore";
 import { cn } from "@/utils/utils";
 import { default as IconComponent } from "../../../../components/common/genericIconComponent";
@@ -17,7 +17,6 @@ import {
   DEFAULT_TOOLSET_PLACEHOLDER,
   FLEX_VIEW_TYPES,
   ICON_STROKE_WIDTH,
-  IS_AUTO_LOGIN,
   LANGBUILDER_SUPPORTED_TYPES,
 } from "../../../../constants/constants";
 import useFlowStore from "../../../../stores/flowStore";
@@ -47,8 +46,8 @@ export default function NodeInputField({
 }: NodeInputFieldComponentType): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const isAutoLogin = useIsAutoLogin();
-  const shouldDisplayApiKey = isAuthenticated && !isAutoLogin;
+
+  const shouldDisplayApiKey = isAuthenticated;
 
   const { currentFlowId, currentFlowName } = useFlowStore(
     useShallow((state) => ({

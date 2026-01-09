@@ -4,7 +4,6 @@ export type AuthContextType = {
   accessToken: string | null;
   login: (
     accessToken: string,
-    autoLogin: string,
     refreshToken?: string,
   ) => void;
   userData: Users | null;

@@ -29,9 +29,8 @@ export const AccountMenu = () => {
   const navigate = useCustomNavigate();
   const { mutate: mutationLogout } = useLogout();
 
-  const { isAdmin, autoLogin } = useAuthStore((state) => ({
+  const { isAdmin } = useAuthStore((state) => ({
     isAdmin: state.isAdmin,
-    autoLogin: state.autoLogin,
   }));
 
   const handleLogout = () => {
@@ -97,7 +96,7 @@ export const AccountMenu = () => {
               </span>
             </HeaderMenuItemButton>
 
-            {isAdmin && !autoLogin && (
+            {isAdmin && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {
@@ -167,13 +166,13 @@ export const AccountMenu = () => {
             </div>
           </div>
 
-          {!autoLogin && (
+          
             <div>
               <HeaderMenuItemButton onClick={handleLogout} icon="log-out">
                 Logout
               </HeaderMenuItemButton>
             </div>
-          )}
+        
         </div>
       </HeaderMenuItems>
     </HeaderMenu>

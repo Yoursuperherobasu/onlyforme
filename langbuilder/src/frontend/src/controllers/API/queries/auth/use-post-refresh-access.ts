@@ -1,5 +1,5 @@
 import { Cookies } from "react-cookie";
-import { IS_AUTO_LOGIN, LANGBUILDER_REFRESH_TOKEN } from "@/constants/constants";
+import {  LANGBUILDER_REFRESH_TOKEN } from "@/constants/constants";
 import useAuthStore from "@/stores/authStore";
 import type { useMutationFunctionType } from "@/types/api";
 import { setAuthCookie } from "@/utils/utils";
@@ -19,7 +19,7 @@ export const useRefreshAccessToken: useMutationFunctionType<
   IRefreshAccessToken
 > = (options?) => {
   const { mutate } = UseRequestProcessor();
-  const autoLogin = useAuthStore((state) => state.autoLogin);
+
 
   async function refreshAccess(): Promise<IRefreshAccessToken> {
     const res = await api.post<IRefreshAccessToken>(`${getURL("REFRESH")}`);
@@ -29,10 +29,9 @@ export const useRefreshAccessToken: useMutationFunctionType<
     return res.data;
   }
 
-  const mutation = mutate(["useRefreshAccessToken"], refreshAccess, {
-    ...options,
-    retry: IS_AUTO_LOGIN || autoLogin ? 0 : 2,
-  });
-
+const mutation = mutate(["useRefreshAccessToken"], refreshAccess, {
+  ...options,
+  retry: 2, // normal retry for transient network errors
+});
   return mutation;
 };

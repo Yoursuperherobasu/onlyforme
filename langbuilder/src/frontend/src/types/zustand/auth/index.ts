@@ -5,7 +5,7 @@ export interface AuthStoreType {
   isAuthenticated: boolean;
   accessToken: string | null;
   userData: Users | null;
-  autoLogin: boolean | null;
+
   apiKey: string | null;
   authenticationErrorCount: number;
 
@@ -13,7 +13,7 @@ export interface AuthStoreType {
   setIsAuthenticated: (isAuthenticated: boolean) => void;
   setAccessToken: (accessToken: string | null) => void;
   setUserData: (userData: Users | null) => void;
-  setAutoLogin: (autoLogin: boolean) => void;
+
   setApiKey: (apiKey: string | null) => void;
   setAuthenticationErrorCount: (authenticationErrorCount: number) => void;
   logout: () => Promise<void>;

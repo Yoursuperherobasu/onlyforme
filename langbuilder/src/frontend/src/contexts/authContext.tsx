@@ -3,7 +3,6 @@ import { Cookies } from "react-cookie";
 import {
   LANGBUILDER_ACCESS_TOKEN,
   LANGBUILDER_API_TOKEN,
-  LANGBUILDER_AUTO_LOGIN_OPTION,
   LANGBUILDER_REFRESH_TOKEN,
 } from "@/constants/constants";
 import { useGetUserData } from "@/controllers/API/queries/auth";
@@ -80,11 +79,9 @@ export function AuthProvider({ children }): React.ReactElement {
 
   function login(
     newAccessToken: string,
-    autoLogin: string,
     refreshToken?: string,
   ) {
     setAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN, newAccessToken);
-    setAuthCookie(cookies, LANGBUILDER_AUTO_LOGIN_OPTION, autoLogin);
     setLocalStorage(LANGBUILDER_ACCESS_TOKEN, newAccessToken);
 
     if (refreshToken) {

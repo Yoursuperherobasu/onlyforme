@@ -76,50 +76,6 @@ async def login_to_get_access_token(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-
-@router.get("/auto_login")
-async def auto_login(response: Response, db: DbSession):
-    auth_settings = get_settings_service().auth_settings
-
-    if auth_settings.AUTO_LOGIN:
-        user_id, tokens = await create_user_longterm_token(db)
-        response.set_cookie(
-            "access_token_lf",
-            tokens["access_token"],
-            httponly=auth_settings.ACCESS_HTTPONLY,
-            samesite=auth_settings.ACCESS_SAME_SITE,
-            secure=auth_settings.ACCESS_SECURE,
-            expires=None,  # Set to None to make it a session cookie
-            domain=auth_settings.COOKIE_DOMAIN,
-        )
-
-        user = await get_user_by_id(db, user_id)
-
-        if user:
-            if user.store_api_key is None:
-                user.store_api_key = ""
-
-            response.set_cookie(
-                "apikey_tkn_lflw",
-                str(user.store_api_key),  # Ensure it's a string
-                httponly=auth_settings.ACCESS_HTTPONLY,
-                samesite=auth_settings.ACCESS_SAME_SITE,
-                secure=auth_settings.ACCESS_SECURE,
-                expires=None,  # Set to None to make it a session cookie
-                domain=auth_settings.COOKIE_DOMAIN,
-            )
-
-        return tokens
-
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail={
-            "message": "Auto login is disabled. Please enable it in the settings",
-            "auto_login": False,
-        },
-    )
-
-
 @router.post("/refresh")
 async def refresh_token(
     request: Request,
