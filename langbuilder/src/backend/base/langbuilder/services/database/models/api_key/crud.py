@@ -29,7 +29,7 @@ async def create_api_key(session: AsyncSession, api_key_create: ApiKeyCreate, us
         api_key=generated_api_key,
         name=api_key_create.name,
         user_id=user_id,
-        created_at=api_key_create.created_at or datetime.datetime.now(),
+        created_at=api_key_create.created_at or datetime.datetime.now(datetime.timezone.utc),
     )
 
     session.add(api_key)
@@ -69,6 +69,6 @@ async def update_total_uses(api_key_id: UUID):
             msg = "API Key not found"
             raise ValueError(msg)
         new_api_key.total_uses += 1
-        new_api_key.last_used_at = datetime.datetime.now()
+        new_api_key.last_used_at = datetime.datetime.now(datetime.timezone.utc)
         session.add(new_api_key)
         await session.commit()

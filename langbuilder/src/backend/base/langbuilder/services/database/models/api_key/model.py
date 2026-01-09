@@ -12,12 +12,12 @@ if TYPE_CHECKING:
 
 
 def utc_now():
-    return datetime.now()
+    return datetime.now(timezone.utc)
 
 
 class ApiKeyBase(SQLModel):
     name: str | None = Field(index=True, nullable=True, default=None)
-    last_used_at: datetime | None = Field(default=None, nullable=True)
+    last_used_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     total_uses: int = Field(default=0)
     is_active: bool = Field(default=True)
 

@@ -2,7 +2,8 @@
 import asyncio
 import os
 from logging.config import fileConfig
-
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 from alembic import context
 from sqlalchemy import pool, text
 from sqlalchemy.event import listen
@@ -107,16 +108,13 @@ async def _run_async_migrations() -> None:
     # If still no URL and settings are available, try to get from settings
     if not url or url.startswith("driver://"):
         try:
-            url = settings.database_url
+            url = os.getenv("DATABASE_URL")
         except Exception:
             pass
     
     # Validate that we have a real URL
     if not url or url.startswith("driver://"):
-        raise ValueError(
-            "No valid database URL found. Please set DATABASE_URL or LANGBUILDER_DATABASE_URL environment variable. "
-            "Example: DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/langbuilder"
-        )
+        url = os.getenv("DATABASE_URL")
     
     connectable = create_async_engine(url, poolclass=pool.NullPool)
 

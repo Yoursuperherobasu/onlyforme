@@ -366,7 +366,7 @@ class DatabaseService(Service):
                         msg = f"There's a mismatch between the models and the database.\n{exc}"
                         raise RuntimeError(msg) from exc
 
-            if fix:
+            if False and fix:
                 self.try_downgrade_upgrade_until_success(alembic_cfg)
 
     async def run_migrations(self, *, fix=False) -> None:

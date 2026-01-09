@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import JSON, Column, Enum as SQLEnum, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Column, DateTime, Enum as SQLEnum, Text, UniqueConstraint, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -36,8 +36,8 @@ class PublishRecordBase(SQLModel):
         nullable=False, description="ID of the model/resource in the external platform"
     )
     published_at: datetime = Field(
-        default_factory=lambda: datetime.now(),
-        nullable=False,
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
     )
     published_by: UUID = Field(foreign_key="user.id", nullable=False)
     status: PublishStatusEnum = Field(

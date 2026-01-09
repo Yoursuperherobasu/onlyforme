@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 def utc_now():
-    return datetime.now()
+    return datetime.now(timezone.utc)
 
 
 class VariableBase(SQLModel):

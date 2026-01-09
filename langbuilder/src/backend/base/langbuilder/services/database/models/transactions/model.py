@@ -2,13 +2,14 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from pydantic import field_serializer, field_validator
+from sqlalchemy import DateTime
 from sqlmodel import JSON, Column, Field, SQLModel
 
 from langbuilder.serialization.serialization import get_max_items_length, get_max_text_length, serialize
 
 
 class TransactionBase(SQLModel):
-    timestamp: datetime = Field(default_factory=lambda: datetime.now())
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
     vertex_id: str = Field(nullable=False)
     target_id: str | None = Field(default=None)
     inputs: dict | None = Field(default=None, sa_column=Column(JSON))

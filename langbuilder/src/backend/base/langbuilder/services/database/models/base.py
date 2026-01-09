@@ -2,7 +2,7 @@ import orjson
 
 
 def orjson_dumps(v, *, default=None, sort_keys=False, indent_2=True):
-    option = orjson.OPT_SORT_KEYS | orjson.OPT_NAIVE_UTC if sort_keys else orjson.OPT_NAIVE_UTC
+    option = orjson.OPT_SORT_KEYS if sort_keys else None
     if indent_2:
         # orjson.dumps returns bytes, to match standard json.dumps we need to decode
         # option

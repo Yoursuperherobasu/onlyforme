@@ -41,7 +41,7 @@ async def update_user(user_db: User | None, user: UserUpdate, db: AsyncSession) 
     if not changed:
         raise HTTPException(status_code=status.HTTP_304_NOT_MODIFIED, detail="Nothing to update")
 
-    user_db.updated_at = datetime.now()
+    user_db.updated_at = datetime.now(timezone.utc)
     flag_modified(user_db, "updated_at")
 
     try:
@@ -55,7 +55,7 @@ async def update_user(user_db: User | None, user: UserUpdate, db: AsyncSession) 
 
 async def update_user_last_login_at(user_id: UUID, db: AsyncSession):
     try:
-        user_data = UserUpdate(last_login_at=datetime.now())
+        user_data = UserUpdate(last_login_at=datetime.now(timezone.utc))
         user = await get_user_by_id(db, user_id)
         return await update_user(user, user_data, db)
     except Exception as e:  # noqa: BLE001

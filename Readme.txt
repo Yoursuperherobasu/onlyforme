@@ -1,0 +1,1 @@
+(python312) PS C:\Users\MSI\Downloads\LangBuilder-main\openwebui\backend> python -m uvicorn open_webui.main:app --port 8002

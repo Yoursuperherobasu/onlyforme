@@ -2,14 +2,14 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, field_serializer, field_validator
-from sqlalchemy import Text
-from sqlmodel import JSON, Column, Field, SQLModel
+from sqlalchemy import Column, DateTime, Text
+from sqlmodel import JSON, Field, SQLModel
 
 from langbuilder.serialization.serialization import get_max_items_length, get_max_text_length, serialize
 
 
 class VertexBuildBase(SQLModel):
-    timestamp: datetime = Field(default_factory=lambda: datetime.now())
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), nullable=False))
     id: str = Field(nullable=False)
     data: dict | None = Field(default=None, sa_column=Column(JSON))
     artifacts: dict | None = Field(default=None, sa_column=Column(JSON))
