@@ -30,7 +30,11 @@ class AuthSettings(BaseSettings):
     NEW_USER_IS_ACTIVE: bool = False
     SUPERUSER: str = DEFAULT_SUPERUSER
     SUPERUSER_PASSWORD: str = DEFAULT_SUPERUSER_PASSWORD
-
+    AUTO_LOGIN: bool = False
+    """If True, the application will attempt to log in automatically as a super user."""
+    skip_auth_auto_login: bool = False
+    """If True, the application will skip authentication when AUTO_LOGIN is enabled.
+    This will be removed in v1.6"""
     REFRESH_SAME_SITE: Literal["lax", "strict", "none"] = "none"
     """The SameSite attribute of the refresh token cookie."""
     REFRESH_SECURE: bool = True
