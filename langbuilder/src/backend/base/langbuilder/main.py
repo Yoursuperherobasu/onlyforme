@@ -305,7 +305,7 @@ def create_app():
     )
 
     setup_sentry(app)
-    origins = ["*"]
+    origins = ["http://localhost:3000"]
 
     app.add_middleware(
         CORSMiddleware,

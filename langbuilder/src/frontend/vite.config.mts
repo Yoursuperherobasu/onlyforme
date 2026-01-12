@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
   const envLangbuilderResult = dotenv.config({
     path: path.resolve(__dirname, "../../.env"),
   });
+  console.log(path.resolve(__dirname, "../../.env"),"manasssssssssssssssss")
 
   const envLangbuilder = envLangbuilderResult.parsed || {};
 
