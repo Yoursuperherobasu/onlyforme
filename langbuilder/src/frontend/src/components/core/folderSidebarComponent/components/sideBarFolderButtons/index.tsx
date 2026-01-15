@@ -1,7 +1,10 @@
 import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useContext } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
+import { AuthContext } from "@/contexts/authContext";
+
 import {
   Sidebar,
   SidebarContent,
@@ -86,6 +89,8 @@ const SideBarFoldersButtonsComponent = ({
   const folderIdDragging = useFolderStore((state) => state.folderIdDragging);
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
   const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
+  const { permissions, role } = useContext(AuthContext);
+
 
   const folderId = useParams().folderId ?? myCollectionId ?? "";
 
@@ -497,6 +502,28 @@ const SideBarFoldersButtonsComponent = ({
               <ForwardedIconComponent name="File" className="h-4 w-4" />
               My Files
             </SidebarMenuButton>
+             {permissions.includes("view_files_tab") && (
+      <SidebarMenuButton
+        onClick={handleFilesNavigation}
+        size="md"
+        className="text-sm"
+      >
+        <ForwardedIconComponent name="File" className="h-4 w-4" />
+        My Files for Developer
+      </SidebarMenuButton>
+    )}
+            
+           {permissions.includes("view_files_tab") && (
+      <SidebarMenuButton
+        onClick={handleFilesNavigation}
+        size="md"
+        className="text-sm"
+      >
+        <ForwardedIconComponent name="File" className="h-4 w-4" />
+        My Files for Developer
+      </SidebarMenuButton>
+    )}
+         
           </div>
         </SidebarFooter>
       )}

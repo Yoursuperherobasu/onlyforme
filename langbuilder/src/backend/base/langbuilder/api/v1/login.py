@@ -23,15 +23,20 @@ from langbuilder.api.v1.users import add_user
 from langbuilder.services.database.models.user.crud import get_user_by_id
 from langbuilder.services.deps import get_settings_service, get_variable_service
 from langbuilder.services.database.models.user.model import UserCreate
+from langbuilder.services.auth.permissions import get_permissions_for_role
 
 
 class AzureSSORequest(BaseModel):
     idToken: str
 
+class AzureSSOResponse(Token):
+    role: str
+    permissions: list[str]
+
 router = APIRouter(tags=["Login"])
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=AzureSSOResponse)
 async def login_to_get_access_token(
     response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -80,20 +85,28 @@ async def login_to_get_access_token(
         await get_variable_service().initialize_user_variables(user.id, db)
         # Create default project for user if it doesn't exist
         _ = await get_or_create_default_folder(db, user.id)
-        return tokens
+        current_role = "developer"
+        permissions = ['view_dashboard',]
+        return {
+            **tokens,
+            "role": current_role,
+            "permissions": permissions
+        }
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Incorrect username or password",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-@router.post("/azure/sso", response_model=Token)
+
+@router.post("/azure/sso", response_model=AzureSSOResponse)
 async def azure_sso_login(
     body: AzureSSORequest,
     response: Response,
     db: DbSession,
 ):
     auth_settings = get_settings_service().auth_settings
+    
 
     # -----------------------------
     # Verify Azure token
@@ -117,6 +130,9 @@ async def azure_sso_login(
         ) from e
 
     email = payload.get("preferred_username") or payload.get("email")
+    azure_role = payload.get("roles", ["developer"])[0]
+    permissions = get_permissions_for_role(azure_role)
+    
 
     if not email:
         raise HTTPException(
@@ -146,6 +162,7 @@ async def azure_sso_login(
     # -----------------------------
     tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
     print(tokens,"tokenssssssssssssssssss")
+    print(permissions,"permissssssssssssssssions")
     response.set_cookie(
         "refresh_token_lf",
         tokens["refresh_token"],
@@ -177,8 +194,11 @@ async def azure_sso_login(
     await get_variable_service().initialize_user_variables(user.id, db)
     _ = await get_or_create_default_folder(db, user.id)
 
-    return tokens
-
+    return {
+        **tokens,
+        "role": azure_role,
+        "permissions": permissions
+    }
 
 @router.post("/refresh")
 async def refresh_token(

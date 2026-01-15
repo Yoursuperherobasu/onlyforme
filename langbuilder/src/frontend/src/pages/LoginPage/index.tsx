@@ -73,7 +73,7 @@ export default function LoginPage(): JSX.Element {
 
     // Login user in your app
     console.log("BACKEND TOKEN RESPONSE:", data);
-   login(data.access_token, data.refresh_token);
+    login(data.access_token,  data.role, data.permissions, data.refresh_token);
   //  setTimeout(() => window.location.href = "/", 50);
   } catch (err) {
     console.error("Azure SSO failed:", err);
@@ -89,7 +89,8 @@ export default function LoginPage(): JSX.Element {
 
     mutate(user, {
       onSuccess: (data) => {
-        login(data.access_token, data.refresh_token);
+        console.log(  "Login successful, data:", data);
+        login(data.access_token,  data.role, data.permissions, data.refresh_token);
       },
       onError: (error) => {
         setErrorData({
