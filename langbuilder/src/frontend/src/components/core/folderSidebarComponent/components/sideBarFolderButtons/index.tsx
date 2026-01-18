@@ -91,14 +91,13 @@ const SideBarFoldersButtonsComponent = ({
   const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
   const { permissions, role } = useContext(AuthContext);
 
-
   const folderId = useParams().folderId ?? myCollectionId ?? "";
 
   const { dragOver, dragEnter, dragLeave, onDrop } = useFileDrop(folderId);
   const uploadFlow = useUploadFlow();
   const [foldersNames, setFoldersNames] = useState({});
   const [editFolders, setEditFolderName] = useState(
-    folders.map((obj) => ({ name: obj.name, edit: false })) ?? [],
+    folders.map((obj) => ({ name: obj.name, edit: false })) ?? []
   );
 
   const isFetchingFolders = !!useIsFetching({
@@ -165,7 +164,7 @@ const SideBarFoldersButtonsComponent = ({
                     list: [err["response"]["data"]["message"]],
                   });
                 },
-              },
+              }
             );
           });
         }
@@ -187,7 +186,7 @@ const SideBarFoldersButtonsComponent = ({
             title: `An error occurred while downloading your project.`,
           });
         },
-      },
+      }
     );
   };
 
@@ -205,7 +204,7 @@ const SideBarFoldersButtonsComponent = ({
           track("Create New Project");
           handleChangeFolder!(folder.id);
         },
-      },
+      }
     );
   }
 
@@ -222,7 +221,7 @@ const SideBarFoldersButtonsComponent = ({
   useEffect(() => {
     if (folders && folders.length > 0) {
       setEditFolderName(
-        folders.map((obj) => ({ name: obj.name, edit: false })),
+        folders.map((obj) => ({ name: obj.name, edit: false }))
       );
     }
   }, [folders]);
@@ -255,7 +254,7 @@ const SideBarFoldersButtonsComponent = ({
         {
           onSuccess: (updatedFolder) => {
             const updatedFolderIndex = folders.findIndex(
-              (f) => f.id === updatedFolder.id,
+              (f) => f.id === updatedFolder.id
             );
 
             const updateFolders = [...folders];
@@ -266,10 +265,10 @@ const SideBarFoldersButtonsComponent = ({
               folders.map((obj) => ({
                 name: obj.name,
                 edit: false,
-              })),
+              }))
             );
           },
-        },
+        }
       );
     } else {
       setFoldersNames((old) => ({
@@ -329,7 +328,7 @@ const SideBarFoldersButtonsComponent = ({
         folders.map((obj) => ({
           name: obj.name,
           edit: false,
-        })),
+        }))
       );
     }
     if (e.key === "Enter") {
@@ -344,7 +343,7 @@ const SideBarFoldersButtonsComponent = ({
   const userDismissedMcpDialog = userData?.optins?.mcp_dialog_dismissed;
 
   const [isDismissedMcpDialog, setIsDismissedMcpDialog] = useState(
-    userDismissedMcpDialog,
+    userDismissedMcpDialog
   );
 
   const handleDismissMcpDialog = () => {
@@ -388,7 +387,7 @@ const SideBarFoldersButtonsComponent = ({
               {!loading ? (
                 folders.map((item, index) => {
                   const editFolderName = editFolders?.filter(
-                    (folder) => folder.name === item.name,
+                    (folder) => folder.name === item.name
                   )[0];
                   return (
                     <SidebarMenuItem
@@ -412,7 +411,7 @@ const SideBarFoldersButtonsComponent = ({
                           className={cn(
                             "flex-grow pr-8",
                             hoveredFolderId === item.id && "bg-accent",
-                            checkHoveringFolder(item.id!),
+                            checkHoveringFolder(item.id!)
                           )}
                         >
                           <div
@@ -502,28 +501,26 @@ const SideBarFoldersButtonsComponent = ({
               <ForwardedIconComponent name="File" className="h-4 w-4" />
               My Files
             </SidebarMenuButton>
-             {permissions.includes("view_files_tab") && (
-      <SidebarMenuButton
-        onClick={handleFilesNavigation}
-        size="md"
-        className="text-sm"
-      >
-        <ForwardedIconComponent name="File" className="h-4 w-4" />
-        My Files for Developer
-      </SidebarMenuButton>
-    )}
-            
-           {permissions.includes("view_files_tab") && (
-      <SidebarMenuButton
-        onClick={handleFilesNavigation}
-        size="md"
-        className="text-sm"
-      >
-        <ForwardedIconComponent name="File" className="h-4 w-4" />
-        My Files for Developer
-      </SidebarMenuButton>
-    )}
-         
+            {permissions.includes("view_files_tab") && (
+              <SidebarMenuButton
+                onClick={handleFilesNavigation}
+                size="md"
+                className="text-sm"
+              >
+                <ForwardedIconComponent name="File" className="h-4 w-4" />
+                My Files for Developer
+              </SidebarMenuButton>
+            )}
+            {permissions.includes("view_files_tab") && (
+              <SidebarMenuButton
+                onClick={handleFilesNavigation}
+                size="md"
+                className="text-sm"
+              >
+                <ForwardedIconComponent name="File" className="h-4 w-4" />
+                My Files for Developer
+              </SidebarMenuButton>
+            )}
           </div>
         </SidebarFooter>
       )}

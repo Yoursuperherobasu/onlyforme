@@ -85,8 +85,10 @@ async def login_to_get_access_token(
         await get_variable_service().initialize_user_variables(user.id, db)
         # Create default project for user if it doesn't exist
         _ = await get_or_create_default_folder(db, user.id)
-        current_role = "developer"
-        permissions = ['view_dashboard',]
+        current_role = getattr(user, "role", "developer")
+        permissions = get_permissions_for_role(current_role)    
+        print(current_role,"current_roleeeeeeeeeee")
+        print(permissions,"permissssssssssssssssions")
         return {
             **tokens,
             "role": current_role,
@@ -131,6 +133,7 @@ async def azure_sso_login(
 
     email = payload.get("preferred_username") or payload.get("email")
     azure_role = payload.get("roles", ["developer"])[0]
+    
     permissions = get_permissions_for_role(azure_role)
     
 
@@ -152,11 +155,18 @@ async def azure_sso_login(
         user_create = UserCreate(
             username=email,
             password=random_password,
+            role=azure_role
         )
 
         # reuse signup API logic
         user = await add_user(user_create, db)
 
+    else:
+        # Returning user - Sync the role if it changed in Azure
+        if user.role != azure_role:
+            user.role = azure_role
+            db.add(user)
+            await db.commit()
     # -----------------------------
     # Issue LangBuilder Tokens
     # -----------------------------
@@ -200,7 +210,7 @@ async def azure_sso_login(
         "permissions": permissions
     }
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=AzureSSOResponse)
 async def refresh_token(
     request: Request,
     response: Response,
@@ -212,6 +222,12 @@ async def refresh_token(
 
     if token:
         tokens = await create_refresh_token(token, db)
+        user_id = tokens.get("user_id") 
+        user = await get_user_by_id(db, user_id)
+        if not user:
+             raise HTTPException(status_code=404, detail="User not found")
+        user_role = getattr(user, "role", "developer")
+        permissions = get_permissions_for_role(user_role)
         response.set_cookie(
             "refresh_token_lf",
             tokens["refresh_token"],
@@ -230,7 +246,11 @@ async def refresh_token(
             expires=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
             domain=auth_settings.COOKIE_DOMAIN,
         )
-        return tokens
+        return {
+            **tokens,
+            "role": user_role,
+            "permissions": permissions
+        }
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid refresh token",
@@ -244,3 +264,21 @@ async def logout(response: Response):
     response.delete_cookie("access_token_lf")
     response.delete_cookie("apikey_tkn_lflw")
     return {"message": "Logout successful"}
+
+# @router.post("/logout")
+# async def logout(response: Response):
+#     auth_settings = get_settings_service().auth_settings
+    
+#     cookie_params = {
+#         "domain": auth_settings.COOKIE_DOMAIN,
+#         "path": "/", # Ensure this matches where the cookie was set
+#         "httponly": True,
+#         "samesite": auth_settings.REFRESH_SAME_SITE,
+#         "secure": auth_settings.REFRESH_SECURE,
+#     }
+
+#     response.delete_cookie("refresh_token_lf", **cookie_params)
+#     response.delete_cookie("access_token_lf", **cookie_params)
+#     response.delete_cookie("apikey_tkn_lflw", **cookie_params)
+    
+#     return {"message": "Logout successful"}

@@ -51,19 +51,38 @@ export const usePostUploadFileV2: useMutationFunctionType<
               });
             }
           },
-        },
+        }
       );
+      console.log(response, "<<< response");
       return response.data;
-    } catch (e) {
-      queryClient.setQueryData(["useGetFilesV2"], (old: FileType[]) => {
-        return old.map((file: any) => {
-          if (file?.id === "temp") {
-            return { ...file, progress: -1 };
-          }
-          return file;
+    } catch (error: any) {
+      const status = error?.response?.status;
+      console.log(status, error);
+      // Permission denied → REMOVE temp file
+      if (status === 403) {
+        queryClient.setQueryData(["useGetFilesV2"], (old: FileType[] = []) => {
+          return old.filter((file) => file.id !== "temp");
         });
-      });
-      throw e;
+      } else {
+        // Other errors → mark failed
+        queryClient.setQueryData(["useGetFilesV2"], (old: FileType[] = []) => {
+          return old.map((file: any) => {
+            if (file?.id === "temp") {
+              return { ...file, progress: -1 };
+            }
+            return file;
+          });
+        });
+      }
+
+      // Always throw a SAFE error shape
+      throw {
+        status,
+        message:
+          error?.response?.data?.detail ??
+          error?.response?.data?.message ??
+          "Upload failed",
+      };
     }
   };
 
@@ -85,7 +104,7 @@ export const usePostUploadFileV2: useMutationFunctionType<
         },
         retry: 0,
         ...options,
-      },
+      }
     );
 
   return mutation;

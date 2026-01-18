@@ -393,6 +393,7 @@ async def create_user_tokens(user_id: UUID, db: AsyncSession, *, update_last_log
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
+        "user_id": str(user_id)
     }
 
 

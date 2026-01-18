@@ -3,7 +3,9 @@ import json
 import os
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
-
+import builtins
+from langbuilder.services.auth.decorators import verify_permissions
+builtins.verify_permissions = verify_permissions
 import sys
 import asyncio
 
@@ -51,6 +53,7 @@ from langbuilder.services.deps import (
     get_telemetry_service,
 )
 from langbuilder.services.utils import initialize_services, teardown_services
+
 
 
 
@@ -305,7 +308,7 @@ def create_app():
     )
 
     setup_sentry(app)
-    origins = ["http://localhost:3000"]
+    origins = ["http://localhost:3000","http://localhost:8767","http://localhost:5175"]
 
     app.add_middleware(
         CORSMiddleware,

@@ -18,6 +18,7 @@ from langbuilder.services.auth.utils import (
 from langbuilder.services.database.models.user.crud import get_user_by_id, update_user
 from langbuilder.services.database.models.user.model import User, UserCreate, UserRead, UserUpdate
 from langbuilder.services.deps import get_settings_service
+from langbuilder.services.auth.permissions import get_permissions_for_role
 
 router = APIRouter(tags=["Users"], prefix="/users")
 
@@ -48,9 +49,14 @@ async def add_user(
 @router.get("/whoami", response_model=UserRead)
 async def read_current_user(
     current_user: CurrentActiveUser,
-) -> User:
+) -> dict:
     """Retrieve the current user's data."""
-    return current_user
+
+    user_permissions = get_permissions_for_role(current_user.role)
+    return {
+        **current_user.model_dump(),
+        "permissions": user_permissions
+    }
 
 
 @router.get("/", dependencies=[Depends(get_current_active_superuser)])

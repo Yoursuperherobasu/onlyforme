@@ -97,9 +97,7 @@ function ApiInterceptor() {
 
         await clearBuildVerticesState(error);
 
-        if (!isAuthenticationError) {
-          return Promise.reject(error);
-        }
+      return Promise.reject(error);
       },
     );
 
