@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { CustomLink } from "@/customization/components/custom-link";
 import { ENABLE_LANGBUILDER_STORE } from "@/customization/feature-flags";
+import { useTranslation } from 'react-i18next';
 
 const SidebarMenuButtons = ({
   hasStore = false,
@@ -10,6 +11,7 @@ const SidebarMenuButtons = ({
   addComponent,
   isLoading = false,
 }) => {
+  const { t } = useTranslation();
   return (
     <>
       {/* TODO: Remove this on cleanup */}
@@ -27,7 +29,7 @@ const SidebarMenuButtons = ({
                 className="h-4 w-4 text-muted-foreground"
               />
               <span className="flex-1 group-data-[state=open]/collapsible:font-semibold">
-                Discover more components
+                {t("Discover more components")}
               </span>
               <ForwardedIconComponent
                 name="SquareArrowOutUpRight"
@@ -54,7 +56,7 @@ const SidebarMenuButtons = ({
             className="h-4 w-4 text-muted-foreground"
           />
           <span className="group-data-[state=open]/collapsible:font-semibold">
-            New Custom Component
+            {t("New Custom Component")}
           </span>
         </Button>
       </SidebarMenuButton>

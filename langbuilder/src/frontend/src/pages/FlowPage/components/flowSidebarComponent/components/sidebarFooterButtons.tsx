@@ -5,6 +5,7 @@ import { SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
 import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import AddMcpServerModal from "@/modals/addMcpServerModal";
+import { useTranslation } from 'react-i18next';
 
 const SidebarMenuButtons = ({
   customComponent,
@@ -14,7 +15,7 @@ const SidebarMenuButtons = ({
   const { activeSection } = useSidebar();
   const [addMcpOpen, setAddMcpOpen] = useState(false);
   const navigate = useCustomNavigate();
-
+  const { t } = useTranslation();
   const handleAddMcpServerClick = () => {
     setAddMcpOpen(true);
   };
@@ -34,7 +35,7 @@ const SidebarMenuButtons = ({
             className="h-4 w-4 text-muted-foreground"
           />
           <span className="group-data-[state=open]/collapsible:font-semibold">
-            Add MCP Server
+            {t("Add MCP Server")}
           </span>
         </Button>
       </SidebarMenuButton>
@@ -53,7 +54,7 @@ const SidebarMenuButtons = ({
             className="h-4 w-4 text-muted-foreground"
           />
           <span className="group-data-[state=open]/collapsible:font-semibold">
-            Manage Servers
+            {t("Manage Servers")}
           </span>
         </Button>
       </SidebarMenuButton>
@@ -77,7 +78,7 @@ const SidebarMenuButtons = ({
           className="h-4 w-4 text-muted-foreground"
         />
         <span className="group-data-[state=open]/collapsible:font-semibold">
-          New Custom Component
+          {t("New Custom Component")}
         </span>
       </Button>
     </SidebarMenuButton>

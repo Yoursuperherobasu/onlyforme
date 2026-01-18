@@ -8,16 +8,19 @@ import { CONTROL_LOGIN_STATE } from "../../../constants/constants";
 import { AuthContext } from "../../../contexts/authContext";
 import useAlertStore from "../../../stores/alertStore";
 import type { LoginType } from "../../../types/api";
+import { useTranslation } from 'react-i18next';
+
 import type {
   inputHandlerEventType,
   loginInputStateType,
 } from "../../../types/components";
 
+
 export default function LoginAdminPage() {
   const [inputState, setInputState] =
     useState<loginInputStateType>(CONTROL_LOGIN_STATE);
   const { login } = useContext(AuthContext);
-
+const { t } = useTranslation();
   const { password, username } = inputState;
   const setErrorData = useAlertStore((state) => state.setErrorData);
   function handleInput({
@@ -57,7 +60,7 @@ export default function LoginAdminPage() {
             handleInput({ target: { name: "username", value } });
           }}
           className="bg-background"
-          placeholder="Username"
+          placeholder={t("Username")}
         />
         <Input
           type="password"
@@ -65,7 +68,7 @@ export default function LoginAdminPage() {
             handleInput({ target: { name: "password", value } });
           }}
           className="bg-background"
-          placeholder="Password"
+          placeholder={t("Password")}
         />
         <Button
           onClick={() => {
@@ -74,7 +77,7 @@ export default function LoginAdminPage() {
           variant="default"
           className="w-full"
         >
-          Login
+          {t("Login")}
         </Button>
       </div>
     </div>

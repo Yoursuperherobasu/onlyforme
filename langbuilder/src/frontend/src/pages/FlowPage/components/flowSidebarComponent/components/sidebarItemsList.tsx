@@ -7,6 +7,7 @@ import { disableItem } from "../helpers/disable-item";
 import { getDisabledTooltip } from "../helpers/get-disabled-tooltip";
 import type { UniqueInputsComponents } from "../types";
 import SidebarDraggableComponent from "./sidebarDraggableComponent";
+import { useTranslation } from 'react-i18next';
 
 const SidebarItemsList = ({
   item,
@@ -15,6 +16,7 @@ const SidebarItemsList = ({
   onDragStart,
   sensitiveSort,
 }) => {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-1 py-1">
       {Object.keys(dataFilter[item.name])
@@ -97,12 +99,13 @@ const UniqueInputsDraggableComponent = ({
   const chatInputAdded = useMemo(() => checkChatInput(nodes), [nodes]);
   const webhookInputAdded = useMemo(() => checkWebhookInput(nodes), [nodes]);
   const uniqueInputsComponents: UniqueInputsComponents = useMemo(() => {
+    const { t } = useTranslation();
     return {
       chatInput: chatInputAdded,
       webhookInput: webhookInputAdded,
     };
   }, [chatInputAdded, webhookInputAdded]);
-
+  const { t } = useTranslation();
   return (
     <ShadTooltip
       content={currentItem.display_name}
@@ -122,7 +125,7 @@ const UniqueInputsDraggableComponent = ({
         color={nodeColors[item.name]}
         itemName={SBItemName}
         error={!!currentItem.error}
-        display_name={currentItem.display_name}
+        display_name={t(currentItem.display_name)}
         official={currentItem.official !== false}
         beta={currentItem.beta ?? false}
         legacy={currentItem.legacy ?? false}

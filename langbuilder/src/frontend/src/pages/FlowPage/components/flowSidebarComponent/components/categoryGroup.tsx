@@ -10,6 +10,7 @@ import { SIDEBAR_BUNDLES } from "@/utils/styleUtils";
 import type { CategoryGroupProps } from "../types";
 import { CategoryDisclosure } from "./categoryDisclouse";
 import { SearchConfigTrigger } from "./searchConfigTrigger";
+import { useTranslation } from 'react-i18next';
 
 export const CategoryGroup = memo(function CategoryGroup({
   dataFilter,
@@ -24,11 +25,12 @@ export const CategoryGroup = memo(function CategoryGroup({
   showConfig,
   setShowConfig,
 }: CategoryGroupProps) {
+  const { t } = useTranslation();
   return (
     <SidebarGroup className="p-3">
       {ENABLE_NEW_SIDEBAR && (
         <SidebarGroupLabel className="cursor-default flex items-center justify-between w-full">
-          <span>Components</span>
+          <span>{t("Components")}</span>
           <SearchConfigTrigger
             showConfig={showConfig}
             setShowConfig={setShowConfig}
@@ -69,7 +71,7 @@ export const CategoryGroup = memo(function CategoryGroup({
               ) ?? {
                 name: categoryName,
                 icon: "folder",
-                display_name: categoryName,
+                display_name: t(categoryName),
               };
               return (
                 <CategoryDisclosure

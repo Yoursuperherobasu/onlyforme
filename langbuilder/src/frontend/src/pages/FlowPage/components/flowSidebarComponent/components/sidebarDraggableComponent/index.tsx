@@ -23,6 +23,7 @@ import {
   getNodeId,
 } from "../../../../../../utils/reactflowUtils";
 import { cn, removeCountFromString } from "../../../../../../utils/utils";
+import { useTranslation } from 'react-i18next';
 
 export const SidebarDraggableComponent = forwardRef(
   (
@@ -57,6 +58,7 @@ export const SidebarDraggableComponent = forwardRef(
     },
     ref,
   ) => {
+    const { t } = useTranslation();
     const [open, setOpen] = useState(false);
     const { deleteFlow } = useDeleteFlow();
     const flows = useFlowsManagerStore((state) => state.flows);
@@ -160,7 +162,7 @@ export const SidebarDraggableComponent = forwardRef(
               <div className="flex flex-1 items-center overflow-hidden">
                 <ShadTooltip content={display_name} styleClasses="z-50">
                   <span className="truncate text-sm font-normal">
-                    {display_name}
+                    {t(display_name)}
                   </span>
                 </ShadTooltip>
                 {beta && (
@@ -169,7 +171,7 @@ export const SidebarDraggableComponent = forwardRef(
                     size="xq"
                     className="ml-1.5 shrink-0"
                   >
-                    Beta
+                    {t("Beta")}
                   </Badge>
                 )}
                 {legacy && (
@@ -178,7 +180,7 @@ export const SidebarDraggableComponent = forwardRef(
                     size="xq"
                     className="ml-1.5 shrink-0"
                   >
-                    Legacy
+                    {t("Legacy")}
                   </Badge>
                 )}
               </div>
@@ -222,7 +224,7 @@ export const SidebarDraggableComponent = forwardRef(
                           name="Download"
                           className="relative top-0.5 mr-2 h-4 w-4"
                         />{" "}
-                        Download{" "}
+                        {t("Download")}{" "}
                       </div>{" "}
                     </SelectItem>
                     {!official && (
@@ -232,7 +234,7 @@ export const SidebarDraggableComponent = forwardRef(
                             name="Trash2"
                             className="relative top-0.5 mr-2 h-4 w-4"
                           />{" "}
-                          Delete{" "}
+                          {t("Delete")}{" "}
                         </div>{" "}
                       </SelectItem>
                     )}

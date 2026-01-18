@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Separator } from "@/components/ui/separator";
+import { useTranslation } from 'react-i18next';
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -22,6 +23,7 @@ interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
+  
   {
     id: "search",
     icon: "search",
@@ -55,6 +57,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 const SidebarSegmentedNav = () => {
+    const { t } = useTranslation();
   const { activeSection, setActiveSection, toggleSidebar, open } = useSidebar();
   const { focusSearch, setSearch } = useSearchContext();
   const [isAddNoteActive, setIsAddNoteActive] = useState(false);
@@ -120,7 +123,7 @@ const SidebarSegmentedNav = () => {
                     name={item.icon}
                     className="h-5 w-5"
                   />
-                  <span className="sr-only">{item.label}</span>
+                  <span className="sr-only">{t(item.label)}</span>
                 </SidebarMenuButton>
               </ShadTooltip>
             </SidebarMenuItem>

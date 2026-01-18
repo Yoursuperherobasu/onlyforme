@@ -22,6 +22,8 @@ import { Starfield } from "./components/StarField";
 import { useMsal } from "@azure/msal-react";
 import { loginRequest } from "@/authConfig";
 
+import { useTranslation } from 'react-i18next';
+
 export default function LoginPage(): JSX.Element {
   const [inputState, setInputState] =
     useState<loginInputStateType>(CONTROL_LOGIN_STATE);
@@ -30,6 +32,7 @@ export default function LoginPage(): JSX.Element {
   const { login } = useContext(AuthContext);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { instance } = useMsal();
+  const { t } = useTranslation();
 
 
   function handleInput({
@@ -123,10 +126,10 @@ export default function LoginPage(): JSX.Element {
           {/* Heading */}
           <div className="max-w-md">
             <h1 className="text-3xl sm:text-4xl lg:text-5xl mb-4 sm:mb-6 font-bold">
-              Build AI Agents, faster.
+              {t("Build AI Agents, faster.")}
             </h1>
             <p className="text-gray-400 text-base sm:text-lg">
-              Connect your ideas to reality with AgentCore's powerful platform.
+              {t("Connect your ideas to reality with AgentCore's powerful platform.")}
             </p>
           </div>
         </div>
@@ -137,10 +140,10 @@ export default function LoginPage(): JSX.Element {
             {/* Welcome Text */}
             <div className="mb-8">
               <h2 className="text-2xl sm:text-3xl mb-2 font-semibold">
-                Welcome back.
+                {t("Welcome back.")}
               </h2>
               <p className="text-gray-400 text-sm sm:text-base">
-                Sign in to your AgentCore account to continue.
+                {t("Sign in to your account to continue building intelligent agents that transform ideas into action.")}
               </p>
             </div>
 
@@ -173,7 +176,7 @@ export default function LoginPage(): JSX.Element {
                         value={username}
                         className="w-full pl-14 pr-4 h-14 bg-[#1a1a1a] border border-gray-700 rounded-lg text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20"
                         required
-                        placeholder="Username"
+                        placeholder={t("Username")}
                       />
                     </Form.Control>
                   </div>
@@ -198,7 +201,7 @@ export default function LoginPage(): JSX.Element {
                       isForm
                       password={true}
                       required
-                      placeholder="Password"
+                      placeholder={t("Password")}
                       className="w-full pl-11 h-12 bg-[#1a1a1a] border-gray-700 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
                     />
                   </div>
@@ -206,7 +209,7 @@ export default function LoginPage(): JSX.Element {
                     className="text-sm text-red-400 mt-1"
                     match="valueMissing"
                   >
-                    Please enter your password
+                    {t("Please enter your password")}
                   </Form.Message>
                 </Form.Field>
               </div>
@@ -219,7 +222,7 @@ export default function LoginPage(): JSX.Element {
                     type="submit"
                     className="h-12 bg-purple-600 hover:bg-purple-700 text-white text-base font-medium"
                   >
-                    Sign In
+                    {t("Sign In")}
                   </Button>
                 </Form.Submit>
 
@@ -235,19 +238,19 @@ export default function LoginPage(): JSX.Element {
                     <path fill="#00a4ef" d="M1 12h10v10H1z" />
                     <path fill="#ffb900" d="M12 12h10v10H12z" />
                   </svg>
-                  SSO
+                  {t("SSO")}
                 </Button>
               </div>
 
               {/* Sign Up Link */}
               <div className="text-center pt-2">
                 <p className="text-sm text-gray-400">
-                  New to AgentCore?{" "}
+                  {t("New to AgentCore?")}{" "}
                   <CustomLink
                     to="/signup"
                     className="text-purple-500 hover:text-purple-400 font-medium"
                   >
-                    Create an account
+                    {t("Create an account")}  
                   </CustomLink>
                 </p>
               </div>

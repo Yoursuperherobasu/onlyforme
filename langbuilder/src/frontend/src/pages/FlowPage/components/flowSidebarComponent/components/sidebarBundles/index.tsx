@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/sidebar";
 import type { SidebarGroupProps } from "../../types";
 import { BundleItem } from "../bundleItems";
+import { useTranslation } from 'react-i18next';
 
 export const MemoizedSidebarGroup = memo(
   ({
@@ -46,7 +47,7 @@ export const MemoizedSidebarGroup = memo(
 
     // Render Cloud Geometry section first, then Bundles
     const sectionOrder = ["Cloud Geometry", "Bundles"];
-
+    const { t } = useTranslation();
     return (
       <>
         {sectionOrder.map((sectionName) => {
@@ -56,7 +57,7 @@ export const MemoizedSidebarGroup = memo(
           return (
             <SidebarGroup key={sectionName} className="p-3">
               <SidebarGroupLabel className="cursor-default">
-                {sectionName}
+                {t(sectionName)}
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>

@@ -308,7 +308,8 @@ def create_app():
     )
 
     setup_sentry(app)
-    origins = ["http://localhost:3000","http://localhost:8767","http://localhost:5175"]
+    # origins = ["http://localhost:3000","http://localhost:8767"]
+    origins = os.getenv("CORS_ALLOWED_ORIGINS".split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else [["http://localhost:3000","http://localhost:8767"]])
 
     app.add_middleware(
         CORSMiddleware,

@@ -14,6 +14,7 @@ import { useHotkeys } from "react-hotkeys-hook";
 import { useShallow } from "zustand/react/shallow";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from 'react-i18next';
 import {
   Sidebar,
   SidebarContent,
@@ -52,6 +53,7 @@ import { filteredDataFn } from "./helpers/filtered-data";
 import { normalizeString } from "./helpers/normalize-string";
 import sensitiveSort from "./helpers/sensitive-sort";
 import { traditionalSearchMetadata } from "./helpers/traditional-search-metadata";
+import { t } from "i18next";
 
 const CATEGORIES = SIDEBAR_CATEGORIES;
 const BUNDLES = SIDEBAR_BUNDLES;
@@ -85,6 +87,7 @@ export function FlowSearchProvider({
 }: {
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [isInputFocused, setIsInputFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -147,7 +150,7 @@ interface FlowSidebarComponentProps {
 
 export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
   const data = useTypesStore((state) => state.data);
-
+  const { t } = useTranslation();
   const {
     getFilterEdge,
     setFilterEdge,
@@ -683,7 +686,7 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
                             className="h-4 w-4"
                           />
                         </span>
-                        Discover more components
+                        {t("Discover more components")}
                       </Button>
                     )}
                   </>

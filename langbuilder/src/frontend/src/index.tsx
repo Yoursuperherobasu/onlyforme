@@ -1,28 +1,8 @@
-// import ReactDOM from "react-dom/client";
-// import reportWebVitals from "./reportWebVitals";
-
-// import "./style/classes.css";
-// // @ts-ignore
-// import "./style/index.css";
-// // @ts-ignore
-// import "./App.css";
-// import "./style/applies.css";
-
-// // @ts-ignore
-// import App from "./customization/custom-App";
-
-// const root = ReactDOM.createRoot(
-//   document.getElementById("root") as HTMLElement,
-// );
-
-// root.render(<App />);
-// reportWebVitals();
-
-
-
 import React from "react";
 import ReactDOM from "react-dom/client";
 import reportWebVitals from "./reportWebVitals";
+import { I18nextProvider } from "react-i18next";
+import i18n from "./i18n";
 
 import "./style/classes.css";
 // @ts-ignore
@@ -75,9 +55,12 @@ const root = ReactDOM.createRoot(
 
 root.render(
   <React.StrictMode>
-    <MsalProvider instance={msalInstance}>
-      <App />
-    </MsalProvider>
+    <I18nextProvider i18n={i18n}>
+      <MsalProvider instance={msalInstance}>
+        <App />
+      </MsalProvider>
+    </I18nextProvider>
   </React.StrictMode>
 );
+
 reportWebVitals();

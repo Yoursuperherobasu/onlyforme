@@ -8,6 +8,7 @@ import {
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import type { APIClassType } from "@/types/api";
 import SidebarItemsList from "../sidebarItemsList";
+import { useTranslation } from 'react-i18next';
 
 export const CategoryDisclosure = memo(function CategoryDisclosure({
   item,
@@ -42,7 +43,7 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
     },
     [item.name, setOpenCategories],
   );
-
+  const { t } = useTranslation();
   const isOpen = openCategories.includes(item.name);
   const handleOpenChange = useCallback(
     (isOpen: boolean) => {
@@ -68,7 +69,7 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
                 className="h-4 w-4 group-aria-expanded/collapsible:text-accent-pink-foreground"
               />
               <span className="flex-1 group-aria-expanded/collapsible:font-semibold">
-                {item.display_name}
+                {t(item.display_name)}
               </span>
               <ForwardedIconComponent
                 name="ChevronRight"

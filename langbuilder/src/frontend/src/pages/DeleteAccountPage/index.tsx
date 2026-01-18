@@ -3,10 +3,11 @@ import LangBuilderLogo from "@/assets/LangBuilderLogo.svg?react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import BaseModal from "../../modals/baseModal";
+import { useTranslation } from 'react-i18next';
 
 export default function DeleteAccountPage() {
   const [showConfirmation, setShowConfirmation] = useState(false);
-
+  const { t } = useTranslation();
   const handleDeleteAccount = () => {
     // Implement your account deletion logic here
     // For example, make an API call to delete the account
@@ -23,7 +24,7 @@ export default function DeleteAccountPage() {
           className="mb-4 h-10 w-10 scale-[1.5]"
         />
         <span className="mb-4 text-center text-2xl font-semibold text-primary">
-          Delete your account
+          {t("Delete your account")}
         </span>
         <Input className="bg-background" placeholder="Confirm password" />
 
@@ -32,8 +33,8 @@ export default function DeleteAccountPage() {
           setOpen={setShowConfirmation}
           size="x-small"
         >
-          <BaseModal.Header description="This action is irreversible and will permanently erase all your data and information associated with the account. ">
-            <h3>Are you sure ?</h3>
+          <BaseModal.Header description={t("This action is irreversible and will permanently erase all your data and information associated with the account. ")}>
+            <h3>{t("Are you sure ?")}</h3>
           </BaseModal.Header>
           <BaseModal.Trigger>
             <Button
@@ -41,7 +42,7 @@ export default function DeleteAccountPage() {
               className="w-full hover:bg-status-red"
               onClick={() => setShowConfirmation(true)}
             >
-              Delete account
+              {t("Delete account")}
             </Button>
           </BaseModal.Trigger>
           <BaseModal.Content>
@@ -51,7 +52,7 @@ export default function DeleteAccountPage() {
                 className="w-full hover:bg-status-red"
                 onClick={() => handleDeleteAccount()}
               >
-                Delete account
+                {t("Delete account")}
               </Button>
             </div>
           </BaseModal.Content>

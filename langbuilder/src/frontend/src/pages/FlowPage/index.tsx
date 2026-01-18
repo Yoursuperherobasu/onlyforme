@@ -13,6 +13,7 @@ import { useTypesStore } from "@/stores/typesStore";
 import { customStringify } from "@/utils/reactflowUtils";
 import useFlowStore from "../../stores/flowStore";
 import useFlowsManagerStore from "../../stores/flowsManagerStore";
+import { useTranslation } from 'react-i18next';
 import {
   FlowSearchProvider,
   FlowSidebarComponent,
@@ -25,7 +26,7 @@ export default function FlowPage({ view }: { view?: boolean }): JSX.Element {
   useGetTypes({
     enabled: Object.keys(types).length <= 0,
   });
-
+  const { t } = useTranslation();
   const setCurrentFlow = useFlowsManagerStore((state) => state.setCurrentFlow);
   const currentFlow = useFlowStore((state) => state.currentFlow);
   const currentSavedFlow = useFlowsManagerStore((state) => state.currentFlow);
@@ -61,7 +62,7 @@ export default function FlowPage({ view }: { view?: boolean }): JSX.Element {
       if (proceed) {
         blocker.proceed && blocker.proceed();
         setSuccessData({
-          title: "Flow saved successfully!",
+          title: t("Flow saved successfully!"),
         });
       }
     }, 1200);
@@ -69,7 +70,7 @@ export default function FlowPage({ view }: { view?: boolean }): JSX.Element {
       if (!autoSaving || saving === false) {
         blocker.proceed && blocker.proceed();
         setSuccessData({
-          title: "Flow saved successfully!",
+          title: t("Flow saved successfully!"),
         });
       }
       proceed = true;
@@ -188,7 +189,7 @@ export default function FlowPage({ view }: { view?: boolean }): JSX.Element {
               onSave={handleSave}
               onCancel={() => blocker.reset?.()}
               onProceed={handleExit}
-              flowName={currentSavedFlow.name}
+              flowName={t(currentSavedFlow.name)}
               lastSaved={
                 updatedAt
                   ? new Date(updatedAt).toLocaleString("en-US", {
