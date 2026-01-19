@@ -13,7 +13,7 @@ export const LangbuilderCounts = () => {
       className="flex items-center gap-3"
       onClick={() => window.open(GITHUB_URL, "_blank")}
     >
-      <ShadTooltip
+      {/* <ShadTooltip
         content="Go to GitHub repo"
         side="bottom"
         styleClasses="z-10"
@@ -22,9 +22,9 @@ export const LangbuilderCounts = () => {
           <FaGithub className="h-4 w-4" />
           <span className="text-xs font-semibold">{formatNumber(stars)}</span>
         </div>
-      </ShadTooltip>
+      </ShadTooltip> */}
 
-      <ShadTooltip
+      {/* <ShadTooltip
         content="Go to Discord server"
         side="bottom"
         styleClasses="z-10"
@@ -38,7 +38,7 @@ export const LangbuilderCounts = () => {
             {formatNumber(discordCount)}
           </span>
         </div>
-      </ShadTooltip>
+      </ShadTooltip> */}
     </div>
   );
 };

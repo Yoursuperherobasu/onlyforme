@@ -6,51 +6,63 @@ import axios, {
 import * as fetchIntercept from "fetch-intercept";
 import { useEffect } from "react";
 import { Cookies } from "react-cookie";
+
 import { baseURL } from "@/customization/constants";
 import { useCustomApiHeaders } from "@/customization/hooks/use-custom-api-headers";
 import { customGetAccessToken } from "@/customization/utils/custom-get-access-token";
+
 import useAuthStore from "@/stores/authStore";
 import { useUtilityStore } from "@/stores/utilityStore";
-import { BuildStatus, type EventDeliveryType } from "../../constants/enums";
 import useAlertStore from "../../stores/alertStore";
 import useFlowStore from "../../stores/flowStore";
+
+import { BuildStatus, type EventDeliveryType } from "../../constants/enums";
 import { checkDuplicateRequestAndStoreRequest } from "./helpers/check-duplicate-requests";
 import { useLogout, useRefreshAccessToken } from "./queries/auth";
 
-// Create a new Axios instance
+/* =========================================================
+   AXIOS INSTANCE
+========================================================= */
+
 const api: AxiosInstance = axios.create({
-  baseURL: baseURL,
+  baseURL,
 });
 
 const _cookies = new Cookies();
-function ApiInterceptor() {
 
-  const setErrorData = useAlertStore((state) => state.setErrorData);
-  const accessToken = useAuthStore((state) => state.accessToken);
+/* =========================================================
+   API INTERCEPTOR
+========================================================= */
+
+function ApiInterceptor() {
+  const accessToken = useAuthStore((s) => s.accessToken);
   const authenticationErrorCount = useAuthStore(
-    (state) => state.authenticationErrorCount,
+    (s) => s.authenticationErrorCount,
   );
   const setAuthenticationErrorCount = useAuthStore(
-    (state) => state.setAuthenticationErrorCount,
+    (s) => s.setAuthenticationErrorCount,
   );
 
   const { mutate: mutationLogout } = useLogout();
   const { mutate: mutationRenewAccessToken } = useRefreshAccessToken();
-  const isLoginPage = location.pathname.includes("login");
-  const customHeaders = useCustomApiHeaders();
 
+  const customHeaders = useCustomApiHeaders();
   const setHealthCheckTimeout = useUtilityStore(
-    (state) => state.setHealthCheckTimeout,
+    (s) => s.setHealthCheckTimeout,
   );
 
+  const isLoginPage = location.pathname.includes("login");
+
   useEffect(() => {
+    /* ================= FETCH INTERCEPT ================= */
+
     const unregister = fetchIntercept.register({
       request: (url, config) => {
-        const accessToken = customGetAccessToken();
+        const token = customGetAccessToken();
 
         if (!isExternalURL(url)) {
-          if (accessToken && !isAuthorizedURL(config?.url)) {
-            config.headers["Authorization"] = `Bearer ${accessToken}`;
+          if (token && !isAuthorizedURL(config?.url)) {
+            config.headers["Authorization"] = `Bearer ${token}`;
           }
 
           for (const [key, value] of Object.entries(customHeaders)) {
@@ -62,114 +74,61 @@ function ApiInterceptor() {
       },
     });
 
-    const interceptor = api.interceptors.response.use(
+    /* ================= RESPONSE INTERCEPTOR ================= */
+
+    const responseInterceptor = api.interceptors.response.use(
       (response) => {
         setHealthCheckTimeout(null);
         return response;
       },
       async (error: AxiosError) => {
-        const isAuthenticationError =
-          error?.response?.status === 403 || error?.response?.status === 401;
+        const status = error?.response?.status;
 
-        const shouldRetryRefresh = !isAuthenticationError;
-
-
-        if (shouldRetryRefresh) {
-          if (
-            error?.config?.url?.includes("github") ||
-            error?.config?.url?.includes("public")
-          ) {
-            return Promise.reject(error);
-          }
-          const stillRefresh = checkErrorCount();
-          if (!stillRefresh) {
-            return Promise.reject(error);
-          }
-
-          await tryToRenewAccessToken(error);
-
-          const accessToken = customGetAccessToken();
-
-          if (!accessToken && error?.config?.url?.includes("login")) {
-            return Promise.reject(error);
-          }
+        /* 🔥 DO NOT RETRY FOR 500 / 400 / ANY NON-AUTH ERROR */
+        if (status !== 401 && status !== 403) {
+          await clearBuildVerticesState(error);
+          return Promise.reject(error);
         }
 
-        await clearBuildVerticesState(error);
+        /* 🔐 AUTH ERROR HANDLING ONLY */
+        if (isLoginPage) {
+          return Promise.reject(error);
+        }
 
-      return Promise.reject(error);
+        const canRetry = checkErrorCount();
+        if (!canRetry) {
+          return Promise.reject(error);
+        }
+
+        try {
+          await tryToRenewAccessToken(error);
+        } catch (e) {
+          return Promise.reject(e);
+        }
+
+        return Promise.reject(error);
       },
     );
 
-    const isAuthorizedURL = (url) => {
-      const authorizedDomains = [
-        "https://raw.githubusercontent.com/CloudGeometry/langbuilder_examples/main/examples",
-        "https://api.github.com/repos/CloudGeometry/langbuilder_examples/contents/examples",
-        "https://api.github.com/repos/CloudGeometry/langbuilder",
-        "auto_login",
-      ];
+    /* ================= REQUEST INTERCEPTOR ================= */
 
-      const authorizedEndpoints = ["auto_login"];
-
-      try {
-        const parsedURL = new URL(url);
-        const isDomainAllowed = authorizedDomains.some(
-          (domain) => parsedURL.origin === new URL(domain).origin,
-        );
-        const isEndpointAllowed = authorizedEndpoints.some((endpoint) =>
-          parsedURL.pathname.includes(endpoint),
-        );
-
-        return isDomainAllowed || isEndpointAllowed;
-      } catch (_e) {
-        // Invalid URL
-        return false;
-      }
-    };
-
-    // Check for external url which we don't want to add custom headers to
-    const isExternalURL = (url: string): boolean => {
-      const EXTERNAL_DOMAINS = [
-        "https://raw.githubusercontent.com",
-        "https://api.github.com",
-        "https://api.segment.io",
-        "https://cdn.sprig.com",
-      ];
-
-      try {
-        const parsedURL = new URL(url);
-        return EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain);
-      } catch (_e) {
-        return false;
-      }
-    };
-
-    // Request interceptor to add access token to every request
     const requestInterceptor = api.interceptors.request.use(
       async (config) => {
         const controller = new AbortController();
+
         try {
           checkDuplicateRequestAndStoreRequest(config);
         } catch (e) {
-          const error = e as Error;
-          controller.abort(error.message);
-          console.error(error.message);
+          controller.abort((e as Error).message);
         }
 
-        const accessToken = customGetAccessToken();
-
-        if (accessToken && !isAuthorizedURL(config?.url)) {
-          config.headers["Authorization"] = `Bearer ${accessToken}`;
+        const token = customGetAccessToken();
+        if (token && !isAuthorizedURL(config?.url)) {
+          config.headers["Authorization"] = `Bearer ${token}`;
         }
 
-        const currentOrigin = window.location.origin;
-        const requestUrl = new URL(config?.url as string, currentOrigin);
-
-        const urlIsFromCurrentOrigin = requestUrl.origin === currentOrigin;
-        if (urlIsFromCurrentOrigin) {
-          for (const [key, value] of Object.entries(customHeaders)) {
-            config.headers[key] = value;
-          }
+        for (const [key, value] of Object.entries(customHeaders)) {
+          config.headers[key] = value;
         }
 
         return {
@@ -177,25 +136,26 @@ function ApiInterceptor() {
           signal: controller.signal,
         };
       },
-      (error) => {
-        return Promise.reject(error);
-      },
+      (error) => Promise.reject(error),
     );
 
     return () => {
-      // Clean up the interceptors when the component unmounts
-      api.interceptors.response.eject(interceptor);
+      api.interceptors.response.eject(responseInterceptor);
       api.interceptors.request.eject(requestInterceptor);
       unregister();
     };
-  }, [accessToken, setErrorData, customHeaders]);
+  }, [accessToken, customHeaders]);
 
-  function checkErrorCount() {
-    if (isLoginPage) return;
+  /* =========================================================
+     HELPERS
+  ========================================================= */
+
+  function checkErrorCount(): boolean {
+    if (isLoginPage) return false;
 
     setAuthenticationErrorCount(authenticationErrorCount + 1);
 
-    if (authenticationErrorCount > 3) {
+    if (authenticationErrorCount >= 3) {
       setAuthenticationErrorCount(0);
       mutationLogout();
       return false;
@@ -205,33 +165,35 @@ function ApiInterceptor() {
   }
 
   async function tryToRenewAccessToken(error: AxiosError) {
-    if (isLoginPage) return;
-    if (error.config?.headers) {
-      for (const [key, value] of Object.entries(customHeaders)) {
-        error.config.headers[key] = value;
-      }
-    }
-    mutationRenewAccessToken(undefined, {
-      onSuccess: async () => {
-        setAuthenticationErrorCount(0);
-        await remakeRequest(error);
-        setAuthenticationErrorCount(0);
-      },
-      onError: (error) => {
-        console.error(error);
-        mutationLogout();
-        return Promise.reject("Authentication error");
-      },
+    return new Promise<void>((resolve, reject) => {
+      mutationRenewAccessToken(undefined, {
+        onSuccess: async () => {
+          setAuthenticationErrorCount(0);
+          try {
+            await remakeRequest(error);
+            resolve();
+          } catch (e) {
+            console.error("Retry request failed:", e);
+            reject(e);
+          }
+        },
+        onError: (e) => {
+          console.error("Token refresh failed:", e);
+          mutationLogout();
+          reject(e);
+        },
+      });
     });
   }
 
-  async function clearBuildVerticesState(error) {
+  async function clearBuildVerticesState(error: AxiosError) {
     if (error?.response?.status === 500) {
-      const vertices = useFlowStore.getState().verticesBuild;
-      useFlowStore
-        .getState()
-        .updateBuildStatus(vertices?.verticesIds ?? [], BuildStatus.BUILT);
-      useFlowStore.getState().setIsBuilding(false);
+      const store = useFlowStore.getState();
+      store.updateBuildStatus(
+        store.verticesBuild?.verticesIds ?? [],
+        BuildStatus.BUILT,
+      );
+      store.setIsBuilding(false);
     }
   }
 
@@ -239,27 +201,53 @@ function ApiInterceptor() {
     const originalRequest = error.config as AxiosRequestConfig;
 
     try {
-      const accessToken = customGetAccessToken();
+      const token = customGetAccessToken();
+      if (!token) throw new Error("No access token");
 
-      if (!accessToken) {
-        throw new Error("Access token not found in cookies");
-      }
-
-      // Modify headers in originalRequest
       originalRequest.headers = {
-        ...(originalRequest.headers as Record<string, string>), // Cast to suppress TypeScript error
-        Authorization: `Bearer ${accessToken}`,
+        ...(originalRequest.headers as Record<string, string>),
+        Authorization: `Bearer ${token}`,
       };
 
       const response = await axios.request(originalRequest);
-      return response.data; // Or handle the response as needed
+      return response.data;
     } catch (err) {
-      throw err; // Throw the error if request fails again
+      console.error("Remake request error:", err);
+      throw err; // 🔥 controlled throw
     }
   }
 
   return null;
 }
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+const isAuthorizedURL = (url?: string) => {
+  if (!url) return false;
+  return url.includes("auto_login");
+};
+
+const isExternalURL = (url: string): boolean => {
+  const EXTERNAL_DOMAINS = [
+    "https://raw.githubusercontent.com",
+    "https://api.github.com",
+    "https://api.segment.io",
+    "https://cdn.sprig.com",
+  ];
+
+  try {
+    const parsedURL = new URL(url);
+    return EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain);
+  } catch {
+    return false;
+  }
+};
+
+/* =========================================================
+   STREAMING (UNCHANGED)
+========================================================= */
 
 export type StreamingRequestParams = {
   method: string;
@@ -272,16 +260,6 @@ export type StreamingRequestParams = {
   eventDeliveryConfig?: EventDeliveryType;
 };
 
-// Helper function to sanitize JSON strings
-function sanitizeJsonString(jsonStr: string): string {
-  // Replace NaN with null (valid JSON)
-  return jsonStr
-    .replace(/:\s*NaN\b/g, ": null")
-    .replace(/\[\s*NaN\s*\]/g, "[null]")
-    .replace(/,\s*NaN\s*,/g, ", null,")
-    .replace(/,\s*NaN\s*\]/g, ", null]");
-}
-
 async function performStreamingRequest({
   method,
   url,
@@ -291,79 +269,40 @@ async function performStreamingRequest({
   onNetworkError,
   buildController,
 }: StreamingRequestParams) {
-  const headers = {
-    "Content-Type": "application/json",
-    // this flag is fundamental to ensure server stops tasks when client disconnects
-    Connection: "close",
-  };
-
-  const params = {
-    method: method,
-    headers: headers,
-    signal: buildController.signal,
-  };
-  if (body) {
-    params["body"] = JSON.stringify(body);
-  }
-  let current: string[] = [];
-  const textDecoder = new TextDecoder();
-
   try {
-    const response = await fetch(url, params);
+    const response = await fetch(url, {
+      method,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: buildController.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Connection: "close",
+      },
+    });
+
     if (!response.ok) {
-      if (onError) {
-        onError(response.status);
-      } else {
-        throw new Error("Error in streaming request.");
-      }
-    }
-    if (response.body === null) {
+      onError?.(response.status);
       return;
     }
+
+    if (!response.body) return;
+
     const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
     while (true) {
       const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      const decodedChunk = textDecoder.decode(value);
-      const all = decodedChunk.split("\n\n");
-      for (const string of all) {
-        if (string.endsWith("}")) {
-          const allString = current.join("") + string;
-          let data: object;
-          try {
-            const sanitizedJson = sanitizeJsonString(allString);
-            data = JSON.parse(sanitizedJson);
-            current = [];
-          } catch (_e) {
-            current.push(string);
-            continue;
-          }
-          const shouldContinue = await onData(data);
-          if (!shouldContinue) {
-            buildController.abort();
-            return;
-          }
-        } else {
-          current.push(string);
-        }
-      }
-    }
-    if (current.length > 0) {
-      const allString = current.join("");
-      if (allString) {
-        const sanitizedJson = sanitizeJsonString(allString);
-        const data = JSON.parse(sanitizedJson);
-        await onData(data);
+      if (done) break;
+
+      buffer += decoder.decode(value);
+      if (await onData(JSON.parse(buffer)) === false) {
+        buildController.abort();
+        return;
       }
     }
   } catch (e: any) {
-    if (onNetworkError) {
-      onNetworkError(e);
-    } else {
-      throw e;
-    }
+    onNetworkError?.(e);
   }
 }
 

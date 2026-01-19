@@ -79,7 +79,7 @@ const router = createBrowserRouter(
             <Route path="" element={<AppAuthenticatedPage />}>
               <Route path="" element={<CustomDashboardWrapperPage />}>
                 <Route path="" element={<CollectionPage />}>
-                  <Route
+                <Route
                     index
                     element={<CustomNavigate replace to={"flows"} />}
                   />
@@ -93,15 +93,18 @@ const router = createBrowserRouter(
                       {ENABLE_KNOWLEDGE_BASES && (
                         <Route
                           path="knowledge-bases"
-                          element={<KnowledgePage />}
+                          element={<KnowledgePage />} 
                         />
                       )}
                     </Route>
                   )}
-                  <Route
-                    path="flows/"
-                    element={<HomePage key="flows" type="flows" />}
-                  />
+                  <Route path="flows/">
+                    <Route index element={<CollectionPage />} />
+                    <Route
+                      path="folder/:folderId"
+                      element={<HomePage type="flows" />}
+                    />
+                  </Route>
                   <Route
                     path="components/"
                     element={<HomePage key="components" type="components" />}
