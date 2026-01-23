@@ -53,6 +53,7 @@ def upgrade() -> None:
             sa.Column("password", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
             sa.Column("is_active", sa.Boolean(), nullable=False),
             sa.Column("is_superuser", sa.Boolean(), nullable=False),
+            sa.Column("role", sa.String(50), nullable=False, server_default="developer"),
             sa.Column("create_at", sa.DateTime(), nullable=False),
             sa.Column("updated_at", sa.DateTime(), nullable=False),
             sa.Column("last_login_at", sa.DateTime(), nullable=True),

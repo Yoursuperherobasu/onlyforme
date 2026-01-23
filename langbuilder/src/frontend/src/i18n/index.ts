@@ -35,6 +35,7 @@ i18n
     interpolation: {
       escapeValue: false,
     },
+    returnEmptyString: false,  // Return key when value is empty string
   });
   console.log("I18N INIT FILE LOADED");
 

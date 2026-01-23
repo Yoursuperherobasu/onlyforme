@@ -4,12 +4,14 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-# Log file paths - use absolute path in langbuilder root
-LOG_DIR = Path("E:/devteam_langbuilder/my_langbuilder/langbuilder/logs")
+# Log file paths - dynamically resolve langbuilder root from this file's location
+# Navigate up from utils/ to langbuilder root: utils -> langbuilder -> base -> backend -> src -> langbuilder
+_CURRENT_FILE = Path(__file__).resolve()
+LOG_DIR = _CURRENT_FILE.parent.parent.parent.parent.parent.parent / "logs"
 DEBUG_LOG_FILE = LOG_DIR / "tools_debug.log"
 INFO_LOG_FILE = LOG_DIR / "info.log"
 
-# Ensure log directory exists
+# Ensure log directory exists (creates if not present)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 def _write_to_file(log_file: Path, message: str) -> None:

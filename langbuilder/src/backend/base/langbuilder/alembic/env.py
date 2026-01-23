@@ -100,18 +100,10 @@ def _do_run_migrations(connection):
  
  
 async def _run_async_migrations() -> None:
-    # Use get_main_option to respect command-line overrides (-x sqlalchemy.url=...)
-    # and programmatic overrides (config.set_main_option)
-    # First try to get from environment variables, fallback to config file
-    url = os.getenv("DATABASE_URL") or os.getenv("LANGBUILDER_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
-   
-    # If still no URL and settings are available, try to get from settings
-    if not url or url.startswith("driver://"):
-        try:
-            url = os.getenv("DATABASE_URL")
-        except Exception:
-            pass
-   
+    # Use get_main_option FIRST to respect programmatic overrides from service.py
+    # (which sanitizes the URL for async compatibility)
+    # Only fallback to environment variables if config option is not set
+    url = config.get_main_option("sqlalchemy.url") or os.getenv("DATABASE_URL") or os.getenv("LANGBUILDER_DATABASE_URL")
     # Validate that we have a real URL
     if not url or url.startswith("driver://"):
         url = os.getenv("DATABASE_URL")

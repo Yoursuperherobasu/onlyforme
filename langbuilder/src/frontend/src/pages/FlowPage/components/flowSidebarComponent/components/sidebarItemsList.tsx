@@ -95,17 +95,16 @@ const UniqueInputsDraggableComponent = ({
   onDragStart,
   nodeColors,
 }) => {
+  const { t } = useTranslation();
   const nodes = useFlowStore((state) => state.nodes);
   const chatInputAdded = useMemo(() => checkChatInput(nodes), [nodes]);
   const webhookInputAdded = useMemo(() => checkWebhookInput(nodes), [nodes]);
   const uniqueInputsComponents: UniqueInputsComponents = useMemo(() => {
-    const { t } = useTranslation();
     return {
       chatInput: chatInputAdded,
       webhookInput: webhookInputAdded,
     };
   }, [chatInputAdded, webhookInputAdded]);
-  const { t } = useTranslation();
   return (
     <ShadTooltip
       content={currentItem.display_name}
