@@ -15,6 +15,7 @@ import type { APIClassType } from "@/types/api";
 import { removeCountFromString } from "@/utils/utils";
 import { SearchConfigTrigger } from "./searchConfigTrigger";
 import SidebarDraggableComponent from "./sidebarDraggableComponent";
+import { useTranslation } from 'react-i18next';
 
 type McpSidebarGroupProps = {
   mcpComponents?: any[];
@@ -35,7 +36,7 @@ type McpSidebarGroupProps = {
 
 const McpEmptyState = ({ isLoading }: { isLoading?: boolean }) => {
   const [addMcpOpen, setAddMcpOpen] = useState(false);
-
+  const { t } = useTranslation();
   const handleAddMcpServerClick = () => {
     setAddMcpOpen(true);
   };
@@ -51,7 +52,7 @@ const McpEmptyState = ({ isLoading }: { isLoading?: boolean }) => {
           onClick={handleAddMcpServerClick}
           data-testid="add-mcp-server-button-sidebar"
         >
-          <span>Add MCP Server</span>
+          <span>{t("Add MCP Server")}</span>
         </Button>
       </div>
       <AddMcpServerModal open={addMcpOpen} setOpen={setAddMcpOpen} />
@@ -75,6 +76,7 @@ const McpSidebarGroup = ({
   // Use props instead of hook call
   const isLoading = mcpLoading;
   const isSuccess = mcpSuccess;
+  const { t } = useTranslation();
 
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [serverToDelete, setServerToDelete] = useState<string | null>(null);
@@ -89,14 +91,14 @@ const McpSidebarGroup = ({
   const handleDeleteMcpServer = (mcpServer: string) => {
     deleteMcpServer(
       {
-        name: mcpServer,
+        name: t(mcpServer),
       },
       {
         onSuccess: (data) => {
-          setSuccessData({ title: data.message });
+          setSuccessData({ title: t(data.message) });
         },
         onError: (error) => {
-          setErrorData({ title: error.message });
+          setErrorData({ title: t(error.message) });
         },
       },
     );
@@ -111,7 +113,7 @@ const McpSidebarGroup = ({
     <SidebarGroup className={`p-3 ${!hasMcpServers ? " h-full" : ""}`}>
       {hasMcpServers && (
         <SidebarGroupLabel className="cursor-default w-full flex items-center justify-between">
-          <span>MCP Servers</span>
+          <span>{t("MCP Servers")}</span>
           {showSearchConfigTrigger && (
             <SearchConfigTrigger
               showConfig={showConfig}
@@ -122,7 +124,7 @@ const McpSidebarGroup = ({
       )}
       <SidebarGroupContent className="h-full">
         <SidebarMenu className={!hasMcpServers ? " h-full" : ""}>
-          {isLoading && <span>Loading...</span>}
+          {isLoading && <span>{t("Loading...")}</span>}
           {isSuccess && !hasMcpServers && (
             <McpEmptyState isLoading={isLoading} />
           )}
@@ -148,9 +150,7 @@ const McpSidebarGroup = ({
                   color={nodeColors["agents"]}
                   itemName={"MCP"}
                   error={!!mcpComponent.error}
-                  display_name={
-                    mcpComponent.mcpServerName ?? mcpComponent.display_name
-                  }
+                  display_name={t(mcpComponent.mcpServerName ?? mcpComponent.display_name)}
                   official={mcpComponent.official === false ? false : true}
                   beta={mcpComponent.beta ?? false}
                   legacy={mcpComponent.legacy ?? false}
@@ -173,7 +173,7 @@ const McpSidebarGroup = ({
               setDeleteModalOpen(false);
               setServerToDelete(null);
             }}
-            description={"MCP Server"}
+            description={t("MCP Server")}
           />
         </SidebarMenu>
       </SidebarGroupContent>

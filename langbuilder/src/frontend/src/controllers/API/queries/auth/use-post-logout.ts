@@ -1,7 +1,5 @@
 import { Cookies } from "react-cookie";
 import {
-  IS_AUTO_LOGIN,
-  LANGBUILDER_AUTO_LOGIN_OPTION,
 } from "@/constants/constants";
 import useAuthStore from "@/stores/authStore";
 import useFlowStore from "@/stores/flowStore";
@@ -19,17 +17,9 @@ export const useLogout: useMutationFunctionType<undefined, void> = (
   const { mutate, queryClient } = UseRequestProcessor();
   const cookies = new Cookies();
   const logout = useAuthStore((state) => state.logout);
-  const isAutoLoginEnv = IS_AUTO_LOGIN;
 
   async function logoutUser(): Promise<any> {
-    const autoLogin =
-      useAuthStore.getState().autoLogin ||
-      getAuthCookie(cookies, LANGBUILDER_AUTO_LOGIN_OPTION) === "auto" ||
-      isAutoLoginEnv;
 
-    if (autoLogin) {
-      return {};
-    }
     const res = await api.post(`${getURL("LOGOUT")}`);
     return res.data;
   }

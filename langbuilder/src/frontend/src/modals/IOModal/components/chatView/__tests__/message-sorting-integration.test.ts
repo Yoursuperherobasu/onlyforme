@@ -4,9 +4,7 @@
  * and simulates the exact data transformation that happens in the chat-view component.
  */
 import type { ChatMessageType } from "../../../../../types/chat";
-import sortSenderMessages, {
-  parseTimestamp,
-} from "../helpers/sort-sender-messages";
+import sortSenderMessages from "../helpers/sort-sender-messages";
 
 // Helper to create messages like they come from the backend/store
 const createStoreMessage = (
@@ -247,9 +245,9 @@ describe("Message Sorting Integration", () => {
 
       // Verify chronological order (skip invalid timestamps)
       for (let i = 1; i < sorted.length; i++) {
-        const prevTime = parseTimestamp(sorted[i - 1].timestamp);
-        const currTime = parseTimestamp(sorted[i].timestamp);
-        if (prevTime !== 0 && currTime !== 0) {
+        const prevTime = new Date(sorted[i - 1].timestamp).getTime();
+        const currTime = new Date(sorted[i].timestamp).getTime();
+        if (!isNaN(prevTime) && !isNaN(currTime)) {
           expect(prevTime).toBeLessThanOrEqual(currTime);
         }
       }

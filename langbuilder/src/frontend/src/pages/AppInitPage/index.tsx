@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { Outlet } from "react-router-dom";
-import { useGetAutoLogin } from "@/controllers/API/queries/auth";
 import { useGetConfig } from "@/controllers/API/queries/config/use-get-config";
 import { useGetBasicExamplesQuery } from "@/controllers/API/queries/flows/use-get-basic-examples";
 import { useGetFoldersQuery } from "@/controllers/API/queries/folders/use-get-folders";
@@ -22,38 +21,35 @@ export function AppInitPage() {
 
   const { isFetched: isLoaded } = useCustomPrimaryLoading();
 
-  const { isFetched, refetch } = useGetAutoLogin({ enabled: isLoaded });
-  useGetVersionQuery({ enabled: isFetched });
-  const { isFetched: isConfigFetched } = useGetConfig({ enabled: isFetched });
-  useGetGlobalVariables({ enabled: isFetched });
-  useGetTagsQuery({ enabled: isFetched });
-  useGetFoldersQuery({ enabled: isFetched });
+  useGetVersionQuery({ enabled: isLoaded });
+  const { isFetched: isConfigFetched } = useGetConfig({ enabled: isLoaded });
+  useGetGlobalVariables({ enabled: isLoaded });
+  useGetTagsQuery({ enabled: isLoaded });
+  useGetFoldersQuery({ enabled: isLoaded });
+
   const { isFetched: isExamplesFetched, refetch: refetchExamples } =
-    useGetBasicExamplesQuery();
+    useGetBasicExamplesQuery({ enabled: isLoaded });
 
   useEffect(() => {
-    if (isFetched) {
+    if (isLoaded) {
       refreshStars();
       refreshDiscordCount();
     }
 
     if (isConfigFetched) {
-      refetch();
       refetchExamples();
     }
-  }, [isFetched, isConfigFetched]);
+  }, [isLoaded, isConfigFetched]);
 
   return (
-    //need parent component with width and height
     <>
       {isLoaded ? (
-        (isLoading || !isFetched || !isExamplesFetched) && (
-          <LoadingPage overlay />
-        )
+        (isLoading || !isExamplesFetched) && <LoadingPage overlay />
       ) : (
         <CustomLoadingPage />
       )}
-      {isFetched && isExamplesFetched && <Outlet />}
+
+      {isLoaded && isExamplesFetched && <Outlet />}
     </>
   );
 }

@@ -20,6 +20,9 @@ from langbuilder.services.database.models.file.model import File as UserFile
 from langbuilder.services.deps import get_settings_service, get_storage_service
 from langbuilder.services.storage.service import StorageService
 
+from langbuilder.services.auth.decorators import PermissionChecker
+
+
 router = APIRouter(tags=["Files"], prefix="/files")
 
 # Set the static name of the MCP servers file
@@ -80,10 +83,11 @@ async def save_file_routine(file, storage_service, current_user: CurrentActiveUs
 
 @router.post("", status_code=HTTPStatus.CREATED)
 @router.post("/", status_code=HTTPStatus.CREATED)
+# @verify_permissions(["view_files_tab"], all_req=True) # type: ignore noqa
 async def upload_user_file(
     file: Annotated[UploadFile, File(...)],
     session: DbSession,
-    current_user: CurrentActiveUser,
+    current_user: Annotated[CurrentActiveUser, Depends(PermissionChecker(["view_files_tab"]))],
     storage_service=Depends(get_storage_service),
     settings_service=Depends(get_settings_service),
 ) -> UploadFileResponse:

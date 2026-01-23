@@ -17,6 +17,7 @@ import { useAddComponent } from "@/hooks/use-add-component";
 import { useDarkStore } from "@/stores/darkStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import type { APIClassType } from "@/types/api";
+import { useTranslation } from 'react-i18next';
 import {
   createFlowComponent,
   downloadNode,
@@ -63,7 +64,7 @@ export const SidebarDraggableComponent = forwardRef(
     const { deleteFlow } = useDeleteFlow();
     const flows = useFlowsManagerStore((state) => state.flows);
     const addComponent = useAddComponent();
-
+    const { t } = useTranslation();
     const version = useDarkStore((state) => state.version);
     const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
     const popoverRef = useRef<HTMLDivElement>(null);
@@ -174,7 +175,7 @@ export const SidebarDraggableComponent = forwardRef(
                     data-testid="display-name"
                     className="truncate text-sm font-normal"
                   >
-                    {display_name}
+                    {t(display_name)}
                   </span>
                 </ShadTooltip>
                 {beta && (
@@ -183,7 +184,7 @@ export const SidebarDraggableComponent = forwardRef(
                     size="xq"
                     className="ml-1.5 shrink-0"
                   >
-                    Beta
+                    {t("Beta")}
                   </Badge>
                 )}
                 {legacy && (
@@ -192,7 +193,7 @@ export const SidebarDraggableComponent = forwardRef(
                     size="xq"
                     className="ml-1.5 shrink-0"
                   >
-                    Legacy
+                    {t("Legacy")}
                   </Badge>
                 )}
               </div>
@@ -236,7 +237,7 @@ export const SidebarDraggableComponent = forwardRef(
                           name="Download"
                           className="relative top-0.5 mr-2 h-4 w-4"
                         />{" "}
-                        Download{" "}
+                        {t("Download")}{" "}
                       </div>{" "}
                     </SelectItem>
                     {(!official || onDelete) && (
@@ -249,7 +250,7 @@ export const SidebarDraggableComponent = forwardRef(
                             name="Trash2"
                             className="relative top-0.5 mr-2 h-4 w-4"
                           />{" "}
-                          Delete{" "}
+                          {t("Delete")}{" "}
                         </div>{" "}
                       </SelectItem>
                     )}

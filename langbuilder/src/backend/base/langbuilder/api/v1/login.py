@@ -4,7 +4,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
+from langbuilder.services.database.models.user.crud import get_user_by_username
 
+import httpx
+from pydantic import BaseModel
+from jose import jwt
+import secrets
 from langbuilder.api.utils import DbSession
 from langbuilder.api.v1.schemas import Token
 from langbuilder.initial_setup.setup import get_or_create_default_folder
@@ -14,13 +19,24 @@ from langbuilder.services.auth.utils import (
     create_user_longterm_token,
     create_user_tokens,
 )
+from langbuilder.api.v1.users import add_user
 from langbuilder.services.database.models.user.crud import get_user_by_id
 from langbuilder.services.deps import get_settings_service, get_variable_service
+from langbuilder.services.database.models.user.model import UserCreate
+from langbuilder.services.auth.permissions import get_permissions_for_role
+
+
+class AzureSSORequest(BaseModel):
+    idToken: str
+
+class AzureSSOResponse(Token):
+    role: str
+    permissions: list[str]
 
 router = APIRouter(tags=["Login"])
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=AzureSSOResponse)
 async def login_to_get_access_token(
     response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -69,7 +85,15 @@ async def login_to_get_access_token(
         await get_variable_service().initialize_user_variables(user.id, db)
         # Create default project for user if it doesn't exist
         _ = await get_or_create_default_folder(db, user.id)
-        return tokens
+        current_role = getattr(user, "role", "developer")
+        permissions = get_permissions_for_role(current_role)    
+        print(current_role,"current_roleeeeeeeeeee")
+        print(permissions,"permissssssssssssssssions")
+        return {
+            **tokens,
+            "role": current_role,
+            "permissions": permissions
+        }
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Incorrect username or password",
@@ -77,50 +101,116 @@ async def login_to_get_access_token(
     )
 
 
-@router.get("/auto_login")
-async def auto_login(response: Response, db: DbSession):
+@router.post("/azure/sso", response_model=AzureSSOResponse)
+async def azure_sso_login(
+    body: AzureSSORequest,
+    response: Response,
+    db: DbSession,
+):
     auth_settings = get_settings_service().auth_settings
+    
 
-    if auth_settings.AUTO_LOGIN:
-        user_id, tokens = await create_user_longterm_token(db)
-        response.set_cookie(
-            "access_token_lf",
-            tokens["access_token"],
-            httponly=auth_settings.ACCESS_HTTPONLY,
-            samesite=auth_settings.ACCESS_SAME_SITE,
-            secure=auth_settings.ACCESS_SECURE,
-            expires=None,  # Set to None to make it a session cookie
-            domain=auth_settings.COOKIE_DOMAIN,
+    # -----------------------------
+    # Verify Azure token
+    # -----------------------------
+    jwks_url = "https://login.microsoftonline.com/common/discovery/v2.0/keys"
+    async with httpx.AsyncClient() as client:
+        jwks = (await client.get(jwks_url)).json()
+
+    try:
+        payload = jwt.decode(
+            body.idToken,
+            jwks,
+            algorithms=["RS256"],
+            audience=auth_settings.AZURE_CLIENT_ID,
+            issuer=f"https://login.microsoftonline.com/{auth_settings.AZURE_TENANT_ID}/v2.0",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Azure token",
+        ) from e
+
+    email = payload.get("preferred_username") or payload.get("email")
+    azure_role = payload.get("roles", ["developer"])[0]
+    
+    permissions = get_permissions_for_role(azure_role)
+    
+
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="Email not found in Azure token",
         )
 
-        user = await get_user_by_id(db, user_id)
+    # -----------------------------
+    # Find or Create User
+    # -----------------------------
+    user = await get_user_by_username(db, email)
 
-        if user:
-            if user.store_api_key is None:
-                user.store_api_key = ""
+    if not user:
+        # create fake strong password (never used)
+        random_password = secrets.token_urlsafe(32)
 
-            response.set_cookie(
-                "apikey_tkn_lflw",
-                str(user.store_api_key),  # Ensure it's a string
-                httponly=auth_settings.ACCESS_HTTPONLY,
-                samesite=auth_settings.ACCESS_SAME_SITE,
-                secure=auth_settings.ACCESS_SECURE,
-                expires=None,  # Set to None to make it a session cookie
-                domain=auth_settings.COOKIE_DOMAIN,
-            )
+        user_create = UserCreate(
+            username=email,
+            password=random_password,
+            role=azure_role
+        )
 
-        return tokens
+        # reuse signup API logic
+        user = await add_user(user_create, db)
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail={
-            "message": "Auto login is disabled. Please enable it in the settings",
-            "auto_login": False,
-        },
+    else:
+        # Returning user - Sync the role if it changed in Azure
+        if user.role != azure_role:
+            user.role = azure_role
+            db.add(user)
+            await db.commit()
+    # -----------------------------
+    # Issue LangBuilder Tokens
+    # -----------------------------
+    tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
+    print(tokens,"tokenssssssssssssssssss")
+    print(permissions,"permissssssssssssssssions")
+    response.set_cookie(
+        "refresh_token_lf",
+        tokens["refresh_token"],
+        httponly=auth_settings.REFRESH_HTTPONLY,
+        samesite=auth_settings.REFRESH_SAME_SITE,
+        secure=auth_settings.REFRESH_SECURE,
+        expires=auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+        domain=auth_settings.COOKIE_DOMAIN,
+    )
+    response.set_cookie(
+        "access_token_lf",
+        tokens["access_token"],
+        httponly=auth_settings.ACCESS_HTTPONLY,
+        samesite=auth_settings.ACCESS_SAME_SITE,
+        secure=auth_settings.ACCESS_SECURE,
+        expires=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+        domain=auth_settings.COOKIE_DOMAIN,
+    )
+    response.set_cookie(
+        "apikey_tkn_lflw",
+        str(user.store_api_key),
+        httponly=auth_settings.ACCESS_HTTPONLY,
+        samesite=auth_settings.ACCESS_SAME_SITE,
+        secure=auth_settings.ACCESS_SECURE,
+        expires=None,
+        domain=auth_settings.COOKIE_DOMAIN,
     )
 
+    await get_variable_service().initialize_user_variables(user.id, db)
+    _ = await get_or_create_default_folder(db, user.id)
 
-@router.post("/refresh")
+    return {
+        **tokens,
+        "role": azure_role,
+        "permissions": permissions
+    }
+
+@router.post("/refresh", response_model=AzureSSOResponse)
 async def refresh_token(
     request: Request,
     response: Response,
@@ -132,6 +222,12 @@ async def refresh_token(
 
     if token:
         tokens = await create_refresh_token(token, db)
+        user_id = tokens.get("user_id") 
+        user = await get_user_by_id(db, user_id)
+        if not user:
+             raise HTTPException(status_code=404, detail="User not found")
+        user_role = getattr(user, "role", "developer")
+        permissions = get_permissions_for_role(user_role)
         response.set_cookie(
             "refresh_token_lf",
             tokens["refresh_token"],
@@ -150,7 +246,11 @@ async def refresh_token(
             expires=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
             domain=auth_settings.COOKIE_DOMAIN,
         )
-        return tokens
+        return {
+            **tokens,
+            "role": user_role,
+            "permissions": permissions
+        }
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid refresh token",
@@ -164,3 +264,21 @@ async def logout(response: Response):
     response.delete_cookie("access_token_lf")
     response.delete_cookie("apikey_tkn_lflw")
     return {"message": "Logout successful"}
+
+# @router.post("/logout")
+# async def logout(response: Response):
+#     auth_settings = get_settings_service().auth_settings
+    
+#     cookie_params = {
+#         "domain": auth_settings.COOKIE_DOMAIN,
+#         "path": "/", # Ensure this matches where the cookie was set
+#         "httponly": True,
+#         "samesite": auth_settings.REFRESH_SAME_SITE,
+#         "secure": auth_settings.REFRESH_SECURE,
+#     }
+
+#     response.delete_cookie("refresh_token_lf", **cookie_params)
+#     response.delete_cookie("access_token_lf", **cookie_params)
+#     response.delete_cookie("apikey_tkn_lflw", **cookie_params)
+    
+#     return {"message": "Logout successful"}

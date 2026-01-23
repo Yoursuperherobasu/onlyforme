@@ -14,6 +14,7 @@ import type { SidebarHeaderComponentProps } from "../types";
 import FeatureToggles from "./featureTogglesComponent";
 import { SearchInput } from "./searchInput";
 import { SidebarFilterComponent } from "./sidebarFilterComponent";
+import { useTranslation } from 'react-i18next';
 
 export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
   showConfig,
@@ -32,6 +33,7 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
   filterDescription,
   resetFilters,
 }: SidebarHeaderComponentProps) {
+  const { t } = useTranslation();
   return (
     <SidebarHeader className="flex w-full flex-col gap-2 group-data-[collapsible=icon]:hidden border-b">
       {!ENABLE_NEW_SIDEBAR && (
@@ -41,7 +43,7 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
               <ForwardedIconComponent name="PanelLeftClose" />
             </SidebarTrigger>
             <h3 className="flex-1 cursor-default text-sm font-semibold">
-              Components
+              {t("Components")}
             </h3>
             <DisclosureTrigger>
               <div>

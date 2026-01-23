@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import {
-  IS_AUTO_LOGIN,
   LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS,
   LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS_ENV,
 } from "@/constants/constants";
@@ -11,14 +10,12 @@ import useAuthStore from "@/stores/authStore";
 export const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const { mutate: mutateRefresh } = useRefreshAccessToken();
-  const autoLogin = useAuthStore((state) => state.autoLogin);
-  const isAutoLoginEnv = IS_AUTO_LOGIN;
+
+  
   const testMockAutoLogin = sessionStorage.getItem("testMockAutoLogin");
 
   const shouldRedirect =
-    !isAuthenticated &&
-    autoLogin !== undefined &&
-    (!autoLogin || !isAutoLoginEnv);
+    !isAuthenticated
 
   useEffect(() => {
     const envRefreshTime = LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS_ENV;
@@ -32,7 +29,7 @@ export const ProtectedRoute = ({ children }) => {
       mutateRefresh();
     };
 
-    if (autoLogin !== undefined && !autoLogin && isAuthenticated) {
+    if ( isAuthenticated) {
       const intervalId = setInterval(intervalFunction, accessTokenTimer * 1000);
       intervalFunction();
       return () => clearInterval(intervalId);

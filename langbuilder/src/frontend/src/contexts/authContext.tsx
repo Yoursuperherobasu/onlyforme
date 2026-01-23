@@ -3,7 +3,6 @@ import { Cookies } from "react-cookie";
 import {
   LANGBUILDER_ACCESS_TOKEN,
   LANGBUILDER_API_TOKEN,
-  LANGBUILDER_AUTO_LOGIN_OPTION,
   LANGBUILDER_REFRESH_TOKEN,
 } from "@/constants/constants";
 import { useGetUserData } from "@/controllers/API/queries/auth";
@@ -17,6 +16,8 @@ import type { AuthContextType } from "../types/contexts/auth";
 
 const initialValue: AuthContextType = {
   accessToken: null,
+  role: null,            // Match the new type
+  permissions: [],
   login: () => {},
   userData: null,
   setUserData: () => {},
@@ -34,6 +35,12 @@ export function AuthProvider({ children }): React.ReactElement {
   const [accessToken, setAccessToken] = useState<string | null>(
     getAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN) ?? null,
   );
+  // --- ADD THESE STATES FOR RBAC ---
+  const [role, setRole] = useState<string | null>(localStorage.getItem("user_role"));
+  const [permissions, setPermissions] = useState<string[]>(
+    JSON.parse(localStorage.getItem("user_permissions") || "[]")
+  );
+  // ---------------------------------
   const [userData, setUserData] = useState<Users | null>(null);
   const [apiKey, setApiKey] = useState<string | null>(
     getAuthCookie(cookies, LANGBUILDER_API_TOKEN),
@@ -80,16 +87,24 @@ export function AuthProvider({ children }): React.ReactElement {
 
   function login(
     newAccessToken: string,
-    autoLogin: string,
+    userRole: string,        
+    userPermissions: string[],
     refreshToken?: string,
+    
   ) {
     setAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN, newAccessToken);
-    setAuthCookie(cookies, LANGBUILDER_AUTO_LOGIN_OPTION, autoLogin);
     setLocalStorage(LANGBUILDER_ACCESS_TOKEN, newAccessToken);
 
     if (refreshToken) {
       setAuthCookie(cookies, LANGBUILDER_REFRESH_TOKEN, refreshToken);
     }
+
+    setLocalStorage("user_role", userRole);
+    setLocalStorage("user_permissions", JSON.stringify(userPermissions));
+
+    setRole(userRole);
+    setPermissions(userPermissions);
+
     setAccessToken(newAccessToken);
     setIsAuthenticated(true);
     getUser();
@@ -109,6 +124,8 @@ export function AuthProvider({ children }): React.ReactElement {
     <AuthContext.Provider
       value={{
         accessToken,
+        role,          
+        permissions,
         login,
         setUserData,
         userData,

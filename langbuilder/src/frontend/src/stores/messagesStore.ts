@@ -55,9 +55,7 @@ export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
       const updatedMessages = [...state.messages];
       for (let i = state.messages.length - 1; i >= 0; i--) {
         if (state.messages[i].id === message.id) {
-          // Preserve the original timestamp to maintain correct message ordering
-          const originalTimestamp = updatedMessages[i].timestamp;
-          updatedMessages[i] = { ...updatedMessages[i], ...message, timestamp: originalTimestamp };
+          updatedMessages[i] = { ...updatedMessages[i], ...message };
           break;
         }
       }

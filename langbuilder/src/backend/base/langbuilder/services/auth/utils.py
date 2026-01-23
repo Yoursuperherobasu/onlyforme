@@ -24,6 +24,7 @@ from langbuilder.services.database.models.user.crud import (
 from langbuilder.services.database.models.user.model import User, UserRead
 from langbuilder.services.deps import get_db_service, get_session, get_settings_service
 from langbuilder.services.settings.service import SettingsService
+from langbuilder.services.auth.permissions import ROLE_PERMISSIONS
 
 if TYPE_CHECKING:
     from langbuilder.services.database.models.api_key.model import ApiKey
@@ -43,6 +44,16 @@ AUTO_LOGIN_ERROR = (
     "Please update your authentication method."
 )
 
+def require_permission(action: str):
+    async def permission_dependency(current_user: User = Depends(get_current_active_user)):
+        allowed_actions = ROLE_PERMISSIONS.get(current_user.role, [])
+        if action not in allowed_actions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"User {current_user.username} lacks permission: {action}"
+            )
+        return current_user
+    return permission_dependency
 
 # Source: https://github.com/mrtolkien/fastapi_simple_security/blob/master/fastapi_simple_security/security_api_key.py
 async def api_key_security(
@@ -382,6 +393,7 @@ async def create_user_tokens(user_id: UUID, db: AsyncSession, *, update_last_log
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
+        "user_id": str(user_id)
     }
 
 

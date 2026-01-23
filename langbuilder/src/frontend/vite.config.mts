@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
   const envLangbuilderResult = dotenv.config({
     path: path.resolve(__dirname, "../../.env"),
   });
+  console.log(path.resolve(__dirname, "../../.env"),"manasssssssssssssssss")
 
   const envLangbuilder = envLangbuilderResult.parsed || {};
 
@@ -50,9 +51,6 @@ export default defineConfig(({ mode }) => {
         envLangbuilder.ACCESS_TOKEN_EXPIRE_SECONDS ?? 60,
       ),
       "process.env.CI": JSON.stringify(envLangbuilder.CI ?? false),
-      "process.env.LANGBUILDER_AUTO_LOGIN": JSON.stringify(
-        envLangbuilder.LANGBUILDER_AUTO_LOGIN ?? true,
-      ),
       "process.env.LANGBUILDER_MCP_COMPOSER_ENABLED": JSON.stringify(
         envLangbuilder.LANGBUILDER_MCP_COMPOSER_ENABLED ?? "true",
       ),

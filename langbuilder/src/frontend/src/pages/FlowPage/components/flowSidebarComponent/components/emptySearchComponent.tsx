@@ -1,5 +1,6 @@
 import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import { SearchConfigTrigger } from "./searchConfigTrigger";
+import { useTranslation } from 'react-i18next';
 
 interface NoResultsMessageProps {
   onClearSearch: () => void;
@@ -18,6 +19,7 @@ const NoResultsMessage = ({
   showConfig = false,
   setShowConfig,
 }: NoResultsMessageProps) => {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col relative">
       {ENABLE_NEW_SIDEBAR && setShowConfig && (
@@ -30,14 +32,14 @@ const NoResultsMessage = ({
       )}
       <div className="flex h-full flex-col items-center justify-center p-3 text-center">
         <p className="text-sm text-secondary-foreground">
-          {message}{" "}
+          {t(message)}{" "}
           <a
             className="cursor-pointer underline underline-offset-4"
             onClick={onClearSearch}
           >
-            {clearSearchText}
+            {t(clearSearchText)}
           </a>{" "}
-          {additionalText}
+          {t(additionalText)}
         </p>
       </div>
     </div>

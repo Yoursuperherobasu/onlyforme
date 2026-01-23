@@ -14,7 +14,6 @@ const useAuthStore = create<AuthStoreType>((set, get) => ({
   isAuthenticated: !!cookies.get(LANGBUILDER_ACCESS_TOKEN),
   accessToken: cookies.get(LANGBUILDER_ACCESS_TOKEN) ?? null,
   userData: null,
-  autoLogin: null,
   apiKey: cookies.get(LANGBUILDER_API_TOKEN),
   authenticationErrorCount: 0,
 
@@ -22,7 +21,6 @@ const useAuthStore = create<AuthStoreType>((set, get) => ({
   setIsAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
   setAccessToken: (accessToken) => set({ accessToken }),
   setUserData: (userData) => set({ userData }),
-  setAutoLogin: (autoLogin) => set({ autoLogin }),
   setApiKey: (apiKey) => set({ apiKey }),
   setAuthenticationErrorCount: (authenticationErrorCount) =>
     set({ authenticationErrorCount }),
@@ -36,7 +34,6 @@ const useAuthStore = create<AuthStoreType>((set, get) => ({
       userData: null,
       accessToken: null,
       isAuthenticated: false,
-      autoLogin: false,
       apiKey: null,
     });
   },

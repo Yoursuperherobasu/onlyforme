@@ -9,6 +9,7 @@ import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import type { SidebarGroupProps } from "../types";
 import { BundleItem } from "./bundleItems";
 import { SearchConfigTrigger } from "./searchConfigTrigger";
+import { useTranslation } from 'react-i18next';
 
 export const MemoizedSidebarGroup = memo(
   ({
@@ -39,11 +40,12 @@ export const MemoizedSidebarGroup = memo(
           Object.keys(dataFilter[item.name]).length > 0,
       );
     }, [BUNDLES, search, sortedCategories, dataFilter]);
+    const { t } = useTranslation();
 
     return (
       <SidebarGroup className="p-3">
         <SidebarGroupLabel className="cursor-default w-full flex items-center justify-between">
-          <span>Bundles</span>
+          <span>{t("Bundles")}</span>
           {showSearchConfigTrigger && ENABLE_NEW_SIDEBAR && (
             <SearchConfigTrigger
               showConfig={showConfig}

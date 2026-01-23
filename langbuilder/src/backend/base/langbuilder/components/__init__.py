@@ -154,7 +154,10 @@ _dynamic_imports = {
     "exa": "langbuilder.components.exa",
     "glean": "langbuilder.components.glean",
     "yahoosearch": "langbuilder.components.yahoosearch",
+<<<<<<< HEAD
     "apollo": "langbuilder.components.apollo",
+=======
+>>>>>>> origin/merge_ui_bknd
     "apify": "langbuilder.components.apify",
     "arxiv": "langbuilder.components.arxiv",
     "confluence": "langbuilder.components.confluence",

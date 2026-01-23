@@ -8,6 +8,9 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
+import builtins
+from langbuilder.services.auth.decorators import verify_permissions
+builtins.verify_permissions = verify_permissions
 import sys
 
 if sys.platform == 'win32':
@@ -120,7 +123,7 @@ async def load_bundles_with_error_handling():
         return [], []
 
 
-def get_lifespan(*, fix_migration=False, version=None):
+def get_lifespan(*, fix_migration=True, version=None):
     telemetry_service = get_telemetry_service()
 
     @asynccontextmanager
@@ -290,12 +293,17 @@ def get_lifespan(*, fix_migration=False, version=None):
 def create_app():
     """Create the FastAPI app and include the router."""
     from langbuilder.utils.version import get_version_info
+   
+    
+    
+    DB_URL = os.getenv("DATABASE_URL")
+    print("Database URL:", DB_URL)  # For debugging purposes only; remove in production
 
     __version__ = get_version_info()["version"]
     configure()
     lifespan = get_lifespan(version=__version__)
     app = FastAPI(
-        title="Langbuilder",
+        title="AgentCore",
         version=__version__,
         lifespan=lifespan,
     )
@@ -304,7 +312,8 @@ def create_app():
     )
 
     setup_sentry(app)
-    origins = ["*"]
+    origins = ["http://localhost:3000","http://localhost:8767"]
+    # origins = os.getenv("CORS_ALLOWED_ORIGINS".split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else [["http://localhost:3000","http://localhost:8767"]])
 
     app.add_middleware(
         CORSMiddleware,
@@ -361,7 +370,7 @@ def create_app():
         return await call_next(request)
 
     settings = get_settings_service().settings
-    if prome_port_str := os.environ.get("LANGBUILDER_PROMETHEUS_PORT"):
+    if prome_port_str := os.environ.get("PROMETHEUS_PORT"):
         # set here for create_app() entry point
         prome_port = int(prome_port_str)
         if prome_port > 0 or prome_port < MAX_PORT:

@@ -26,17 +26,16 @@ class AuthSettings(BaseSettings):
     # API Key to execute /process endpoint
     API_KEY_ALGORITHM: str = "HS256"
     API_V1_STR: str = "/api/v1"
-
-    AUTO_LOGIN: bool = True
-    """If True, the application will attempt to log in automatically as a super user."""
-    skip_auth_auto_login: bool = True
-    """If True, the application will skip authentication when AUTO_LOGIN is enabled.
-    This will be removed in v1.6"""
-
-    NEW_USER_IS_ACTIVE: bool = False
+    AZURE_TENANT_ID: str = "69b98d34-6d85-4ddf-9d5f-6f8767b5f4b7"
+    AZURE_CLIENT_ID: str ="d717db80-a34b-43c3-b78b-41322e2058cc"
+    NEW_USER_IS_ACTIVE: bool = True
     SUPERUSER: str = DEFAULT_SUPERUSER
     SUPERUSER_PASSWORD: str = DEFAULT_SUPERUSER_PASSWORD
-
+    AUTO_LOGIN: bool = False
+    """If True, the application will attempt to log in automatically as a super user."""
+    skip_auth_auto_login: bool = False
+    """If True, the application will skip authentication when AUTO_LOGIN is enabled.
+    This will be removed in v1.6"""
     REFRESH_SAME_SITE: Literal["lax", "strict", "none"] = "none"
     """The SameSite attribute of the refresh token cookie."""
     REFRESH_SECURE: bool = True
@@ -61,24 +60,6 @@ class AuthSettings(BaseSettings):
         self.SUPERUSER = DEFAULT_SUPERUSER
         self.SUPERUSER_PASSWORD = DEFAULT_SUPERUSER_PASSWORD
 
-    # If autologin is true, then we need to set the credentials to
-    # the default values
-    # so we need to validate the superuser and superuser_password
-    # fields
-    @field_validator("SUPERUSER", "SUPERUSER_PASSWORD", mode="before")
-    @classmethod
-    def validate_superuser(cls, value, info):
-        if info.data.get("AUTO_LOGIN"):
-            if value != DEFAULT_SUPERUSER:
-                value = DEFAULT_SUPERUSER
-                logger.debug("Resetting superuser to default value")
-            if info.data.get("SUPERUSER_PASSWORD") != DEFAULT_SUPERUSER_PASSWORD:
-                info.data["SUPERUSER_PASSWORD"] = DEFAULT_SUPERUSER_PASSWORD
-                logger.debug("Resetting superuser password to default value")
-
-            return value
-
-        return value
 
     @field_validator("SECRET_KEY", mode="before")
     @classmethod

@@ -2,6 +2,8 @@ import { memo } from "react";
 import { Input } from "@/components/ui/input";
 import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import ShortcutDisplay from "../../nodeToolbarComponent/shortcutDisplay";
+import { useTranslation } from 'react-i18next';
+
 
 export const SearchInput = memo(function SearchInput({
   searchInputRef,
@@ -18,6 +20,7 @@ export const SearchInput = memo(function SearchInput({
   handleInputBlur: (event: React.FocusEvent<HTMLInputElement>) => void;
   handleInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
+  
   return (
     <div className={`relative w-full flex-1 ${!ENABLE_NEW_SIDEBAR && "pb-2"}`}>
       <Input

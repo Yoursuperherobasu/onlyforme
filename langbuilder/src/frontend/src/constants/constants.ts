@@ -786,7 +786,6 @@ export const AUTHORIZED_DUPLICATE_REQUESTS = [
   "/logout",
   "/refresh",
   "/login",
-  "/auto_login",
 ];
 
 export const BROKEN_EDGES_WARNING =
@@ -979,7 +978,6 @@ export const TABS_ORDER = [
 
 export const LANGBUILDER_ACCESS_TOKEN = "access_token_lf";
 export const LANGBUILDER_API_TOKEN = "apikey_tkn_lflw";
-export const LANGBUILDER_AUTO_LOGIN_OPTION = "auto_login_lf";
 export const LANGBUILDER_REFRESH_TOKEN = "refresh_token_lf";
 
 export const LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60 - 60 * 60 * 0.1;
@@ -1051,12 +1049,6 @@ export const POLLING_MESSAGES = {
 
 export const BUILD_POLLING_INTERVAL = 25;
 
-export const IS_AUTO_LOGIN =
-  !process?.env?.LANGBUILDER_AUTO_LOGIN ||
-  String(process?.env?.LANGBUILDER_AUTO_LOGIN)?.toLowerCase() !== "false";
-
-export const AUTO_LOGIN_RETRY_DELAY = 2000;
-export const AUTO_LOGIN_MAX_RETRY_DELAY = 60000;
 
 export const ALL_LANGUAGES = [
   { value: "en-US", name: "English (US)" },

@@ -1,3 +1,6 @@
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(), override=True)
+
 import asyncio
 import contextlib
 import json
@@ -370,8 +373,8 @@ class Settings(BaseSettings):
             msg = f"Invalid database_url provided: '{value}'"
             raise ValueError(msg)
 
-        logger.debug("No database_url provided, trying LANGBUILDER_DATABASE_URL env variable")
-        if langbuilder_database_url := os.getenv("LANGBUILDER_DATABASE_URL"):
+
+        if langbuilder_database_url := os.getenv("DATABASE_URL"):
             value = langbuilder_database_url
             logger.debug("Using LANGBUILDER_DATABASE_URL env variable.")
         else:
@@ -446,9 +449,9 @@ class Settings(BaseSettings):
         appended to the provided list if not already present. If the input list is empty or missing, it is
         set to an empty list.
         """
-        if os.getenv("LANGBUILDER_COMPONENTS_PATH"):
+        if os.getenv("COMPONENTS_PATH"):
             logger.debug("Adding LANGBUILDER_COMPONENTS_PATH to components_path")
-            langbuilder_component_path = os.getenv("LANGBUILDER_COMPONENTS_PATH")
+            langbuilder_component_path = os.getenv("COMPONENTS_PATH")
             if Path(langbuilder_component_path).exists() and langbuilder_component_path not in value:
                 if isinstance(langbuilder_component_path, list):
                     for path in langbuilder_component_path:
@@ -472,7 +475,7 @@ class Settings(BaseSettings):
         logger.debug(f"Components path: {value}")
         return value
 
-    model_config = SettingsConfigDict(validate_assignment=True, extra="ignore", env_prefix="LANGBUILDER_")
+    model_config = SettingsConfigDict(validate_assignment=True, extra="ignore", env_prefix="")
 
     async def update_from_yaml(self, file_path: str, *, dev: bool = False) -> None:
         new_settings = await load_settings_from_yaml(file_path)

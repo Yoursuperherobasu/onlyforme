@@ -349,3 +349,11 @@ export type TableOptionsTypeAPI = {
   field_parsers?: Array<FieldParserType | { [key: string]: FieldParserType }>;
   description?: string;
 };
+
+export interface TokenWithPermissions {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  role: string;          // No hardcoding! Accepts any string from Azure
+  permissions: string[]; // Dynamic list of permissions
+}

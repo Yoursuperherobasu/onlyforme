@@ -1,7 +1,15 @@
 import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+<<<<<<< HEAD
 import { useLocation, useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
+=======
+import { useContext } from "react";
+import { useLocation, useParams } from "react-router-dom";
+import ForwardedIconComponent from "@/components/common/genericIconComponent";
+import { AuthContext } from "@/contexts/authContext";
+
+>>>>>>> origin/merge_ui_bknd
 import {
   Sidebar,
   SidebarContent,
@@ -86,6 +94,10 @@ const SideBarFoldersButtonsComponent = ({
   const folderIdDragging = useFolderStore((state) => state.folderIdDragging);
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
   const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
+<<<<<<< HEAD
+=======
+  const { permissions, role } = useContext(AuthContext);
+>>>>>>> origin/merge_ui_bknd
 
   const folderId = useParams().folderId ?? myCollectionId ?? "";
 
@@ -93,7 +105,11 @@ const SideBarFoldersButtonsComponent = ({
   const uploadFlow = useUploadFlow();
   const [foldersNames, setFoldersNames] = useState({});
   const [editFolders, setEditFolderName] = useState(
+<<<<<<< HEAD
     folders.map((obj) => ({ name: obj.name, edit: false })) ?? [],
+=======
+    folders.map((obj) => ({ name: obj.name, edit: false })) ?? []
+>>>>>>> origin/merge_ui_bknd
   );
 
   const isFetchingFolders = !!useIsFetching({
@@ -160,7 +176,11 @@ const SideBarFoldersButtonsComponent = ({
                     list: [err["response"]["data"]["message"]],
                   });
                 },
+<<<<<<< HEAD
               },
+=======
+              }
+>>>>>>> origin/merge_ui_bknd
             );
           });
         }
@@ -182,7 +202,11 @@ const SideBarFoldersButtonsComponent = ({
             title: `An error occurred while downloading your project.`,
           });
         },
+<<<<<<< HEAD
       },
+=======
+      }
+>>>>>>> origin/merge_ui_bknd
     );
   };
 
@@ -200,7 +224,11 @@ const SideBarFoldersButtonsComponent = ({
           track("Create New Project");
           handleChangeFolder!(folder.id);
         },
+<<<<<<< HEAD
       },
+=======
+      }
+>>>>>>> origin/merge_ui_bknd
     );
   }
 
@@ -217,7 +245,11 @@ const SideBarFoldersButtonsComponent = ({
   useEffect(() => {
     if (folders && folders.length > 0) {
       setEditFolderName(
+<<<<<<< HEAD
         folders.map((obj) => ({ name: obj.name, edit: false })),
+=======
+        folders.map((obj) => ({ name: obj.name, edit: false }))
+>>>>>>> origin/merge_ui_bknd
       );
     }
   }, [folders]);
@@ -250,7 +282,11 @@ const SideBarFoldersButtonsComponent = ({
         {
           onSuccess: (updatedFolder) => {
             const updatedFolderIndex = folders.findIndex(
+<<<<<<< HEAD
               (f) => f.id === updatedFolder.id,
+=======
+              (f) => f.id === updatedFolder.id
+>>>>>>> origin/merge_ui_bknd
             );
 
             const updateFolders = [...folders];
@@ -261,10 +297,17 @@ const SideBarFoldersButtonsComponent = ({
               folders.map((obj) => ({
                 name: obj.name,
                 edit: false,
+<<<<<<< HEAD
               })),
             );
           },
         },
+=======
+              }))
+            );
+          },
+        }
+>>>>>>> origin/merge_ui_bknd
       );
     } else {
       setFoldersNames((old) => ({
@@ -324,7 +367,11 @@ const SideBarFoldersButtonsComponent = ({
         folders.map((obj) => ({
           name: obj.name,
           edit: false,
+<<<<<<< HEAD
         })),
+=======
+        }))
+>>>>>>> origin/merge_ui_bknd
       );
     }
     if (e.key === "Enter") {
@@ -339,7 +386,11 @@ const SideBarFoldersButtonsComponent = ({
   const userDismissedMcpDialog = userData?.optins?.mcp_dialog_dismissed;
 
   const [isDismissedMcpDialog, setIsDismissedMcpDialog] = useState(
+<<<<<<< HEAD
     userDismissedMcpDialog,
+=======
+    userDismissedMcpDialog
+>>>>>>> origin/merge_ui_bknd
   );
 
   const handleDismissMcpDialog = () => {
@@ -383,7 +434,11 @@ const SideBarFoldersButtonsComponent = ({
               {!loading ? (
                 folders.map((item, index) => {
                   const editFolderName = editFolders?.filter(
+<<<<<<< HEAD
                     (folder) => folder.name === item.name,
+=======
+                    (folder) => folder.name === item.name
+>>>>>>> origin/merge_ui_bknd
                   )[0];
                   return (
                     <SidebarMenuItem
@@ -407,7 +462,11 @@ const SideBarFoldersButtonsComponent = ({
                           className={cn(
                             "flex-grow pr-8",
                             hoveredFolderId === item.id && "bg-accent",
+<<<<<<< HEAD
                             checkHoveringFolder(item.id!),
+=======
+                            checkHoveringFolder(item.id!)
+>>>>>>> origin/merge_ui_bknd
                           )}
                         >
                           <div
@@ -497,6 +556,29 @@ const SideBarFoldersButtonsComponent = ({
               <ForwardedIconComponent name="File" className="h-4 w-4" />
               My Files
             </SidebarMenuButton>
+<<<<<<< HEAD
+=======
+            {permissions.includes("view_files_tab") && (
+              <SidebarMenuButton
+                onClick={handleFilesNavigation}
+                size="md"
+                className="text-sm"
+              >
+                <ForwardedIconComponent name="File" className="h-4 w-4" />
+                My Files for Developer
+              </SidebarMenuButton>
+            )}
+            {permissions.includes("view_files_tab") && (
+              <SidebarMenuButton
+                onClick={handleFilesNavigation}
+                size="md"
+                className="text-sm"
+              >
+                <ForwardedIconComponent name="File" className="h-4 w-4" />
+                My Files for Developer
+              </SidebarMenuButton>
+            )}
+>>>>>>> origin/merge_ui_bknd
           </div>
         </SidebarFooter>
       )}

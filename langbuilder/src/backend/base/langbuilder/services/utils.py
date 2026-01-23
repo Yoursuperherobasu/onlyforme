@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
-
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 from loguru import logger
 from sqlalchemy import delete
 from sqlalchemy import exc as sqlalchemy_exc

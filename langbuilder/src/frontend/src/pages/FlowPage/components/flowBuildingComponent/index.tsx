@@ -17,9 +17,11 @@ import {
   RETRY_BUTTON_VARIANTS,
   STOP_BUTTON_VARIANTS,
 } from "./helpers/visual-variants";
+import { useTranslation } from 'react-i18next';
 
 export default function FlowBuildingComponent() {
   const isBuilding = useFlowStore((state) => state.isBuilding);
+  const { t } = useTranslation();
   const flowBuildStatus = useFlowStore((state) => state.flowBuildStatus);
   const buildInfo = useFlowStore((state) => state.buildInfo);
   const errorButtonsRef = useRef<HTMLDivElement>(null);
@@ -156,7 +158,7 @@ export default function FlowBuildingComponent() {
                               name="CircleAlert"
                               className="h-5 w-5"
                             />
-                            Flow build failed
+                            {t("Flow build failed")}
                           </div>
                         )}
                       </div>
@@ -192,7 +194,7 @@ export default function FlowBuildingComponent() {
                                   transition={{ duration: 0.2 }}
                                 >
                                   <Button size="sm" onClick={handleRetry}>
-                                    Retry
+                                    {t("Retry")}
                                   </Button>
                                 </motion.div>
                                 <motion.div
@@ -208,7 +210,7 @@ export default function FlowBuildingComponent() {
                                     className="text-primary"
                                     onClick={handleDismiss}
                                   >
-                                    Dismiss
+                                    {t("Dismiss")}
                                   </Button>
                                 </motion.div>
                               </motion.div>
@@ -228,7 +230,7 @@ export default function FlowBuildingComponent() {
                                   size="sm"
                                   onClick={handleStop}
                                 >
-                                  Stop
+                                  {t("Stop")}
                                 </Button>
                               </motion.div>
                             )}

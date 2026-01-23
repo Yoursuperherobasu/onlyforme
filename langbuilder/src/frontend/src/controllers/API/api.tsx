@@ -6,26 +6,35 @@ import axios, {
 import * as fetchIntercept from "fetch-intercept";
 import { useEffect } from "react";
 import { Cookies } from "react-cookie";
-import { IS_AUTO_LOGIN } from "@/constants/constants";
+
 import { baseURL } from "@/customization/constants";
 import { useCustomApiHeaders } from "@/customization/hooks/use-custom-api-headers";
 import { customGetAccessToken } from "@/customization/utils/custom-get-access-token";
+
 import useAuthStore from "@/stores/authStore";
 import { useUtilityStore } from "@/stores/utilityStore";
+import useAlertStore from "@/stores/alertStore";
+import useFlowStore from "@/stores/flowStore";
+
 import { BuildStatus, type EventDeliveryType } from "../../constants/enums";
-import useAlertStore from "../../stores/alertStore";
-import useFlowStore from "../../stores/flowStore";
 import { checkDuplicateRequestAndStoreRequest } from "./helpers/check-duplicate-requests";
 import { useLogout, useRefreshAccessToken } from "./queries/auth";
 
-// Create a new Axios instance
+/* =========================================================
+   AXIOS INSTANCE
+========================================================= */
+
 const api: AxiosInstance = axios.create({
-  baseURL: baseURL,
+  baseURL,
 });
 
 const _cookies = new Cookies();
+
+/* =========================================================
+   API INTERCEPTOR
+========================================================= */
+
 function ApiInterceptor() {
-  const autoLogin = useAuthStore((state) => state.autoLogin);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const accessToken = useAuthStore((state) => state.accessToken);
   const authenticationErrorCount = useAuthStore(
@@ -45,6 +54,28 @@ function ApiInterceptor() {
   );
 
   useEffect(() => {
+    // Define helper functions INSIDE useEffect (like the old code)
+    const isAuthorizedURL = (url) => {
+      if (!url) return false;
+      return url.includes("auto_login");
+    };
+
+    const isExternalURL = (url: string): boolean => {
+      const EXTERNAL_DOMAINS = [
+        "https://raw.githubusercontent.com",
+        "https://api.github.com",
+        "https://api.segment.io",
+        "https://cdn.sprig.com",
+      ];
+
+      try {
+        const parsedURL = new URL(url);
+        return EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain);
+      } catch {
+        return false;
+      }
+    };
+
     const unregister = fetchIntercept.register({
       request: (url, config) => {
         const accessToken = customGetAccessToken();
@@ -72,9 +103,7 @@ function ApiInterceptor() {
         const isAuthenticationError =
           error?.response?.status === 403 || error?.response?.status === 401;
 
-        const shouldRetryRefresh =
-          (isAuthenticationError && !IS_AUTO_LOGIN) ||
-          (isAuthenticationError && !autoLogin && autoLogin !== undefined);
+        const shouldRetryRefresh = !isAuthenticationError;
 
         if (shouldRetryRefresh) {
           if (
@@ -99,56 +128,10 @@ function ApiInterceptor() {
 
         await clearBuildVerticesState(error);
 
-        if (!isAuthenticationError) {
-          return Promise.reject(error);
-        }
+        return Promise.reject(error);
       },
     );
 
-    const isAuthorizedURL = (url) => {
-      const authorizedDomains = [
-        "https://raw.githubusercontent.com/CloudGeometry/langbuilder_examples/main/examples",
-        "https://api.github.com/repos/CloudGeometry/langbuilder_examples/contents/examples",
-        "https://api.github.com/repos/CloudGeometry/langbuilder",
-        "auto_login",
-      ];
-
-      const authorizedEndpoints = ["auto_login"];
-
-      try {
-        const parsedURL = new URL(url);
-        const isDomainAllowed = authorizedDomains.some(
-          (domain) => parsedURL.origin === new URL(domain).origin,
-        );
-        const isEndpointAllowed = authorizedEndpoints.some((endpoint) =>
-          parsedURL.pathname.includes(endpoint),
-        );
-
-        return isDomainAllowed || isEndpointAllowed;
-      } catch (_e) {
-        // Invalid URL
-        return false;
-      }
-    };
-
-    // Check for external url which we don't want to add custom headers to
-    const isExternalURL = (url: string): boolean => {
-      const EXTERNAL_DOMAINS = [
-        "https://raw.githubusercontent.com",
-        "https://api.github.com",
-        "https://api.segment.io",
-        "https://cdn.sprig.com",
-      ];
-
-      try {
-        const parsedURL = new URL(url);
-        return EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain);
-      } catch (_e) {
-        return false;
-      }
-    };
-
-    // Request interceptor to add access token to every request
     const requestInterceptor = api.interceptors.request.use(
       async (config) => {
         const controller = new AbortController();
@@ -187,12 +170,11 @@ function ApiInterceptor() {
     );
 
     return () => {
-      // Clean up the interceptors when the component unmounts
       api.interceptors.response.eject(interceptor);
       api.interceptors.request.eject(requestInterceptor);
       unregister();
     };
-  }, [accessToken, setErrorData, customHeaders, autoLogin]);
+  }, [accessToken, setErrorData, customHeaders]);
 
   function checkErrorCount() {
     if (isLoginPage) return;
@@ -249,21 +231,24 @@ function ApiInterceptor() {
         throw new Error("Access token not found in cookies");
       }
 
-      // Modify headers in originalRequest
       originalRequest.headers = {
-        ...(originalRequest.headers as Record<string, string>), // Cast to suppress TypeScript error
+        ...(originalRequest.headers as Record<string, string>),
         Authorization: `Bearer ${accessToken}`,
       };
 
       const response = await axios.request(originalRequest);
-      return response.data; // Or handle the response as needed
+      return response.data;
     } catch (err) {
-      throw err; // Throw the error if request fails again
+      throw err;
     }
   }
 
   return null;
 }
+
+/* =========================================================
+   STREAMING
+========================================================= */
 
 export type StreamingRequestParams = {
   method: string;
@@ -276,9 +261,7 @@ export type StreamingRequestParams = {
   eventDeliveryConfig?: EventDeliveryType;
 };
 
-// Helper function to sanitize JSON strings
 function sanitizeJsonString(jsonStr: string): string {
-  // Replace NaN with null (valid JSON)
   return jsonStr
     .replace(/:\s*NaN\b/g, ": null")
     .replace(/\[\s*NaN\s*\]/g, "[null]")
@@ -297,7 +280,6 @@ async function performStreamingRequest({
 }: StreamingRequestParams) {
   const headers = {
     "Content-Type": "application/json",
-    // this flag is fundamental to ensure server stops tasks when client disconnects
     Connection: "close",
   };
 

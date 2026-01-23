@@ -254,7 +254,6 @@ langbuilder.db
 
 .githooks/prepare-commit-msg
 .langchain.db
-
 # docusaurus
 .docusaurus/
 

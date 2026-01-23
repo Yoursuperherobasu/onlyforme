@@ -1,6 +1,7 @@
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from 'react-i18next';
 
 export function SidebarFilterComponent({
   name,
@@ -13,6 +14,7 @@ export function SidebarFilterComponent({
 }) {
   const tooltips = description.split("\n");
   const plural = tooltips.length > 1 ? "s" : "";
+  const { t } = useTranslation();
   return (
     <div
       className={`mb-0.5 flex w-full items-center overflow-hidden justify-between rounded border p-2 text-sm text-foreground`}
@@ -23,10 +25,10 @@ export function SidebarFilterComponent({
           className={`h-4 w-4 shrink-0 stroke-2`}
         />
         <div className="flex flex-1 overflow-hidden">
-          {name}
-          {plural}:{" "}
+          {t(name)}
+          {t(plural)}:{" "}
           <div className="flex-1 overflow-hidden truncate pl-1">
-            {tooltips.join(", ")}
+            {t(tooltips.join(", "))}
           </div>
         </div>
       </div>

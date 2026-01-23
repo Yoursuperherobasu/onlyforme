@@ -13,6 +13,7 @@ import ShadTooltip from "../../components/common/shadTooltipComponent";
 import { Button } from "../../components/ui/button";
 import { CheckBoxDiv } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
+import { useTranslation } from 'react-i18next';
 import {
   Table,
   TableBody,
@@ -52,6 +53,7 @@ export default function AdminPage() {
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { userData } = useContext(AuthContext);
   const [totalRowsCount, setTotalRowsCount] = useState(0);
+  const { t } = useTranslation();
 
   const { mutate: mutateDeleteUser } = useDeleteUsers();
   const { mutate: mutateUpdateUser } = useUpdateUser();
@@ -253,16 +255,16 @@ export default function AdminPage() {
           <div className="main-page-nav-arrangement">
             <span className="main-page-nav-title">
               <IconComponent name="Shield" className="w-6" />
-              {ADMIN_HEADER_TITLE}
+              {t(ADMIN_HEADER_TITLE)}
             </span>
           </div>
           <span className="admin-page-description-text">
-            {ADMIN_HEADER_DESCRIPTION}
+            {t(ADMIN_HEADER_DESCRIPTION)}
           </span>
           <div className="flex w-full justify-between px-4">
             <div className="flex w-96 items-center gap-4">
               <Input
-                placeholder="Search Username"
+                placeholder={t("Search Username")}
                 value={inputValue}
                 onChange={(e) => handleFilterUsers(e.target.value)}
               />
@@ -297,7 +299,7 @@ export default function AdminPage() {
                 }}
                 asChild
               >
-                <Button variant="primary">New User</Button>
+                <Button variant="primary">{t("New User")}</Button>
               </UserManagementModal>
             </div>
           </div>
@@ -308,7 +310,7 @@ export default function AdminPage() {
           ) : userList.current.length === 0 && !isIdle ? (
             <>
               <div className="m-4 flex items-center justify-between text-sm">
-                No users registered.
+                {t("No users registered.")}
               </div>
             </>
           ) : (
@@ -326,12 +328,12 @@ export default function AdminPage() {
                     }
                   >
                     <TableRow>
-                      <TableHead className="h-10">Id</TableHead>
-                      <TableHead className="h-10">Username</TableHead>
-                      <TableHead className="h-10">Active</TableHead>
-                      <TableHead className="h-10">Superuser</TableHead>
-                      <TableHead className="h-10">Created At</TableHead>
-                      <TableHead className="h-10">Updated At</TableHead>
+                      <TableHead className="h-10">{t("Id")}</TableHead>
+                      <TableHead className="h-10">{t("Username")}</TableHead>
+                      <TableHead className="h-10">{t("Active")}</TableHead>
+                      <TableHead className="h-10">{t("Superuser")}</TableHead>
+                      <TableHead className="h-10">{t("Created At")}</TableHead>
+                      <TableHead className="h-10">{t("Updated At")}</TableHead>
                       <TableHead className="h-10 w-[100px] text-right"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -347,7 +349,7 @@ export default function AdminPage() {
                           <TableCell className="truncate py-2">
                             <ShadTooltip content={user.username}>
                               <span className="cursor-default">
-                                {user.username}
+                                {t(user.username)}
                               </span>
                             </ShadTooltip>
                           </TableCell>
@@ -355,7 +357,7 @@ export default function AdminPage() {
                             <ConfirmationModal
                               size="x-small"
                               title="Edit"
-                              titleHeader={`${user.username}`}
+                              titleHeader={`${t(user.username)}`}
                               modalContentTitle="Attention!"
                               cancelText="Cancel"
                               confirmationText="Confirm"
@@ -372,8 +374,8 @@ export default function AdminPage() {
                             >
                               <ConfirmationModal.Content>
                                 <span>
-                                  Are you completely confident about the changes
-                                  you are making to this user?
+                                  {t("Are you completely confident about the changes you are making to this user?")}
+                                  {t("you are making to this user?")}
                                 </span>
                               </ConfirmationModal.Content>
                               <ConfirmationModal.Trigger>
@@ -404,8 +406,8 @@ export default function AdminPage() {
                             >
                               <ConfirmationModal.Content>
                                 <span>
-                                  Are you completely confident about the changes
-                                  you are making to this user?
+                                  {t("Are you completely confident about the changes you are making to this user?")}
+                                  {t("you are making to this user?")}
                                 </span>
                               </ConfirmationModal.Content>
                               <ConfirmationModal.Trigger>
@@ -467,8 +469,8 @@ export default function AdminPage() {
                               >
                                 <ConfirmationModal.Content>
                                   <span>
-                                    Are you sure you want to delete this user?
-                                    This action cannot be undone.
+                                    {t("Are you sure you want to delete this user?")}
+                                    {t("This action cannot be undone.")}
                                   </span>
                                 </ConfirmationModal.Content>
                                 <ConfirmationModal.Trigger>

@@ -1,7 +1,5 @@
 import type { ChatMessageType } from "../../../../../types/chat";
-import sortSenderMessages, {
-  parseTimestamp,
-} from "../helpers/sort-sender-messages";
+import sortSenderMessages from "../helpers/sort-sender-messages";
 
 // Helper function to create mock ChatMessageType
 const createMockMessage = (
@@ -37,11 +35,11 @@ describe("sortSenderMessages", () => {
       const sorted = [...messages].sort(sortSenderMessages);
 
       expect(sorted.map((m) => m.id)).toEqual(["msg1", "msg2", "msg3"]);
-      expect(parseTimestamp(sorted[0].timestamp)).toBeLessThan(
-        parseTimestamp(sorted[1].timestamp),
+      expect(new Date(sorted[0].timestamp).getTime()).toBeLessThan(
+        new Date(sorted[1].timestamp).getTime(),
       );
-      expect(parseTimestamp(sorted[1].timestamp)).toBeLessThan(
-        parseTimestamp(sorted[2].timestamp),
+      expect(new Date(sorted[1].timestamp).getTime()).toBeLessThan(
+        new Date(sorted[2].timestamp).getTime(),
       );
     });
 
@@ -55,22 +53,10 @@ describe("sortSenderMessages", () => {
       const sorted = [...messages].sort(sortSenderMessages);
 
       // Check that first is earliest, last is latest
-      // Note: We don't use new Date() here as our parseTimestamp handles the format
+      const sortedTimes = sorted.map((m) => new Date(m.timestamp).getTime());
+      expect(sortedTimes[0]).toBeLessThan(sortedTimes[1]);
+      expect(sortedTimes[1]).toBeLessThan(sortedTimes[2]);
       expect(sorted[0].id).toBe("utc"); // 08:51:21 is earliest
-    });
-
-    it("should handle timestamps with microseconds for precise ordering", () => {
-      // This tests the fix for message ordering when multiple messages
-      // are created within the same second (e.g., ChatInput and Agent messages)
-      const messages = [
-        createMockMessage("2025-08-29 08:51:21.000002 UTC", false, "late"),
-        createMockMessage("2025-08-29 08:51:21.000001 UTC", true, "early"),
-      ];
-
-      const sorted = [...messages].sort(sortSenderMessages);
-
-      expect(sorted[0].id).toBe("early"); // 000001 microseconds is earlier
-      expect(sorted[1].id).toBe("late"); // 000002 microseconds is later
     });
 
     it("should handle messages spanning multiple days", () => {
@@ -316,8 +302,8 @@ describe("sortSenderMessages", () => {
       // Messages with .001 should come before .002
       const firstTwoTimes = sorted
         .slice(0, 2)
-        .map((m) => parseTimestamp(m.timestamp));
-      const thirdTime = parseTimestamp(sorted[2].timestamp);
+        .map((m) => new Date(m.timestamp).getTime());
+      const thirdTime = new Date(sorted[2].timestamp).getTime();
 
       expect(firstTwoTimes[0]).toEqual(firstTwoTimes[1]); // Same millisecond
       expect(firstTwoTimes[0]).toBeLessThan(thirdTime); // Earlier than third
@@ -382,10 +368,10 @@ describe("sortSenderMessages", () => {
 
       // Verify sorting is correct - timestamps should be chronological
       for (let i = 1; i < sorted.length; i++) {
-        const prevTime = parseTimestamp(sorted[i - 1].timestamp);
-        const currTime = parseTimestamp(sorted[i].timestamp);
-        // Skip comparison if either timestamp is invalid (0)
-        if (prevTime !== 0 && currTime !== 0) {
+        const prevTime = new Date(sorted[i - 1].timestamp).getTime();
+        const currTime = new Date(sorted[i].timestamp).getTime();
+        // Skip comparison if either timestamp is invalid (NaN)
+        if (!isNaN(prevTime) && !isNaN(currTime)) {
           expect(prevTime).toBeLessThanOrEqual(currTime);
         }
       }

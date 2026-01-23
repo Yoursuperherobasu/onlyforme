@@ -8,6 +8,7 @@ import {
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import type { BundleItemProps } from "../types";
 import SidebarItemsList from "./sidebarItemsList";
+import { useTranslation } from 'react-i18next';
 
 export const BundleItem = memo(
   ({
@@ -21,6 +22,7 @@ export const BundleItem = memo(
     handleKeyDownInput,
   }: BundleItemProps) => {
     const isOpen = openCategories.includes(item.name);
+    const { t } = useTranslation();
 
     const handleOpenChange = useCallback(
       (isOpen: boolean) => {
@@ -50,7 +52,7 @@ export const BundleItem = memo(
                   className="h-4 w-4 text-muted-foreground group-aria-expanded/collapsible:text-primary"
                 />
                 <span className="flex-1 group-aria-expanded/collapsible:font-semibold">
-                  {item.display_name}
+                  {t(item.display_name)}
                 </span>
                 <ForwardedIconComponent
                   name="ChevronRight"
