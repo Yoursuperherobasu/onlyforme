@@ -13,7 +13,13 @@ export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
   },
   messages: [],
   setMessages: (messages) => {
-    set(() => ({ messages: messages }));
+    // Sort messages by timestamp to ensure correct order
+    const sortedMessages = [...messages].sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeA - timeB;
+    });
+    set(() => ({ messages: sortedMessages }));
   },
   addMessage: (message) => {
     const existingMessage = get().messages.find((msg) => msg.id === message.id);
@@ -34,7 +40,17 @@ export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
     if (message.sender === "Machine") {
       set(() => ({ displayLoadingMessage: false }));
     }
-    set(() => ({ messages: [...get().messages, message] }));
+    // Add message and sort by timestamp to ensure correct order
+    // (SSE events may arrive out of order)
+    set(() => {
+      const newMessages = [...get().messages, message];
+      newMessages.sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return timeA - timeB;
+      });
+      return { messages: newMessages };
+    });
   },
   removeMessage: (message) => {
     set(() => ({
