@@ -7,15 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from typing_extensions import override
-
+from langchain.callbacks.base import BaseCallbackHandler
 from langbuilder.serialization.serialization import serialize
 from langbuilder.services.tracing.base import BaseTracer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
-
-    from langchain.callbacks.base import BaseCallbackHandler
 
     from langbuilder.graph.vertex.base import Vertex
     from langbuilder.services.tracing.schema import Log
