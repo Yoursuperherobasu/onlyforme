@@ -1,7 +1,7 @@
 # Add helper functions for each event type
 from collections.abc import AsyncIterator
 from time import perf_counter
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 import logging
 logger = logging.getLogger(__name__)
 from langchain_core.agents import AgentFinish
@@ -12,6 +12,9 @@ from langbuilder.schema.content_block import ContentBlock
 from langbuilder.schema.content_types import TextContent, ToolContent
 from langbuilder.schema.log import SendMessageFunctionType
 from langbuilder.schema.message import Message
+
+if TYPE_CHECKING:
+    from langbuilder.events.event_manager import EventManager
 
 
 class ExceptionWithMessageError(Exception):
@@ -257,21 +260,47 @@ async def handle_on_chain_stream(
     agent_message: Message,
     send_message_method: SendMessageFunctionType,
     start_time: float,
+    event_manager: "EventManager | None" = None,
 ) -> tuple[Message, float]:
+    """Handle chain stream events with optimized token streaming.
+    
+    OPTIMIZATION: Instead of calling send_message for each chunk (which writes to DB),
+    we now send 'token' SSE events directly via EventManager for real-time streaming.
+    This reduces DB writes from 100+ per message to just 1.
+    """
     data_chunk = event["data"].get("chunk", {})
+    
     if isinstance(data_chunk, dict) and data_chunk.get("output"):
+        # Final output - this is handled by on_chain_end, skip here
         output = data_chunk.get("output")
         if output and isinstance(output, str | list):
             agent_message.text = _extract_output_text(output)
         agent_message.properties.state = "complete"
-        agent_message = await send_message_method(message=agent_message)
+        # Don't call send_message here - let on_chain_end handle it
         start_time = perf_counter()
     elif isinstance(data_chunk, AIMessageChunk):
         output_text = _extract_output_text(data_chunk.content)
-        if output_text and isinstance(agent_message.text, str):
-            agent_message.text += output_text
+        if output_text:
+            # Accumulate text in message (for final storage)
+            if isinstance(agent_message.text, str):
+                agent_message.text += output_text
+            else:
+                agent_message.text = output_text
             agent_message.properties.state = "partial"
-            agent_message = await send_message_method(message=agent_message)
+            
+            # OPTIMIZATION: Send token event via EventManager (SSE only, no DB write)
+            # This gives smooth real-time streaming in UI
+            if event_manager and hasattr(agent_message, 'id') and agent_message.id:
+                event_manager.on_token(
+                    data={
+                        "chunk": output_text,
+                        "id": str(agent_message.id),
+                    }
+                )
+            elif not event_manager:
+                # Fallback: If no event_manager, use old behavior (DB write per chunk)
+                agent_message = await send_message_method(message=agent_message)
+                
         if not agent_message.text:
             start_time = perf_counter()
     return agent_message, start_time
@@ -295,18 +324,23 @@ class ChainEventHandler(Protocol):
         agent_message: Message,
         send_message_method: SendMessageFunctionType,
         start_time: float,
+        event_manager: "EventManager | None" = None,
     ) -> tuple[Message, float]: ...
 
 
 EventHandler = ToolEventHandler | ChainEventHandler
 
 # Define separate mappings of event types to their respective handler functions
+# Note: on_chain_stream and on_chat_model_stream now support token streaming via EventManager
 CHAIN_EVENT_HANDLERS: dict[str, ChainEventHandler] = {
     "on_chain_start": handle_on_chain_start,
     "on_chain_end": handle_on_chain_end,
     "on_chain_stream": handle_on_chain_stream,
     "on_chat_model_stream": handle_on_chain_stream,
 }
+
+# Handlers that support true token streaming (send SSE events directly, no DB writes)
+STREAMING_EVENT_HANDLERS = {"on_chain_stream", "on_chat_model_stream"}
 
 TOOL_EVENT_HANDLERS: dict[str, ToolEventHandler] = {
     "on_tool_start": handle_on_tool_start,
@@ -319,8 +353,17 @@ async def process_agent_events(
     agent_executor: AsyncIterator[dict[str, Any]],
     agent_message: Message,
     send_message_method: SendMessageFunctionType,
+    event_manager: "EventManager | None" = None,
 ) -> Message:
-    """Process agent events and return the final output."""
+    """Process agent events and return the final output.
+    
+    OPTIMIZATION: When event_manager is provided, streaming chunks are sent as 'token' SSE events
+    directly to the UI, avoiding DB writes for each chunk. The message is stored to DB only:
+    1. Once at the start (initial empty message)
+    2. Once at the end (final complete message)
+    
+    This reduces DB writes from 100+ per message to just 2, while maintaining real-time UI streaming.
+    """
     if isinstance(agent_message.properties, dict):
         agent_message.properties.update({"icon": "Bot", "state": "partial"})
     else:
@@ -328,13 +371,14 @@ async def process_agent_events(
         agent_message.properties.state = "partial"
     
     # Store the initial message - this is the FIRST DB insert
-    logger.info(f"[PROCESS_AGENT_EVENTS] BEFORE first store: timestamp={agent_message.timestamp!r}")
+    # This creates the message in DB and gets us an ID for SSE events
     agent_message = await send_message_method(message=agent_message)
-    logger.info(f"[PROCESS_AGENT_EVENTS] AFTER first store: id={agent_message.id}, timestamp={agent_message.timestamp!r}")
+    
     try:
         # Create a mapping of run_ids to tool contents
         tool_blocks_map: dict[str, ToolContent] = {}
         start_time = perf_counter()
+        
         async for event in agent_executor:
             if event["event"] in TOOL_EVENT_HANDLERS:
                 tool_handler = TOOL_EVENT_HANDLERS[event["event"]]
@@ -343,11 +387,23 @@ async def process_agent_events(
                 )
             elif event["event"] in CHAIN_EVENT_HANDLERS:
                 chain_handler = CHAIN_EVENT_HANDLERS[event["event"]]
-                agent_message, start_time = await chain_handler(event, agent_message, send_message_method, start_time)
+                # Pass event_manager to streaming handlers for token events
+                if event["event"] in STREAMING_EVENT_HANDLERS:
+                    agent_message, start_time = await chain_handler(
+                        event, agent_message, send_message_method, start_time, event_manager
+                    )
+                else:
+                    agent_message, start_time = await chain_handler(
+                        event, agent_message, send_message_method, start_time
+                    )
+        
         agent_message.properties.state = "complete"
+        
+        # OPTIMIZATION: Final DB update with complete message
+        # This is the SECOND (and last) DB write
+        agent_message = await send_message_method(message=agent_message)
+        
     except Exception as e:
         raise ExceptionWithMessageError(agent_message, str(e)) from e
     
-    # IMPORTANT: Don't create a new Message - just return the existing one
-    # Creating a new Message might cause timestamp issues
     return agent_message

@@ -111,7 +111,6 @@ class Message(Data):
         return value
 
     def model_post_init(self, /, _context: Any) -> None:
-        logger.info(f"[MESSAGE_POST_INIT] Created Message: sender={self.sender_name}, timestamp={self.timestamp!r}, id={getattr(self, 'id', None)}")
         new_files: list[Any] = []
         for file in self.files or []:
             if is_image_file(file):
@@ -276,12 +275,10 @@ class Message(Data):
     @classmethod
     async def create(cls, **kwargs):
         """If files are present, create the message in a separate thread as is_image_file is blocking."""
-        logger.info(f"[MESSAGE_CREATE] Input kwargs timestamp={kwargs.get('timestamp')!r}, sender_name={kwargs.get('sender_name')}")
         if "files" in kwargs:
             result = await asyncio.to_thread(cls, **kwargs)
         else:
             result = cls(**kwargs)
-        logger.info(f"[MESSAGE_CREATE] Result: sender={result.sender_name}, timestamp={result.timestamp!r}, id={getattr(result, 'id', None)}")
         return result
 
     def to_data(self) -> Data:

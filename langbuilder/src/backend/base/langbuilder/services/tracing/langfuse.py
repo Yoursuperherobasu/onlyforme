@@ -21,6 +21,41 @@ if TYPE_CHECKING:
     from langbuilder.services.tracing.schema import Log
 
 
+class LangfuseCallbackWrapper:
+    """Wrapper for Langfuse callback that suppresses 'parent run not found' and 'run not found' errors."""
+    
+    def __init__(self, callback):
+        self._callback = callback
+    
+    def __getattr__(self, name):
+        """Delegate all attribute access to the wrapped callback."""
+        attr = getattr(self._callback, name)
+        
+        # Wrap methods that might throw 'parent run not found', 'run not found', or KeyError for UUID errors
+        if callable(attr) and name in (
+            'on_tool_start', 'on_tool_end', 'on_tool_error',
+            'on_chain_start', 'on_chain_end', 'on_chain_error',
+            'on_llm_start', 'on_llm_end', 'on_llm_error'
+        ):
+            def wrapped_method(*args, **kwargs):
+                try:
+                    return attr(*args, **kwargs)
+                except KeyError as e:
+                    # Suppress UUID KeyError in Langfuse callback (run_id not found in self.runs)
+                    logger.debug(f"Suppressed Langfuse KeyError in {name}: {e}")
+                    return None
+                except Exception as e:
+                    # Suppress specific Langfuse tracing errors
+                    error_msg = str(e).lower()
+                    if 'parent run not found' in error_msg or 'run not found' in error_msg:
+                        logger.debug(f"Suppressed Langfuse tracing error in {name}: {e}")
+                        return None
+                    raise
+            return wrapped_method
+        
+        return attr
+
+
 class LangFuseTracer(BaseTracer):
     flow_id: str
 
@@ -158,7 +193,10 @@ class LangFuseTracer(BaseTracer):
 
         # get callback from parent span
         stateful_client = self.spans[next(reversed(self.spans))] if len(self.spans) > 0 else self.trace
-        return stateful_client.get_langchain_handler()
+        langfuse_callback = stateful_client.get_langchain_handler()
+        
+        # Wrap the callback to suppress 'parent run not found' and 'run not found' errors
+        return LangfuseCallbackWrapper(langfuse_callback) if langfuse_callback else None
 
     @staticmethod
     def _get_config() -> dict:

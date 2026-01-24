@@ -3,6 +3,7 @@ from typing import Any
 
 import orjson
 from fastapi.encoders import jsonable_encoder
+from loguru import logger
 
 from langbuilder.base.io.chat import ChatComponent
 from langbuilder.helpers.data import safe_convert
@@ -151,6 +152,9 @@ class ChatOutput(ChatComponent):
             if self.chat_icon:
                 message.properties.icon = icon
             self.status = message
+            # Add log for AI message completion
+            if message.sender == MESSAGE_SENDER_AI:
+                logger.info(f"[AI_MESSAGE] AI: {message.text}")
             return message
 
         # IMPORTANT: Create a NEW Message object for non-stored inputs
@@ -175,6 +179,9 @@ class ChatOutput(ChatComponent):
             message = stored_message
 
         self.status = message
+        # Add log for AI message completion
+        if message.sender == MESSAGE_SENDER_AI:
+            logger.info(f"[AI_MESSAGE] AI: {message.text}")
         return message
 
     def _serialize_data(self, data: Data) -> str:

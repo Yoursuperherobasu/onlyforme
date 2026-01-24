@@ -168,9 +168,7 @@ class LCAgentComponent(Component):
 
         # Capture the timestamp at agent creation time
         from datetime import datetime, timezone
-        from loguru import logger
         creation_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-        logger.info(f"[AGENT TIMESTAMP] Creating agent message with timestamp: {creation_timestamp}")
         
         agent_message = Message(
             sender=MESSAGE_SENDER_AI,
@@ -180,7 +178,10 @@ class LCAgentComponent(Component):
             session_id=session_id,
             timestamp=creation_timestamp,
         )
-        logger.info(f"[AGENT TIMESTAMP] After Message creation, timestamp: {agent_message.timestamp}")
+        
+        # Get event_manager for optimized token streaming
+        event_manager = self._event_manager if hasattr(self, "_event_manager") else None
+        
         try:
             result = await process_agent_events(
                 runnable.astream_events(
@@ -190,6 +191,7 @@ class LCAgentComponent(Component):
                 ),
                 agent_message,
                 cast("SendMessageFunctionType", self.send_message),
+                event_manager=event_manager,  # Pass event_manager for token streaming
             )
         except ExceptionWithMessageError as e:
             if hasattr(e, "agent_message") and hasattr(e.agent_message, "id"):

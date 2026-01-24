@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Iterator
 from copy import deepcopy
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, get_type_hints
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import nanoid
 import pandas as pd
@@ -1484,8 +1484,6 @@ class Component(CustomComponent):
         )
 
     async def send_message(self, message: Message, id_: str | None = None):
-        from loguru import logger
-        logger.info(f"[SEND_MESSAGE] Entry: sender={message.sender_name}, timestamp={message.timestamp!r}, id={getattr(message, 'id', None)}")
         if self._should_skip_message(message):
             return message
         
@@ -1496,53 +1494,64 @@ class Component(CustomComponent):
             message.session_id = session_id
         if hasattr(message, "flow_id") and isinstance(message.flow_id, str):
             message.flow_id = UUID(message.flow_id)
-        logger.info(f"[SEND_MESSAGE] Before _store_message: timestamp={message.timestamp!r}")
-        stored_message = await self._store_message(message)
-        logger.info(f"[SEND_MESSAGE] After _store_message: id={stored_message.id}, timestamp={stored_message.timestamp!r}")
-        self._stored_message_id = stored_message.id
-        try:
-            complete_message = ""
-            if (
-                self._should_stream_message(stored_message, message)
-                and message is not None
-                and isinstance(message.text, AsyncIterator | Iterator)
-            ):
-                complete_message = await self._stream_message(message.text, stored_message)
-                stored_message.text = complete_message
-                stored_message = await self._update_stored_message(stored_message)
-            else:
-                # Only send message event for non-streaming messages
+        
+        # Check if this is a streaming message BEFORE storing to DB
+        is_streaming = (
+            hasattr(self, "_event_manager")
+            and self._event_manager
+            and message is not None
+            and isinstance(message.text, AsyncIterator | Iterator)
+        )
+        
+        if is_streaming:
+            # OPTIMIZATION: For streaming messages, generate ID upfront and write to DB only ONCE at the end
+            # This reduces DB writes from 100+ (one per chunk) to just 1
+            message_id = str(uuid4())
+            message.data["id"] = message_id
+            self._stored_message_id = message_id
+            
+            try:
+                # Stream all chunks via SSE (NO DB writes during streaming)
+                complete_message = await self._stream_message(message.text, message, message_id)
+                
+                # After streaming completes, set final text and store ONCE
+                message.text = complete_message
+                stored_message = await self._store_message(message)
+            except Exception:
+                # No DB cleanup needed since we haven't written yet
+                raise
+        else:
+            # Non-streaming: store immediately then send event
+            stored_message = await self._store_message(message)
+            self._stored_message_id = stored_message.id
+            try:
                 await self._send_message_event(stored_message, id_=id_)
-        except Exception:
-            # remove the message from the database
-            await delete_message(stored_message.id)
-            raise
+            except Exception:
+                # Remove message from database on error
+                if stored_message.id:
+                    await delete_message(stored_message.id)
+                raise
+        
         self.status = stored_message
         return stored_message
 
     async def _store_message(self, message: Message) -> Message:
-        from loguru import logger
-        logger.info(f"[_STORE_MESSAGE] Input message: sender={message.sender_name}, timestamp={message.timestamp!r}, id={getattr(message, 'id', None)}")
         flow_id: str | None = None
         if hasattr(self, "graph"):
             # Convert UUID to str if needed
             flow_id = str(self.graph.flow_id) if self.graph.flow_id else None
         
-        logger.info(f"[_STORE_MESSAGE] Calling astore_message with flow_id={flow_id}")
         stored_messages = await astore_message(message, flow_id=flow_id)
         if len(stored_messages) != 1:
             msg = "Only one message can be stored at a time."
             raise ValueError(msg)
         stored_message = stored_messages[0]
-        logger.info(f"[_STORE_MESSAGE] After astore_message: sender={stored_message.sender_name}, timestamp={stored_message.timestamp!r}, id={getattr(stored_message, 'id', None)}")
         
         # Get the dump and create a new Message from it
         dump = stored_message.model_dump()
-        logger.info(f"[_STORE_MESSAGE] model_dump timestamp: {dump.get('timestamp')!r}")
         
         # CRITICAL: Ensure timestamp is preserved when creating the new Message
         result = await Message.create(**dump)
-        logger.info(f"[_STORE_MESSAGE] Final result: sender={result.sender_name}, timestamp={result.timestamp!r}, id={getattr(result, 'id', None)}")
         
         return result
 
@@ -1574,12 +1583,12 @@ class Component(CustomComponent):
             # This is critical for maintaining correct message order in real-time
             await asyncio.sleep(0)
 
-    def _should_stream_message(self, stored_message: Message, original_message: Message) -> bool:
+    def _should_stream_message(self, message: Message) -> bool:
+        """Check if a message should be streamed (has iterator text and event manager)."""
         return bool(
             hasattr(self, "_event_manager")
             and self._event_manager
-            and stored_message.id
-            and not isinstance(original_message.text, str)
+            and isinstance(message.text, AsyncIterator | Iterator)
         )
 
     async def _update_stored_message(self, message: Message) -> Message:
@@ -1600,19 +1609,29 @@ class Component(CustomComponent):
         message_table = message_tables[0]
         return await Message.create(**message_table.model_dump())
 
-    async def _stream_message(self, iterator: AsyncIterator | Iterator, message: Message) -> str:
+    async def _stream_message(self, iterator: AsyncIterator | Iterator, message: Message, message_id: str) -> str:
+        """Stream message chunks via SSE without writing to DB.
+        
+        Args:
+            iterator: The async/sync iterator producing chunks
+            message: The message object (used for metadata)
+            message_id: Pre-generated message ID for SSE events
+            
+        Returns:
+            The complete accumulated message text
+        """
         if not isinstance(iterator, AsyncIterator | Iterator):
             msg = "The message must be an iterator or an async iterator."
             raise TypeError(msg)
 
         if isinstance(iterator, AsyncIterator):
-            return await self._handle_async_iterator(iterator, message.id, message)
+            return await self._handle_async_iterator(iterator, message_id, message)
         try:
             complete_message = ""
             first_chunk = True
             for chunk in iterator:
                 complete_message = await self._process_chunk(
-                    chunk.content, complete_message, message.id, message, first_chunk=first_chunk
+                    chunk.content, complete_message, message_id, message, first_chunk=first_chunk
                 )
                 first_chunk = False
         except Exception as e:
@@ -1621,6 +1640,7 @@ class Component(CustomComponent):
             return complete_message
 
     async def _handle_async_iterator(self, iterator: AsyncIterator, message_id: str, message: Message) -> str:
+        """Handle async iterator for streaming, sending SSE events only (no DB writes)."""
         complete_message = ""
         first_chunk = True
         async for chunk in iterator:
@@ -1633,14 +1653,21 @@ class Component(CustomComponent):
     async def _process_chunk(
         self, chunk: str, complete_message: str, message_id: str, message: Message, *, first_chunk: bool = False
     ) -> str:
+        """Process a streaming chunk - send SSE event only, NO database writes.
+        
+        OPTIMIZATION: All DB writes happen ONCE at the end of streaming in send_message().
+        This reduces DB writes from 100+ (one per chunk) to just 1 per message.
+        """
         complete_message += chunk
+        
         if self._event_manager:
             if first_chunk:
-                # Send the initial message only on the first chunk
+                # Send the initial message event on first chunk (for UI to create message bubble)
                 msg_copy = message.model_copy()
                 msg_copy.text = complete_message
                 await self._send_message_event(msg_copy, id_=message_id)
-            # Send token event synchronously to maintain ordering
+            
+            # Send token event for real-time UI streaming (SSE only, no DB)
             self._event_manager.on_token(
                 data={
                     "chunk": chunk,

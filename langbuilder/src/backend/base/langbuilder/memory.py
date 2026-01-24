@@ -119,18 +119,12 @@ async def aadd_messages(messages: Message | list[Message], flow_id: str | UUID |
         raise ValueError(msg)
 
     try:
-        for msg in messages:
-            logger.info(f"[AADD_MESSAGES] Input message: sender={msg.sender_name}, timestamp={msg.timestamp!r}, type={type(msg.timestamp)}")
         messages_models = [MessageTable.from_message(msg, flow_id=flow_id) for msg in messages]
-        for model in messages_models:
-            logger.info(f"[AADD_MESSAGES] After from_message: sender={model.sender_name}, timestamp={model.timestamp!r}, type={type(model.timestamp)}")
         async with session_scope() as session:
             messages_models = await aadd_messagetables(messages_models, session)
         result_messages = []
         for model in messages_models:
-            logger.info(f"[AADD_MESSAGES] After DB commit: sender={model.sender_name}, timestamp={model.timestamp!r}")
             dump = model.model_dump()
-            logger.info(f"[AADD_MESSAGES] model_dump() timestamp: {dump.get('timestamp')!r}, type={type(dump.get('timestamp'))}")
             result_messages.append(await Message.create(**dump))
         return result_messages
     except Exception as e:
@@ -145,20 +139,17 @@ async def aupdate_messages(messages: Message | list[Message]) -> list[Message]:
     async with session_scope() as session:
         updated_messages: list[MessageTable] = []
         for message in messages:
-            logger.info(f"[AUPDATE_MESSAGES] Updating message id={message.id}, input timestamp={message.timestamp!r}")
             msg = await session.get(MessageTable, message.id)
             if msg:
                 # CRITICAL: Save the original timestamp from database BEFORE any update
                 # This is the authoritative creation time that must never change
                 original_timestamp = msg.timestamp
-                logger.info(f"[AUPDATE_MESSAGES] Original DB timestamp: {original_timestamp!r}")
                 
                 # Exclude timestamp from updates to preserve the original creation time
                 msg = msg.sqlmodel_update(message.model_dump(exclude_unset=True, exclude_none=True, exclude={"timestamp"}))
                 
                 # CRITICAL: Force restore the original timestamp after sqlmodel_update
                 msg.timestamp = original_timestamp
-                logger.info(f"[AUPDATE_MESSAGES] After restore, timestamp: {msg.timestamp!r}")
                 
                 # Convert flow_id to UUID if it's a string
                 if msg.flow_id and isinstance(msg.flow_id, str):
@@ -166,7 +157,6 @@ async def aupdate_messages(messages: Message | list[Message]) -> list[Message]:
                 session.add(msg)
                 await session.commit()
                 await session.refresh(msg)
-                logger.info(f"[AUPDATE_MESSAGES] After commit+refresh, timestamp: {msg.timestamp!r}")
                 updated_messages.append(msg)
             else:
                 error_message = f"Message with id {message.id} not found"
@@ -179,18 +169,13 @@ async def aadd_messagetables(messages: list[MessageTable], session: AsyncSession
     try:
         try:
             for message in messages:
-                logger.info(f"[AADD_MESSAGETABLES] BEFORE session.add: sender={message.sender_name}, timestamp={message.timestamp!r}, type={type(message.timestamp)}")
                 session.add(message)
-            logger.info(f"[AADD_MESSAGETABLES] Calling session.commit() for {len(messages)} messages")
             await session.commit()
-            logger.info(f"[AADD_MESSAGETABLES] session.commit() completed")
         except asyncio.CancelledError:
             await session.rollback()
             return await aadd_messagetables(messages, session)
         for message in messages:
-            logger.info(f"[AADD_MESSAGETABLES] BEFORE session.refresh: sender={message.sender_name}, timestamp={message.timestamp!r}")
             await session.refresh(message)
-            logger.info(f"[AADD_MESSAGETABLES] AFTER session.refresh: sender={message.sender_name}, timestamp={message.timestamp!r}")
     except asyncio.CancelledError as e:
         logger.exception(e)
         error_msg = "Operation cancelled"
@@ -299,15 +284,12 @@ async def astore_message(
         raise ValueError(msg)
     
     msg_id = message.data.get("id") if hasattr(message, "data") else None
-    logger.info(f"[ASTORE_MESSAGE] sender={message.sender_name}, timestamp={message.timestamp!r}, msg_id={msg_id}")
     if msg_id:
         # if message has an id and exist in the database, update it
-        logger.info(f"[ASTORE_MESSAGE] Message has ID, calling aupdate_messages")
         try:
             return await aupdate_messages([message])
         except ValueError as e:
             logger.error(e)
-    logger.info(f"[ASTORE_MESSAGE] New message, calling aadd_messages")
     if flow_id and not isinstance(flow_id, UUID):
         flow_id = UUID(flow_id)
     return await aadd_messages([message], flow_id=flow_id)

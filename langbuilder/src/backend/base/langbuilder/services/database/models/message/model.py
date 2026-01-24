@@ -34,16 +34,8 @@ class MessageBase(SQLModel):
 
     @field_serializer("timestamp")
     def serialize_timestamp(self, value):
-        from loguru import logger
-        logger.info(f"[MESSAGEBASE_SERIALIZE_TIMESTAMP] Input: {value!r}, type={type(value)}")
         if isinstance(value, datetime):
-            result = value.strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(f"[MESSAGEBASE_SERIALIZE_TIMESTAMP] Output: {result!r}")
-            return result
-        if isinstance(value, str):
-            logger.info(f"[MESSAGEBASE_SERIALIZE_TIMESTAMP] Already str, output: {value!r}")
-            return value
-        logger.info(f"[MESSAGEBASE_SERIALIZE_TIMESTAMP] Unknown type, output: {value!r}")
+            return value.strftime("%Y-%m-%d %H:%M:%S")
         return value
 
     @field_validator("files", mode="before")
@@ -55,9 +47,6 @@ class MessageBase(SQLModel):
 
     @classmethod
     def from_message(cls, message: "Message", flow_id: str | UUID | None = None):
-        from loguru import logger
-        logger.info(f"[FROM_MESSAGE] Input: sender={message.sender_name}, timestamp={message.timestamp!r}, type={type(message.timestamp)}")
-        
         # first check if the record has all the required fields (sender and sender_name are required)
         # text can be None or empty string
         if not message.sender or not message.sender_name:
@@ -76,33 +65,27 @@ class MessageBase(SQLModel):
                 message.files = image_paths
 
         if isinstance(message.timestamp, str):
-            logger.info(f"[FROM_MESSAGE] Timestamp is string: {message.timestamp!r}")
             # Convert timestamp string to datetime
             try:
                 # Try format without timezone
                 timestamp = datetime.strptime(message.timestamp, "%Y-%m-%d %H:%M:%S")
-                logger.info(f"[FROM_MESSAGE] Parsed with basic format: {timestamp}")
             except ValueError:
                 try:
                     # Try format with timezone name like UTC
                     timestamp = datetime.strptime(message.timestamp, "%Y-%m-%d %H:%M:%S %Z")
-                    logger.info(f"[FROM_MESSAGE] Parsed with %Z format: {timestamp}, tzinfo={timestamp.tzinfo}")
                     # Strip timezone info
                     timestamp = timestamp.replace(tzinfo=None)
                 except ValueError:
                     # Fallback for ISO format if the above fails
                     timestamp = datetime.fromisoformat(message.timestamp)
-                    logger.info(f"[FROM_MESSAGE] Parsed with ISO format: {timestamp}")
                     # Strip timezone info if present
                     if timestamp.tzinfo is not None:
                         timestamp = timestamp.replace(tzinfo=None)
         else:
             timestamp = message.timestamp
-            logger.info(f"[FROM_MESSAGE] Timestamp is datetime: {timestamp}, tzinfo={timestamp.tzinfo if timestamp else None}")
             # Strip timezone info if present
             if timestamp and timestamp.tzinfo is not None:
                 timestamp = timestamp.replace(tzinfo=None)
-        logger.info(f"[FROM_MESSAGE] Final timestamp to store: {timestamp!r}, type={type(timestamp)}")
         if not flow_id and message.flow_id:
             flow_id = message.flow_id
         # If the text is not a string, it means it could be
@@ -126,7 +109,6 @@ class MessageBase(SQLModel):
                 msg = f"Flow ID {flow_id} is not a valid UUID"
                 raise ValueError(msg) from exc
 
-        logger.info(f"[FROM_MESSAGE] Creating MessageTable with timestamp={timestamp!r}")
         result = cls(
             sender=message.sender,
             sender_name=message.sender_name,
@@ -139,7 +121,6 @@ class MessageBase(SQLModel):
             category=message.category,
             content_blocks=content_blocks,
         )
-        logger.info(f"[FROM_MESSAGE] MessageTable created: sender={result.sender_name}, timestamp={result.timestamp!r}")
         return result
 
 

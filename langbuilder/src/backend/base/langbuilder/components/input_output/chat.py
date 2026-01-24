@@ -93,6 +93,8 @@ class ChatInput(ChatComponent):
     ]
 
     async def message_response(self) -> Message:
+        from loguru import logger
+
         background_color = self.background_color
         text_color = self.text_color
         icon = self.chat_icon
@@ -116,5 +118,8 @@ class ChatInput(ChatComponent):
             self.message.value = stored_message
             message = stored_message
 
+        # Add log for user message
+        if message.sender == MESSAGE_SENDER_USER:
+            logger.info(f"[USER_MESSAGE] User: {message.text}")
         self.status = message
         return message

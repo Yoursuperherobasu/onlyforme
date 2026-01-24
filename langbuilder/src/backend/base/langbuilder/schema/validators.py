@@ -18,7 +18,7 @@ def timestamp_to_str(timestamp: datetime | str) -> str:
     Raises:
         ValueError: If string timestamp is in invalid format
     """
-    logger.info(f"[TIMESTAMP_TO_STR] Input: {timestamp!r}, type: {type(timestamp)}")
+    logger.debug(f"[TIMESTAMP_TO_STR] Input: {timestamp!r}, type: {type(timestamp)}")
     if isinstance(timestamp, str):
         # Try parsing with different formats
         formats = [
@@ -41,7 +41,7 @@ def timestamp_to_str(timestamp: datetime | str) -> str:
                 if parsed.tzinfo is None:
                     parsed = parsed.replace(tzinfo=timezone.utc)
                 result = parsed.strftime("%Y-%m-%d %H:%M:%S %Z")
-                logger.info(f"[TIMESTAMP_TO_STR] Parsed with fmt={fmt}, parsed={parsed!r}, result: {result}")
+                logger.debug(f"[TIMESTAMP_TO_STR] Parsed with fmt={fmt}, result: {result}")
                 return result
             except ValueError:
                 continue
@@ -50,12 +50,10 @@ def timestamp_to_str(timestamp: datetime | str) -> str:
         raise ValueError(msg)
 
     # Handle datetime object
-    logger.info(f"[TIMESTAMP_TO_STR] Handling datetime: {timestamp!r}, tzinfo={timestamp.tzinfo}")
+    logger.debug(f"[TIMESTAMP_TO_STR] Handling datetime: {timestamp!r}")
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
-        logger.info(f"[TIMESTAMP_TO_STR] Added UTC timezone: {timestamp!r}")
     result = timestamp.strftime("%Y-%m-%d %H:%M:%S %Z")
-    logger.info(f"[TIMESTAMP_TO_STR] From datetime, result: {result}")
     return result
 
 
@@ -73,7 +71,7 @@ def str_to_timestamp(timestamp: str | datetime) -> datetime:
     Raises:
         ValueError: If string timestamp is not in a valid format
     """
-    logger.info(f"[STR_TO_TIMESTAMP] Input: {timestamp!r}, type: {type(timestamp)}")
+    logger.debug(f"[STR_TO_TIMESTAMP] Input: {timestamp!r}, type: {type(timestamp)}")
     if isinstance(timestamp, str):
         # Try parsing with multiple formats
         formats = [
@@ -90,18 +88,15 @@ def str_to_timestamp(timestamp: str | datetime) -> datetime:
                 # If no timezone info, assume UTC
                 if parsed.tzinfo is None:
                     parsed = parsed.replace(tzinfo=timezone.utc)
-                logger.info(f"[STR_TO_TIMESTAMP] Parsed with fmt={fmt}, result: {parsed!r}")
+                logger.debug(f"[STR_TO_TIMESTAMP] Parsed with fmt={fmt}")
                 return parsed
             except ValueError:
                 continue
         msg = f"Invalid timestamp format: {timestamp}. Expected format: YYYY-MM-DD HH:MM:SS UTC"
         raise ValueError(msg)
     # If already a datetime, ensure it has UTC timezone
-    logger.info(f"[STR_TO_TIMESTAMP] Input is datetime: {timestamp!r}, tzinfo={timestamp.tzinfo}")
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
-        logger.info(f"[STR_TO_TIMESTAMP] Added UTC timezone: {timestamp!r}")
-    logger.info(f"[STR_TO_TIMESTAMP] Returning: {timestamp!r}")
     return timestamp
 
 
@@ -171,7 +166,7 @@ def str_to_naive_timestamp(timestamp: str | datetime) -> datetime:
     Returns:
         datetime: Naive datetime object (no timezone info)
     """
-    logger.info(f"[STR_TO_NAIVE_TIMESTAMP] Input: {timestamp!r}, type: {type(timestamp)}")
+    logger.debug(f"[STR_TO_NAIVE_TIMESTAMP] Input type: {type(timestamp)}")
     
     if isinstance(timestamp, str):
         # Try parsing with multiple formats
@@ -189,7 +184,6 @@ def str_to_naive_timestamp(timestamp: str | datetime) -> datetime:
                 # Always return naive datetime for DB storage
                 if parsed.tzinfo is not None:
                     parsed = parsed.replace(tzinfo=None)
-                logger.info(f"[STR_TO_NAIVE_TIMESTAMP] Parsed with fmt={fmt}, result: {parsed!r}")
                 return parsed
             except ValueError:
                 continue
@@ -197,13 +191,9 @@ def str_to_naive_timestamp(timestamp: str | datetime) -> datetime:
         raise ValueError(msg)
     
     # If already a datetime, strip timezone for DB storage
-    logger.info(f"[STR_TO_NAIVE_TIMESTAMP] Input is datetime: {timestamp!r}, tzinfo={timestamp.tzinfo}")
     if timestamp.tzinfo is not None:
         # Already has timezone - just strip it to keep the same time values
-        result = timestamp.replace(tzinfo=None)
-        logger.info(f"[STR_TO_NAIVE_TIMESTAMP] Stripped timezone: {result!r}")
-        return result
-    logger.info(f"[STR_TO_NAIVE_TIMESTAMP] Already naive, returning: {timestamp!r}")
+        return timestamp.replace(tzinfo=None)
     return timestamp
 
 
