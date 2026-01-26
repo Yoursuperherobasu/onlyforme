@@ -67,7 +67,7 @@ export default function ApprovalPage() {
         <div className="mb-8 flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-semibold">
-              Human in the Loop
+              Agent Registry
             </h1>
             <p className="text-sm text-muted-foreground">
               Review and approve AI agents before deployment
