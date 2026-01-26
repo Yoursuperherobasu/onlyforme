@@ -229,3 +229,10 @@ code {
   max-width: calc(var(--sidebar-width) - (var(--sidebar-width-icon) + 0.1rem));
   width: var(--sidebar-width);
 }
+
+
+/* Sidebar color */
+:root {
+  --sidebar-background: #cf0707; /* light theme */
+  --sidebar-foreground: #ffffff;
+}

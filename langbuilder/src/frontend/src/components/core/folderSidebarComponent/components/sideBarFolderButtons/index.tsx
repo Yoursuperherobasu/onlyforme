@@ -368,163 +368,135 @@ const SideBarFoldersButtonsComponent = ({
   };
 
   return (
-    <Sidebar
-      collapsible={isMobile ? "offcanvas" : "none"}
-      data-testid="project-sidebar"
-    >
-      <SidebarHeader className="px-4 py-1">
-        <HeaderButtons
-          handleUploadFlowsToFolder={handleUploadFlowsToFolder}
-          isUpdatingFolder={isUpdatingFolder}
-          isPending={isPending}
-          addNewFolder={addNewFolder}
-        />
-      </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup className="p-4 py-2">
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {!loading ? (
-                folders.map((item, index) => {
-                  const editFolderName = editFolders?.filter(
-                    (folder) => folder.name === item.name
-                  )[0];
-                  return (
-                    <SidebarMenuItem
-                      key={index}
-                      className="group/menu-button"
-                      onMouseEnter={() => setHoveredFolderId(item.id!)}
-                      onMouseLeave={() => setHoveredFolderId(null)}
-                    >
-                      <div className="relative flex w-full">
-                        <SidebarMenuButton
-                          size="md"
-                          onDragOver={(e) => dragOver(e, item.id!)}
-                          onDragEnter={(e) => dragEnter(e, item.id!)}
-                          onDragLeave={dragLeave}
-                          onDrop={(e) => onDrop(e, item.id!)}
-                          key={item.id}
-                          data-testid={`sidebar-nav-${item.name}`}
-                          id={`sidebar-nav-${item.name}`}
-                          isActive={checkPathName(item.id!)}
-                          onClick={() => handleChangeFolder!(item.id!)}
-                          className={cn(
-                            "flex-grow pr-8",
-                            hoveredFolderId === item.id && "bg-accent",
-                            checkHoveringFolder(item.id!)
-                          )}
-                        >
-                          <div
-                            onDoubleClick={(event) => {
-                              handleDoubleClick(event, item);
-                            }}
-                            className="flex w-full items-center justify-between gap-2"
-                          >
-                            <div className="flex flex-1 items-center gap-2">
-                              {editFolderName?.edit && !isUpdatingFolder ? (
-                                <InputEditFolderName
-                                  handleEditFolderName={handleEditFolderName}
-                                  item={item}
-                                  refInput={refInput}
-                                  handleKeyDownFn={handleKeyDownFn}
-                                  handleEditNameFolder={handleEditNameFolder}
-                                  editFolderName={editFolderName}
-                                  foldersNames={foldersNames}
-                                  handleKeyDown={handleKeyDown}
-                                />
-                              ) : (
-                                <span className="block w-0 grow truncate text-sm opacity-100">
-                                  {item.name}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </SidebarMenuButton>
-                        <div
-                          className="absolute right-2 top-[0.45rem] flex items-center hover:text-foreground"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <SelectOptions
-                            item={item}
-                            index={index}
-                            handleDeleteFolder={handleDeleteFolder}
-                            handleDownloadFolder={() =>
-                              handleDownloadFolder(item.id!, item.name)
-                            }
-                            handleSelectFolderToRename={
-                              handleSelectFolderToRename
-                            }
-                            checkPathName={checkPathName}
-                          />
-                        </div>
-                      </div>
-                    </SidebarMenuItem>
-                  );
-                })
-              ) : (
-                <>
-                  <SidebarFolderSkeleton />
-                  <SidebarFolderSkeleton />
-                </>
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <div className="flex-1" />
+  <Sidebar
+    collapsible={isMobile ? "offcanvas" : "none"}
+    data-testid="project-sidebar"
+    className="bg-[var(--sidebar-background)] text-[var(--sidebar-foreground)]"
+  >
+    {/* ================= HEADER ================= */}
+    <SidebarHeader className="px-3 py-0">
+  <div className="flex h-10 items-center gap-2">
+    <span className="h-4 w-2" /> {/* spacer to align with icons */}
+    
+  </div>
+</SidebarHeader>
 
-        {ENABLE_MCP_NOTICE && !isDismissedMcpDialog && (
-          <div className="p-2">
-            <MCPServerNotice handleDismissDialog={handleDismissMcpDialog} />
-          </div>
-        )}
-      </SidebarContent>
-      {ENABLE_FILE_MANAGEMENT && (
-        <SidebarFooter className="border-t">
-          <div className="grid w-full items-center gap-2 p-2">
-            {/* TODO: Remove this on cleanup */}
-            {ENABLE_DATASTAX_LANGBUILDER && <CustomStoreButton />}{" "}
-            {ENABLE_KNOWLEDGE_BASES && (
+    {/* ================= CONTENT ================= */}
+    <SidebarContent className="text-[var(--sidebar-foreground)]">
+      <SidebarGroup className="p-4 py-2">
+        <SidebarGroupContent>
+          <SidebarMenu className="text-[var(--sidebar-foreground)]">
+            {/* Dashboard */}
+            <SidebarMenuItem>
               <SidebarMenuButton
-                onClick={handleKnowledgeNavigation}
                 size="md"
-                className="text-sm"
+                isActive={pathname.startsWith("/dashboard")}
+                onClick={() => _navigate("/dashboard")}
+                className="text-[var(--sidebar-foreground)]"
               >
-                <ForwardedIconComponent name="Library" className="h-4 w-4" />
-                Knowledge
+                <ForwardedIconComponent
+                  name="LayoutDashboard"
+                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
+                />
+                Dashboard
               </SidebarMenuButton>
-            )}
-            <SidebarMenuButton
-              onClick={handleFilesNavigation}
-              size="md"
-              className="text-sm"
-            >
-              <ForwardedIconComponent name="File" className="h-4 w-4" />
-              My Files
-            </SidebarMenuButton>
-            {permissions.includes("view_files_tab") && (
+            </SidebarMenuItem>
+
+            {/* Approvals */}
+            <SidebarMenuItem>
               <SidebarMenuButton
-                onClick={handleFilesNavigation}
                 size="md"
-                className="text-sm"
+                isActive={pathname.startsWith("/approval")}
+                onClick={() => _navigate("/approval")}
+                className="text-[var(--sidebar-foreground)]"
               >
-                <ForwardedIconComponent name="File" className="h-4 w-4" />
-                My Files for Developer
+                <ForwardedIconComponent
+                  name="CheckSquare"
+                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
+                />
+                Approvals
               </SidebarMenuButton>
-            )}
-            {permissions.includes("view_files_tab") && (
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
               <SidebarMenuButton
-                onClick={handleFilesNavigation}
                 size="md"
-                className="text-sm"
+                isActive={pathname.startsWith("/approval")}
+                onClick={() => _navigate("/approval")}
+                className="text-[var(--sidebar-foreground)]"
               >
-                <ForwardedIconComponent name="File" className="h-4 w-4" />
-                My Files for Developer
+                <ForwardedIconComponent
+                  name="CheckSquare"
+                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
+                />
+                Agent Catalogue
               </SidebarMenuButton>
-            )}
-          </div>
-        </SidebarFooter>
-      )}
-    </Sidebar>
-  );
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="md"
+                isActive={pathname.startsWith("/approval")}
+                onClick={() => _navigate("/approval")}
+                className="text-[var(--sidebar-foreground)]"
+              >
+                <ForwardedIconComponent
+                  name="CheckSquare"
+                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
+                />
+                Model Catalogue
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="md"
+                isActive={pathname.startsWith("/approval")}
+                onClick={() => _navigate("/approval")}
+                className="text-[var(--sidebar-foreground)]"
+              >
+                <ForwardedIconComponent
+                  name="CheckSquare"
+                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
+                />
+                Workflow
+              </SidebarMenuButton>
+            </SidebarMenuItem>  
+
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="md"
+                isActive={pathname.startsWith("/approval")}
+                onClick={() => _navigate("/approval")}
+                className="text-[var(--sidebar-foreground)]"
+              >
+                <ForwardedIconComponent
+                  name="CheckSquare"
+                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
+                />
+                Orchestrator
+              </SidebarMenuButton>
+            </SidebarMenuItem>          
+            </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+    </SidebarContent>
+
+    {/* ================= FOOTER ================= */}
+    <SidebarFooter className="border-t">
+      <div className="grid w-full items-center gap-2 p-2">
+        <SidebarMenuButton
+          onClick={() => _navigate("/settings")}
+          size="md"
+          className="text-sm text-[var(--sidebar-foreground)]"
+        >
+          <ForwardedIconComponent name="Settings" className="h-4 w-4 text-[var(--sidebar-foreground)]" />
+          Settings
+        </SidebarMenuButton>
+      </div>
+    </SidebarFooter>
+  </Sidebar>
+);
+
 };
 export default SideBarFoldersButtonsComponent;

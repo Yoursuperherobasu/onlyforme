@@ -27,7 +27,7 @@ const SideBarButtonsComponent = ({ items }: SideBarButtonsComponentProps) => {
   const isMobile = useIsMobile();
 
   return (
-    <Sidebar collapsible={isMobile ? "icon" : "none"} className="border-none">
+    <Sidebar collapsible={isMobile ? "icon" : "none"} className="border-none" >
       <SidebarContent className="pr-6">
         <SidebarGroup>
           <SidebarGroupContent>
