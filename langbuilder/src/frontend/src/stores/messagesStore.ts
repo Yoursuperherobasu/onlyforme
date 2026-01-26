@@ -14,10 +14,23 @@ export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
   messages: [],
   setMessages: (messages) => {
     // Sort messages by timestamp to ensure correct order
+    // Secondary sort: User messages come before AI/Machine when timestamps are identical
     const sortedMessages = [...messages].sort((a, b) => {
       const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
       const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-      return timeA - timeB;
+      
+      // Primary sort: by timestamp
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      
+      // Secondary sort: User messages come before Machine messages for same timestamp
+      const isAUser = a.sender === "User";
+      const isBUser = b.sender === "User";
+      if (isAUser && !isBUser) return -1;
+      if (!isAUser && isBUser) return 1;
+      
+      return 0;
     });
     set(() => ({ messages: sortedMessages }));
   },
@@ -42,12 +55,25 @@ export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
     }
     // Add message and sort by timestamp to ensure correct order
     // (SSE events may arrive out of order)
+    // Secondary sort: User messages come before AI/Machine when timestamps are identical
     set(() => {
       const newMessages = [...get().messages, message];
       newMessages.sort((a, b) => {
         const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
         const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-        return timeA - timeB;
+        
+        // Primary sort: by timestamp
+        if (timeA !== timeB) {
+          return timeA - timeB;
+        }
+        
+        // Secondary sort: User messages come before Machine messages for same timestamp
+        const isAUser = a.sender === "User";
+        const isBUser = b.sender === "User";
+        if (isAUser && !isBUser) return -1;
+        if (!isAUser && isBUser) return 1;
+        
+        return 0;
       });
       return { messages: newMessages };
     });
