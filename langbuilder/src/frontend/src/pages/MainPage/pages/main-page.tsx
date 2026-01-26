@@ -49,8 +49,7 @@ export default function CollectionPage(): JSX.Element {
   const isFlowsRoute =
     location.pathname === "/flows" || location.pathname === "/flows/";
 
-  const isInFlowsFolder =
-    location.pathname.includes("/flows/folder/");
+  const isInFlowsFolder = location.pathname.includes("/flows/folder/");
 
   /* ================= CLEANUP ================= */
 
@@ -108,151 +107,89 @@ export default function CollectionPage(): JSX.Element {
     );
   };
 
-
+  /* ================= DERIVED STATE ================= */
 
   const hasContent = Boolean(flows && examples && folders);
 
   const showEmptyState =
     hasContent &&
-    flows &&
     flows.length === examples.length &&
     folders.length <= 1;
 
+  const showSidebar = Boolean(hasContent && folders.length > 0);
 
-  if (isFlowsRoute) {
-    return (
-      <>
-        <main className="flex h-full w-full overflow-hidden">
-          {hasContent ? (
-            <div className="relative mx-auto flex h-full w-full flex-col overflow-hidden">
-              {showEmptyState ? (
-                <CustomEmptyPageCommunity setOpenModal={setOpenModal} />
-              ) : (
-                <FolderCardsView
-                  setOpenModal={setOpenModal}
-                  onFolderClick={(folderId: string) => {
-                    navigate(`/flows/folder/${folderId}`);
-                  }}
-                  onRenameFolder={(folder) => {
-                    setFolderToEdit(folder);
-                    setOpenEditFolderModal(true);
-                  }}
-                  onDeleteFolder={(folder) => {
-                    setFolderToEdit(folder);
-                    setOpenDeleteFolderModal(true);
-                  }}
-                  onFilesClick={() => {
-                    navigate("/assets/files");
-                  }}
-                />
-              )}
-            </div>
-          ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <CustomLoader remSize={30} />
-            </div>
-          )}
-        </main>
+  /* ================= SHARED SIDEBAR ================= */
 
-        <ModalsComponent
-          openModal={openModal}
-          setOpenModal={setOpenModal}
-          openDeleteFolderModal={openDeleteFolderModal}
-          setOpenDeleteFolderModal={setOpenDeleteFolderModal}
-          handleDeleteFolder={handleDeleteFolder}
-        />
+  const Sidebar = showSidebar ? (
+    <SideBarFoldersButtonsComponent
+      handleChangeFolder={(id: string) => {
+        navigate(`/flows/folder/${id}`);
+      }}
+      handleDeleteFolder={(folder) => {
+        setFolderToEdit(folder);
+        setOpenDeleteFolderModal(true);
+      }}
+      handleFilesClick={() => {
+        navigate("/assets/files");
+      }}
+    />
+  ) : null;
 
-        <EditFolderModal
-          open={openEditFolderModal}
-          setOpen={setOpenEditFolderModal}
-          folder={folderToEdit}
-          onSave={handleUpdateFolderName}
-        />
-      </>
-    );
-  }
-
-
-
-  if (isInFlowsFolder) {
-    return (
-      <SidebarProvider width="0px">
-        <main className="flex h-full w-full overflow-hidden">
-          {hasContent ? (
-            <div className="relative mx-auto flex h-full w-full flex-col overflow-hidden">
-              <Outlet />
-            </div>
-          ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <CustomLoader remSize={30} />
-            </div>
-          )}
-        </main>
-
-        <ModalsComponent
-          openModal={openModal}
-          setOpenModal={setOpenModal}
-          openDeleteFolderModal={openDeleteFolderModal}
-          setOpenDeleteFolderModal={setOpenDeleteFolderModal}
-          handleDeleteFolder={handleDeleteFolder}
-        />
-
-        <EditFolderModal
-          open={openEditFolderModal}
-          setOpen={setOpenEditFolderModal}
-          folder={folderToEdit}
-          onSave={handleUpdateFolderName}
-        />
-      </SidebarProvider>
-    );
-  }
-
-  /* ==================================================
-     📌 DEFAULT (components, mcp, assets, etc.)
-     ================================================== */
-
-  const showSidebar =
-    hasContent &&
-    (flows.length !== examples.length || folders.length > 1);
+  /* ================= LAYOUT ================= */
 
   return (
-    <SidebarProvider width="0px">
-      {showSidebar && (
-        <SideBarFoldersButtonsComponent
-          handleChangeFolder={(id: string) => {
-            navigate(`/flows/folder/${id}`);
-          }}
-          handleDeleteFolder={(folder) => {
-            setFolderToEdit(folder);
-            setOpenDeleteFolderModal(true);
-          }}
-          handleFilesClick={() => {
-            navigate("/assets");
-          }}
-        />
-      )}
+    <SidebarProvider width="280px">
+      {Sidebar}
 
       <main className="flex h-full w-full overflow-hidden">
-        {hasContent ? (
+        {!hasContent ? (
+          <div className="flex h-full w-full items-center justify-center">
+            <CustomLoader remSize={30} />
+          </div>
+        ) : isFlowsRoute ? (
           <div className="relative mx-auto flex h-full w-full flex-col overflow-hidden">
             {showEmptyState ? (
               <CustomEmptyPageCommunity setOpenModal={setOpenModal} />
             ) : (
-              <Outlet />
+              <FolderCardsView
+                setOpenModal={setOpenModal}
+                onFolderClick={(folderId: string) => {
+                  navigate(`/flows/folder/${folderId}`);
+                }}
+                onRenameFolder={(folder) => {
+                  setFolderToEdit(folder);
+                  setOpenEditFolderModal(true);
+                }}
+                onDeleteFolder={(folder) => {
+                  setFolderToEdit(folder);
+                  setOpenDeleteFolderModal(true);
+                }}
+                onFilesClick={() => {
+                  navigate("/assets/files");
+                }}
+              />
             )}
           </div>
         ) : (
-          <div className="flex h-full w-full items-center justify-center">
-            <CustomLoader remSize={30} />
+          <div className="relative mx-auto flex h-full w-full flex-col overflow-hidden">
+            <Outlet />
           </div>
         )}
       </main>
+
       <ModalsComponent
         openModal={openModal}
         setOpenModal={setOpenModal}
         openDeleteFolderModal={openDeleteFolderModal}
         setOpenDeleteFolderModal={setOpenDeleteFolderModal}
         handleDeleteFolder={handleDeleteFolder}
+      />
+
+      <EditFolderModal
+        open={openEditFolderModal}
+        setOpen={setOpenEditFolderModal}
+        folder={folderToEdit}
+        onSave={handleUpdateFolderName}
       />
     </SidebarProvider>
   );

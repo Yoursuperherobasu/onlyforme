@@ -24,7 +24,7 @@ export default function PageLayout({
 
   return (
     <div className="flex w-full flex-1 flex-col justify-between overflow-auto overflow-x-hidden bg-background">
-      <div className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col">
+      <div className="mx-auto flex w-full  flex-1 flex-col">
         <div className="flex flex-col gap-4 p-6 pt-0">
           <CustomBanner />
           <div className="flex w-full items-center justify-between gap-4 space-y-0.5 pb-2 pt-10">

@@ -28,6 +28,7 @@ import LoginPage from "./pages/LoginPage";
 import FilesPage from "./pages/MainPage/pages/filesPage";
 import HomePage from "./pages/MainPage/pages/homePage";
 import KnowledgePage from "./pages/MainPage/pages/knowledgePage";
+
 import CollectionPage from "./pages/MainPage/pages/main-page";
 import SettingsPage from "./pages/SettingsPage";
 import ApiKeysPage from "./pages/SettingsPage/pages/ApiKeysPage";
@@ -37,6 +38,7 @@ import MCPServersPage from "./pages/SettingsPage/pages/MCPServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
+import ApprovalPage from "./pages/ApprovalPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -83,6 +85,15 @@ const router = createBrowserRouter(
                     index
                     element={<CustomNavigate replace to={"flows"} />}
                   />
+                  <Route
+            path="approval"
+            element={
+              
+                <ApprovalPage />
+              
+            }
+          />
+
                   {ENABLE_FILE_MANAGEMENT && (
                     <Route path="assets">
                       <Route
@@ -186,6 +197,7 @@ const router = createBrowserRouter(
               </ProtectedLoginRoute>
             }
           />
+          
           <Route
             path="signup"
             element={

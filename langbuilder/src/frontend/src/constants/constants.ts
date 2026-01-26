@@ -1093,7 +1093,7 @@ export const DEFAULT_FILE_PICKER_TIMEOUT = 60000;
 export const DISCORD_URL = "https://discord.com/invite/EqksyE2EX9";
 export const GITHUB_URL = "https://github.com/CloudGeometry/langbuilder";
 export const TWITTER_URL = "https://x.com/CloudGeometry";
-export const DOCS_URL = "https://docs.langbuilder.org";
+export const DOCS_URL = "https://www.motherson.com/";
 export const DATASTAX_DOCS_URL =
   "https://docs.datastax.com/en/langbuilder/index.html";
 export const DESKTOP_URL = "https://www.langbuilder.org/desktop";
