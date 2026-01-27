@@ -408,7 +408,7 @@ const SideBarFoldersButtonsComponent = ({
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              {/* Approvals */}
+              {/* Projects */}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="md"
@@ -417,13 +417,14 @@ const SideBarFoldersButtonsComponent = ({
                   className="text-[var(--sidebar-foreground)]"
                 >
                   <ForwardedIconComponent
-                    name="CheckSquare"
+                    name="FolderKanban"
                     className="h-4 w-4 text-[var(--sidebar-foreground)]"
                   />
-                  Approvals
+                  Projects
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
+              {/* Review & Approval */}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="md"
@@ -432,13 +433,13 @@ const SideBarFoldersButtonsComponent = ({
                   className="text-[var(--sidebar-foreground)]"
                 >
                   <ForwardedIconComponent
-                    name="CheckSquare"
+                    name="ClipboardCheck"
                     className="h-4 w-4 text-[var(--sidebar-foreground)]"
                   />
-                  Agent Catalogue
+                  Review & Approval
                 </SidebarMenuButton>
               </SidebarMenuItem>
-
+              {/* Agent Registry */}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="md"
@@ -450,10 +451,10 @@ const SideBarFoldersButtonsComponent = ({
                     name="BrainCog"
                     className="h-4 w-4 text-[var(--sidebar-foreground)]"
                   />
-                  Model Catalogue
+                  Agent Registry
                 </SidebarMenuButton>
               </SidebarMenuItem>
-
+              {/* Model Registry */}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="md"
@@ -465,10 +466,10 @@ const SideBarFoldersButtonsComponent = ({
                     name="Workflow"
                     className="h-4 w-4 text-[var(--sidebar-foreground)]"
                   />
-                  Workflow
+                  Model Registry
                 </SidebarMenuButton>
               </SidebarMenuItem>
-
+              {/* Orchestrator */}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="md"
@@ -480,7 +481,23 @@ const SideBarFoldersButtonsComponent = ({
                     name="Cog"
                     className="h-4 w-4 text-[var(--sidebar-foreground)]"
                   />
-                  Orchestrator
+                  Orchestrator 
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* Observability */}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  size="md"
+                  isActive={pathname.startsWith("/approval")}
+                  onClick={() => _navigate("/approval")}
+                  className="text-[var(--sidebar-foreground)]"
+                >
+                  <ForwardedIconComponent
+                    name="BarChart3"
+                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
+                  />
+                  Observability
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
