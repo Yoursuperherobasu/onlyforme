@@ -72,14 +72,19 @@ export function AuthProvider({ children }): React.ReactElement {
       {},
       {
         onSuccess: async (user) => {
-          setUserData(user);
-          setRole(user.role);
-          setPermissions(user.permissions || []);
-          const isSuperUser = user!.is_superuser;
-          useAuthStore.getState().setIsAdmin(isSuperUser);
-          checkHasStore();
-          fetchApiData();
-        },
+  setUserData(user);
+  setRole(user.role);
+  setPermissions(user.permissions || []);
+
+  // 🔥 THIS IS THE FIX
+  useAuthStore.getState().setAuthContext({
+    role: user.role,
+    permissions: user.permissions || [],
+  });
+
+  checkHasStore();
+  fetchApiData();
+},
         onError: () => {
           setUserData(null);
         },

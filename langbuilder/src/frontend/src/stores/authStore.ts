@@ -1,5 +1,3 @@
-// authStore.js
-
 import { Cookies } from "react-cookie";
 import { create } from "zustand";
 import {
@@ -9,15 +7,27 @@ import {
 import type { AuthStoreType } from "@/types/zustand/auth";
 
 const cookies = new Cookies();
-const useAuthStore = create<AuthStoreType>((set, get) => ({
-  isAdmin: false,
+
+const useAuthStore = create<AuthStoreType>((set) => ({
+  // auth
   isAuthenticated: !!cookies.get(LANGBUILDER_ACCESS_TOKEN),
   accessToken: cookies.get(LANGBUILDER_ACCESS_TOKEN) ?? null,
-  userData: null,
   apiKey: cookies.get(LANGBUILDER_API_TOKEN),
   authenticationErrorCount: 0,
 
-  setIsAdmin: (isAdmin) => set({ isAdmin }),
+  // authz
+  role: null,
+  permissions: [],
+
+  userData: null,
+
+  // 🔥 single entry point from backend
+  setAuthContext: ({ role, permissions }) =>
+    set({
+      role,
+      permissions,
+    }),
+
   setIsAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
   setAccessToken: (accessToken) => set({ accessToken }),
   setUserData: (userData) => set({ userData }),
@@ -26,15 +36,13 @@ const useAuthStore = create<AuthStoreType>((set, get) => ({
     set({ authenticationErrorCount }),
 
   logout: async () => {
-    get().setIsAuthenticated(false);
-    get().setIsAdmin(false);
-
     set({
-      isAdmin: false,
-      userData: null,
-      accessToken: null,
       isAuthenticated: false,
+      accessToken: null,
       apiKey: null,
+      role: null,
+      permissions: [],
+      userData: null,
     });
   },
 }));

@@ -23,6 +23,8 @@ from langbuilder.services.cache.user_cache import UserCacheService
 
 from langbuilder.services.cache.user_cache import UserCacheService
 from langbuilder.services.auth.permissions import permission_cache
+from langbuilder.services.auth.decorators import PermissionChecker
+
 
 router = APIRouter(tags=["Users"], prefix="/users")
 
@@ -31,6 +33,7 @@ router = APIRouter(tags=["Users"], prefix="/users")
 async def add_user(
     user: UserCreate,
     session: DbSession,
+     _: User = Depends(PermissionChecker(["manage_users"])),
 ) -> User:
     """Add a new user to the database."""
     new_user = User.model_validate(user, from_attributes=True)
@@ -87,7 +90,7 @@ async def read_current_user(
         "permissions": user_permissions
     }
 
-@router.get("/", dependencies=[Depends(get_current_active_superuser)])
+@router.get("/", response_model=UsersResponse)
 async def read_all_users(
     *,
     skip: int = 0,
@@ -160,14 +163,14 @@ async def reset_password(
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_superuser)],
     session: DbSession,
+    current_user: User = Depends(PermissionChecker(["manage_users"])),
+
 ) -> dict:
     """Delete a user from the database."""
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="You can't delete your own user account")
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Permission denied")
+
 
     stmt = select(User).where(User.id == user_id)
     user_db = (await session.exec(stmt)).first()
