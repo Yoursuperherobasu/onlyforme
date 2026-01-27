@@ -168,7 +168,7 @@ class LCAgentComponent(Component):
 
         # Capture the timestamp at agent creation time
         from datetime import datetime, timezone
-        creation_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+        creation_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
         
         agent_message = Message(
             sender=MESSAGE_SENDER_AI,

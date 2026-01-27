@@ -5,27 +5,22 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from .python_function import PythonFunctionComponent
+    from langbuilder.components.HumanInTheLoop.human_approval import HumanApprovalComponent
 
 _dynamic_imports = {
-    "PythonFunctionComponent": "python_function",
+    "HumanApprovalComponent": "human_approval",
 }
 
 __all__ = [
-    "PythonFunctionComponent",
+    "HumanApprovalComponent",
 ]
 
 
 def __getattr__(attr_name: str) -> Any:
-    """Lazily import prototype components on attribute access."""
     if attr_name not in _dynamic_imports:
         msg = f"module '{__name__}' has no attribute '{attr_name}'"
         raise AttributeError(msg)
-    try:
-        result = import_mod(attr_name, _dynamic_imports[attr_name], __spec__.parent)
-    except (ModuleNotFoundError, ImportError, AttributeError) as e:
-        msg = f"Could not import '{attr_name}' from '{__name__}': {e}"
-        raise AttributeError(msg) from e
+    result = import_mod(attr_name, _dynamic_imports[attr_name], __spec__.parent)
     globals()[attr_name] = result
     return result
 

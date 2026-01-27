@@ -212,7 +212,7 @@ export const SIDEBAR_CATEGORIES = [
   { display_name: "Input / Output", name: "input_output", icon: "Cable" },
   { display_name: "Agents", name: "agents", icon: "Bot" },
   { display_name: "Models", name: "models", icon: "BrainCog" },
-  { display_name: "Data", name: "data", icon: "Database" },
+  //{ display_name: "Tools", name: "data", icon: "Database" },
   ...(ENABLE_KNOWLEDGE_BASES
     ? [
         {
@@ -222,7 +222,7 @@ export const SIDEBAR_CATEGORIES = [
         },
       ]
     : []),
-  { display_name: "Vector Stores", name: "vectorstores", icon: "Layers" },
+  { display_name: "Vector DB", name: "vectorstores", icon: "Layers" },
   { display_name: "Processing", name: "processing", icon: "ListFilter" },
   { display_name: "Logic", name: "logic", icon: "ArrowRightLeft" },
   { display_name: "Helpers", name: "helpers", icon: "Wand2" },
@@ -248,6 +248,8 @@ export const SIDEBAR_CATEGORIES = [
     name: "languagemodels",
     icon: "BrainCircuit",
   },
+   { display_name: "Guardrails", name: "Guardrails", icon: "Binary" },
+  { display_name: "Human in the Loop", name: "HumanInTheLoop", icon: "UserCheck" },
   { display_name: "Embeddings", name: "embeddings", icon: "Binary" },
   { display_name: "Memories", name: "memories", icon: "Cpu" },
   { display_name: "Amazon", name: "amazon", icon: "Amazon" },
@@ -279,7 +281,7 @@ export const SIDEBAR_CATEGORIES = [
   { display_name: "Git", name: "git", icon: "GitLoader" },
   { display_name: "Glean", name: "glean", icon: "Glean" },
   { display_name: "Gmail", name: "gmail", icon: "Gmail" },
-  { display_name: "Google", name: "google", icon: "Google" },
+  { display_name: "Google Generative AI", name: "google", icon: "GoogleGenerativeAI" },
   { display_name: "Groq", name: "groq", icon: "Groq" },
   {
     display_name: "Home Assistant",
@@ -290,7 +292,6 @@ export const SIDEBAR_CATEGORIES = [
   { display_name: "IBM", name: "ibm", icon: "WatsonxAI" },
   { display_name: "Icosa Computing", name: "icosacomputing", icon: "Icosa" },
   { display_name: "JigsawStack", name: "jigsawstack", icon: "JigsawStack" },
-  { display_name: "LangChain", name: "langchain_utilities", icon: "LangChain" },
   { display_name: "LangWatch", name: "langwatch", icon: "Langwatch" },
   { display_name: "LMStudio", name: "lmstudio", icon: "LMStudio" },
   { display_name: "MariTalk", name: "maritalk", icon: "Maritalk" },
@@ -324,7 +325,7 @@ export const SIDEBAR_CATEGORIES = [
   { display_name: "Unstructured", name: "unstructured", icon: "Unstructured" },
   { display_name: "Upstash", name: "upstash", icon: "Upstash" },
   { display_name: "Vectara", name: "vectara", icon: "Vectara" },
-  { display_name: "Vector Stores", name: "vectorstores", icon: "Layers" },
+  { display_name: "Vector DB", name: "vectorstores", icon: "Layers" },
   { display_name: "Weaviate", name: "weaviate", icon: "Weaviate" },
   { display_name: "Vertex AI", name: "vertexai", icon: "VertexAI" },
   { display_name: "Wikipedia", name: "wikipedia", icon: "Wikipedia" },
