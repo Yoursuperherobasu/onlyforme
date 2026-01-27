@@ -152,6 +152,12 @@ class Settings(BaseSettings):
     # cache configuration
     cache_type: Literal["async", "redis", "memory", "disk"] = "async"
     """The cache type can be 'async' or 'redis'."""
+    redis_host: str = "agentcoreredis.redis.cache.windows.net"
+    redis_port: int = 6380
+    redis_db: int = 0
+    redis_url: str | None = None
+    redis_password: str = "7iQsiMysElkfTwCNsyAuiQng3Eeeat6jFAzCaCPfsQw="
+    redis_ssl: bool = True
     cache_expire: int = 3600
     """The cache expire in seconds."""
     variable_store: str = "db"
@@ -170,11 +176,13 @@ class Settings(BaseSettings):
     bundle_urls: list[str] = []
 
     # Redis
-    redis_host: str = "localhost"
-    redis_port: int = 6379
+    redis_host: str = "agentcoreredis.redis.cache.windows.net"
+    redis_port: int = 6380
     redis_db: int = 0
     redis_url: str | None = None
+    redis_password: str | None = "7iQsiMysElkfTwCNsyAuiQng3Eeeat6jFAzCaCPfsQw="
     redis_cache_expire: int = 3600
+
 
     # Sentry
     sentry_dsn: str | None = None

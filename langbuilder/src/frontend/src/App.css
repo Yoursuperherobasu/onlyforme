@@ -230,9 +230,23 @@ code {
   width: var(--sidebar-width);
 }
 
-
 /* Sidebar color */
 :root {
   --sidebar-background: #cf0707; /* light theme */
   --sidebar-foreground: #ffffff;
+}
+
+[data-sidebar="sidebar"] {
+  --background: var(--sidebar-background);
+}
+
+:root {
+  --sidebar-icon: rgba(255, 255, 255, 0.85);
+  --sidebar-icon-active: #ffffff;
+}
+
+/* Dark theme */
+.dark {
+  --sidebar-icon: rgba(255, 255, 255, 0.8);
+  --sidebar-icon-active: #ffffff;
 }

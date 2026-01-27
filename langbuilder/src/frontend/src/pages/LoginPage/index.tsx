@@ -162,75 +162,17 @@ export default function LoginPage(): JSX.Element {
               }}
               className="space-y-4"
             >
-              {/* Username Input */}
-              <div>
-                <Form.Field name="username">
-                  <div className="relative w-full">
-                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 z-10 pointer-events-none" />
-                    <Form.Control asChild>
-                      <Input
-                        type="text"
-                        onChange={({ target: { value } }) => {
-                          handleInput({ target: { name: "username", value } });
-                        }}
-                        value={username}
-                        className="w-full pl-14 pr-4 h-14 bg-[#1a1a1a] border border-gray-700 rounded-lg text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20"
-                        required
-                        placeholder={t("Username")}
-                      />
-                    </Form.Control>
-                  </div>
-                  <Form.Message
-                    match="valueMissing"
-                    className="text-sm text-red-400 mt-1"
-                  >
-                    Please enter your username
-                  </Form.Message>
-                </Form.Field>
-              </div>
-              {/* Password Input */}
-              <div>
-                <Form.Field name="password">
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 z-10" />
-                    <InputComponent
-                      onChange={(value) => {
-                        handleInput({ target: { name: "password", value } });
-                      }}
-                      value={password}
-                      isForm
-                      password={true}
-                      required
-                      placeholder={t("Password")}
-                      className="w-full pl-11 h-12 bg-[#1a1a1a] border-gray-700 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
-                    />
-                  </div>
-                  <Form.Message
-                    className="text-sm text-red-400 mt-1"
-                    match="valueMissing"
-                  >
-                    {t("Please enter your password")}
-                  </Form.Message>
-                </Form.Field>
-              </div>
+              
+              
 
               {/* Sign In Button */}
               <div className="grid grid-cols-2 gap-3">
-                {/* Normal Sign In */}
-                <Form.Submit asChild>
-                  <Button
-                    type="submit"
-                    className="h-12 bg-purple-600 hover:bg-purple-700 text-white text-base font-medium"
-                  >
-                    {t("Sign In")}
-                  </Button>
-                </Form.Submit>
-
+                
                 {/* Azure SSO */}
                 <Button
                   type="button"
                   onClick={handleAzureSSO}
-                  className="h-12 bg-[#2f2f2f] hover:bg-[#3a3a3a] text-white text-base font-medium flex items-center justify-center gap-2"
+                   className="h-12 bg-[#9810FA] hover:bg-[#8a0ee0] text-white flex items-center justify-center gap-2"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 23 23">
                     <path fill="#f25022" d="M1 1h10v10H1z" />
@@ -242,18 +184,6 @@ export default function LoginPage(): JSX.Element {
                 </Button>
               </div>
 
-              {/* Sign Up Link */}
-              <div className="text-center pt-2">
-                <p className="text-sm text-gray-400">
-                  {t("New to AgentCore?")}{" "}
-                  <CustomLink
-                    to="/signup"
-                    className="text-purple-500 hover:text-purple-400 font-medium"
-                  >
-                    {t("Create an account")}  
-                  </CustomLink>
-                </p>
-              </div>
             </Form.Root>
           </div>
         </div>

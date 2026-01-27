@@ -1,6 +1,6 @@
 from typing import List, Annotated
 from fastapi import HTTPException, status, Depends
-from langbuilder.services.auth.permissions import get_permissions_for_role
+from langbuilder.services.auth.permissions import get_permissions_for_role, permission_cache
 from langbuilder.services.auth.utils import get_current_active_user
 from functools import wraps
 from fastapi import Depends
@@ -11,7 +11,7 @@ class PermissionChecker:
         self.required_permissions = required_permissions
         self.all_required = all_required
 
-    def __call__(
+    async def __call__(
         self,
         current_user: User = Depends(get_current_active_user),
     ) -> User:
@@ -22,7 +22,10 @@ class PermissionChecker:
                 detail="Not authenticated",
             )
         print("User role:", current_user.role)
-        user_permissions = get_permissions_for_role(current_user.role)
+        if permission_cache:
+            user_permissions = await permission_cache.get_permissions_for_role(current_user.role)
+        else:
+            user_permissions = await get_permissions_for_role(current_user.role)
         print("User permissions:", user_permissions)
         if self.all_required:
             has_access = all(
@@ -37,13 +40,12 @@ class PermissionChecker:
                 f"Requires at least one of: {self.required_permissions}"
             )
         print("Access granted:", has_access)
-        if  has_access is False:
+        if has_access is False:
             print(status.HTTP_403_FORBIDDEN, error_msg, "*****")
-            from fastapi.responses import JSONResponse
             raise HTTPException(
-        status_code=403, 
-        detail=f"Missing required permissions"
-    )
+                status_code=403, 
+                detail=f"Missing required permissions"
+            )
         return current_user
 
     
