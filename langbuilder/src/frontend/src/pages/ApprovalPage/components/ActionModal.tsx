@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X } from "lucide-react";
+import { X, Upload, File, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -9,7 +9,7 @@ interface ActionModalProps {
   setOpen: (open: boolean) => void;
   action: "approve" | "reject";
   agentTitle: string;
-  onSubmit: (comments: string) => void;
+  onSubmit: (data: { comments: string; attachments: File[] }) => void;
 }
 
 export default function ActionModal({
@@ -20,17 +20,43 @@ export default function ActionModal({
   onSubmit,
 }: ActionModalProps) {
   const [comments, setComments] = useState("");
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [error, setError] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(comments);
-    setComments("");
-    setOpen(false);
+    
+    // Validation: Either comments or attachments must be provided
+    if (!comments.trim() && attachments.length === 0) {
+      setError("Please provide either comments or attachments");
+      return;
+    }
+
+    onSubmit({ comments, attachments });
+    handleClose();
   };
 
   const handleClose = () => {
     setComments("");
+    setAttachments([]);
+    setError("");
     setOpen(false);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    setAttachments([...attachments, ...files]);
+    setError(""); // Clear error when files are added
+  };
+
+  const handleRemoveFile = (index: number) => {
+    setAttachments(attachments.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
   };
 
   if (!open) return null;
@@ -66,16 +92,25 @@ export default function ActionModal({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Error Message */}
+          {error && (
+            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
           {/* Comments */}
           <div className="space-y-2">
             <Label htmlFor="comments" className="text-sm font-medium">
-              Comments {!isApprove && <span className="text-destructive">*</span>}
+              Comments
             </Label>
             <Textarea
               id="comments"
-              required={!isApprove}
               value={comments}
-              onChange={(e) => setComments(e.target.value)}
+              onChange={(e) => {
+                setComments(e.target.value);
+                setError(""); // Clear error when typing
+              }}
               placeholder={
                 isApprove
                   ? "Add optional feedback or notes..."
@@ -84,11 +119,73 @@ export default function ActionModal({
               rows={5}
               className="resize-none bg-background"
             />
-            {!isApprove && (
-              <p className="text-xs text-muted-foreground">
-                Rejection reason is required
-              </p>
+          </div>
+
+          {/* File Attachments */}
+          <div className="space-y-2">
+            <Label htmlFor="attachments" className="text-sm font-medium">
+              Attachments
+            </Label>
+            
+            {/* Upload Button */}
+            <div className="flex items-center gap-2">
+              <input
+                id="attachments"
+                type="file"
+                multiple
+                onChange={handleFileChange}
+                className="hidden"
+                accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.xlsx,.csv"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => document.getElementById("attachments")?.click()}
+                className="w-full gap-2"
+              >
+                <Upload className="h-4 w-4" />
+                Upload Files
+              </Button>
+            </div>
+
+            {/* File List */}
+            {attachments.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {attachments.map((file, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between rounded-md border border-border bg-muted/50 p-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <File className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">
+                          {file.name}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatFileSize(file.size)}
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveFile(index)}
+                      className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
             )}
+
+            <p className="text-xs text-muted-foreground">
+              {isApprove
+                ? "Either comments or attachments are required"
+                : "Either comments or attachments are required for rejection"}
+            </p>
           </div>
 
           {/* Action Buttons */}
