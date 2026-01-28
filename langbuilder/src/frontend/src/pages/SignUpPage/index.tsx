@@ -1,6 +1,6 @@
 import * as Form from "@radix-ui/react-form";
 import { type FormEvent, useEffect, useState } from "react";
-import LangBuilderLogo from "@/assets/LangBuilderLogo.svg?react";
+import MothersonLogo from "@/assets/mothersonLogo.svg?react";
 import InputComponent from "@/components/core/parameterRenderComponent/components/inputComponent";
 import { useAddUser } from "@/controllers/API/queries/auth";
 import { CustomLink } from "@/customization/components/custom-link";
@@ -90,7 +90,7 @@ export default function SignUp(): JSX.Element {
     >
       <div className="flex h-full w-full flex-col items-center justify-center bg-muted">
         <div className="flex w-72 flex-col items-center justify-center gap-2">
-          <LangBuilderLogo
+          <MothersonLogo
             title="LangBuilder logo"
             className="mb-4 h-10 w-10 scale-[1.5]"
           />
