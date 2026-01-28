@@ -66,7 +66,7 @@ export default function GuardrailsView({
   const DUMMY_GUARDRAILS: GuardrailType[] = [
     {
       id: "1",
-      name: "Nemo Guardrails",
+      name: "NeMo Guardrails",
       description: "NVIDIA's programmable guardrails for LLM applications with content moderation and topic control",
       provider: "NVIDIA",
       category: "content-safety",
