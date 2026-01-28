@@ -80,11 +80,7 @@ export default function SettingsPage(): JSX.Element {
     },
   );
 
-  // TODO: Remove this on cleanup
-  if (!ENABLE_DATASTAX_LANGBUILDER) {
-    const langbuilderItems = CustomStoreSidebar(true, ENABLE_LANGBUILDER_STORE);
-    sidebarNavItems.splice(2, 0, ...langbuilderItems);
-  }
+
 
   return (
     <PageLayout

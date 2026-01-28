@@ -50,6 +50,8 @@ import Dashboard from "./pages/DashboardPage";
 import DashboardAdmin from "./pages/DashboardPage";
 import TimeoutSettings from "./pages/TimeoutSettings";
 import ObservabilityDashboard from "./pages/ObservabilityPage";
+import GuardrailsView from "./pages/GuardrailsCatalogue";
+import VectorDBView from "./pages/VectorDbPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -101,6 +103,18 @@ const router = createBrowserRouter(
                   <Route
                     path="orchestrator-chat"
                     element={<AgentOrchestrator />}
+                  />
+                  <Route
+                    path="guardrails"
+                    element={<GuardrailsView />}
+                  />
+                  <Route
+                    path="vector-db"
+                    element={<VectorDBView />}
+                  />
+                  <Route
+                    path="mcp-servers"
+                    element={<MCPServersPage />}
                   />
                   <Route
                     path="dashboard-admin"

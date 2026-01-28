@@ -485,7 +485,7 @@ const SideBarFoldersButtonsComponent = ({
               name="PlayCircle"
               className="h-4 w-4"
             />
-            Agent Runtime
+            Agent Control Panel
           </SidebarMenuButton>
         </SidebarMenuItem>
 
@@ -501,7 +501,7 @@ const SideBarFoldersButtonsComponent = ({
               name="GitBranch"
               className="h-4 w-4"
             />
-            Orchestrator
+            Orchestration Chat
           </SidebarMenuButton>
         </SidebarMenuItem>
 
@@ -521,6 +521,51 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuButton>
         </SidebarMenuItem>
 
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/guardrails")}
+            onClick={() => _navigate("/guardrails")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="ShieldCheck"
+              className="h-4 w-4"
+            />
+            Guardrails
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/vector-db")}
+            onClick={() => _navigate("/vector-db")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Database"
+              className="h-4 w-4"
+            />
+            VectorDB Catalogue
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/mcp-servers")}
+            onClick={() => _navigate("/mcp-servers")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Server"
+              className="h-4 w-4"
+            />
+            MCP Servers
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
         {/* Timeout Settings */}
         <SidebarMenuItem>
           <SidebarMenuButton
@@ -533,7 +578,7 @@ const SideBarFoldersButtonsComponent = ({
               name="Clock"
               className="h-4 w-4"
             />
-            Timeout Settings
+            Platform Configurations
           </SidebarMenuButton>
         </SidebarMenuItem>
 

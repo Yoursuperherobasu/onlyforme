@@ -67,14 +67,11 @@ export default function MCPServersPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header - Fixed */}
-      <div className="flex flex-shrink-0 items-start justify-between border-b px-8 py-6">
+      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex items-center gap-3">
+            <Server className="h-7 w-7 text-orange-500" />
             <h1 className="text-2xl font-semibold">MCP Servers</h1>
-            <ForwardedIconComponent
-              name="Mcp"
-              className="h-5 w-5 text-primary"
-            />
           </div>
           <p className="text-sm text-muted-foreground">
             Manage MCP Servers for use in your flows
@@ -93,7 +90,8 @@ export default function MCPServersPage() {
             />
           </div>
 
-          <Button variant="default"
+          <Button
+            variant="default"
             onClick={() => setAddOpen(true)}
             data-testid="add-mcp-server-button-page"
           >
@@ -120,7 +118,8 @@ export default function MCPServersPage() {
                   : "Get started by adding your first MCP server"}
               </p>
               {!searchQuery && (
-                <Button variant="default"
+                <Button
+                  variant="default"
                   className="mt-4"
                   onClick={() => setAddOpen(true)}
                 >
