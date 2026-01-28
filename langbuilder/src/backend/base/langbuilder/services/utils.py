@@ -18,7 +18,9 @@ from langbuilder.services.database.models.vertex_builds.model import VertexBuild
 from langbuilder.services.database.utils import initialize_database
 from langbuilder.services.schema import ServiceType
 from langbuilder.services.settings.constants import DEFAULT_SUPERUSER, DEFAULT_SUPERUSER_PASSWORD
-
+from langbuilder.services.auth import permissions
+from langbuilder.services.auth.permissions import PermissionCacheService
+from langbuilder.services.cache.user_cache import UserCacheService
 from .deps import get_db_service, get_service, get_settings_service
 
 if TYPE_CHECKING:
@@ -218,7 +220,9 @@ async def clean_vertex_builds(settings_service: SettingsService, session: AsyncS
 
 
 async def initialize_services(*, fix_migration: bool = False) -> None:
+    
     """Initialize all the services needed."""
+    print("Auth cache services initialized")
     cache_service = get_service(ServiceType.CACHE_SERVICE, default=CacheServiceFactory())
     # Test external cache connection
     if isinstance(cache_service, ExternalAsyncBaseCacheService) and not (await cache_service.is_connected()):
@@ -238,3 +242,11 @@ async def initialize_services(*, fix_migration: bool = False) -> None:
         logger.warning(f"Error assigning orphaned flows to the superuser: {exc!s}")
     await clean_transactions(settings_service, session)
     await clean_vertex_builds(settings_service, session)
+    try:
+        permissions.permission_cache = PermissionCacheService(settings_service)
+        user_cache_service = UserCacheService(settings_service)  # Can store globally if needed
+        print("Auth cache services initialized")
+    except Exception as e:
+        print(f"Failed to init auth cache: {e}")
+        permissions.permission_cache = None
+    logger.info("Auth cache services initialized")

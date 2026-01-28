@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import useFlowStore from "@/stores/flowStore";
 import PublishDropdown from "./deploy-dropdown";
 import PlaygroundButton from "./playground-button";
+import PublishButton from "./publish-button";
 
 type FlowToolbarOptionsProps = {
   open: boolean;
@@ -26,6 +27,16 @@ const FlowToolbarOptions = ({
           setOpen={setOpen}
           canvasOpen
         />
+        
+      </div>
+      <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">
+        <PublishButton
+          hasIO={hasIO}
+          open={open}
+          setOpen={setOpen}
+          canvasOpen
+        />
+        
       </div>
       <PublishDropdown
         openApiModal={openApiModal}

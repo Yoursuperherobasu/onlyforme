@@ -39,6 +39,16 @@ import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
+import ModelCatalogue from "./pages/ModelCatalogue";
+import AgentOrchestrator from "./pages/OrchestratorChat";
+import AgentCatalogueView from "./pages/AgentCatalogue";
+import { Workflow } from "lucide-react";
+import WorkflowCatalogueView from "./pages/WorkflowPage";
+import WorkflowsView from "./pages/WorkflowPage";
+import Dashboard from "./pages/DashboardPage";
+import Dashboard from "./pages/DashboardPage";
+import DashboardAdmin from "./pages/DashboardPage";
+import TimeoutSettings from "./pages/TimeoutSettings";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -81,19 +91,30 @@ const router = createBrowserRouter(
             <Route path="" element={<AppAuthenticatedPage />}>
               <Route path="" element={<CustomDashboardWrapperPage />}>
                 <Route path="" element={<CollectionPage />}>
-                <Route
+                  <Route
                     index
                     element={<CustomNavigate replace to={"flows"} />}
                   />
+                  <Route path="approval" element={<ApprovalPage />} />
+                  <Route path="model-catalogue" element={<ModelCatalogue />} />
                   <Route
-            path="approval"
-            element={
-              
-                <ApprovalPage />
-              
-            }
-          />
+                    path="orchestrator-chat"
+                    element={<AgentOrchestrator />}
+                  />
+                  <Route
+                    path="dashboard-admin"
+                    element={<DashboardAdmin />}
+                  />
+                  <Route
+                    path="timeout-settings"
+                    element={<TimeoutSettings />}
+                  />
+                  <Route
+                    path="agent-catalogue"
+                    element={<AgentCatalogueView />}
+                  />
 
+                  <Route path="workflows" element={<WorkflowsView />} />
                   {ENABLE_FILE_MANAGEMENT && (
                     <Route path="assets">
                       <Route
@@ -104,7 +125,7 @@ const router = createBrowserRouter(
                       {ENABLE_KNOWLEDGE_BASES && (
                         <Route
                           path="knowledge-bases"
-                          element={<KnowledgePage />} 
+                          element={<KnowledgePage />}
                         />
                       )}
                     </Route>
@@ -197,7 +218,7 @@ const router = createBrowserRouter(
               </ProtectedLoginRoute>
             }
           />
-          
+
           <Route
             path="signup"
             element={

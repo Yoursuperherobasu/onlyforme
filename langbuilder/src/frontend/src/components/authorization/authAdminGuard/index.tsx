@@ -1,20 +1,28 @@
-import { useContext } from "react";
-import { AuthContext } from "@/contexts/authContext";
+import useAuthStore from "@/stores/authStore";
 import { CustomNavigate } from "@/customization/components/custom-navigate";
 import { LoadingPage } from "@/pages/LoadingPage";
-import useAuthStore from "@/stores/authStore";
 
-export const ProtectedAdminRoute = ({ children }) => {
-  const { userData } = useContext(AuthContext);
+export const ProtectedAdminRoute = ({
+  children,
+}: {
+  children: JSX.Element;
+}) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const autoLogin = useAuthStore((state) => state.autoLogin);
-  const isAdmin = useAuthStore((state) => state.isAdmin);
+  const permissions = useAuthStore((state) => state.permissions);
 
+  // 1️⃣ Wait until auth is resolved
   if (!isAuthenticated) {
     return <LoadingPage />;
-  } else if ((userData && !isAdmin) || autoLogin) {
-    return <CustomNavigate to="/" replace />;
-  } else {
-    return children;
   }
+
+  // 2️⃣ Centralized admin permission rule
+  const canAccessAdmin = permissions.includes("manage_users");
+
+  // 3️⃣ Block if permission missing
+  if (!canAccessAdmin) {
+    return <CustomNavigate to="/" replace />;
+  }
+
+  // 4️⃣ Allowed
+  return children;
 };

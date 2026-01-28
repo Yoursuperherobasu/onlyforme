@@ -19,17 +19,17 @@ import {
   HeaderMenuToggle,
 } from "../HeaderMenu";
 import ThemeButtons from "../ThemeButtons";
+import { usePermissionAny } from "@/contexts/PermissionCheck";
 
 export const AccountMenu = () => {
   const version = useDarkStore((state) => state.version);
   const latestVersion = useDarkStore((state) => state.latestVersion);
   const navigate = useCustomNavigate();
   const { mutate: mutationLogout } = useLogout();
+  const permissions = useAuthStore((s) => s.permissions);
+  const canAccessAdmin = usePermissionAny(["manage_users"]);
 
-  const { isAdmin } = useAuthStore((state) => ({
-    isAdmin: state.isAdmin,
-  }));
-
+  console.log("🟢 [AccountMenu] User permissions:", canAccessAdmin);
   const handleLogout = () => {
     mutationLogout();
   };
@@ -69,7 +69,7 @@ export const AccountMenu = () => {
               </span>
             </HeaderMenuItemButton>
 
-            {isAdmin && (
+            {canAccessAdmin  && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {

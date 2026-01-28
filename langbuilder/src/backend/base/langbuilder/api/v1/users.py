@@ -18,7 +18,13 @@ from langbuilder.services.auth.utils import (
 from langbuilder.services.database.models.user.crud import get_user_by_id, update_user
 from langbuilder.services.database.models.user.model import User, UserCreate, UserRead, UserUpdate
 from langbuilder.services.deps import get_settings_service
-from langbuilder.services.auth.permissions import get_permissions_for_role
+from langbuilder.services.auth.permissions import get_permissions_for_role, permission_cache
+from langbuilder.services.cache.user_cache import UserCacheService
+
+from langbuilder.services.cache.user_cache import UserCacheService
+from langbuilder.services.auth.permissions import permission_cache
+from langbuilder.services.auth.decorators import PermissionChecker
+
 
 router = APIRouter(tags=["Users"], prefix="/users")
 
@@ -27,6 +33,7 @@ router = APIRouter(tags=["Users"], prefix="/users")
 async def add_user(
     user: UserCreate,
     session: DbSession,
+     _: User = Depends(PermissionChecker(["manage_users"])),
 ) -> User:
     """Add a new user to the database."""
     new_user = User.model_validate(user, from_attributes=True)
@@ -46,20 +53,44 @@ async def add_user(
     return new_user
 
 
+
 @router.get("/whoami", response_model=UserRead)
 async def read_current_user(
     current_user: CurrentActiveUser,
 ) -> dict:
     """Retrieve the current user's data."""
+    settings_service = get_settings_service()
+    user_cache = UserCacheService(settings_service)
 
-    user_permissions = get_permissions_for_role(current_user.role)
+    # Try cache for user
+    try:
+        cached_user = await user_cache.get_user(str(current_user.id))
+        if cached_user:
+            print(f"User from cache {current_user.id}")
+        else:
+            cached_user = current_user.model_dump()
+            await user_cache.set_user(current_user)  # Cache it
+            print(f"Cached user {current_user.id}")
+    except Exception as e:
+        print(f"User cache error: {e}")
+        cached_user = current_user.model_dump()
+
+    # Try cache for permissions
+    try:
+        if permission_cache:
+            user_permissions = await permission_cache.get_permissions_for_role(current_user.role)
+        else:
+            user_permissions = await get_permissions_for_role(current_user.role)
+    except Exception as e:
+        print(f"Permission cache error: {e}")
+        user_permissions = await get_permissions_for_role(current_user.role)
+
     return {
-        **current_user.model_dump(),
+        **cached_user,
         "permissions": user_permissions
     }
 
-
-@router.get("/", dependencies=[Depends(get_current_active_superuser)])
+@router.get("/", response_model=UsersResponse)
 async def read_all_users(
     *,
     skip: int = 0,
@@ -132,14 +163,14 @@ async def reset_password(
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_superuser)],
     session: DbSession,
+    current_user: User = Depends(PermissionChecker(["manage_users"])),
+
 ) -> dict:
     """Delete a user from the database."""
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="You can't delete your own user account")
-    if not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Permission denied")
+
 
     stmt = select(User).where(User.id == user_id)
     user_db = (await session.exec(stmt)).first()

@@ -86,7 +86,7 @@ async def login_to_get_access_token(
         # Create default project for user if it doesn't exist
         _ = await get_or_create_default_folder(db, user.id)
         current_role = getattr(user, "role", "developer")
-        permissions = get_permissions_for_role(current_role)    
+        permissions = await get_permissions_for_role(current_role) 
         print(current_role,"current_roleeeeeeeeeee")
         print(permissions,"permissssssssssssssssions")
         return {
@@ -134,7 +134,7 @@ async def azure_sso_login(
     email = payload.get("preferred_username") or payload.get("email")
     azure_role = payload.get("roles", ["developer"])[0]
     
-    permissions = get_permissions_for_role(azure_role)
+    permissions = await get_permissions_for_role(azure_role)
     
 
     if not email:
@@ -227,7 +227,7 @@ async def refresh_token(
         if not user:
              raise HTTPException(status_code=404, detail="User not found")
         user_role = getattr(user, "role", "developer")
-        permissions = get_permissions_for_role(user_role)
+        permissions = await get_permissions_for_role(user_role)
         response.set_cookie(
             "refresh_token_lf",
             tokens["refresh_token"],

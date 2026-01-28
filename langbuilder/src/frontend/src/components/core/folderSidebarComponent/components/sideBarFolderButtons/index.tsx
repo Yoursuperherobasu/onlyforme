@@ -4,6 +4,7 @@ import { useContext } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { AuthContext } from "@/contexts/authContext";
+import { SidebarRail, SidebarTrigger } from "@/components/ui/sidebar";
 
 import {
   Sidebar,
@@ -97,7 +98,7 @@ const SideBarFoldersButtonsComponent = ({
   const uploadFlow = useUploadFlow();
   const [foldersNames, setFoldersNames] = useState({});
   const [editFolders, setEditFolderName] = useState(
-    folders.map((obj) => ({ name: obj.name, edit: false })) ?? []
+    folders.map((obj) => ({ name: obj.name, edit: false })) ?? [],
   );
 
   const isFetchingFolders = !!useIsFetching({
@@ -164,7 +165,7 @@ const SideBarFoldersButtonsComponent = ({
                     list: [err["response"]["data"]["message"]],
                   });
                 },
-              }
+              },
             );
           });
         }
@@ -186,7 +187,7 @@ const SideBarFoldersButtonsComponent = ({
             title: `An error occurred while downloading your project.`,
           });
         },
-      }
+      },
     );
   };
 
@@ -204,7 +205,7 @@ const SideBarFoldersButtonsComponent = ({
           track("Create New Project");
           handleChangeFolder!(folder.id);
         },
-      }
+      },
     );
   }
 
@@ -221,7 +222,7 @@ const SideBarFoldersButtonsComponent = ({
   useEffect(() => {
     if (folders && folders.length > 0) {
       setEditFolderName(
-        folders.map((obj) => ({ name: obj.name, edit: false }))
+        folders.map((obj) => ({ name: obj.name, edit: false })),
       );
     }
   }, [folders]);
@@ -254,7 +255,7 @@ const SideBarFoldersButtonsComponent = ({
         {
           onSuccess: (updatedFolder) => {
             const updatedFolderIndex = folders.findIndex(
-              (f) => f.id === updatedFolder.id
+              (f) => f.id === updatedFolder.id,
             );
 
             const updateFolders = [...folders];
@@ -265,10 +266,10 @@ const SideBarFoldersButtonsComponent = ({
               folders.map((obj) => ({
                 name: obj.name,
                 edit: false,
-              }))
+              })),
             );
           },
-        }
+        },
       );
     } else {
       setFoldersNames((old) => ({
@@ -328,7 +329,7 @@ const SideBarFoldersButtonsComponent = ({
         folders.map((obj) => ({
           name: obj.name,
           edit: false,
-        }))
+        })),
       );
     }
     if (e.key === "Enter") {
@@ -343,7 +344,7 @@ const SideBarFoldersButtonsComponent = ({
   const userDismissedMcpDialog = userData?.optins?.mcp_dialog_dismissed;
 
   const [isDismissedMcpDialog, setIsDismissedMcpDialog] = useState(
-    userDismissedMcpDialog
+    userDismissedMcpDialog,
   );
 
   const handleDismissMcpDialog = () => {
@@ -368,135 +369,198 @@ const SideBarFoldersButtonsComponent = ({
   };
 
   return (
-  <Sidebar
-    collapsible={isMobile ? "offcanvas" : "none"}
-    data-testid="project-sidebar"
-    className="bg-[var(--sidebar-background)] text-[var(--sidebar-foreground)]"
-  >
-    {/* ================= HEADER ================= */}
-    <SidebarHeader className="px-3 py-0">
-  <div className="flex h-10 items-center gap-2">
-    <span className="h-4 w-2" /> {/* spacer to align with icons */}
-    
-  </div>
-</SidebarHeader>
-
-    {/* ================= CONTENT ================= */}
-    <SidebarContent className="text-[var(--sidebar-foreground)]">
-      <SidebarGroup className="p-4 py-2">
-        <SidebarGroupContent>
-          <SidebarMenu className="text-[var(--sidebar-foreground)]">
-            {/* Dashboard */}
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="md"
-                isActive={pathname.startsWith("/dashboard")}
-                onClick={() => _navigate("/dashboard")}
-                className="text-[var(--sidebar-foreground)]"
-              >
-                <ForwardedIconComponent
-                  name="LayoutDashboard"
-                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                />
-                Dashboard
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            {/* Approvals */}
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="md"
-                isActive={pathname.startsWith("/approval")}
-                onClick={() => _navigate("/approval")}
-                className="text-[var(--sidebar-foreground)]"
-              >
-                <ForwardedIconComponent
-                  name="CheckSquare"
-                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                />
-                Approvals
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="md"
-                isActive={pathname.startsWith("/approval")}
-                onClick={() => _navigate("/approval")}
-                className="text-[var(--sidebar-foreground)]"
-              >
-                <ForwardedIconComponent
-                  name="CheckSquare"
-                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                />
-                Agent Catalogue
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="md"
-                isActive={pathname.startsWith("/approval")}
-                onClick={() => _navigate("/approval")}
-                className="text-[var(--sidebar-foreground)]"
-              >
-                <ForwardedIconComponent
-                  name="CheckSquare"
-                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                />
-                Model Catalogue
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="md"
-                isActive={pathname.startsWith("/approval")}
-                onClick={() => _navigate("/approval")}
-                className="text-[var(--sidebar-foreground)]"
-              >
-                <ForwardedIconComponent
-                  name="CheckSquare"
-                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                />
-                Workflow
-              </SidebarMenuButton>
-            </SidebarMenuItem>  
-
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="md"
-                isActive={pathname.startsWith("/approval")}
-                onClick={() => _navigate("/approval")}
-                className="text-[var(--sidebar-foreground)]"
-              >
-                <ForwardedIconComponent
-                  name="CheckSquare"
-                  className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                />
-                Orchestrator
-              </SidebarMenuButton>
-            </SidebarMenuItem>          
-            </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-    </SidebarContent>
-
-    {/* ================= FOOTER ================= */}
-    <SidebarFooter className="border-t">
-      <div className="grid w-full items-center gap-2 p-2">
-        <SidebarMenuButton
-          onClick={() => _navigate("/settings")}
-          size="md"
-          className="text-sm text-[var(--sidebar-foreground)]"
-        >
-          <ForwardedIconComponent name="Settings" className="h-4 w-4 text-[var(--sidebar-foreground)]" />
-          Settings
-        </SidebarMenuButton>
+    <Sidebar
+      collapsible={isMobile ? "offcanvas" : "icon"}
+      data-testid="project-sidebar"
+      className="bg-[var(--sidebar-background)] text-[var(--sidebar-foreground)]"
+    >
+      {/* ================= HEADER ================= */}
+      <div
+        className="absolute top-[56px] right-[-12px] z-50 -translate-y-1/2"
+      >
+        <SidebarTrigger
+          className="h-6 w-6 rounded-full bg-background border shadow-md hover:bg-accent"
+        />
       </div>
-    </SidebarFooter>
-  </Sidebar>
-);
+      <SidebarHeader className="flex h-12 items-center px-3">
+        {/* Left side (title or spacer) */}
+        <div className="flex flex-1 items-center"></div>
+      </SidebarHeader>
 
+      {/* ================= CONTENT ================= */}
+      <SidebarContent className="text-[var(--sidebar-foreground)]">
+  <SidebarGroup className="p-4 py-2">
+    <SidebarGroupContent>
+      <SidebarMenu className="text-[var(--sidebar-foreground)]">
+
+        {/* Dashboard */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/dashboard-admin")}
+            onClick={() => _navigate("/dashboard-admin")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="LayoutDashboard"
+              className="h-4 w-4"
+            />
+            Dashboard
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Projects */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/flows")}
+            onClick={() => _navigate("/flows")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="FolderKanban"
+              className="h-4 w-4"
+            />
+            Projects
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Review & Approval */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/approval")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="ClipboardCheck"
+              className="h-4 w-4"
+            />
+            Review & Approval
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Agent Registry */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/agent-catalogue")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Bot"
+              className="h-4 w-4"
+            />
+            Agent Registry
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Model Registry */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/model-catalogue")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Database"
+              className="h-4 w-4"
+            />
+            Model Registry
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Agent Runtime */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/workflows")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="PlayCircle"
+              className="h-4 w-4"
+            />
+            Agent Runtime
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Orchestrator */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/orchestrator-chat")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="GitBranch"
+              className="h-4 w-4"
+            />
+            Orchestrator
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Observability */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/observability")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Activity"
+              className="h-4 w-4"
+            />
+            Observability
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Timeout Settings */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/timeout-settings")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Clock"
+              className="h-4 w-4"
+            />
+            Timeout Settings
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+      </SidebarMenu>
+    </SidebarGroupContent>
+  </SidebarGroup>
+</SidebarContent>
+
+
+
+      {/* ================= FOOTER ================= */}
+      <SidebarFooter className="border-t">
+        <div className="grid w-full items-center gap-2 p-2">
+          <SidebarMenuButton
+            onClick={() => _navigate("/settings")}
+            size="md"
+            className="text-sm text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Settings"
+              className="h-4 w-4"
+            />
+            Settings
+          </SidebarMenuButton>
+        </div>
+      </SidebarFooter>
+    </Sidebar>
+  );
 };
 export default SideBarFoldersButtonsComponent;

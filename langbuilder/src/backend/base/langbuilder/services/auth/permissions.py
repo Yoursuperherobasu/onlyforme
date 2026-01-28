@@ -1,4 +1,7 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
+import redis.asyncio as redis
+from langbuilder.services.settings.service import SettingsService
+from langbuilder.services.cache.redis_client import get_redis_client
 from loguru import logger
 
 
@@ -19,10 +22,27 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     "viewer": [ACTIONS["VIEW_FILES_TAB"]]
 }
 
-def get_permissions_for_role(role: str) -> List[str]:
-    # Superusers always get all permissions
-    if role == "admin":
-        return list(ACTIONS.values())
-    perms = ROLE_PERMISSIONS.get(role.lower(), [])
-    logger.debug(f"Role: {role} | Permissions found: {perms}")
+class PermissionCacheService:
+    def __init__(self, settings_service: SettingsService):
+        self.redis = get_redis_client(settings_service)
+        self.ttl = settings_service.settings.redis_cache_expire
+
+    async def get_permissions_for_role(self, role: str) -> List[str]:
+        key = f"role:{role.lower()}"
+        cached = await self.redis.get(key)
+
+        if cached:
+            return cached.split(",")  # Deserialize list
+        perms = ROLE_PERMISSIONS.get(role.lower(), [])
+        key = f"role:{role.lower()}"
+        await self.redis.set(key, ",".join(perms), ex=self.ttl)
+        logger.debug(f"Role: {role} | Permissions cached: {perms}")
+        return perms
+
+
+permission_cache: Optional[PermissionCacheService] = None
+
+async def get_permissions_for_role(role: str) -> List[str]: 
+    if permission_cache:
+        return await permission_cache.get_permissions_for_role(role)
     return ROLE_PERMISSIONS.get(role.lower(), [])

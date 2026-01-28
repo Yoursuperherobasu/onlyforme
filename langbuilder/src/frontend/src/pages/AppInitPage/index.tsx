@@ -17,6 +17,7 @@ export function AppInitPage() {
   const refreshDiscordCount = useDarkStore(
     (state) => state.refreshDiscordCount,
   );
+  
   const isLoading = useFlowsManagerStore((state) => state.isLoading);
 
   const { isFetched: isLoaded } = useCustomPrimaryLoading();

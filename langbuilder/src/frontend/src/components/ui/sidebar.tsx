@@ -15,6 +15,7 @@ import { Input } from "./input";
 import { Separator } from "./separator";
 import { Skeleton } from "./skeleton";
 import { TooltipProvider } from "./tooltip";
+import { FaChevronLeft, FaChevronRight } from "react-icons/fa";
 
 const SIDEBAR_COOKIE_NAME = "sidebar:state";
 const SIDEBAR_SECTION_COOKIE_NAME = "sidebar:section";
@@ -223,7 +224,7 @@ const SidebarProvider = React.forwardRef<
               } as React.CSSProperties
             }
             className={cn(
-              "group/sidebar-wrapper flex h-full w-full text-foreground has-[[data-variant=inset]]:bg-background",
+             "group/sidebar-wrapper flex h-full w-full overflow-visible text-foreground has-[[data-variant=inset]]:bg-background",
               className,
             )}
             data-open={open}
@@ -361,11 +362,13 @@ const Sidebar = React.forwardRef<
 );
 Sidebar.displayName = "Sidebar";
 
+
+
 const SidebarTrigger = React.forwardRef<
   React.ElementRef<typeof Button>,
   React.ComponentProps<typeof Button>
 >(({ className, onClick, ...props }, ref) => {
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, state } = useSidebar();
 
   const handleClick = React.useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -377,26 +380,35 @@ const SidebarTrigger = React.forwardRef<
 
   return (
     <Button
-      ref={ref}
-      data-sidebar="trigger"
-      variant="ghost"
-      size="icon"
-      className={cn("h-7 w-7 text-muted-foreground", className)}
-      onClick={handleClick}
-      {...props}
-    >
+  ref={ref}
+  data-sidebar="trigger"
+  variant="ghost"
+  size="icon"
+  className={cn(
+    "!bg-white !opacity-100 h-7 w-7 rounded-full bg-white text-gray-700 shadow border border-gray-200 hover:bg-gray-100",
+    className
+  )}
+  onClick={handleClick}
+  {...props}
+>
       {props.children ? (
         props.children
       ) : (
         <>
-          <PanelLeft />
+          {state === "expanded" ? (
+            <FaChevronLeft className="h-4 w-4" />
+          ) : (
+            <FaChevronRight className="h-4 w-4" />
+          )}
           <span className="sr-only">Toggle Sidebar</span>
         </>
       )}
     </Button>
   );
 });
+
 SidebarTrigger.displayName = "SidebarTrigger";
+
 
 const SidebarRail = React.forwardRef<
   HTMLButtonElement,

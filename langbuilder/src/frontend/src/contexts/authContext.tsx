@@ -36,10 +36,8 @@ export function AuthProvider({ children }): React.ReactElement {
     getAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN) ?? null,
   );
   // --- ADD THESE STATES FOR RBAC ---
-  const [role, setRole] = useState<string | null>(localStorage.getItem("user_role"));
-  const [permissions, setPermissions] = useState<string[]>(
-    JSON.parse(localStorage.getItem("user_permissions") || "[]")
-  );
+  const [role, setRole] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   // ---------------------------------
   const [userData, setUserData] = useState<Users | null>(null);
   const [apiKey, setApiKey] = useState<string | null>(
@@ -57,6 +55,8 @@ export function AuthProvider({ children }): React.ReactElement {
     const storedAccessToken = getAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN);
     if (storedAccessToken) {
       setAccessToken(storedAccessToken);
+      setIsAuthenticated(true);
+      getUser();  // Fetch user data and permissions on app load
     }
   }, []);
 
@@ -72,12 +72,19 @@ export function AuthProvider({ children }): React.ReactElement {
       {},
       {
         onSuccess: async (user) => {
-          setUserData(user);
-          const isSuperUser = user!.is_superuser;
-          useAuthStore.getState().setIsAdmin(isSuperUser);
-          checkHasStore();
-          fetchApiData();
-        },
+  setUserData(user);
+  setRole(user.role);
+  setPermissions(user.permissions || []);
+
+  // 🔥 THIS IS THE FIX
+  useAuthStore.getState().setAuthContext({
+    role: user.role,
+    permissions: user.permissions || [],
+  });
+
+  checkHasStore();
+  fetchApiData();
+},
         onError: () => {
           setUserData(null);
         },
@@ -93,14 +100,11 @@ export function AuthProvider({ children }): React.ReactElement {
     
   ) {
     setAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN, newAccessToken);
-    setLocalStorage(LANGBUILDER_ACCESS_TOKEN, newAccessToken);
+
 
     if (refreshToken) {
       setAuthCookie(cookies, LANGBUILDER_REFRESH_TOKEN, refreshToken);
     }
-
-    setLocalStorage("user_role", userRole);
-    setLocalStorage("user_permissions", JSON.stringify(userPermissions));
 
     setRole(userRole);
     setPermissions(userPermissions);
