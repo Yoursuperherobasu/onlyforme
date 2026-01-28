@@ -1,21 +1,13 @@
 import { Outlet, type To } from "react-router-dom";
 import SideBarButtonsComponent from "@/components/core/sidebarComponent";
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { CustomStoreSidebar } from "@/customization/components/custom-store-sidebar";
-import {
-  ENABLE_DATASTAX_LANGBUILDER,
-  ENABLE_LANGBUILDER_STORE,
-  ENABLE_PROFILE_ICONS,
-} from "@/customization/feature-flags";
-import useAuthStore from "@/stores/authStore";
 import { useStoreStore } from "@/stores/storeStore";
 import ForwardedIconComponent from "../../components/common/genericIconComponent";
 import PageLayout from "../../components/common/pageLayout";
 export default function SettingsPage(): JSX.Element {
   const hasStore = useStoreStore((state) => state.hasStore);
 
-  // Hides the General settings if there is nothing to show
-  const showGeneralSettings = ENABLE_PROFILE_ICONS || hasStore
+
 
   const sidebarNavItems: {
     href?: string;
@@ -23,30 +15,9 @@ export default function SettingsPage(): JSX.Element {
     icon: React.ReactNode;
   }[] = [];
 
-  if (showGeneralSettings) {
-    sidebarNavItems.push({
-      title: "General",
-      href: "/settings/general",
-      icon: (
-        <ForwardedIconComponent
-          name="SlidersHorizontal"
-          className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
-        />
-      ),
-    });
-  }
+ 
 
   sidebarNavItems.push(
-    {
-      title: "MCP Servers",
-      href: "/settings/mcp-servers",
-      icon: (
-        <ForwardedIconComponent
-          name="Mcp"
-          className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
-        />
-      ),
-    },
     {
       title: "Global Variables",
       href: "/settings/global-variables",
@@ -86,7 +57,7 @@ export default function SettingsPage(): JSX.Element {
     <PageLayout
       backTo={-1 as To}
       title="Settings"
-      description="Manage the general settings for LangBuilder."
+      description="Manage the general settings for AgentCore."
     >
       <SidebarProvider width="15rem" defaultOpen={false}>
         <SideBarButtonsComponent items={sidebarNavItems} />
