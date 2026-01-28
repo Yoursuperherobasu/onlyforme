@@ -509,8 +509,8 @@ const SideBarFoldersButtonsComponent = ({
         <SidebarMenuItem>
           <SidebarMenuButton
             size="md"
-            isActive={pathname.startsWith("/observability")}
-            onClick={() => _navigate("/observability")}
+            isActive={pathname.startsWith("/observability-dashboard")}
+            onClick={() => _navigate("/observability-dashboard")}
             className="text-[var(--sidebar-foreground)]"
           >
             <ForwardedIconComponent
