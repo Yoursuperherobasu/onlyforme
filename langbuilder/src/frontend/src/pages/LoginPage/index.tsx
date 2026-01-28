@@ -166,16 +166,15 @@ export default function LoginPage(): JSX.Element {
         {/* RIGHT */}
         <div className="flex-1 flex items-center justify-center px-6 sm:px-12 lg:px-16 py-12 lg:py-0">
           <div className="w-full max-w-md">
-            <div className="mb-8">
-              <h2 className="text-2xl sm:text-3xl mb-2 font-semibold">
-                {t("Welcome back.")}
-              </h2>
-              <p className="text-gray-400 text-sm sm:text-base">
-                {t(
-                  "Sign in to your account to continue building intelligent agents.",
-                )}
-              </p>
-            </div>
+            <div className="mb-8 text-center">
+            <h2 className="text-2xl sm:text-3xl mb-2 font-semibold">
+              {t("Welcome back.")}
+            </h2>
+
+            <p className="text-gray-400 text-sm sm:text-base whitespace-nowrap">
+              {t("Sign in to your account to continue building intelligent agents.")}
+            </p>
+          </div>
 
             <Form.Root
               onSubmit={(event) => {
@@ -186,10 +185,11 @@ export default function LoginPage(): JSX.Element {
             >
               <div className="grid grid-cols-2 gap-3">
                 <Button
-                  type="button"
-                  onClick={handleAzureSSO}
-                  className="h-12 bg-[#9810FA] hover:bg-[#8a0ee0] text-white flex items-center justify-center gap-2"
-                >
+                type="button"
+                onClick={handleAzureSSO}
+                className="col-span-2 h-12 !bg-[#9810FA] hover:!bg-[#8a0ee0] text-white flex items-center justify-center gap-2"
+              >
+
                   <svg className="w-5 h-5" viewBox="0 0 23 23">
                     <path fill="#f25022" d="M1 1h10v10H1z" />
                     <path fill="#7fba00" d="M12 1h10v10H12z" />

@@ -105,23 +105,37 @@ export function AgentCard({
     <div className="ml-auto flex items-center gap-2">
       
 
-      <Button
-        variant="outline"
-        onClick={onReject}
-        className="gap-2 border-red-500 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/30"
-      >
-        <XCircle className="h-4 w-4" />
-        Reject
-      </Button>
+     <Button
+  variant="outline"
+  onClick={onReject}
+  className="
+    gap-2
+    border-red-500 text-red-600
+    hover:!bg-red-50 hover:!text-red-600
+    dark:border-red-700 dark:text-red-400
+    dark:hover:!bg-red-950/30 dark:hover:!text-red-400
+  "
+>
+  <XCircle className="h-4 w-4" />
+  Reject
+</Button>
+
 
       <Button
-        variant="outline"
-        onClick={onApprove}
-        className="gap-2 border-green-500 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950/30"
-      >
-        <CheckCircle2 className="h-4 w-4" />
-        Approve
-      </Button>
+  variant="outline"
+  onClick={onApprove}
+  className="
+    gap-2
+    border-green-500 text-green-600
+    hover:!bg-green-50 hover:!text-green-600
+    dark:border-green-700 dark:text-green-400
+    dark:hover:!bg-green-950/30 dark:hover:!text-green-400
+  "
+>
+  <CheckCircle2 className="h-4 w-4" />
+  Approve
+</Button>
+
     </div>
   )}
 </div>

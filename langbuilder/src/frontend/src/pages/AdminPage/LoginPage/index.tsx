@@ -1,5 +1,5 @@
 import { useContext, useState } from "react";
-import LangBuilderLogo from "@/assets/LangBuilderLogo.svg?react";
+import MothersonLogo from "@/assets/mothersonLogo.svg?react";
 import { useLoginUser } from "@/controllers/API/queries/auth";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
@@ -52,7 +52,7 @@ const { t } = useTranslation();
   return (
     <div className="flex h-full w-full flex-col items-center justify-center bg-muted">
       <div className="flex w-72 flex-col items-center justify-center gap-2">
-        <LangBuilderLogo title="LangBuilder logo" className="h-10 w-10 scale-[1.5]" />
+        <MothersonLogo title="Motherson Logo" className="h-10 w-10 scale-[1.5]" />
         <span className="mb-6 text-2xl font-semibold text-primary">Admin</span>
         <Input
           onChange={({ target: { value } }) => {
