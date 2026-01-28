@@ -49,6 +49,7 @@ import Dashboard from "./pages/DashboardPage";
 import Dashboard from "./pages/DashboardPage";
 import DashboardAdmin from "./pages/DashboardPage";
 import TimeoutSettings from "./pages/TimeoutSettings";
+import ObservabilityDashboard from "./pages/ObservabilityPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -93,7 +94,7 @@ const router = createBrowserRouter(
                 <Route path="" element={<CollectionPage />}>
                   <Route
                     index
-                    element={<CustomNavigate replace to={"flows"} />}
+                    element={<CustomNavigate replace to={"dashboard-admin"} />}
                   />
                   <Route path="approval" element={<ApprovalPage />} />
                   <Route path="model-catalogue" element={<ModelCatalogue />} />
@@ -109,9 +110,14 @@ const router = createBrowserRouter(
                     path="timeout-settings"
                     element={<TimeoutSettings />}
                   />
+                  
                   <Route
                     path="agent-catalogue"
                     element={<AgentCatalogueView />}
+                  />
+                  <Route
+                    path="observability-dashboard"
+                    element={<ObservabilityDashboard />}
                   />
 
                   <Route path="workflows" element={<WorkflowsView />} />
