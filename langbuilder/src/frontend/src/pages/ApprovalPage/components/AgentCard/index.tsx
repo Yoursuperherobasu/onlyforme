@@ -103,14 +103,7 @@ export function AgentCard({
   {/* RIGHT actions */}
   {status === "pending" && (
     <div className="ml-auto flex items-center gap-2">
-      <Button
-        variant="outline"
-        onClick={onApprove}
-        className="gap-2 border-green-500 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950/30"
-      >
-        <CheckCircle2 className="h-4 w-4" />
-        Approve
-      </Button>
+      
 
       <Button
         variant="outline"
@@ -119,6 +112,15 @@ export function AgentCard({
       >
         <XCircle className="h-4 w-4" />
         Reject
+      </Button>
+
+      <Button
+        variant="outline"
+        onClick={onApprove}
+        className="gap-2 border-green-500 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950/30"
+      >
+        <CheckCircle2 className="h-4 w-4" />
+        Approve
       </Button>
     </div>
   )}

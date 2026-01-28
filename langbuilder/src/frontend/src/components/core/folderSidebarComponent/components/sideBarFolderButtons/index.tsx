@@ -389,136 +389,160 @@ const SideBarFoldersButtonsComponent = ({
 
       {/* ================= CONTENT ================= */}
       <SidebarContent className="text-[var(--sidebar-foreground)]">
-        <SidebarGroup className="p-4 py-2">
-          <SidebarGroupContent>
-            <SidebarMenu className="text-[var(--sidebar-foreground)]">
-              {/* Dashboard */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/dashboard-admin")}
-                  onClick={() => _navigate("/dashboard-admin")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="LayoutDashboard"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Dashboard
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+  <SidebarGroup className="p-4 py-2">
+    <SidebarGroupContent>
+      <SidebarMenu className="text-[var(--sidebar-foreground)]">
 
-              {/* Projects */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/flows")}
-                  onClick={() => _navigate("/flows")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="FolderKanban"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Projects
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+        {/* Dashboard */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/dashboard-admin")}
+            onClick={() => _navigate("/dashboard-admin")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="LayoutDashboard"
+              className="h-4 w-4"
+            />
+            Dashboard
+          </SidebarMenuButton>
+        </SidebarMenuItem>
 
-              {/* Review & Approval */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/approval")}
-                  onClick={() => _navigate("/approval")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="ClipboardCheck"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Review & Approval
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              {/* Agent Registry */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/agent-catalogue")}
-                  onClick={() => _navigate("/agent-catalogue")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="BrainCog"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Agent Registry
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              {/* Model Registry */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/model-catalogue")}
-                  onClick={() => _navigate("/model-catalogue")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="Workflow"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Model Registry
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              {/* Orchestrator */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/orchestrator-chat")}
-                  onClick={() => _navigate("/orchestrator-chat")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="Cog"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Orchestrator 
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+        {/* Projects */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/flows")}
+            onClick={() => _navigate("/flows")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="FolderKanban"
+              className="h-4 w-4"
+            />
+            Projects
+          </SidebarMenuButton>
+        </SidebarMenuItem>
 
-              {/* Observability */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/approval")}
-                  onClick={() => _navigate("/approval")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="BarChart3"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Observability
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+        {/* Review & Approval */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/approval")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="ClipboardCheck"
+              className="h-4 w-4"
+            />
+            Review & Approval
+          </SidebarMenuButton>
+        </SidebarMenuItem>
 
-               <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="md"
-                  isActive={pathname.startsWith("/timeout-settings")}
-                  onClick={() => _navigate("/timeout-settings")}
-                  className="text-[var(--sidebar-foreground)]"
-                >
-                  <ForwardedIconComponent
-                    name="BarChart3"
-                    className="h-4 w-4 text-[var(--sidebar-foreground)]"
-                  />
-                  Timeouts Settings
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+        {/* Agent Registry */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/agent-catalogue")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Bot"
+              className="h-4 w-4"
+            />
+            Agent Registry
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Model Registry */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/model-catalogue")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Database"
+              className="h-4 w-4"
+            />
+            Model Registry
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Agent Runtime */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/workflows")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="PlayCircle"
+              className="h-4 w-4"
+            />
+            Agent Runtime
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Orchestrator */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/orchestrator-chat")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="GitBranch"
+              className="h-4 w-4"
+            />
+            Orchestrator
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Observability */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/observability")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Activity"
+              className="h-4 w-4"
+            />
+            Observability
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+        {/* Timeout Settings */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/timeout-settings")}
+            onClick={() => _navigate("/approval")}
+            className="text-[var(--sidebar-foreground)]"
+          >
+            <ForwardedIconComponent
+              name="Clock"
+              className="h-4 w-4"
+            />
+            Timeout Settings
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
+      </SidebarMenu>
+    </SidebarGroupContent>
+  </SidebarGroup>
+</SidebarContent>
+
+
 
       {/* ================= FOOTER ================= */}
       <SidebarFooter className="border-t">
@@ -530,7 +554,7 @@ const SideBarFoldersButtonsComponent = ({
           >
             <ForwardedIconComponent
               name="Settings"
-              className="h-4 w-4 text-[var(--sidebar-foreground)]"
+              className="h-4 w-4"
             />
             Settings
           </SidebarMenuButton>
