@@ -446,7 +446,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuButton
             size="md"
             isActive={pathname.startsWith("/agent-catalogue")}
-            onClick={() => _navigate("/approval")}
+            onClick={() => _navigate("/agent-catalogue")}
             className="text-[var(--sidebar-foreground)]"
           >
             <ForwardedIconComponent
@@ -462,7 +462,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuButton
             size="md"
             isActive={pathname.startsWith("/model-catalogue")}
-            onClick={() => _navigate("/approval")}
+            onClick={() => _navigate("/model-catalogue")}
             className="text-[var(--sidebar-foreground)]"
           >
             <ForwardedIconComponent
@@ -478,7 +478,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuButton
             size="md"
             isActive={pathname.startsWith("/workflows")}
-            onClick={() => _navigate("/approval")}
+            onClick={() => _navigate("/workflows")}
             className="text-[var(--sidebar-foreground)]"
           >
             <ForwardedIconComponent
@@ -494,7 +494,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuButton
             size="md"
             isActive={pathname.startsWith("/orchestrator-chat")}
-            onClick={() => _navigate("/approval")}
+            onClick={() => _navigate("/orchestrator-chat")}
             className="text-[var(--sidebar-foreground)]"
           >
             <ForwardedIconComponent
@@ -510,7 +510,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuButton
             size="md"
             isActive={pathname.startsWith("/observability")}
-            onClick={() => _navigate("/approval")}
+            onClick={() => _navigate("/observability")}
             className="text-[var(--sidebar-foreground)]"
           >
             <ForwardedIconComponent
@@ -526,7 +526,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuButton
             size="md"
             isActive={pathname.startsWith("/timeout-settings")}
-            onClick={() => _navigate("/approval")}
+            onClick={() => _navigate("/timeout-settings")}
             className="text-[var(--sidebar-foreground)]"
           >
             <ForwardedIconComponent

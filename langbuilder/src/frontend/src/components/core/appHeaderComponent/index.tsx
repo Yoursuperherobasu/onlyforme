@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import AlertDropdown from "@/alerts/alertDropDown";
 import DataStaxLogo from "@/assets/DataStaxLogo.svg?react";
 
-import MothersonLogo from "@/assets/mothersonLogo.svg?react";
+import MothersonLogo from "@/assets/motherson_name.svg?react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
@@ -69,7 +69,9 @@ export default function AppHeader(): JSX.Element {
           {ENABLE_DATASTAX_LANGBUILDER ? (
             <DataStaxLogo className="fill-black dark:fill-[white]" />
           ) : (
-            <MothersonLogo className="h-5 w-5" />
+            <div className="flex items-center px-3 h-12">
+              <MothersonLogo className="h-6 w-auto" />
+            </div>
           )}
         </Button>
         {ENABLE_DATASTAX_LANGBUILDER && (
