@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import EditModelModal from "./components/edit-model-modal";
-import { getProviderIcon } from "./components/logo_provider";
+import { getProviderIcon } from "@/utils/logo_provider";
 
 
 interface ModelCardsViewProps {

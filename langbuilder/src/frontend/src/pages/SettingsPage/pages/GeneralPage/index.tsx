@@ -27,7 +27,7 @@ import type {
 import useScrollToElement from "../hooks/use-scroll-to-element";
 import GeneralPageHeaderComponent from "./components/GeneralPageHeader";
 import PasswordFormComponent from "./components/PasswordForm";
-import ProfilePictureFormComponent from "./components/ProfilePictureForm";
+
 
 export const GeneralPage = () => {
   const { scrollId } = useParams();
@@ -142,15 +142,7 @@ export const GeneralPage = () => {
       <GeneralPageHeaderComponent />
 
       <div className="flex w-full flex-col gap-6">
-        {ENABLE_PROFILE_ICONS && (
-          <ProfilePictureFormComponent
-            profilePicture={profilePicture}
-            handleInput={handleInput}
-            handlePatchProfilePicture={handlePatchProfilePicture}
-            handleGetProfilePictures={handleGetProfilePictures}
-            userData={userData}
-          />
-        )}
+        
 
         {!autoLogin && (
           <PasswordFormComponent
