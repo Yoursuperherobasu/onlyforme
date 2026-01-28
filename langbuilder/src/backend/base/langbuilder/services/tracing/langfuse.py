@@ -19,10 +19,14 @@ if TYPE_CHECKING:
     from langbuilder.services.tracing.schema import Log
 
 
-class LangfuseCallbackWrapper:
-    """Wrapper for Langfuse callback that suppresses 'parent run not found' and 'run not found' errors."""
+class LangfuseCallbackWrapper(BaseCallbackHandler):
+    """Wrapper for Langfuse callback that suppresses 'parent run not found' and 'run not found' errors.
+    
+    Inherits from BaseCallbackHandler to pass Pydantic validation in LangChain tools.
+    """
     
     def __init__(self, callback):
+        super().__init__()
         self._callback = callback
     
     def __getattr__(self, name):
