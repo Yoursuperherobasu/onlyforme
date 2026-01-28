@@ -55,8 +55,10 @@ async def import_langbuilder_components():
     # Collect all module names to process
     module_names = []
     for _, modname, _ in pkgutil.walk_packages(components_pkg.__path__, prefix=components_pkg.__name__ + "."):
-        # Skip if the module is in the deactivated folder
-        if "deactivated" not in modname:
+        # Skip if the module is in the deactivated folder or is a private module (underscore prefix)
+        module_parts = modname.split(".")
+        is_private = any(part.startswith("_") for part in module_parts[2:])  # Check parts after "langbuilder.components"
+        if "deactivated" not in modname and not is_private:
             module_names.append(modname)
 
     if not module_names:

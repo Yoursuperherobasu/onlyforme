@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from langbuilder.components.langchain_utilities import ToolCallingAgentComponent
+from langbuilder.components._langchain_utilities import ToolCallingAgentComponent
 from langbuilder.components.openai.openai_chat_model import OpenAIModelComponent
 from langbuilder.components.tools.calculator import CalculatorToolComponent
 

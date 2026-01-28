@@ -13,9 +13,9 @@ from langbuilder.base.models.model_input_constants import (
     MODELS_METADATA,
 )
 from langbuilder.base.models.model_utils import get_model_name
-from langbuilder.components.helpers.current_date import CurrentDateComponent
-from langbuilder.components.helpers.memory import MemoryComponent
-from langbuilder.components.langchain_utilities.tool_calling import ToolCallingAgentComponent
+from langbuilder.components._helpers.current_date import CurrentDateComponent
+from langbuilder.components._helpers.memory import MemoryComponent
+from langbuilder.components._langchain_utilities.tool_calling import ToolCallingAgentComponent
 from langbuilder.custom.custom_component.component import _get_component_toolkit
 from langbuilder.custom.utils import update_component_build_config
 from langbuilder.field_typing import Tool

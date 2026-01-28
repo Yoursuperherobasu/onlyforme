@@ -7,27 +7,15 @@ from langbuilder.components._importing import import_mod
 if TYPE_CHECKING:
     from langbuilder.components.amazon.amazon_bedrock_embedding import AmazonBedrockEmbeddingsComponent
     from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockComponent
-    from langbuilder.components.amazon.s3_bucket_uploader import S3BucketUploaderComponent
-    from langbuilder.components.amazon.dynamodb_session_store import DynamoDBSessionStoreComponent
-    from langbuilder.components.amazon.dynamodb_session_retrieve import DynamoDBSessionRetrieveComponent
-    from langbuilder.components.amazon.ses_send_email import SESSendEmailComponent
 
 _dynamic_imports = {
     "AmazonBedrockEmbeddingsComponent": "amazon_bedrock_embedding",
     "AmazonBedrockComponent": "amazon_bedrock_model",
-    "S3BucketUploaderComponent": "s3_bucket_uploader",
-    "DynamoDBSessionStoreComponent": "dynamodb_session_store",
-    "DynamoDBSessionRetrieveComponent": "dynamodb_session_retrieve",
-    "SESSendEmailComponent": "ses_send_email",
 }
 
 __all__ = [
     "AmazonBedrockComponent",
     "AmazonBedrockEmbeddingsComponent",
-    "S3BucketUploaderComponent",
-    "DynamoDBSessionStoreComponent",
-    "DynamoDBSessionRetrieveComponent",
-    "SESSendEmailComponent",
 ]
 
 

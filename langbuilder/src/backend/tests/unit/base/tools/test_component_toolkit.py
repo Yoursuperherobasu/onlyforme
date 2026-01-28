@@ -6,7 +6,7 @@ import pytest
 from langbuilder.base.tools.component_tool import ComponentToolkit
 from langbuilder.components.data.sql_executor import SQLComponent
 from langbuilder.components.input_output.chat_output import ChatOutput
-from langbuilder.components.langchain_utilities import ToolCallingAgentComponent
+from langbuilder.components._langchain_utilities import ToolCallingAgentComponent
 from langbuilder.components.openai.openai_chat_model import OpenAIModelComponent
 from langbuilder.components.tools.calculator import CalculatorToolComponent
 from langbuilder.graph.graph.base import Graph

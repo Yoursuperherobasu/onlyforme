@@ -2,7 +2,7 @@ from collections import deque
 
 import pytest
 from langbuilder.components.input_output import ChatInput, ChatOutput, TextOutputComponent
-from langbuilder.components.langchain_utilities import ToolCallingAgentComponent
+from langbuilder.components._langchain_utilities import ToolCallingAgentComponent
 from langbuilder.components.tools import YfinanceToolComponent
 from langbuilder.graph import Graph
 from langbuilder.graph.graph.constants import Finish

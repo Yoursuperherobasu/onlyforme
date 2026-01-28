@@ -610,8 +610,11 @@ async function onEvent(
       return true;
     }
     case "add_message": {
-      // Add a message to the messages store.
-      useMessagesStore.getState().addMessage(data);
+      // Add a message to the messages store with flushSync to ensure immediate re-render
+      // This prevents React batching from delaying the UI update and causing ordering issues
+      flushSync(() => {
+        useMessagesStore.getState().addMessage(data);
+      });
       return true;
     }
     case "token": {
