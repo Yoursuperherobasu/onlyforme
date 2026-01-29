@@ -22,7 +22,7 @@ from langbuilder.custom.directory_reader.utils import (
     merge_nested_dicts_with_renaming,
 )
 from langbuilder.custom.eval import eval_custom_component_code
-from langbuilder.custom.schema import MissingDefault
+from langbuilder.custom.schema import NoDefault
 from langbuilder.field_typing.range_spec import RangeSpec
 from langbuilder.helpers.custom import format_type
 from langbuilder.schema.dotdict import dotdict
@@ -141,8 +141,8 @@ def get_field_properties(extra_field):
     # a required field is a field that does not contain
     # optional in field_type
     # and a field that does not have a default value
-    field_required = "optional" not in field_type.lower() and isinstance(field_value, MissingDefault)
-    field_value = field_value if not isinstance(field_value, MissingDefault) else None
+    field_required = "optional" not in field_type.lower() and isinstance(field_value, NoDefault)
+    field_value = field_value if not isinstance(field_value, NoDefault) else None
 
     if not field_required:
         field_type = extract_type_from_optional(field_type)

@@ -16,9 +16,9 @@ class CustomComponentPathValueError(ValueError):
     pass
 
 
-class StringCompressor:
+class TextCompressor:
     def __init__(self, input_string) -> None:
-        """Initialize StringCompressor with a string to compress."""
+        """Initialize TextCompressor with a string to compress."""
         self.input_string = input_string
 
     def compress_string(self):
@@ -38,13 +38,13 @@ class StringCompressor:
         return decompressed_data.decode("utf-8")
 
 
-class DirectoryReader:
+class NodeDirectoryScanner:
     # Ensure the base path to read the files that contain
     # the custom components from this directory.
     base_path = ""
 
     def __init__(self, directory_path, *, compress_code_field=False) -> None:
-        """Initialize DirectoryReader with a directory path and a flag indicating whether to compress the code."""
+        """Initialize NodeDirectoryScanner with a directory path and a flag indicating whether to compress the code."""
         self.directory_path = directory_path
         self.compress_code_field = compress_code_field
 
@@ -220,7 +220,7 @@ class DirectoryReader:
                 "Type hint 'Optional' is used but not imported in the code.",
             )
         if self.compress_code_field:
-            file_content = str(StringCompressor(file_content).compress_string())
+            file_content = str(TextCompressor(file_content).compress_string())
         return True, file_content
 
     def build_component_menu_list(self, file_paths):
@@ -295,7 +295,7 @@ class DirectoryReader:
                 "Type hint 'Optional' is used but not imported in the code.",
             )
         if self.compress_code_field:
-            file_content = str(StringCompressor(file_content).compress_string())
+            file_content = str(TextCompressor(file_content).compress_string())
         return True, file_content
 
     async def abuild_component_menu_list(self, file_paths):

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from loguru import logger
 
 from langbuilder.custom.attributes import ATTR_FUNC_MAPPING
-from langbuilder.custom.code_parser.code_parser import CodeParser
+from langbuilder.custom.code_parser.code_parser import NodeCodeParser
 from langbuilder.custom.eval import eval_custom_component_code
 from langbuilder.utils import validate
 
@@ -16,11 +16,11 @@ if TYPE_CHECKING:
     from uuid import UUID
 
 
-class ComponentCodeNullError(HTTPException):
+class NodeBaseCodeNullError(HTTPException):
     pass
 
 
-class ComponentFunctionEntrypointNameNullError(HTTPException):
+class NodeBaseFunctionEntrypointNameNullError(HTTPException):
     pass
 
 
@@ -54,18 +54,18 @@ class NodeBase:
 
     @cachedmethod(cache=operator.attrgetter("cache"))
     def get_code_tree(self, code: str):
-        parser = CodeParser(code)
+        parser = NodeCodeParser(code)
         return parser.parse_code()
 
     def get_function(self):
         if not self._code:
-            raise ComponentCodeNullError(
+            raise NodeBaseCodeNullError(
                 status_code=400,
                 detail={"error": self.ERROR_CODE_NULL, "traceback": ""},
             )
 
         if not self._function_entrypoint_name:
-            raise ComponentFunctionEntrypointNameNullError(
+            raise NodeBaseFunctionEntrypointNameNullError(
                 status_code=400,
                 detail={
                     "error": self.ERROR_FUNCTION_ENTRYPOINT_NAME_NULL,

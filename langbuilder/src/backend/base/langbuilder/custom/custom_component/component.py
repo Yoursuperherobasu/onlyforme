@@ -22,7 +22,7 @@ from langbuilder.base.tools.constants import (
     TOOLS_METADATA_INFO,
     TOOLS_METADATA_INPUT_NAME,
 )
-from langbuilder.custom.tree_visitor import RequiredInputsVisitor
+from langbuilder.custom.tree_visitor import FieldRequirementChecker
 from langbuilder.exceptions.component import StreamingError
 from langbuilder.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
 from langbuilder.utils.debug_logger import debug_log
@@ -577,7 +577,7 @@ class Node(ExecutableNode):
             except Exception:  # noqa: BLE001
                 ast_tree = ast.parse(dedent(self._code or ""))
 
-            visitor = RequiredInputsVisitor(self._inputs)
+            visitor = FieldRequirementChecker(self._inputs)
             visitor.visit(ast_tree)
             output.required_inputs = sorted(visitor.required_inputs)
 
