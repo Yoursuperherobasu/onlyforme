@@ -839,7 +839,7 @@
             "legacy": false,
             "lf_version": "1.2.0",
             "metadata": {
-              "code_hash": "bdc368e4679d",
+              "code_hash": "053283e67b80",
               "module": "langbuilder.components.processing.structured_output.StructuredOutputComponent"
             },
             "minimized": false,

@@ -515,7 +515,7 @@
             "legacy": false,
             "lf_version": "1.4.3",
             "metadata": {
-              "code_hash": "8620a5069e95",
+              "code_hash": "d74d13142a5a",
               "module": "langbuilder.components.processing.parser.ParserComponent"
             },
             "minimized": false,
@@ -1002,7 +1002,7 @@
             "legacy": false,
             "lf_version": "1.4.3",
             "metadata": {
-              "code_hash": "8620a5069e95",
+              "code_hash": "d74d13142a5a",
               "module": "langbuilder.components.processing.parser.ParserComponent"
             },
             "minimized": false,
@@ -2582,7 +2582,7 @@
             "icon": "braces",
             "legacy": false,
             "metadata": {
-              "code_hash": "bdc368e4679d",
+              "code_hash": "053283e67b80",
               "module": "langbuilder.components.processing.structured_output.StructuredOutputComponent"
             },
             "minimized": false,

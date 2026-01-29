@@ -1037,7 +1037,7 @@
             "legacy": false,
             "lf_version": "1.4.3",
             "metadata": {
-              "code_hash": "8620a5069e95",
+              "code_hash": "d74d13142a5a",
               "module": "langbuilder.components.processing.parser.ParserComponent"
             },
             "minimized": false,
@@ -1212,7 +1212,7 @@
             "legacy": false,
             "lf_version": "1.4.3",
             "metadata": {
-              "code_hash": "0a11de71eb0a",
+              "code_hash": "5f5f2fbf9aa9",
               "module": "langbuilder.components.logic.loop.LoopComponent"
             },
             "minimized": false,

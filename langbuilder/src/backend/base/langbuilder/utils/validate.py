@@ -482,7 +482,7 @@ def extract_class_name(code: str) -> str:
             # Check bases for Component inheritance
             # TODO: Build a more robust check for Component inheritance
             for base in node.bases:
-                if isinstance(base, ast.Name) and any(pattern in base.id for pattern in ["Node", "LC"]):
+                if isinstance(base, ast.Name) and any(pattern in base.id for pattern in ["Node", "LC", "Component"]):
                     return node.name
 
         msg = f"No Node subclass found in the code string. Code snippet: {code[:100]}"

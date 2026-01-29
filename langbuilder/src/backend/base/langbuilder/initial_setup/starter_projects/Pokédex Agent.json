@@ -831,7 +831,7 @@
             "key": "APIRequest",
             "legacy": false,
             "metadata": {
-              "code_hash": "deb8288f4123",
+              "code_hash": "b90d7a4c2a20",
               "module": "langbuilder.components.tools.api_request.APIRequestComponent"
             },
             "minimized": false,

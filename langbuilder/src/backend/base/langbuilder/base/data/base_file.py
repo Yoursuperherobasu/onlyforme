@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-class BaseFileComponent(Component, ABC):
+class BaseFileComponent(Node, ABC):
     """Base class for handling file processing components.
 
     This class provides common functionality for resolving, validating, and

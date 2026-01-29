@@ -794,7 +794,7 @@
             "legacy": false,
             "lf_version": "1.1.1",
             "metadata": {
-              "code_hash": "0ac039451451",
+              "code_hash": "049e7165d135",
               "module": "langbuilder.components.processing.split_text.SplitTextComponent"
             },
             "output_types": [],

@@ -791,7 +791,7 @@
             "legacy": false,
             "lf_version": "1.4.2",
             "metadata": {
-              "code_hash": "8620a5069e95",
+              "code_hash": "d74d13142a5a",
               "module": "langbuilder.components.processing.parser.ParserComponent"
             },
             "minimized": false,

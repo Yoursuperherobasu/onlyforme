@@ -285,7 +285,7 @@
             "legacy": false,
             "lf_version": "1.4.3",
             "metadata": {
-              "code_hash": "f08da8e29f3c",
+              "code_hash": "78dd9757e06d",
               "module": "langbuilder.components.processing.batch_run.BatchRunComponent"
             },
             "minimized": false,
