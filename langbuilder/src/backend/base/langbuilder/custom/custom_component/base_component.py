@@ -24,7 +24,7 @@ class ComponentFunctionEntrypointNameNullError(HTTPException):
     pass
 
 
-class BaseComponent:
+class NodeBase:
     ERROR_CODE_NULL: ClassVar[str] = "Python code must be provided."
     ERROR_FUNCTION_ENTRYPOINT_NAME_NULL: ClassVar[str] = "The name of the entrypoint function must be provided."
 

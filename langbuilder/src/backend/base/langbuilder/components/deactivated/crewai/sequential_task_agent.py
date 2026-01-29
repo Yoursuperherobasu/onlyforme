@@ -1,9 +1,9 @@
 from langbuilder.base.agents.crewai.tasks import SequentialTask
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import BoolInput, DictInput, HandleInput, MultilineInput, Output
 
 
-class SequentialTaskAgentComponent(Component):
+class SequentialTaskAgentComponent(Node):
     display_name = "Sequential Task Agent"
     description = "Creates a CrewAI Task and its associated Agent."
     documentation = "https://docs.crewai.com/how-to/LLM-Connections/"

@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable
 
     from langbuilder.api.v1.schemas import InputValueRequest
-    from langbuilder.custom.custom_component.component import Component
+    from langbuilder.custom.custom_component.component import Node
     from langbuilder.events.event_manager import EventManager
     from langbuilder.graph.edge.schema import EdgeData
     from langbuilder.graph.schema import ResultData
@@ -60,8 +60,8 @@ class Graph:
 
     def __init__(
         self,
-        start: Component | None = None,
-        end: Component | None = None,
+        start: Node | None = None,
+        end: Node | None = None,
         flow_id: str | None = None,
         flow_name: str | None = None,
         description: str | None = None,
@@ -247,7 +247,7 @@ class Graph:
         self._edges = self._graph_data["edges"]
         self.initialize()
 
-    def add_component(self, component: Component, component_id: str | None = None) -> str:
+    def add_component(self, component: Node, component_id: str | None = None) -> str:
         component_id = component_id or component._id
         if component_id in self.vertex_map:
             return component_id
@@ -270,12 +270,12 @@ class Graph:
 
         return component_id
 
-    def _set_start_and_end(self, start: Component, end: Component) -> None:
+    def _set_start_and_end(self, start: Node, end: Node) -> None:
         if not hasattr(start, "to_frontend_node"):
-            msg = f"start must be a Component. Got {type(start)}"
+            msg = f"start must be a Node. Got {type(start)}"
             raise TypeError(msg)
         if not hasattr(end, "to_frontend_node"):
-            msg = f"end must be a Component. Got {type(end)}"
+            msg = f"end must be a Node. Got {type(end)}"
             raise TypeError(msg)
         self.add_component(start, start._id)
         self.add_component(end, end._id)

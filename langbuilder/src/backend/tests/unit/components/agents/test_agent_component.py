@@ -13,7 +13,7 @@ from langbuilder.base.models.openai_constants import (
 )
 from langbuilder.components.agents.agent import AgentComponent
 from langbuilder.components.tools.calculator import CalculatorToolComponent
-from langbuilder.custom import Component
+from langbuilder.custom import Node
 
 from tests.base import ComponentTestBaseWithClient, ComponentTestBaseWithoutClient
 from tests.unit.mock_language_model import MockLanguageModel
@@ -30,7 +30,7 @@ class TestAgentComponent(ComponentTestBaseWithoutClient):
     def file_names_mapping(self):
         return []
 
-    async def component_setup(self, component_class: type[Any], default_kwargs: dict[str, Any]) -> Component:
+    async def component_setup(self, component_class: type[Any], default_kwargs: dict[str, Any]) -> Node:
         component_instance = await super().component_setup(component_class, default_kwargs)
         # Mock _should_process_output method
         component_instance._should_process_output = lambda output: False  # noqa: ARG005

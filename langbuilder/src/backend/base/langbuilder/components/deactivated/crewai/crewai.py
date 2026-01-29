@@ -1,16 +1,16 @@
 from langbuilder.base.agents.crewai.crew import convert_llm, convert_tools
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import BoolInput, DictInput, HandleInput, MultilineInput, Output
 
 
-class CrewAIAgentComponent(Component):
+class CrewAIAgentComponent(Node):
     """Component for creating a CrewAI agent.
 
     This component allows you to create a CrewAI agent with the specified role, goal, backstory, tools,
     and language model.
 
     Args:
-        Component (Component): Base class for all components.
+        Component (Node): Base class for all components.
 
     Returns:
         Agent: CrewAI agent.

@@ -14,12 +14,12 @@
 
 from langchain_core.documents import Document
 
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.io import HandleInput, StrInput
 from langbuilder.services.database.models.base import orjson_dumps
 
 
-class JSONDocumentBuilder(CustomComponent):
+class JSONDocumentBuilder(ExecutableNode):
     display_name: str = "JSON Document Builder"
     description: str = "Build a Document containing a JSON object using a key and another Document page content."
     name = "JSONDocumentBuilder"

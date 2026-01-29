@@ -3,7 +3,7 @@ import asyncio
 from loguru import logger
 
 from langbuilder.custom.directory_reader.directory_reader import DirectoryReader
-from langbuilder.template.frontend_node.custom_components import CustomComponentFrontendNode
+from langbuilder.template.frontend_node.custom_components import ExecutableNodeFrontendNode
 
 
 def merge_nested_dicts_with_renaming(dict1, dict2):
@@ -99,7 +99,7 @@ async def abuild_custom_component_list_from_path(path: str):
 def create_invalid_component_template(component, component_name):
     """Create a template for an invalid component."""
     component_code = component["code"]
-    component_frontend_node = CustomComponentFrontendNode(
+    component_frontend_node = ExecutableNodeFrontendNode(
         description="ERROR - Check your Python Code",
         display_name=f"ERROR - {component_name}",
     )

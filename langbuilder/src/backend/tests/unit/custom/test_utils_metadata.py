@@ -54,7 +54,7 @@ class TestMetadataInTemplateBuilders:
     @patch("langbuilder.custom.utils.ComponentFrontendNode")
     def test_build_from_inputs_adds_metadata_with_module(self, mock_frontend_class):
         """Test that build_custom_component_template_from_inputs adds metadata when module_name is provided."""
-        from langbuilder.custom.custom_component.component import Component
+        from langbuilder.custom.custom_component.component import Node
         from langbuilder.custom.utils import build_custom_component_template_from_inputs
 
         # Setup mock frontend node
@@ -97,7 +97,7 @@ class TestMetadataInTemplateBuilders:
     @patch("langbuilder.custom.utils.CustomComponentFrontendNode")
     def test_build_template_adds_metadata_with_module(self, mock_frontend_class):
         """Test that build_custom_component_template adds metadata when module_name is provided."""
-        from langbuilder.custom.custom_component.component import Component
+        from langbuilder.custom.custom_component.component import Node
         from langbuilder.custom.utils import build_custom_component_template
 
         # Setup mock frontend node
@@ -329,7 +329,7 @@ class TestMetadataWithDependencies:
 
     def test_build_from_inputs_without_module_generates_default(self):
         """Test that build_component_metadata includes dependency analysis results."""
-        from langbuilder.custom.custom_component.component import Component
+        from langbuilder.custom.custom_component.component import Node
 
         # Setup mock frontend node
         mock_frontend = Mock()
@@ -364,7 +364,7 @@ class TestComponent:
 
     def test_build_component_metadata_handles_analysis_error(self):
         """Test that build_component_metadata handles dependency analysis errors gracefully."""
-        from langbuilder.custom.custom_component.component import Component
+        from langbuilder.custom.custom_component.component import Node
 
         # Setup mock frontend node
         mock_frontend = Mock()
@@ -385,7 +385,7 @@ class TestComponent:
 
     def test_build_component_metadata_with_external_dependencies(self):
         """Test dependency analysis with external packages."""
-        from langbuilder.custom.custom_component.component import Component
+        from langbuilder.custom.custom_component.component import Node
 
         # Setup mock frontend node
         mock_frontend = Mock()
@@ -416,7 +416,7 @@ class TestComponent(CustomComponent):
 
     def test_build_component_metadata_with_optional_dependencies(self):
         """Test dependency analysis with optional dependencies."""
-        from langbuilder.custom.custom_component.component import Component
+        from langbuilder.custom.custom_component.component import Node
 
         # Setup mock frontend node
         mock_frontend = Mock()
@@ -451,7 +451,7 @@ class TestComponent:
 
     def test_build_component_metadata_with_real_component(self):
         """Test dependency analysis with a real component."""
-        from langbuilder.custom.custom_component.component import Component
+        from langbuilder.custom.custom_component.component import Node
         from langbuilder.custom.utils import build_component_metadata
 
         # Setup mock frontend node

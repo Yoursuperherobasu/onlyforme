@@ -294,7 +294,7 @@ class CodeParser:
         bases = self.get_base_classes()
         nodes = []
         for base in bases:
-            if base.__name__ == node.name or base.__name__ in {"CustomComponent", "Component", "BaseComponent"}:
+            if base.__name__ == node.name or base.__name__ in {"ExecutableNode", "Node", "NodeBase"}:
                 continue
             try:
                 class_node, import_nodes = find_class_ast_node(base)

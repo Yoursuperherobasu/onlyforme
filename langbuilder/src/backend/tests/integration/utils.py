@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 import requests
 from langbuilder.api.v1.schemas import InputValueRequest
-from langbuilder.custom import Component
+from langbuilder.custom import Node
 from langbuilder.custom.eval import eval_custom_component_code
 from langbuilder.field_typing import Embeddings
 from langbuilder.graph import Graph
@@ -111,14 +111,14 @@ def download_flow_from_github(name: str, version: str) -> JSONFlow:
     return JSONFlow(json=as_json)
 
 
-def download_component_from_github(module: str, file_name: str, version: str) -> Component:
+def download_component_from_github(module: str, file_name: str, version: str) -> Node:
     version_string = f"v{version}" if version != "main" else version
     response = requests.get(
         f"https://raw.githubusercontent.com/CloudGeometry/langbuilder/{version_string}/src/backend/base/langbuilder/components/{module}/{file_name}.py",
         timeout=10,
     )
     response.raise_for_status()
-    return Component(_code=response.text)
+    return Node(_code=response.text)
 
 
 async def run_json_flow(
@@ -166,7 +166,7 @@ async def run_single_component(
             for key, value in inputs.items():
                 if not isinstance(value, ComponentInputHandle):
                     raw_inputs[key] = value
-                if isinstance(value, Component):
+                if isinstance(value, Node):
                     msg = "Component inputs must be wrapped in ComponentInputHandle"
                     raise TypeError(msg)
         component = clazz(**raw_inputs, _user_id=user_id)

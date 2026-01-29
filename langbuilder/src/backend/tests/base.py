@@ -5,7 +5,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.graph.graph.base import Graph
 from langbuilder.graph.vertex.base import Vertex
 from typing_extensions import TypedDict
@@ -52,7 +52,7 @@ class ComponentTestBase:
         msg = f"{self.__class__.__name__} must implement the file_names_mapping fixture"
         raise NotImplementedError(msg)
 
-    async def component_setup(self, component_class: type[Any], default_kwargs: dict[str, Any]) -> Component:
+    async def component_setup(self, component_class: type[Any], default_kwargs: dict[str, Any]) -> Node:
         mock_vertex = Mock(spec=Vertex)
         mock_vertex.graph = Mock(spec=Graph)
         mock_vertex.graph.session_id = str(uuid4())

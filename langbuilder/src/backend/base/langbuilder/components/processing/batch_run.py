@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 import toml  # type: ignore[import-untyped]
 from loguru import logger
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import BoolInput, DataFrameInput, HandleInput, MessageTextInput, MultilineInput, Output
 from langbuilder.schema.dataframe import DataFrame
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from langchain_core.runnables import Runnable
 
 
-class BatchRunComponent(Component):
+class BatchRunComponent(Node):
     display_name = "Batch Run"
     description = "Runs an LLM on each row of a DataFrame column. If no column is specified, all columns are used."
     documentation: str = "https://docs.langbuilder.org/components-processing#batch-run"

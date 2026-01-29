@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from langchain_core.callbacks import Callbacks
 
-    from langbuilder.custom.custom_component.component import Component
+    from langbuilder.custom.custom_component.component import Node
     from langbuilder.events.event_manager import EventManager
     from langbuilder.inputs.inputs import InputTypes
     from langbuilder.io import Output
@@ -37,7 +37,7 @@ def _get_input_type(input_: InputTypes):
     return input_.field_type
 
 
-def build_description(component: Component) -> str:
+def build_description(component: Node) -> str:
     return component.description or ""
 
 
@@ -57,7 +57,7 @@ async def send_message_noop(
     return message
 
 
-def patch_components_send_message(component: Component):
+def patch_components_send_message(component: Node):
     old_send_message = component.send_message
     component.send_message = send_message_noop  # type: ignore[method-assign, assignment]
     return old_send_message
@@ -90,7 +90,7 @@ def _patch_send_message_decorator(component, func):
     return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 
 
-def _build_output_function(component: Component, output_method: Callable, event_manager: EventManager | None = None):
+def _build_output_function(component: Node, output_method: Callable, event_manager: EventManager | None = None):
     def output_function(*args, **kwargs):
         try:
             if event_manager:
@@ -113,7 +113,7 @@ def _build_output_function(component: Component, output_method: Callable, event_
 
 
 def _build_output_async_function(
-    component: Component, output_method: Callable, event_manager: EventManager | None = None
+    component: Node, output_method: Callable, event_manager: EventManager | None = None
 ):
     async def output_function(*args, **kwargs):
         try:
@@ -147,7 +147,7 @@ def _add_commands_to_tool_description(tool_description: str, commands: str):
 
 
 class ComponentToolkit:
-    def __init__(self, component: Component, metadata: pd.DataFrame | None = None):
+    def __init__(self, component: Node, metadata: pd.DataFrame | None = None):
         self.component = component
         self.metadata = metadata
 

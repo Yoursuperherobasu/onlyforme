@@ -60,13 +60,13 @@ test(
 
     const waitTimeoutCode = `
 # from langbuilder.field_typing import Data
-from langbuilder.custom import Component
+from langbuilder.custom import Node
 from langbuilder.io import MessageTextInput, Output
 from langbuilder.schema import Data
 from time import sleep
 from langbuilder.schema.message import Message
 
-class CustomComponent(Component):
+class CustomComponent(Node):
     display_name = "Custom Component"
     description = "Use as a template to create your own component."
     documentation: str = "https://docs.langbuilder.org/components-custom-components"

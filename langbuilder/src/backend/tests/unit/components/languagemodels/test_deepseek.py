@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from langbuilder.components.deepseek.deepseek import DeepSeekModelComponent
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.custom.utils import build_custom_component_template
 
 

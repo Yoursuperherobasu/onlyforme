@@ -1,7 +1,7 @@
 from spider.spider import Spider
 
 from langbuilder.base.langchain_utilities.spider_constants import MODES
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import (
     BoolInput,
     DictInput,
@@ -14,7 +14,7 @@ from langbuilder.io import (
 from langbuilder.schema.data import Data
 
 
-class SpiderTool(Component):
+class SpiderTool(Node):
     display_name: str = "Spider Web Crawler & Scraper"
     description: str = "Spider API for web crawling and scraping."
     output_types: list[str] = ["Document"]

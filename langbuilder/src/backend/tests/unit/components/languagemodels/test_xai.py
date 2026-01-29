@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from langbuilder.components.xai.xai import XAIModelComponent
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.custom.utils import build_custom_component_template
 from langbuilder.inputs.inputs import (
     BoolInput,

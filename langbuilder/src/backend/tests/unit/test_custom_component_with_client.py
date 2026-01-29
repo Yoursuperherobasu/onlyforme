@@ -1,5 +1,5 @@
 import pytest
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.field_typing.constants import Data
 
 

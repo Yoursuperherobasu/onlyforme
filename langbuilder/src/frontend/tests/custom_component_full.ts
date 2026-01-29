@@ -1,4 +1,4 @@
-export const custom = `from langbuilder.custom import CustomComponent
+export const custom = `from langbuilder.custom import ExecutableNode
 
 from langbuilder.field_typing import BaseLanguageModel
 from langchain.chains import LLMChain

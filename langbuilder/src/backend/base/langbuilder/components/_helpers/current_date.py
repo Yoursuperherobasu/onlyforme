@@ -3,12 +3,12 @@ from zoneinfo import ZoneInfo, available_timezones
 
 from loguru import logger
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import DropdownInput, Output
 from langbuilder.schema.message import Message
 
 
-class CurrentDateComponent(Component):
+class CurrentDateComponent(Node):
     display_name = "Current Date"
     description = "Returns the current date and time in the selected timezone."
     documentation: str = "https://docs.langbuilder.org/components-helpers#current-date"

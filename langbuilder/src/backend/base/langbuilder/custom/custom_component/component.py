@@ -39,11 +39,11 @@ from langbuilder.schema.message import ErrorMessage, Message
 from langbuilder.schema.properties import Source
 from langbuilder.services.tracing.schema import Log
 from langbuilder.template.field.base import UNDEFINED, Input, Output
-from langbuilder.template.frontend_node.custom_components import ComponentFrontendNode
+from langbuilder.template.frontend_node.custom_components import NodeFrontendNode
 from langbuilder.utils.async_helpers import run_until_complete
 from langbuilder.utils.util import find_closest_match
 
-from .custom_component import CustomComponent
+from .custom_component import ExecutableNode
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -96,11 +96,11 @@ class PlaceholderGraph(NamedTuple):
     flow_name: str | None
 
 
-class Component(CustomComponent):
+class Node(ExecutableNode):
     inputs: list[InputTypes] = []
     outputs: list[Output] = []
     selected_output: str | None = None
-    code_class_base_inheritance: ClassVar[str] = "Component"
+    code_class_base_inheritance: ClassVar[str] = "Node"
 
     def __init__(self, **kwargs) -> None:
         # Initialize instance-specific attributes first
@@ -120,7 +120,7 @@ class Component(CustomComponent):
         self._results: dict[str, Any] = {}
         self._attributes: dict[str, Any] = {}
         self._edges: list[EdgeData] = []
-        self._components: list[Component] = []
+        self._components: list[Node] = []
         self._event_manager: EventManager | None = None
         self._state_model = None
 
@@ -318,7 +318,7 @@ class Component(CustomComponent):
         _instance_getter.__annotations__["return"] = state_model
         return _instance_getter
 
-    def __deepcopy__(self, memo: dict) -> Component:
+    def __deepcopy__(self, memo: dict) -> Node:
         if id(self) in memo:
             return memo[id(self)]
         kwargs = deepcopy(self.__config, memo)
@@ -594,14 +594,14 @@ class Component(CustomComponent):
     def _inherits_from_component(self, method: Callable):
         # check if the method is a method from a class that inherits from Component
         # and that it is an output of that class
-        return hasattr(method, "__self__") and isinstance(method.__self__, Component)
+        return hasattr(method, "__self__") and isinstance(method.__self__, Node)
 
     def _method_is_valid_output(self, method: Callable):
         # check if the method is a method from a class that inherits from Component
         # and that it is an output of that class
         return (
             hasattr(method, "__self__")
-            and isinstance(method.__self__, Component)
+            and isinstance(method.__self__, Node)
             and method.__self__.get_output_by_method(method)
         )
 
@@ -611,7 +611,7 @@ class Component(CustomComponent):
             text += f"{output.name}[{','.join(output.types)}]->{input_.name}[{','.join(input_.input_types or [])}]\n"
         return text
 
-    def _find_matching_output_method(self, input_name: str, value: Component):
+    def _find_matching_output_method(self, input_name: str, value: Node):
         """Find the output method from the given component and input name.
 
         Find the output method from the given component (`value`) that matches the specified input (`input_name`)
@@ -675,7 +675,7 @@ class Component(CustomComponent):
 
         input_ = self._get_or_create_input(key)
         # We need to check if callable AND if it is a method from a class that inherits from Component
-        if isinstance(value, Component):
+        if isinstance(value, Node):
             # We need to find the Output that can connect to an input of the current component
             # if there's more than one output that matches, we need to raise an error
             # because we don't know which one to connect to
@@ -802,7 +802,7 @@ class Component(CustomComponent):
         )
 
     def _set_parameter_or_attribute(self, key, value) -> None:
-        if isinstance(value, Component):
+        if isinstance(value, Node):
             methods = ", ".join([f"'{output.method}'" for output in value.outputs])
             msg = f"You set {value.display_name} as value for `{key}`. You should pass one of the following: {methods}"
             raise TypeError(msg)
@@ -854,7 +854,7 @@ class Component(CustomComponent):
     def _set_input_value(self, name: str, value: Any) -> None:
         if name in self._inputs:
             input_value = self._inputs[name].value
-            if isinstance(input_value, Component):
+            if isinstance(input_value, Node):
                 methods = ", ".join([f"'{output.method}'" for output in input_value.outputs])
                 msg = self.build_input_error_message(
                     name,
@@ -884,7 +884,7 @@ class Component(CustomComponent):
             msg = f"selected_output '{self.selected_output}' is not valid. Must be one of: {output_names}"
             raise ValueError(msg)
 
-    def _map_parameters_on_frontend_node(self, frontend_node: ComponentFrontendNode) -> None:
+    def _map_parameters_on_frontend_node(self, frontend_node: NodeFrontendNode) -> None:
         for name, value in self._parameters.items():
             frontend_node.set_field_value_in_template(name, value)
 
@@ -916,7 +916,7 @@ class Component(CustomComponent):
         # ! backwards compatibility. We can change how prompt component
         # ! works and then update this later
         field_config = self.get_template_config(self)
-        frontend_node = ComponentFrontendNode.from_inputs(**field_config)
+        frontend_node = NodeFrontendNode.from_inputs(**field_config)
         for key in self._inputs:
             frontend_node.set_field_load_from_db_in_template(key, value=False)
         self._map_parameters_on_frontend_node(frontend_node)
@@ -925,7 +925,7 @@ class Component(CustomComponent):
         frontend_node_dict = self._update_template(frontend_node_dict)
         self._map_parameters_on_template(frontend_node_dict["template"])
 
-        frontend_node = ComponentFrontendNode.from_dict(frontend_node_dict)
+        frontend_node = NodeFrontendNode.from_dict(frontend_node_dict)
         if not self._code:
             self.set_class_code()
         code_field = Input(

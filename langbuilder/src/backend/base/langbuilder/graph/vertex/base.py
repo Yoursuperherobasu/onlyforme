@@ -27,7 +27,7 @@ from langbuilder.utils.util import sync_to_async
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from langbuilder.custom.custom_component.component import Component
+    from langbuilder.custom.custom_component.component import Node
     from langbuilder.events.event_manager import EventManager
     from langbuilder.graph.edge.base import CycleEdge, Edge
     from langbuilder.graph.graph.base import Graph
@@ -125,7 +125,7 @@ class Vertex:
     def to_data(self):
         return self.full_data
 
-    def add_component_instance(self, component_instance: Component) -> None:
+    def add_component_instance(self, component_instance: Node) -> None:
         component_instance.set_vertex(self)
         self.custom_component = component_instance
 

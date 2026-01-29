@@ -1,8 +1,8 @@
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.schema.data import Data
 
 
-class ListFlowsComponent(CustomComponent):
+class ListFlowsComponent(ExecutableNode):
     display_name = "List Flows"
     description = "A component to list all available flows."
     icon = "ListFlows"

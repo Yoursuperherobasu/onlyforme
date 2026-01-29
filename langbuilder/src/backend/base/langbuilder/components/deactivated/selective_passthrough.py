@@ -1,9 +1,9 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import Text
 from langbuilder.io import BoolInput, DropdownInput, MessageTextInput, Output
 
 
-class SelectivePassThroughComponent(Component):
+class SelectivePassThroughComponent(Node):
     display_name = "Selective Pass Through"
     description = "Passes the specified value if a specified condition is met."
     icon = "filter"

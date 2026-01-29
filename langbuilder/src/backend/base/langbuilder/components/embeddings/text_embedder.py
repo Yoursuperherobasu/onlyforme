@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import HandleInput, MessageInput, Output
 from langbuilder.schema.data import Data
 
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from langbuilder.schema.message import Message
 
 
-class TextEmbedderComponent(Component):
+class TextEmbedderComponent(Node):
     display_name: str = "Text Embedder"
     description: str = "Generate embeddings for a given message using the specified embedding model."
     icon = "binary"

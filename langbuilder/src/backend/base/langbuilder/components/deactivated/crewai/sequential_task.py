@@ -1,9 +1,9 @@
 from langbuilder.base.agents.crewai.tasks import SequentialTask
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import BoolInput, HandleInput, MultilineInput, Output
 
 
-class SequentialTaskComponent(Component):
+class SequentialTaskComponent(Node):
     display_name: str = "Sequential Task"
     description: str = "Each task must have a description, an expected output and an agent responsible for execution."
     icon = "CrewAI"

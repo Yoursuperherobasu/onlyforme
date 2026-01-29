@@ -6,7 +6,7 @@ from langbuilder.components.input_output.text import TextInputComponent
 from langbuilder.components.logic.conditional_router import ConditionalRouterComponent
 from langbuilder.components.openai.openai_chat_model import OpenAIModelComponent
 from langbuilder.components.processing import PromptComponent
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.graph.graph.base import Graph
 from langbuilder.graph.graph.utils import find_cycle_vertices
 from langbuilder.io import MessageTextInput, Output

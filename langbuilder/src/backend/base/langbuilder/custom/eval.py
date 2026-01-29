@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from langbuilder.utils import validate
 
 if TYPE_CHECKING:
-    from langbuilder.custom.custom_component.custom_component import CustomComponent
+    from langbuilder.custom.custom_component.custom_component import ExecutableNode
 
 
 def eval_custom_component_code(code: str) -> type["CustomComponent"]:

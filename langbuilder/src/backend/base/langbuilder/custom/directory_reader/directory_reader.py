@@ -7,7 +7,7 @@ import anyio
 from aiofile import async_open
 from loguru import logger
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 
 MAX_DEPTH = 2
 

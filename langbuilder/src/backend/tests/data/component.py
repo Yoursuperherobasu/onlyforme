@@ -1,9 +1,9 @@
 import random
 
-from langbuilder.custom import CustomComponent
+from langbuilder.custom import ExecutableNode
 
 
-class TestComponent(CustomComponent):
+class TestComponent(ExecutableNode):
     def refresh_values(self):
         # This is a function that will be called every time the component is updated
         # and should return a list of random strings

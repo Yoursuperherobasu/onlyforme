@@ -1,12 +1,12 @@
 from langbuilder.base.prompts.api_utils import process_prompt_template
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import DefaultPromptField
 from langbuilder.io import MessageTextInput, Output, PromptInput
 from langbuilder.schema.message import Message
 from langbuilder.template.utils import update_template_values
 
 
-class PromptComponent(Component):
+class PromptComponent(Node):
     display_name: str = "Prompt Template"
     description: str = "Create a prompt template with dynamic variables."
     documentation: str = "https://docs.langbuilder.org/components-prompts"

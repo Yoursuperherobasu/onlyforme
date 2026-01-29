@@ -9,12 +9,12 @@ from langbuilder.base.mcp.util import (
     create_tool_coroutine,
     create_tool_func,
 )
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import Tool
 from langbuilder.io import MessageTextInput, Output
 
 
-class MCPStdio(Component):
+class MCPStdio(Node):
     client = MCPStdioClient()
     tools = types.ListToolsResult
     tool_names = [str]

@@ -5,7 +5,7 @@ import pytest
 from langbuilder.components.crewai import CrewAIAgentComponent, SequentialTaskComponent
 from langbuilder.components.custom_component import CustomComponent
 from langbuilder.components.input_output import ChatInput, ChatOutput
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.custom.utils import update_component_build_config
 from langbuilder.schema import dotdict
 from langbuilder.schema.message import Message

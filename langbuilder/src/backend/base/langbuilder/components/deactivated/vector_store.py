@@ -1,11 +1,11 @@
 from langchain_core.vectorstores import VectorStoreRetriever
 
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.field_typing import VectorStore
 from langbuilder.inputs.inputs import HandleInput
 
 
-class VectorStoreRetrieverComponent(CustomComponent):
+class VectorStoreRetrieverComponent(ExecutableNode):
     display_name = "VectorStore Retriever"
     description = "A vector store retriever"
     name = "VectorStoreRetriever"
