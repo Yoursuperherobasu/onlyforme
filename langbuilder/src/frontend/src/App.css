@@ -235,6 +235,7 @@ code {
   --sidebar-background: #f3f3f3; /* light theme */
   --sidebar-foreground: #555555;
   --sidebar-background-hover: #e9e9e9;
+  --info-foreground: #da2128;
 }
 
 [data-sidebar="sidebar"] {
@@ -249,4 +250,4 @@ code {
   --sidebar-icon-active: #ffffff;
 }
 
-/* Dark theme */
+
