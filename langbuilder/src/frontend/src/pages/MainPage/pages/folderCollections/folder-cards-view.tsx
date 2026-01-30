@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X, Grid3x3, List } from "lucide-react";
+import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import { usePostFolders } from "@/controllers/API/queries/folders";
@@ -42,6 +42,8 @@ export default function FolderCardsView({
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+  const [expandedTableRow, setExpandedTableRow] = useState<string | null>(null);
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   
   const { mutate: mutateAddFolder, isPending } = usePostFolders();
   const { mutate: mutateDownloadFolder } = useGetDownloadFolders({});
@@ -49,14 +51,14 @@ export default function FolderCardsView({
   const displayFolders = folders || [];
   
   // Split folders into recent (top 5) and older
-  const recentFolders = displayFolders.slice(0, 5);
+  const recentFolders = displayFolders.slice(0, 3);
   const olderFolders = displayFolders.slice(5);
 
   // Count flows per folder
   const getFlowCount = (folderId: string) => {
     if (!flows || flows.length === 0) return 0;
     const count = flows.filter((flow) => flow.folder_id === folderId).length;
-    console.log(`Folder ${folderId} has ${count} flows`); // Debug log
+    console.log(`Folder ${folderId} has ${count} flows`);
     return count;
   };
 
@@ -153,28 +155,35 @@ export default function FolderCardsView({
         {/* Cards Section - Recent Projects */}
         <div className="border-b bg-muted/30 px-6 py-6">
           <h2 className="mb-4 text-sm font-semibold text-muted-foreground">Recents</h2>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {/* Create New Project Card */}
-            <button
-              onClick={handleOpenCreateModal}
-              disabled={isPending}
-              className="group flex aspect-square flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-4 transition-all hover:border-primary hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4">
+            {/* Create New Project Card - CENTERED AND FIXED */}
+            <div
+              className="group relative flex flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-5 transition-all hover:border-primary hover:bg-accent"
             >
-              <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
-                <Plus className="h-6 w-6 text-primary" />
+              <div className="flex-1 flex items-center justify-center">
+                <button
+                  onClick={handleOpenCreateModal}
+                  disabled={isPending}
+                  className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20 disabled:opacity-50"
+                >
+                  <Plus className="h-6 w-6 text-primary" />
+                </button>
               </div>
-              <span className="text-center text-xs font-medium">Blank project</span>
-            </button>
+              <span className="text-center text-xs font-medium text-muted-foreground mt-2">Blank project</span>
+            </div>
 
-            {/* Recent Folder Cards */}
+            {/* Recent Folder Cards - FIXED HEIGHT */}
             {recentFolders.map((folder) => {
               const flowCount = getFlowCount(folder.id);
+              const isHovered = hoveredCard === folder.id;
               return (
                 <div
                   key={folder.id}
-                  className="group relative flex min-h-[180px] flex-col items-start justify-between rounded-lg border bg-card p-5 transition-all hover:border-primary hover:shadow-md"
+                  className="group relative flex flex-col items-center justify-between rounded-lg border bg-card p-5 transition-all hover:border-primary hover:shadow-md"
+                  onMouseEnter={() => setHoveredCard(folder.id)}
+                  onMouseLeave={() => setHoveredCard(null)}
                 >
-                  {/* Three dots menu */}
+                  {/* Three dots menu - Top Right */}
                   <div className="absolute right-2 top-2 z-10">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -218,34 +227,68 @@ export default function FolderCardsView({
                     </DropdownMenu>
                   </div>
 
-                  {/* Clickable card content */}
+                  {/* Clickable card content - Centered */}
                   <button
                     onClick={() => onFolderClick(folder.id)}
-                    className="flex w-full flex-1 flex-col items-center justify-center gap-3 text-center py-2"
+                    className="flex flex-1 flex-col items-center justify-center gap-3 w-full text-center py-2"
                   >
+                    {/* Icon */}
                     <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
                       <Folder className="h-7 w-7 text-primary" />
                     </div>
-                    <div className="w-full space-y-2">
-                      <span className="block text-sm font-semibold line-clamp-2 leading-snug">
+
+                    {/* Text Content */}
+                    <div className="w-full space-y-1.5">
+                      {/* Folder Name */}
+                      <p 
+                        className="block text-sm font-semibold line-clamp-2 leading-tight"
+                      >
                         {folder.name}
-                      </span>
+                      </p>
+
+                      {/* Description - Show 1 line with ellipsis */}
                       {folder.description && (
-                        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed px-1">
+                        <p 
+                          className="text-xs text-muted-foreground line-clamp-1"
+                        >
                           {folder.description}
                         </p>
                       )}
-                      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground pt-1">
-                        <span>{flowCount} {flowCount === 1 ? "flow" : "flows"}</span>
-                        {folder.updated_at && (
-                          <>
-                            <span>•</span>
-                            <span>{formatDate(folder.updated_at)}</span>
-                          </>
+                    </div>
+                  </button>
+
+                  {/* Stats - Bottom */}
+                  <div className="flex flex-col items-center justify-center gap-1 text-xs text-muted-foreground pt-2 border-t border-border/50 w-full">
+                    <span>{flowCount} {flowCount === 1 ? "flow" : "flows"}</span>
+                    {folder.updated_at && (
+                      <span className="text-xs">{formatDate(folder.updated_at)}</span>
+                    )}
+                  </div>
+
+                  {/* Hover Tooltip Overlay - NO SCROLLBAR */}
+                  {isHovered && (folder.name.length > 15 || (folder.description && folder.description.length > 40)) && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/75 backdrop-blur-sm z-20 p-4 cursor-pointer overflow-hidden">
+                      <style>{`
+                        .scrollbar-hide::-webkit-scrollbar {
+                          display: none;
+                        }
+                        .scrollbar-hide {
+                          -ms-overflow-style: none;
+                          scrollbar-width: none;
+                        }
+                      `}</style>
+                      <div className="text-center space-y-2 max-h-full overflow-y-auto scrollbar-hide">
+                        <p className="text-sm font-semibold text-white break-words">
+                          {folder.name}
+                        </p>
+                        {folder.description && (
+                          <p className="text-xs text-gray-200 break-words whitespace-normal">
+                            {folder.description}
+                          </p>
                         )}
                       </div>
                     </div>
-                  </button>
+                  )}
                 </div>
               );
             })}
@@ -255,17 +298,17 @@ export default function FolderCardsView({
         {/* Table/List Section - Older Projects */}
         {olderFolders.length > 0 && (
           <div className="flex-1 overflow-auto px-6 py-4">
-            <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Earlier</h2>
+            <h2 className="mb-4 text-sm font-semibold text-muted-foreground">Earlier</h2>
             
-            <div className="rounded-lg border bg-card">
+            <div className="rounded-lg border bg-card overflow-hidden">
               {/* Table Header */}
-              <div className="grid grid-cols-12 gap-4 border-b bg-muted/50 px-4 py-3 text-xs font-medium text-muted-foreground">
+              <div className="grid grid-cols-12 gap-4 border-b bg-muted/50 px-4 py-3 text-xs font-semibold text-muted-foreground sticky top-0">
                 <div className="col-span-6 flex items-center gap-2">
                   <Folder className="h-4 w-4" />
-                  Name
+                  <span>Name</span>
                 </div>
-                <div className="col-span-2">Owner</div>
-                <div className="col-span-3">Last opened</div>
+                <div className="col-span-2 flex items-center">Owner</div>
+                <div className="col-span-3 flex items-center">Last opened</div>
                 <div className="col-span-1"></div>
               </div>
 
@@ -273,92 +316,112 @@ export default function FolderCardsView({
               <div className="divide-y">
                 {olderFolders.map((folder) => {
                   const flowCount = getFlowCount(folder.id);
+                  const isExpanded = expandedTableRow === folder.id;
+                  
                   return (
-                    <div
+                    <div 
                       key={folder.id}
-                      className="grid grid-cols-12 gap-4 px-4 py-3 transition-colors hover:bg-muted/50 cursor-pointer group"
-                      onClick={() => onFolderClick(folder.id)}
+                      onMouseEnter={() => {
+                        if (folder.description) {
+                          setExpandedTableRow(folder.id);
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        setExpandedTableRow(null);
+                      }}
                     >
-                      {/* Name Column */}
-                      <div className="col-span-6 flex items-center gap-3">
-                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-primary/10">
-                          <Folder className="h-4 w-4 text-primary" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate font-medium text-sm">
+                      {/* Main Row */}
+                      <div
+                        className="group grid grid-cols-12 gap-4 px-4 py-3 transition-colors hover:bg-muted/50 cursor-pointer items-center"
+                        onClick={() => onFolderClick(folder.id)}
+                      >
+                        {/* Name Column */}
+                        <div className="col-span-6 flex items-center gap-3 min-w-0">
+                          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-primary/10">
+                            <Folder className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium text-sm">
                               {folder.name}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            {folder.description && (
-                              <>
-                                <p className="text-xs text-muted-foreground truncate">
-                                  {folder.description}
-                                </p>
-                                <span className="text-xs text-muted-foreground">•</span>
-                              </>
+                            </p>
+                            {folder.description && !isExpanded && (
+                              <p className="text-xs text-muted-foreground truncate">
+                                {folder.description}
+                              </p>
                             )}
-                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            <p className="text-xs text-muted-foreground mt-1">
                               {flowCount} {flowCount === 1 ? "flow" : "flows"}
-                            </span>
+                            </p>
                           </div>
+                        </div>
+
+                        {/* Owner Column */}
+                        <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                          <span className="truncate">me</span>
+                        </div>
+
+                        {/* Last Opened Column */}
+                        <div className="col-span-3 flex items-center text-sm text-muted-foreground">
+                          <span className="truncate">
+                            {folder.updated_at ? formatDate(folder.updated_at) : '--'}
+                          </span>
+                        </div>
+
+                        {/* Actions Column */}
+                        <div className="col-span-1 flex items-center justify-end">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRenameFolder?.(folder);
+                                }}
+                              >
+                                <Edit2 className="mr-2 h-4 w-4" />
+                                Rename
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownloadFolder(folder);
+                                }}
+                              >
+                                <Download className="mr-2 h-4 w-4" />
+                                Download
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDeleteFolder?.(folder);
+                                }}
+                                className="text-destructive"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </div>
 
-                      {/* Owner Column */}
-                      <div className="col-span-2 flex items-center text-sm text-muted-foreground">
-                        me
-                      </div>
-
-                      {/* Last Opened Column */}
-                      <div className="col-span-3 flex items-center text-sm text-muted-foreground">
-                        {folder.updated_at ? formatDate(folder.updated_at) : '--'}
-                      </div>
-
-                      {/* Actions Column */}
-                      <div className="col-span-1 flex items-center justify-end">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              onClick={(e) => e.stopPropagation()}
-                              className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onRenameFolder?.(folder);
-                              }}
-                            >
-                              <Edit2 className="mr-2 h-4 w-4" />
-                              Rename
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownloadFolder(folder);
-                              }}
-                            >
-                              <Download className="mr-2 h-4 w-4" />
-                              Download
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteFolder?.(folder);
-                              }}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
+                      {/* Expanded Description Row */}
+                      {isExpanded && folder.description && (
+                        <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-muted/30 border-t">
+                          <div className="col-span-12">
+                            <p className="text-xs text-muted-foreground break-words whitespace-normal">
+                              <span className="font-semibold">Description:</span> {folder.description}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -371,7 +434,9 @@ export default function FolderCardsView({
         {displayFolders.length === 0 && (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center">
-              <Folder className="mx-auto mb-4 h-16 w-16 text-muted-foreground/50" />
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-lg bg-primary/10">
+                <Folder className="h-8 w-8 text-primary" />
+              </div>
               <h3 className="mb-2 text-lg font-semibold">No projects yet</h3>
               <p className="mb-4 text-sm text-muted-foreground">
                 Create your first project to get started
@@ -400,7 +465,7 @@ export default function FolderCardsView({
           <div className="fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] rounded-lg border border-border bg-card p-6 shadow-lg">
             <div className="mb-6 flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-card-foreground">
+                <h2 className="text-xl font-semibold">
                   Create New Project
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">

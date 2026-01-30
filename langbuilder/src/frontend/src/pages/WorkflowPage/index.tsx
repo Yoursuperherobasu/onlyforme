@@ -223,7 +223,7 @@ export default function WorkflowsView({
       <div className="flex-shrink-0 px-8 py-6 border-b">
         <div className="flex items-center gap-3 mb-6">
           <Workflow className="h-6 w-6 text-red-500" />
-          <h1 className="text-2xl font-semibold">Workflows</h1>
+          <h1 className="text-2xl font-semibold">Agent Runtime</h1>
         </div>
 
         {/* Search */}
