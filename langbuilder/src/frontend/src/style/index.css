@@ -207,6 +207,8 @@
     --button-primary-hover: #b81b20;
     --button-primary-disabled: #f0a3a6;
 
+    --tabs-label: #ffffff;
+
 
   }
 
@@ -468,5 +470,13 @@
     --accent-amber-foreground: 45.9 96.7% 64.5%;
     --red-foreground: 0 72.2% 50.6%;
     --indigo-foreground: 234.5 89.5% 73.9%;
+
+    --button-primary: white;
+    --button-primary-foreground: #0c0c0c;
+
+    --button-primary-hover: #ffffff;
+    --button-primary-disabled: #f0a3a6;
+
+    --tabs-label: #000000;
   }
 }
