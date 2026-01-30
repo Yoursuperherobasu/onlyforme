@@ -61,11 +61,13 @@ export default function AdminPage() {
 
   const userList = useRef([]);
 
-  useEffect(() => {
-    setTimeout(() => {
-      getUsers();
-    }, 500);
-  }, []);
+ const hasFetchedRef = useRef(false);
+
+useEffect(() => {
+  if (hasFetchedRef.current) return;
+  hasFetchedRef.current = true;
+  getUsers();
+}, []);
 
   const [filterUserList, setFilterUserList] = useState(userList.current);
 
@@ -331,7 +333,7 @@ export default function AdminPage() {
                       <TableHead className="h-10">{t("Id")}</TableHead>
                       <TableHead className="h-10">{t("Username")}</TableHead>
                       <TableHead className="h-10">{t("Active")}</TableHead>
-                      <TableHead className="h-10">{t("Superuser")}</TableHead>
+                      <TableHead className="h-10">{t("Roles")}</TableHead>
                       <TableHead className="h-10">{t("Created At")}</TableHead>
                       <TableHead className="h-10">{t("Updated At")}</TableHead>
                       <TableHead className="h-10 w-[100px] text-right"></TableHead>
@@ -411,8 +413,8 @@ export default function AdminPage() {
                                 </span>
                               </ConfirmationModal.Content>
                               <ConfirmationModal.Trigger>
-                                <div className="flex w-fit">
-                                  <CheckBoxDiv checked={user.is_superuser} />
+                                <div className="flex w-fit cursor-pointer">
+                                  <span>{user.is_superuser ? "Admin" : "User"}</span>
                                 </div>
                               </ConfirmationModal.Trigger>
                             </ConfirmationModal>

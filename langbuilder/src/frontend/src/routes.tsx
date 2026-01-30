@@ -207,9 +207,9 @@ const router = createBrowserRouter(
                 <Route
                   path="admin"
                   element={
-                    <ProtectedAdminRoute>
+                    // <ProtectedAdminRoute>
                       <AdminPage />
-                    </ProtectedAdminRoute>
+                    // </ProtectedAdminRoute>
                   }
                 />
               </Route>

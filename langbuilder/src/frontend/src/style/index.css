@@ -200,6 +200,12 @@
     --accent-amber-foreground: 26 90.5% 37.1%;
     --red-foreground: 0 90.6% 70.8%;
     --indigo-foreground: 243.7 54.5% 41.4%;
+
+--button-primary: #DA2128;
+  --button-primary-foreground: #ffffff;
+
+  --button-primary-hover: #b81b20;     /* darker */
+  --button-primary-disabled: #f0a3a6;
   }
 
   .dark {
@@ -396,7 +402,7 @@
     --chat-bot-icon: #235d70;
     --chat-user-icon: #4f3d6e;
 
-    --sidebar-background: 220 25% 4%;
+    --sidebar-background: 85.5% 12.9% 15.7%;
 --sidebar-foreground: 210 40% 96%;
 
 --sidebar-primary: 217 91% 60%;

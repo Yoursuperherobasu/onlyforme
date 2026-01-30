@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import AlertDropdown from "@/alerts/alertDropDown";
 import DataStaxLogo from "@/assets/DataStaxLogo.svg?react";
 
-import MothersonLogo from "@/assets/motherson_name.svg?react";
+// import MothersonLogo from "@/assets/motherson_name.svg?react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
@@ -17,13 +17,47 @@ import useTheme from "@/customization/hooks/use-custom-theme";
 import useAlertStore from "@/stores/alertStore";
 import FlowMenu from "./components/FlowMenu";
 
+import FullLogo from "@/assets/agentcore.svg?react";
+import IconLogo from "@/assets/mothersonLogo.svg?react";
+
 export default function AppHeader(): JSX.Element {
   const notificationCenter = useAlertStore((state) => state.notificationCenter);
   const navigate = useCustomNavigate();
   const [activeState, setActiveState] = useState<"notifications" | null>(null);
   const notificationRef = useRef<HTMLButtonElement | null>(null);
   const notificationContentRef = useRef<HTMLDivElement | null>(null);
+  
+  // Listen to sidebar state from localStorage or custom event
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    const stored = localStorage.getItem("sidebar:state");
+    return stored ? JSON.parse(stored) : true;
+  });
+
   useTheme();
+
+  useEffect(() => {
+    // Listen for sidebar state changes via custom event
+    const handleSidebarChange = (e: CustomEvent) => {
+      setSidebarOpen(e.detail.open);
+    };
+
+    window.addEventListener("sidebar-state-change" as any, handleSidebarChange);
+
+    // Also listen to storage changes
+    const handleStorageChange = () => {
+      const stored = localStorage.getItem("sidebar:state");
+      if (stored) {
+        setSidebarOpen(JSON.parse(stored));
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("sidebar-state-change" as any, handleSidebarChange);
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -70,7 +104,11 @@ export default function AppHeader(): JSX.Element {
             <DataStaxLogo className="fill-black dark:fill-[white]" />
           ) : (
             <div className="flex items-center px-3 h-12">
-              <MothersonLogo className="h-6 w-auto" />
+              {sidebarOpen ? (
+                <FullLogo className="h-8" />
+              ) : (
+                <IconLogo className="h-8 w-8" />
+              )}
             </div>
           )}
         </Button>

@@ -16,6 +16,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { DEFAULT_FOLDER } from "@/constants/constants";
 import { useUpdateUser } from "@/controllers/API/queries/auth";
@@ -54,6 +55,10 @@ import { InputEditFolderName } from "./components/input-edit-folder-name";
 import { MCPServerNotice } from "./components/mcp-server-notice";
 import { SelectOptions } from "./components/select-options";
 
+// Import your logos here
+// import FullLogo from "@/assets/full-logo.svg"; // Your full logo when expanded
+// import CollapsedLogo from "@/assets/collapsed-logo.svg"; // Your icon/small logo when collapsed
+
 type SideBarFoldersButtonsComponentProps = {
   handleChangeFolder?: (id: string) => void;
   handleDeleteFolder?: (item: FolderType) => void;
@@ -71,6 +76,9 @@ const SideBarFoldersButtonsComponent = ({
   const refInput = useRef<HTMLInputElement>(null);
 
   const _navigate = useCustomNavigate();
+  
+  // Get sidebar state to detect if it's collapsed
+  const { open: sidebarOpen } = useSidebar();
 
   const currentFolder = pathname.split("/");
   const urlWithoutPath =
@@ -347,6 +355,14 @@ const SideBarFoldersButtonsComponent = ({
     userDismissedMcpDialog,
   );
 
+  // Dispatch custom event when sidebar state changes
+  useEffect(() => {
+    const event = new CustomEvent("sidebar-state-change", {
+      detail: { open: sidebarOpen }
+    });
+    window.dispatchEvent(event);
+  }, [sidebarOpen]);
+
   const handleDismissMcpDialog = () => {
     setIsDismissedMcpDialog(true);
     updateUser({
@@ -383,8 +399,8 @@ const SideBarFoldersButtonsComponent = ({
         />
       </div>
       <SidebarHeader className="flex h-12 items-center px-3">
-        {/* Left side (title or spacer) */}
-        <div className="flex flex-1 items-center"></div>
+        {/* Logo changes based on sidebar collapse state */}
+        
       </SidebarHeader>
 
       {/* ================= CONTENT ================= */}

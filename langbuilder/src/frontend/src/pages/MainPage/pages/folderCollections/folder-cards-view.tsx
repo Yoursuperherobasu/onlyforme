@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X } from "lucide-react";
+import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X, Grid3x3, List } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import { usePostFolders } from "@/controllers/API/queries/folders";
@@ -47,10 +47,23 @@ export default function FolderCardsView({
   const { mutate: mutateDownloadFolder } = useGetDownloadFolders({});
 
   const displayFolders = folders || [];
+  
+  // Split folders into recent (top 5) and older
+  const recentFolders = displayFolders.slice(0, 5);
+  const olderFolders = displayFolders.slice(5);
 
   // Count flows per folder
   const getFlowCount = (folderId: string) => {
-    return flows?.filter((flow) => flow.folder_id === folderId).length || 0;
+    if (!flows || flows.length === 0) return 0;
+    const count = flows.filter((flow) => flow.folder_id === folderId).length;
+    console.log(`Folder ${folderId} has ${count} flows`); // Debug log
+    return count;
+  };
+
+  // Format date
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   // Open create modal
@@ -86,7 +99,6 @@ export default function FolderCardsView({
           setCreateModalOpen(false);
           setProjectName("");
           setProjectDescription("");
-          // Navigate to the new folder
           onFolderClick(folder.id);
         },
         onError: (err) => {
@@ -117,13 +129,13 @@ export default function FolderCardsView({
 
   return (
     <>
-      <div className="flex h-full w-full flex-col overflow-auto">
+      <div className="flex h-full w-full flex-col overflow-auto bg-background">
         {/* Header */}
-        <div className="flex items-center justify-between border-b px-6 py-4">
+        <div className="flex items-center justify-between border-b bg-background px-6 py-4 sticky top-0 z-10">
           <div>
             <h1 className="text-2xl font-semibold">Projects</h1>
             <p className="text-sm text-muted-foreground">
-              Manage your workflow projects
+              Start a new project or select an existing one
             </p>
           </div>
           {onFilesClick && (
@@ -138,31 +150,29 @@ export default function FolderCardsView({
           )}
         </div>
 
-        {/* Cards Grid */}
-        <div className="flex-1 overflow-auto p-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {/* Cards Section - Recent Projects */}
+        <div className="border-b bg-muted/30 px-6 py-6">
+          <h2 className="mb-4 text-sm font-semibold text-muted-foreground">Recents</h2>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {/* Create New Project Card */}
             <button
               onClick={handleOpenCreateModal}
               disabled={isPending}
-              className="group flex min-h-[200px] flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-6 transition-all hover:border-primary hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              className="group flex aspect-square flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-4 transition-all hover:border-primary hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 transition-colors group-hover:bg-primary/20">
-                <Plus className="h-8 w-8 text-primary" />
+              <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
+                <Plus className="h-6 w-6 text-primary" />
               </div>
-              <h3 className="text-lg font-semibold">Create New Project</h3>
-              <p className="mt-2 text-center text-sm text-muted-foreground">
-                Start a new workflow project
-              </p>
+              <span className="text-center text-xs font-medium">Blank project</span>
             </button>
 
-            {/* Existing Folder Cards */}
-            {displayFolders.map((folder) => {
+            {/* Recent Folder Cards */}
+            {recentFolders.map((folder) => {
               const flowCount = getFlowCount(folder.id);
               return (
                 <div
                   key={folder.id}
-                  className="group relative flex min-h-[200px] flex-col rounded-lg border bg-card transition-all hover:border-primary hover:shadow-lg"
+                  className="group relative flex min-h-[180px] flex-col items-start justify-between rounded-lg border bg-card p-5 transition-all hover:border-primary hover:shadow-md"
                 >
                   {/* Three dots menu */}
                   <div className="absolute right-2 top-2 z-10">
@@ -170,9 +180,9 @@ export default function FolderCardsView({
                       <DropdownMenuTrigger asChild>
                         <button
                           onClick={(e) => e.stopPropagation()}
-                          className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+                          className="flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
                         >
-                          <MoreVertical className="h-4 w-4" />
+                          <MoreVertical className="h-3.5 w-3.5" />
                         </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
@@ -211,68 +221,183 @@ export default function FolderCardsView({
                   {/* Clickable card content */}
                   <button
                     onClick={() => onFolderClick(folder.id)}
-                    className="flex flex-1 flex-col p-6 text-left"
+                    className="flex w-full flex-1 flex-col items-center justify-center gap-3 text-center py-2"
                   >
-                    <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
-                      <Folder className="h-8 w-8 text-primary" />
+                    <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
+                      <Folder className="h-7 w-7 text-primary" />
                     </div>
-                    <h3 className="mb-2 text-lg font-semibold text-card-foreground">
-                      {folder.name}
-                    </h3>
-                    {folder.description && (
-                      <p className="mb-4 flex-1 text-sm text-muted-foreground line-clamp-2">
-                        {folder.description}
-                      </p>
-                    )}
-                    <div className="mt-auto flex items-center justify-between pt-4 text-sm text-muted-foreground">
-                      <span>
-                        {flowCount} {flowCount === 1 ? "flow" : "flows"}
+                    <div className="w-full space-y-2">
+                      <span className="block text-sm font-semibold line-clamp-2 leading-snug">
+                        {folder.name}
                       </span>
-                      <span className="text-xs opacity-0 transition-opacity group-hover:opacity-100">
-                        Open →
-                      </span>
+                      {folder.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed px-1">
+                          {folder.description}
+                        </p>
+                      )}
+                      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground pt-1">
+                        <span>{flowCount} {flowCount === 1 ? "flow" : "flows"}</span>
+                        {folder.updated_at && (
+                          <>
+                            <span>•</span>
+                            <span>{formatDate(folder.updated_at)}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </button>
                 </div>
               );
             })}
           </div>
+        </div>
 
-          {/* Empty State */}
-          {displayFolders.length === 0 && (
-            <div className="flex h-full items-center justify-center">
-              <div className="text-center">
-                <Folder className="mx-auto mb-4 h-16 w-16 text-muted-foreground/50" />
-                <h3 className="mb-2 text-lg font-semibold">No projects yet</h3>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  Create your first project to get started
-                </p>
-                <button
-                  onClick={handleOpenCreateModal}
-                  disabled={isPending}
-                  className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Plus className="h-4 w-4" />
-                  Create Project
-                </button>
+        {/* Table/List Section - Older Projects */}
+        {olderFolders.length > 0 && (
+          <div className="flex-1 overflow-auto px-6 py-4">
+            <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Earlier</h2>
+            
+            <div className="rounded-lg border bg-card">
+              {/* Table Header */}
+              <div className="grid grid-cols-12 gap-4 border-b bg-muted/50 px-4 py-3 text-xs font-medium text-muted-foreground">
+                <div className="col-span-6 flex items-center gap-2">
+                  <Folder className="h-4 w-4" />
+                  Name
+                </div>
+                <div className="col-span-2">Owner</div>
+                <div className="col-span-3">Last opened</div>
+                <div className="col-span-1"></div>
+              </div>
+
+              {/* Table Body */}
+              <div className="divide-y">
+                {olderFolders.map((folder) => {
+                  const flowCount = getFlowCount(folder.id);
+                  return (
+                    <div
+                      key={folder.id}
+                      className="grid grid-cols-12 gap-4 px-4 py-3 transition-colors hover:bg-muted/50 cursor-pointer group"
+                      onClick={() => onFolderClick(folder.id)}
+                    >
+                      {/* Name Column */}
+                      <div className="col-span-6 flex items-center gap-3">
+                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-primary/10">
+                          <Folder className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate font-medium text-sm">
+                              {folder.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {folder.description && (
+                              <>
+                                <p className="text-xs text-muted-foreground truncate">
+                                  {folder.description}
+                                </p>
+                                <span className="text-xs text-muted-foreground">•</span>
+                              </>
+                            )}
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {flowCount} {flowCount === 1 ? "flow" : "flows"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Owner Column */}
+                      <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                        me
+                      </div>
+
+                      {/* Last Opened Column */}
+                      <div className="col-span-3 flex items-center text-sm text-muted-foreground">
+                        {folder.updated_at ? formatDate(folder.updated_at) : '--'}
+                      </div>
+
+                      {/* Actions Column */}
+                      <div className="col-span-1 flex items-center justify-end">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRenameFolder?.(folder);
+                              }}
+                            >
+                              <Edit2 className="mr-2 h-4 w-4" />
+                              Rename
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadFolder(folder);
+                              }}
+                            >
+                              <Download className="mr-2 h-4 w-4" />
+                              Download
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteFolder?.(folder);
+                              }}
+                              className="text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {displayFolders.length === 0 && (
+          <div className="flex flex-1 items-center justify-center">
+            <div className="text-center">
+              <Folder className="mx-auto mb-4 h-16 w-16 text-muted-foreground/50" />
+              <h3 className="mb-2 text-lg font-semibold">No projects yet</h3>
+              <p className="mb-4 text-sm text-muted-foreground">
+                Create your first project to get started
+              </p>
+              <button
+                onClick={handleOpenCreateModal}
+                disabled={isPending}
+                className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" />
+                Create Project
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Create Project Modal */}
       {createModalOpen && (
         <>
-          {/* Backdrop with blur */}
           <div
             className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
             onClick={() => setCreateModalOpen(false)}
           />
 
-          {/* Modal */}
           <div className="fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] rounded-lg border border-border bg-card p-6 shadow-lg">
-            {/* Header */}
             <div className="mb-6 flex items-start justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-card-foreground">
@@ -291,9 +416,7 @@ export default function FolderCardsView({
               </button>
             </div>
 
-            {/* Form */}
             <form onSubmit={handleCreateNewFolder} className="space-y-4">
-              {/* Project Name */}
               <div className="space-y-2">
                 <Label htmlFor="projectName" className="text-sm font-medium">
                   Project Name <span className="text-destructive">*</span>
@@ -309,7 +432,6 @@ export default function FolderCardsView({
                 />
               </div>
 
-              {/* Description */}
               <div className="space-y-2">
                 <Label htmlFor="projectDescription" className="text-sm font-medium">
                   Description (Optional)
@@ -324,7 +446,6 @@ export default function FolderCardsView({
                 />
               </div>
 
-              {/* Action Buttons */}
               <div className="flex items-center gap-3 pt-4">
                 <Button
                   type="button"
