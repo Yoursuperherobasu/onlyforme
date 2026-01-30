@@ -45,15 +45,22 @@ export default function FolderCardsView({
   const [expandedTableRow, setExpandedTableRow] = useState<string | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedFolderDetail, setSelectedFolderDetail] = useState<FolderType | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   
   const { mutate: mutateAddFolder, isPending } = usePostFolders();
   const { mutate: mutateDownloadFolder } = useGetDownloadFolders({});
 
   const displayFolders = folders || [];
   
+  // Filter folders based on search query
+  const filteredFolders = displayFolders.filter(folder => 
+    folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    folder.description?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  
   // Split folders into recent (top 4) and older
-  const recentFolders = displayFolders.slice(0, 4);
-  const olderFolders = displayFolders.slice(4);
+  const recentFolders = filteredFolders.slice(0, 4);
+  const olderFolders = filteredFolders.slice(4);
 
   // Count flows per folder
   const getFlowCount = (folderId: string) => {
@@ -148,17 +155,37 @@ export default function FolderCardsView({
             </p>
           </div>
           
-          
-          {onFilesClick && (
-            <Button
-              onClick={onFilesClick}
-              variant="outline"
-              className="gap-2"
-            >
-              <FileText className="h-4 w-4" />
-              My Files
-            </Button>
-          )}
+          <div className="flex items-center gap-3">
+            {/* Search Bar */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search projects..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-10 w-64 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {onFilesClick && (
+              <Button
+                onClick={onFilesClick}
+                variant="outline"
+                className="gap-2"
+              >
+                <FileText className="h-4 w-4" />
+                My Files
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Cards Section - Recent Projects */}
@@ -424,24 +451,41 @@ export default function FolderCardsView({
         )}
 
         {/* Empty State */}
-        {displayFolders.length === 0 && (
+        {filteredFolders.length === 0 && (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-lg bg-primary/10">
                 <Folder className="h-8 w-8 text-primary" />
               </div>
-              <h3 className="mb-2 text-lg font-semibold">No projects yet</h3>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Create your first project to get started
-              </p>
-              <button
-                onClick={handleOpenCreateModal}
-                disabled={isPending}
-                className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Plus className="h-4 w-4" />
-                Create Project
-              </button>
+              {searchQuery ? (
+                <>
+                  <h3 className="mb-2 text-lg font-semibold">No projects found</h3>
+                  <p className="mb-4 text-sm text-muted-foreground">
+                    No projects match "{searchQuery}"
+                  </p>
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="text-sm text-primary hover:underline"
+                  >
+                    Clear search
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h3 className="mb-2 text-lg font-semibold">No projects yet</h3>
+                  <p className="mb-4 text-sm text-muted-foreground">
+                    Create your first project to get started
+                  </p>
+                  <button
+                    onClick={handleOpenCreateModal}
+                    disabled={isPending}
+                    className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Create Project
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
