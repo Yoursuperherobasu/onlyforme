@@ -30,11 +30,13 @@ const ListComponent = ({
   selected,
   setSelected,
   shiftPressed,
+  index,
 }: {
   flowData: FlowType;
   selected: boolean;
   setSelected: (selected: boolean) => void;
   shiftPressed: boolean;
+  index: number;
 }) => {
   const navigate = useCustomNavigate();
   const [openDelete, setOpenDelete] = useState(false);
@@ -45,8 +47,6 @@ const ListComponent = ({
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
   const isComponent = flowData.is_component ?? false;
-
-  const { getIcon } = useGetTemplateStyle(flowData);
 
   const editFlowLink = `/flow/${flowData.id}${folderId ? `/folder/${folderId}` : ""}`;
 
@@ -97,12 +97,6 @@ const ListComponent = ({
     }
   };
 
-  const [icon, setIcon] = useState<string>("");
-
-  useEffect(() => {
-    getIcon().then(setIcon);
-  }, [getIcon]);
-
   return (
     <>
       <Card
@@ -140,17 +134,16 @@ const ListComponent = ({
             </div>
             <div
               className={cn(
-                `item-center flex justify-center rounded-lg p-1.5 transition-opacity duration-200`,
-                swatchColors[swatchIndex],
-                selected
-                  ? "duration-300"
-                  : "group-hover/checkbox:pointer-events-none group-hover/checkbox:opacity-0",
+                "flex items-center justify-center rounded-lg p-1.5",
+                index % 2 === 0 ? "bg-muted" : "bg-[var(--info-foreground)]",
               )}
             >
               <ForwardedIconComponent
-                name={flowData?.icon || icon}
-                aria-hidden="true"
-                className="flex h-5 w-5 items-center justify-center"
+                name="Workflow"
+                className={cn(
+                  "h-5 w-5",
+                  index % 2 === 0 ? "text-foreground" : "text-white",
+                )}
               />
             </div>
           </div>
