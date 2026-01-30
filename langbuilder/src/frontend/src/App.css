@@ -232,7 +232,7 @@ code {
 
 /* Sidebar color */
 :root {
-  --sidebar-background: #cf0707; /* light theme */
+  --sidebar-background: #555555; /* light theme */
   --sidebar-foreground: #ffffff;
 }
 
