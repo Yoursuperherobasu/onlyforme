@@ -97,8 +97,8 @@ export default function ApprovalPage() {
       <div className="flex items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <Users className="h-7 w-7 text-blue-500" />
-            <h1 className="text-2xl font-semibold">Human in the Loop</h1>
+            
+            <h1 className="text-2xl font-semibold">Review & Approval</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             Review and approve AI agents before deployment

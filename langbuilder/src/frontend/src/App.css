@@ -232,12 +232,16 @@ code {
 
 /* Sidebar color */
 :root {
-  --sidebar-background: #555555; /* light theme */
-  --sidebar-foreground: #ffffff;
+  --sidebar-background: #f3f3f3; /* light theme */
+  --sidebar-foreground: #555555;
+  --sidebar-background-hover: #e9e9e9;
 }
 
 [data-sidebar="sidebar"] {
   --background: var(--sidebar-background);
+}
+[data-sidebar="menu-button"]:hover {
+  background-color: var(--sidebar-background-hover);
 }
 
 :root {
