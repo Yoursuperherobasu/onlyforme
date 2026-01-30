@@ -500,12 +500,16 @@ class LangGraphAdapter:
         # Always generate a new run ID for each run
         self.set_run_id()
         
-        # Initialize tracing service
+        # Initialize tracing service - this creates the FLOW-LEVEL trace
+        # Each vertex build will create child spans under this trace via trace_component()
         self.tracing_service = get_tracing_service()
         if self.tracing_service and not self.tracing_service.deactivated:
+            from uuid import UUID
             run_name = f"{self.flow_name} - {self.flow_id}"
+            # Use the run_id we just set (converted to UUID)
+            run_id = UUID(self._run_id) if self._run_id else uuid4()
             await self.tracing_service.start_tracers(
-                run_id=uuid4() if not self._run_id else self._run_id,
+                run_id=run_id,
                 run_name=run_name,
                 user_id=self.user_id,
                 session_id=self._session_id,
@@ -656,8 +660,6 @@ class LangGraphAdapter:
         Returns:
             VertexBuildResult with vertex build result
         """
-        from uuid import uuid4
-        from langbuilder.services.deps import get_tracing_service
         from langbuilder.graph_langgraph.schema import VertexBuildResult
         
         # Get the vertex
@@ -666,258 +668,238 @@ class LangGraphAdapter:
             msg = f"Vertex {vertex_id} not found"
             raise ValueError(msg)
         
-        # Set up tracing context for this build if tracing is enabled
-        tracing_service = get_tracing_service()
+        # Note: We do NOT start a new trace here. The flow-level trace is started 
+        # in initialize_run(). Each vertex build creates child spans via the 
+        # component's trace_component() call in build_results().
+        # This ensures all vertex builds appear as spans under a single flow trace.
+        
         user_id = kwargs.get("user_id")
+        inputs_dict = kwargs.get("inputs_dict", {})
         
-        # Start a trace context for this individual vertex build
-        if tracing_service and not tracing_service.deactivated:
-            run_id = uuid4()
-            run_name = f"vertex_build_{vertex_id}"
-            session_id = kwargs.get("inputs_dict", {}).get("session") if kwargs.get("inputs_dict") else None
+        # If this is an input vertex AND we have inputs_dict, update the vertex parameters first
+        # This mimics the old Graph's _set_inputs() behavior with component and type filtering
+        if vertex_id in self._is_input_vertices and inputs_dict:
+            # Get input filtering parameters
+            from langbuilder.schema.schema import INPUT_FIELD_NAME
             
-            await tracing_service.start_tracers(
-                run_id=run_id,
-                run_name=run_name,
-                user_id=user_id,
-                session_id=session_id,
-                project_name="LangBuilder"
-            )
+            # Extract components filter (if provided)
+            input_components = inputs_dict.get('components', [])
+            # Note: input_type is not in inputs_dict, would need to be passed separately
+            # For now, we skip input_type filtering as it's rarely used
+            
+            # Filter by component (only update if vertex matches component filter)
+            should_update = True
+            if input_components:
+                # Check if vertex_id or display_name is in the components list
+                if vertex_id not in input_components and vertex.display_name not in input_components:
+                    should_update = False
+                    logger.debug(f"Skipping input vertex {vertex_id} - not in components filter: {input_components}")
+            
+            if should_update:
+                print(f"🔧 ADAPTER: Updating input vertex {vertex_id} with inputs: {inputs_dict}")
+                logger.debug(f"Updating input vertex {vertex_id} with inputs: {inputs_dict}")
+                
+                if INPUT_FIELD_NAME in inputs_dict:
+                    vertex.update_raw_params({INPUT_FIELD_NAME: inputs_dict[INPUT_FIELD_NAME]}, overwrite=True)
+                    print(f"✅ ADAPTER: Input vertex {vertex_id} updated with {INPUT_FIELD_NAME}: {inputs_dict[INPUT_FIELD_NAME]}")
+                    logger.debug(f"Input vertex {vertex_id} updated with input_value: {inputs_dict[INPUT_FIELD_NAME]}")
         
-        try:
-            # If this is an input vertex AND we have inputs_dict, update the vertex parameters first
-            # This mimics the old Graph's _set_inputs() behavior with component and type filtering
-            inputs_dict = kwargs.get("inputs_dict", {})
-            if vertex_id in self._is_input_vertices and inputs_dict:
-                # Get input filtering parameters
-                from langbuilder.schema.schema import INPUT_FIELD_NAME
-                
-                # Extract components filter (if provided)
-                input_components = inputs_dict.get('components', [])
-                # Note: input_type is not in inputs_dict, would need to be passed separately
-                # For now, we skip input_type filtering as it's rarely used
-                
-                # Filter by component (only update if vertex matches component filter)
-                should_update = True
-                if input_components:
-                    # Check if vertex_id or display_name is in the components list
-                    if vertex_id not in input_components and vertex.display_name not in input_components:
-                        should_update = False
-                        logger.debug(f"Skipping input vertex {vertex_id} - not in components filter: {input_components}")
-                
-                if should_update:
-                    print(f"🔧 ADAPTER: Updating input vertex {vertex_id} with inputs: {inputs_dict}")
-                    logger.debug(f"Updating input vertex {vertex_id} with inputs: {inputs_dict}")
-                    
-                    if INPUT_FIELD_NAME in inputs_dict:
-                        vertex.update_raw_params({INPUT_FIELD_NAME: inputs_dict[INPUT_FIELD_NAME]}, overwrite=True)
-                        print(f"✅ ADAPTER: Input vertex {vertex_id} updated with {INPUT_FIELD_NAME}: {inputs_dict[INPUT_FIELD_NAME]}")
-                        logger.debug(f"Input vertex {vertex_id} updated with input_value: {inputs_dict[INPUT_FIELD_NAME]}")
+        # Check if we should build or use cached result (frozen vertex optimization)
+        should_build = False
+        if not vertex.frozen:
+            should_build = True
+        else:
+            # Vertex is frozen - check cache
+            from langbuilder.services.cache.utils import CacheMiss
+            get_cache = kwargs.get("get_cache")
+            if get_cache is not None:
+                cached_result = await get_cache(key=vertex.id)
+            else:
+                cached_result = CacheMiss()
             
-            # Check if we should build or use cached result (frozen vertex optimization)
-            should_build = False
-            if not vertex.frozen:
+            if isinstance(cached_result, CacheMiss):
                 should_build = True
             else:
-                # Vertex is frozen - check cache
-                from langbuilder.services.cache.utils import CacheMiss
-                get_cache = kwargs.get("get_cache")
-                if get_cache is not None:
-                    cached_result = await get_cache(key=vertex.id)
-                else:
-                    cached_result = CacheMiss()
-                
-                if isinstance(cached_result, CacheMiss):
-                    should_build = True
-                else:
-                    # Try to restore from cache
-                    try:
-                        cached_vertex_dict = cached_result["result"]
-                        vertex.built = cached_vertex_dict["built"]
-                        vertex.artifacts = cached_vertex_dict["artifacts"]
-                        vertex.built_object = cached_vertex_dict["built_object"]
-                        vertex.built_result = cached_vertex_dict["built_result"]
-                        vertex.results = cached_vertex_dict.get("results", {})
-                        
-                        # Try to finalize build with cached data
-                        try:
-                            vertex.finalize_build()
-                            if vertex.result is not None:
-                                vertex.result.used_frozen_result = True
-                        except Exception:
-                            logger.opt(exception=True).debug("Error finalizing cached build")
-                            should_build = True
-                    except KeyError:
-                        should_build = True
-            
-            if should_build:
+                # Try to restore from cache
                 try:
-                    # Build the vertex directly (not via LangGraph for individual builds)
-                    await vertex.build(
-                        user_id=user_id,
-                        inputs=inputs_dict,
-                        files=kwargs.get("files"),
-                        event_manager=kwargs.get("event_manager"),
-                        fallback_to_env_vars=kwargs.get("fallback_to_env_vars", False),
-                    )
+                    cached_vertex_dict = cached_result["result"]
+                    vertex.built = cached_vertex_dict["built"]
+                    vertex.artifacts = cached_vertex_dict["artifacts"]
+                    vertex.built_object = cached_vertex_dict["built_object"]
+                    vertex.built_result = cached_vertex_dict["built_result"]
+                    vertex.results = cached_vertex_dict.get("results", {})
                     
-                    print(f"✅ ADAPTER: Vertex {vertex.id} built successfully, flow_id={self.flow_id}")
-                    
-                    # Log transaction to database (for Logs UI)
-                    if self.flow_id:
-                        try:
-                            from langbuilder.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
-                            
-                            # Prepare inputs
-                            inputs_for_log = _vertex_to_primitive_dict(vertex.raw_params)
-                            
-                            # Prepare outputs - use built_result which contains the actual output
-                            outputs_for_log = None
-                            if vertex.built_result is not None:
-                                try:
-                                    # built_result contains the actual component output
-                                    if isinstance(vertex.built_result, dict):
-                                        result_dict = vertex.built_result.copy()
-                                    elif hasattr(vertex.built_result, 'model_dump'):
-                                        result_dict = vertex.built_result.model_dump()
-                                    elif hasattr(vertex.built_result, '__dict__'):
-                                        result_dict = vertex.built_result.__dict__
-                                    else:
-                                        result_dict = {"result": str(vertex.built_result)}
-                                    
-                                    # Handle pandas DataFrames
-                                    for key, value in list(result_dict.items()):
-                                        if isinstance(value, pd.DataFrame):
-                                            result_dict[key] = value.to_dict()
-                                    outputs_for_log = result_dict
-                                except Exception as e:
-                                    logger.debug(f"Error preparing outputs for {vertex.id}: {e}")
-                                    outputs_for_log = {"result": str(vertex.built_result)}
-                            
-                            # Get target vertices from outgoing edges
-                            target_ids = []
-                            if hasattr(vertex, 'outgoing_edges'):
-                                for edge in vertex.outgoing_edges:
-                                    if hasattr(edge, 'target') and hasattr(edge.target, 'id'):
-                                        target_ids.append(edge.target.id)
-                            
-                            # Log transaction for each target (or None if no targets)
-                            if target_ids:
-                                for target_id in target_ids:
-                                    await log_transaction(
-                                        flow_id=self.flow_id,
-                                        vertex_id=vertex.id,
-                                        status="success",
-                                        inputs=inputs_for_log,
-                                        outputs=outputs_for_log,
-                                        target_id=target_id,
-                                        error=None,
-                                    )
-                            else:
-                                # No targets, log single transaction
+                    # Try to finalize build with cached data
+                    try:
+                        vertex.finalize_build()
+                        if vertex.result is not None:
+                            vertex.result.used_frozen_result = True
+                    except Exception:
+                        logger.opt(exception=True).debug("Error finalizing cached build")
+                        should_build = True
+                except KeyError:
+                    should_build = True
+        
+        if should_build:
+            try:
+                # Build the vertex directly (not via LangGraph for individual builds)
+                await vertex.build(
+                    user_id=user_id,
+                    inputs=inputs_dict,
+                    files=kwargs.get("files"),
+                    event_manager=kwargs.get("event_manager"),
+                    fallback_to_env_vars=kwargs.get("fallback_to_env_vars", False),
+                )
+                
+                print(f"✅ ADAPTER: Vertex {vertex.id} built successfully, flow_id={self.flow_id}")
+                
+                # Log transaction to database (for Logs UI)
+                if self.flow_id:
+                    try:
+                        from langbuilder.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
+                        
+                        # Prepare inputs
+                        inputs_for_log = _vertex_to_primitive_dict(vertex.raw_params)
+                        
+                        # Prepare outputs - use built_result which contains the actual output
+                        outputs_for_log = None
+                        if vertex.built_result is not None:
+                            try:
+                                # built_result contains the actual component output
+                                if isinstance(vertex.built_result, dict):
+                                    result_dict = vertex.built_result.copy()
+                                elif hasattr(vertex.built_result, 'model_dump'):
+                                    result_dict = vertex.built_result.model_dump()
+                                elif hasattr(vertex.built_result, '__dict__'):
+                                    result_dict = vertex.built_result.__dict__
+                                else:
+                                    result_dict = {"result": str(vertex.built_result)}
+                                
+                                # Handle pandas DataFrames
+                                for key, value in list(result_dict.items()):
+                                    if isinstance(value, pd.DataFrame):
+                                        result_dict[key] = value.to_dict()
+                                outputs_for_log = result_dict
+                            except Exception as e:
+                                logger.debug(f"Error preparing outputs for {vertex.id}: {e}")
+                                outputs_for_log = {"result": str(vertex.built_result)}
+                        
+                        # Get target vertices from outgoing edges
+                        target_ids = []
+                        if hasattr(vertex, 'outgoing_edges'):
+                            for edge in vertex.outgoing_edges:
+                                if hasattr(edge, 'target') and hasattr(edge.target, 'id'):
+                                    target_ids.append(edge.target.id)
+                        
+                        # Log transaction for each target (or None if no targets)
+                        if target_ids:
+                            for target_id in target_ids:
                                 await log_transaction(
                                     flow_id=self.flow_id,
                                     vertex_id=vertex.id,
                                     status="success",
                                     inputs=inputs_for_log,
                                     outputs=outputs_for_log,
-                                    target_id=None,
+                                    target_id=target_id,
                                     error=None,
                                 )
-                        except Exception as log_error:
-                            logger.warning(f"Failed to log transaction for {vertex.id}: {log_error}")
-                    
-                    # Log successful vertex build to database
-                    if self.flow_id:
-                        try:
-                            from uuid import UUID
-                            from langbuilder.graph_langgraph.logging import log_vertex_build
-                            
-                            # Prepare data for logging
-                            data_dict = {}
-                            if vertex.built_result is not None:
-                                data_dict = {"result": str(vertex.built_result)}
-                            
-                            await log_vertex_build(
-                                flow_id=self.flow_id if isinstance(self.flow_id, UUID) else UUID(self.flow_id),
-                                vertex_id=vertex.id,
-                                valid=vertex.built,
-                                params=vertex.raw_params,
-                                data=data_dict,
-                                artifacts=vertex.artifacts,
-                            )
-                        except Exception as log_error:
-                            logger.warning(f"Failed to log vertex build for {vertex.id}: {log_error}")
-                    
-                    # Save to cache if vertex is frozen and set_cache is available
-                    if vertex.frozen:
-                        set_cache = kwargs.get("set_cache")
-                        if set_cache is not None:
-                            vertex_dict = {
-                                "built": vertex.built,
-                                "results": vertex.results,
-                                "artifacts": vertex.artifacts,
-                                "built_object": vertex.built_object,
-                                "built_result": vertex.built_result,
-                            }
-                            await set_cache(key=vertex.id, value={"result": vertex_dict})
-                
-                except Exception as build_error:
-                    # Log failed transaction to database
-                    if self.flow_id:
-                        try:
-                            from langbuilder.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
-                            
-                            inputs_for_log = _vertex_to_primitive_dict(vertex.raw_params)
-                            
+                        else:
+                            # No targets, log single transaction
                             await log_transaction(
                                 flow_id=self.flow_id,
                                 vertex_id=vertex.id,
-                                status="error",
+                                status="success",
                                 inputs=inputs_for_log,
-                                outputs=None,
+                                outputs=outputs_for_log,
                                 target_id=None,
-                                error=str(build_error),
+                                error=None,
                             )
-                        except Exception as log_error:
-                            logger.warning(f"Failed to log transaction error for {vertex.id}: {log_error}")
-                    
-                    # Log failed vertex build to database
-                    if self.flow_id:
-                        try:
-                            from uuid import UUID
-                            from langbuilder.graph_langgraph.logging import log_vertex_build
-                            
-                            await log_vertex_build(
-                                flow_id=self.flow_id if isinstance(self.flow_id, UUID) else UUID(self.flow_id),
-                                vertex_id=vertex.id,
-                                valid=False,
-                                params=vertex.raw_params,
-                                data={"error": str(build_error)},
-                                artifacts=None,
-                            )
-                        except Exception as log_error:
-                            logger.warning(f"Failed to log vertex build error for {vertex.id}: {log_error}")
-                    
-                    # Re-raise the build error
-                    raise
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log transaction for {vertex.id}: {log_error}")
+                
+                # Log successful vertex build to database
+                if self.flow_id:
+                    try:
+                        from uuid import UUID
+                        from langbuilder.graph_langgraph.logging import log_vertex_build
+                        
+                        # Prepare data for logging
+                        data_dict = {}
+                        if vertex.built_result is not None:
+                            data_dict = {"result": str(vertex.built_result)}
+                        
+                        await log_vertex_build(
+                            flow_id=self.flow_id if isinstance(self.flow_id, UUID) else UUID(self.flow_id),
+                            vertex_id=vertex.id,
+                            valid=vertex.built,
+                            params=vertex.raw_params,
+                            data=data_dict,
+                            artifacts=vertex.artifacts,
+                        )
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log vertex build for {vertex.id}: {log_error}")
+                
+                # Save to cache if vertex is frozen and set_cache is available
+                if vertex.frozen:
+                    set_cache = kwargs.get("set_cache")
+                    if set_cache is not None:
+                        vertex_dict = {
+                            "built": vertex.built,
+                            "results": vertex.results,
+                            "artifacts": vertex.artifacts,
+                            "built_object": vertex.built_object,
+                            "built_result": vertex.built_result,
+                        }
+                        await set_cache(key=vertex.id, value={"result": vertex_dict})
             
-            # Return result as VertexBuildResult NamedTuple
-            return VertexBuildResult(
-                result_dict=vertex.result,
-                params=str(vertex.built_object_repr()),
-                valid=vertex.built,
-                artifacts=vertex.artifacts,
-                vertex=vertex,
-            )
-        finally:
-            # Clean up tracing context
-            if tracing_service and not tracing_service.deactivated:
-                try:
-                    await tracing_service.end_tracers(outputs={}, error=None)
-                except Exception:
-                    # Ignore cleanup errors
-                    pass
+            except Exception as build_error:
+                # Log failed transaction to database
+                if self.flow_id:
+                    try:
+                        from langbuilder.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
+                        
+                        inputs_for_log = _vertex_to_primitive_dict(vertex.raw_params)
+                        
+                        await log_transaction(
+                            flow_id=self.flow_id,
+                            vertex_id=vertex.id,
+                            status="error",
+                            inputs=inputs_for_log,
+                            outputs=None,
+                            target_id=None,
+                            error=str(build_error),
+                        )
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log transaction error for {vertex.id}: {log_error}")
+                
+                # Log failed vertex build to database
+                if self.flow_id:
+                    try:
+                        from uuid import UUID
+                        from langbuilder.graph_langgraph.logging import log_vertex_build
+                        
+                        await log_vertex_build(
+                            flow_id=self.flow_id if isinstance(self.flow_id, UUID) else UUID(self.flow_id),
+                            vertex_id=vertex.id,
+                            valid=False,
+                            params=vertex.raw_params,
+                            data={"error": str(build_error)},
+                            artifacts=None,
+                        )
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log vertex build error for {vertex.id}: {log_error}")
+                
+                # Re-raise the build error
+                raise
+        
+        # Return result as VertexBuildResult NamedTuple
+        return VertexBuildResult(
+            result_dict=vertex.result,
+            params=str(vertex.built_object_repr()),
+            valid=vertex.built,
+            artifacts=vertex.artifacts,
+            vertex=vertex,
+        )
     
     async def get_next_runnable_vertices(self, lock, vertex: LangGraphVertex, cache: bool = False) -> list[str]:
         """Get next runnable vertices (compatibility method).
