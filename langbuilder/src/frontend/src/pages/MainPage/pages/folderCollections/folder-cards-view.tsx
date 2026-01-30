@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X } from "lucide-react";
+import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X, Info } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useFlowsManagerStore from "@/stores/flowsManagerStore";
 import { usePostFolders } from "@/controllers/API/queries/folders";
@@ -43,16 +43,17 @@ export default function FolderCardsView({
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
   const [expandedTableRow, setExpandedTableRow] = useState<string | null>(null);
-  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedFolderDetail, setSelectedFolderDetail] = useState<FolderType | null>(null);
   
   const { mutate: mutateAddFolder, isPending } = usePostFolders();
   const { mutate: mutateDownloadFolder } = useGetDownloadFolders({});
 
   const displayFolders = folders || [];
   
-  // Split folders into recent (top 5) and older
-  const recentFolders = displayFolders.slice(0, 3);
-  const olderFolders = displayFolders.slice(5);
+  // Split folders into recent (top 4) and older
+  const recentFolders = displayFolders.slice(0, 4);
+  const olderFolders = displayFolders.slice(4);
 
   // Count flows per folder
   const getFlowCount = (folderId: string) => {
@@ -73,6 +74,12 @@ export default function FolderCardsView({
     setProjectName("");
     setProjectDescription("");
     setCreateModalOpen(true);
+  };
+
+  // Open detail modal
+  const handleOpenDetailModal = (folder: FolderType) => {
+    setSelectedFolderDetail(folder);
+    setDetailModalOpen(true);
   };
 
   // Handle creating new folder
@@ -155,7 +162,7 @@ export default function FolderCardsView({
         {/* Cards Section - Recent Projects */}
         <div className="border-b bg-muted/30 px-6 py-6">
           <h2 className="mb-4 text-sm font-semibold text-muted-foreground">Recents</h2>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {/* Create New Project Card - CENTERED AND FIXED */}
             <div
               className="group relative flex flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-5 transition-all hover:border-primary hover:bg-accent"
@@ -172,59 +179,68 @@ export default function FolderCardsView({
               <span className="text-center text-xs font-medium text-muted-foreground mt-2">Blank project</span>
             </div>
 
-            {/* Recent Folder Cards - FIXED HEIGHT */}
+            {/* Recent Folder Cards - ENTERPRISE DESIGN */}
             {recentFolders.map((folder) => {
               const flowCount = getFlowCount(folder.id);
-              const isHovered = hoveredCard === folder.id;
               return (
                 <div
                   key={folder.id}
                   className="group relative flex flex-col items-center justify-between rounded-lg border bg-card p-5 transition-all hover:border-primary hover:shadow-md"
-                  onMouseEnter={() => setHoveredCard(folder.id)}
-                  onMouseLeave={() => setHoveredCard(null)}
                 >
-                  {/* Three dots menu - Top Right */}
-                  <div className="absolute right-2 top-2 z-10">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          onClick={(e) => e.stopPropagation()}
-                          className="flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
-                        >
-                          <MoreVertical className="h-3.5 w-3.5" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRenameFolder?.(folder);
-                          }}
-                        >
-                          <Edit2 className="mr-2 h-4 w-4" />
-                          Rename
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownloadFolder(folder);
-                          }}
-                        >
-                          <Download className="mr-2 h-4 w-4" />
-                          Download
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteFolder?.(folder);
-                          }}
-                          className="text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                  {/* Top Right Icons - Menu and Info */}
+                  <div className="absolute right-2 top-2 z-10 flex gap-1">
+                    {/* Info Button - View Full Details */}
+                    <button
+                      onClick={() => handleOpenDetailModal(folder)}
+                      className="flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-blue-100 group-hover:opacity-100"
+                      title="View details"
+                    >
+                      <Info className="h-3.5 w-3.5 text-[var(--info-foreground)]" />
+                    </button>
+
+                    {/* Menu Button */}
+                    <div className="z-20">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+                          >
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRenameFolder?.(folder);
+                            }}
+                          >
+                            <Edit2 className="mr-2 h-4 w-4" />
+                            Rename
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadFolder(folder);
+                            }}
+                          >
+                            <Download className="mr-2 h-4 w-4" />
+                            Download
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteFolder?.(folder);
+                            }}
+                            className="text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
 
                   {/* Clickable card content - Centered */}
@@ -264,31 +280,6 @@ export default function FolderCardsView({
                       <span className="text-xs">{formatDate(folder.updated_at)}</span>
                     )}
                   </div>
-
-                  {/* Hover Tooltip Overlay - NO SCROLLBAR */}
-                  {isHovered && (folder.name.length > 15 || (folder.description && folder.description.length > 40)) && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/75 backdrop-blur-sm z-20 p-4 cursor-pointer overflow-hidden">
-                      <style>{`
-                        .scrollbar-hide::-webkit-scrollbar {
-                          display: none;
-                        }
-                        .scrollbar-hide {
-                          -ms-overflow-style: none;
-                          scrollbar-width: none;
-                        }
-                      `}</style>
-                      <div className="text-center space-y-2 max-h-full overflow-y-auto scrollbar-hide">
-                        <p className="text-sm font-semibold text-white break-words">
-                          {folder.name}
-                        </p>
-                        {folder.description && (
-                          <p className="text-xs text-gray-200 break-words whitespace-normal">
-                            {folder.description}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -531,6 +522,121 @@ export default function FolderCardsView({
                 </Button>
               </div>
             </form>
+          </div>
+        </>
+      )}
+
+      {/* Project Details Modal - ENTERPRISE DESIGN */}
+      {detailModalOpen && selectedFolderDetail && (
+        <>
+          <div
+            className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+            onClick={() => setDetailModalOpen(false)}
+          />
+
+          <div className="fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] rounded-lg border border-border bg-card p-6 shadow-lg">
+            <div className="mb-6 flex items-start justify-between">
+              <div className="flex gap-3 flex-1">
+                <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Folder className="h-6 w-6 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-lg font-semibold break-words">
+                    {selectedFolderDetail.name}
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {getFlowCount(selectedFolderDetail.id)} {getFlowCount(selectedFolderDetail.id) === 1 ? "flow" : "flows"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDetailModalOpen(false)}
+                className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100"
+              >
+                <X className="h-5 w-5" />
+                <span className="sr-only">Close</span>
+              </button>
+            </div>
+
+            {/* Details Content */}
+            <div className="space-y-4 mb-6">
+              {selectedFolderDetail.description && (
+                <div>
+                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">DESCRIPTION</h3>
+                  <p className="text-sm text-card-foreground break-words whitespace-normal leading-relaxed">
+                    {selectedFolderDetail.description}
+                  </p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">FLOWS</h3>
+                  <p className="text-sm font-medium">
+                    {getFlowCount(selectedFolderDetail.id)}
+                  </p>
+                </div>
+                {selectedFolderDetail.updated_at && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-muted-foreground mb-2">LAST UPDATED</h3>
+                    <p className="text-sm font-medium">
+                      {formatDate(selectedFolderDetail.updated_at)}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 pt-4 border-t">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setDetailModalOpen(false);
+                  onFolderClick(selectedFolderDetail.id);
+                }}
+              >
+                Open Project
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setDetailModalOpen(false);
+                      onRenameFolder?.(selectedFolderDetail);
+                    }}
+                  >
+                    <Edit2 className="mr-2 h-4 w-4" />
+                    Rename
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setDetailModalOpen(false);
+                      handleDownloadFolder(selectedFolderDetail);
+                    }}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Download
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setDetailModalOpen(false);
+                      onDeleteFolder?.(selectedFolderDetail);
+                    }}
+                    className="text-destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </>
       )}

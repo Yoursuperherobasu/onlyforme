@@ -239,6 +239,12 @@ code {
 [data-sidebar="sidebar"] {
   --background: var(--sidebar-background);
 }
+:root {
+  --sidebar-background: #f3f3f3; /* light theme */
+  --sidebar-foreground: #555555;
+  --sidebar-background-hover: #e9e9e9;
+  --info-foreground: #da2128;
+}
 
 :root {
   --sidebar-icon: rgba(255, 255, 255, 0.85);
