@@ -1,7 +1,7 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 
 
-class TextComponent(Component):
+class TextComponent(Node):
     display_name = "Text Component"
     description = "Used to pass text to the next component."
 

@@ -2,11 +2,11 @@
 from langchain_community.retrievers import MetalRetriever
 
 from langbuilder.base.vectorstores.model import check_cached_vector_store
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.io import DictInput, SecretStrInput, StrInput
 
 
-class MetalRetrieverComponent(CustomComponent):
+class MetalRetrieverComponent(ExecutableNode):
     display_name: str = "Metal Retriever"
     description: str = "Retriever that uses the Metal API."
     name = "MetalRetriever"

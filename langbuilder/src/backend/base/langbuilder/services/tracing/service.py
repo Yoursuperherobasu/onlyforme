@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from langchain.callbacks.base import BaseCallbackHandler
 
-    from langbuilder.custom.custom_component.component import Component
+    from langbuilder.custom.custom_component.component import Node
     from langbuilder.graph.vertex.base import Vertex
     from langbuilder.services.settings.service import SettingsService
     from langbuilder.services.tracing.base import BaseTracer
@@ -325,7 +325,7 @@ class TracingService(Service):
     @asynccontextmanager
     async def trace_component(
         self,
-        component: Component,
+        component: Node,
         trace_name: str,
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,

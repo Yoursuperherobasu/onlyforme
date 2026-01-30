@@ -14,7 +14,7 @@ from langbuilder.base.mcp.util import (
     create_input_schema_from_json_schema,
     update_tools,
 )
-from langbuilder.custom.custom_component.component_with_cache import ComponentWithCache
+from langbuilder.custom.custom_component.component_with_cache import NodeWithCache
 from langbuilder.inputs.inputs import InputTypes  # noqa: TC001
 from langbuilder.io import DropdownInput, McpInput, MessageTextInput, Output
 from langbuilder.io.schema import flatten_schema, schema_to_langbuilder_inputs
@@ -28,7 +28,7 @@ from langbuilder.services.database.models.user.crud import get_user_by_id
 from langbuilder.services.deps import get_session, get_settings_service, get_storage_service
 
 
-class MCPToolsComponent(ComponentWithCache):
+class MCPToolsComponent(NodeWithCache):
     schema_inputs: list = []
     tools: list[StructuredTool] = []
     _not_load_actions: bool = False

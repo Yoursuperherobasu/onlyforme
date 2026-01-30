@@ -4,7 +4,7 @@ from typing import Any, cast
 import litellm
 from pydantic import SecretStr
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import HandleInput, InputTypes
 from langbuilder.io import BoolInput, IntInput, Output
 from langbuilder.schema.data import Data
@@ -123,7 +123,7 @@ def convert_tools(tools):
     return [Tool.from_langchain(tool) for tool in tools]
 
 
-class BaseCrewComponent(Component):
+class BaseCrewComponent(Node):
     description: str = (
         "Represents a group of agents, defining how they should collaborate and the tasks they should perform."
     )

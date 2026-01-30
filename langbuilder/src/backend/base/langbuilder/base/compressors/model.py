@@ -1,6 +1,6 @@
 from abc import abstractmethod
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import BaseDocumentCompressor
 from langbuilder.io import DataInput, IntInput, MultilineInput
 from langbuilder.schema.data import Data
@@ -8,7 +8,7 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class LCCompressorComponent(Component):
+class LCCompressorComponent(Node):
     inputs = [
         MultilineInput(
             name="search_query",

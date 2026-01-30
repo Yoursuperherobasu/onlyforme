@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.helpers.data import data_to_text
 from langbuilder.inputs.inputs import DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
 from langbuilder.memory import aget_messages, astore_message
@@ -13,7 +13,7 @@ from langbuilder.utils.component_utils import set_current_fields, set_field_disp
 from langbuilder.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI, MESSAGE_SENDER_USER
 
 
-class MemoryComponent(Component):
+class MemoryComponent(Node):
     display_name = "Message History"
     description = "Stores or retrieves stored chat messages from Langbuilder tables or an external memory."
     documentation: str = "https://docs.langbuilder.org/components-helpers#message-history"

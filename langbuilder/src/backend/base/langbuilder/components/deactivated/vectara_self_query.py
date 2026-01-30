@@ -5,11 +5,11 @@ from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
 
 from langbuilder.base.vectorstores.model import check_cached_vector_store
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.io import HandleInput, StrInput
 
 
-class VectaraSelfQueryRetriverComponent(CustomComponent):
+class VectaraSelfQueryRetriverComponent(ExecutableNode):
     """A custom component for implementing Vectara Self Query Retriever using a vector store."""
 
     display_name: str = "Vectara Self Query Retriever"

@@ -46,12 +46,12 @@ test(
 
     const customCodeWithError = `
 # from langbuilder.field_typing import Data
-from langbuilder.custom import Component
+from langbuilder.custom import Node
 from langbuilder.io import TableInput, Output
 from langbuilder.schema import Data
 
 
-class CustomComponent(Component):
+class CustomComponent(Node):
     display_name = "Custom Component"
     description = "Use as a template to create your own component."
     documentation: str = "https://docs.langbuilder.org/components-custom-components"

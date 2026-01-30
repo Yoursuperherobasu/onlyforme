@@ -3,10 +3,10 @@ from typing import TYPE_CHECKING
 from langbuilder.utils import validate
 
 if TYPE_CHECKING:
-    from langbuilder.custom.custom_component.custom_component import CustomComponent
+    from langbuilder.custom.custom_component.custom_component import ExecutableNode
 
 
-def eval_custom_component_code(code: str) -> type["CustomComponent"]:
+def eval_custom_component_code(code: str) -> type["ExecutableNode"]:
     """Evaluate custom component code."""
     class_name = validate.extract_class_name(code)
     return validate.create_class(code, class_name)

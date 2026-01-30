@@ -4,14 +4,14 @@ from langbuilder.base.data.utils import (
     parse_text_file_to_data,
     retrieve_file_paths,
 )
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import BoolInput, IntInput, MessageTextInput, MultiselectInput
 from langbuilder.schema.data import Data
 from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class DirectoryComponent(Component):
+class DirectoryComponent(Node):
     display_name = "Directory"
     description = "Recursively load files from a directory."
     documentation: str = "https://docs.langbuilder.org/components-data#directory"

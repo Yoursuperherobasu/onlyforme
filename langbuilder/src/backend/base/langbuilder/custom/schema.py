@@ -3,7 +3,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class ClassCodeDetails(BaseModel):
+class ParsedClassInfo(BaseModel):
     """A dataclass for storing details about a class."""
 
     name: str
@@ -14,7 +14,7 @@ class ClassCodeDetails(BaseModel):
     init: dict | None = Field(default_factory=dict)
 
 
-class CallableCodeDetails(BaseModel):
+class FunctionDefinitionInfo(BaseModel):
     """A dataclass for storing details about a callable."""
 
     name: str
@@ -25,7 +25,7 @@ class CallableCodeDetails(BaseModel):
     has_return: bool = False
 
 
-class MissingDefault:
+class NoDefault:
     """A class to represent a missing default value."""
 
     def __repr__(self) -> str:

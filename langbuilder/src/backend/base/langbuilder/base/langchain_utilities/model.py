@@ -1,14 +1,14 @@
 from abc import abstractmethod
 from collections.abc import Sequence
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import Tool
 from langbuilder.io import Output
 from langbuilder.schema.data import Data
 from langbuilder.schema.dataframe import DataFrame
 
 
-class LCToolComponent(Component):
+class LCToolComponent(Node):
     trace_type = "tool"
     outputs = [
         Output(name="api_run_model", display_name="Data", method="run_model"),

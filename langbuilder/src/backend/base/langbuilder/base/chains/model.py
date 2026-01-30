@@ -1,8 +1,8 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.template.field.base import Output
 
 
-class LCChainComponent(Component):
+class LCChainComponent(Node):
     trace_type = "chain"
 
     outputs = [Output(display_name="Text", name="text", method="invoke_chain")]

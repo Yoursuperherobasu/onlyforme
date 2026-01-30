@@ -2,8 +2,8 @@ import asyncio
 
 from loguru import logger
 
-from langbuilder.custom.directory_reader.directory_reader import DirectoryReader
-from langbuilder.template.frontend_node.custom_components import CustomComponentFrontendNode
+from langbuilder.custom.directory_reader.directory_reader import NodeDirectoryScanner
+from langbuilder.template.frontend_node.custom_components import ExecutableNodeFrontendNode
 
 
 def merge_nested_dicts_with_renaming(dict1, dict2):
@@ -43,7 +43,7 @@ def build_valid_menu(valid_components):
     return valid_menu
 
 
-def build_and_validate_all_files(reader: DirectoryReader, file_list):
+def build_and_validate_all_files(reader: NodeDirectoryScanner, file_list):
     """Build and validate all files."""
     data = reader.build_component_menu_list(file_list)
 
@@ -53,7 +53,7 @@ def build_and_validate_all_files(reader: DirectoryReader, file_list):
     return valid_components, invalid_components
 
 
-async def abuild_and_validate_all_files(reader: DirectoryReader, file_list):
+async def abuild_and_validate_all_files(reader: NodeDirectoryScanner, file_list):
     """Build and validate all files."""
     data = await reader.abuild_component_menu_list(file_list)
 
@@ -65,7 +65,7 @@ async def abuild_and_validate_all_files(reader: DirectoryReader, file_list):
 
 def load_files_from_path(path: str):
     """Load all files from a given path."""
-    reader = DirectoryReader(path, compress_code_field=False)
+    reader = NodeDirectoryScanner(path, compress_code_field=False)
 
     return reader.get_files()
 
@@ -73,7 +73,7 @@ def load_files_from_path(path: str):
 def build_custom_component_list_from_path(path: str):
     """Build a list of custom components for the langchain from a given path."""
     file_list = load_files_from_path(path)
-    reader = DirectoryReader(path, compress_code_field=False)
+    reader = NodeDirectoryScanner(path, compress_code_field=False)
 
     valid_components, invalid_components = build_and_validate_all_files(reader, file_list)
 
@@ -86,7 +86,7 @@ def build_custom_component_list_from_path(path: str):
 async def abuild_custom_component_list_from_path(path: str):
     """Build a list of custom components for the langchain from a given path."""
     file_list = await asyncio.to_thread(load_files_from_path, path)
-    reader = DirectoryReader(path, compress_code_field=False)
+    reader = NodeDirectoryScanner(path, compress_code_field=False)
 
     valid_components, invalid_components = await abuild_and_validate_all_files(reader, file_list)
 
@@ -99,7 +99,7 @@ async def abuild_custom_component_list_from_path(path: str):
 def create_invalid_component_template(component, component_name):
     """Create a template for an invalid component."""
     component_code = component["code"]
-    component_frontend_node = CustomComponentFrontendNode(
+    component_frontend_node = ExecutableNodeFrontendNode(
         description="ERROR - Check your Python Code",
         display_name=f"ERROR - {component_name}",
     )

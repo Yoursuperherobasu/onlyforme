@@ -1,11 +1,11 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import StrInput
 from langbuilder.schema.data import Data
 from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class CreateListComponent(Component):
+class CreateListComponent(Node):
     display_name = "Create List"
     description = "Creates a list of texts."
     icon = "list"

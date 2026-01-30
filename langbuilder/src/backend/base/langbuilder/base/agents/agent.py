@@ -10,7 +10,7 @@ from langchain_core.runnables import Runnable
 from langbuilder.base.agents.callback import AgentAsyncHandler
 from langbuilder.base.agents.events import ExceptionWithMessageError, process_agent_events
 from langbuilder.base.agents.utils import data_to_messages
-from langbuilder.custom.custom_component.component import Component, _get_component_toolkit
+from langbuilder.custom.custom_component.component import Node, _get_component_toolkit
 from langbuilder.field_typing import Tool
 from langbuilder.inputs.inputs import InputTypes, MultilineInput
 from langbuilder.io import BoolInput, HandleInput, IntInput, MessageInput
@@ -32,7 +32,7 @@ DEFAULT_TOOLS_DESCRIPTION = "A helpful assistant with access to the following to
 DEFAULT_AGENT_NAME = "Agent ({tools_names})"
 
 
-class LCAgentComponent(Component):
+class LCAgentComponent(Node):
     trace_type = "agent"
     _base_inputs: list[InputTypes] = [
         MessageInput(

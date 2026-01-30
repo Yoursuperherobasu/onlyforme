@@ -1,11 +1,11 @@
 from loguru import logger
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import DataInput, Output
 from langbuilder.schema.data import Data
 
 
-class MergeDataComponent(Component):
+class MergeDataComponent(Node):
     """MergeDataComponent is responsible for combining multiple Data objects into a unified list of Data objects.
 
     It ensures that all keys across the input Data objects are present in each merged Data object.

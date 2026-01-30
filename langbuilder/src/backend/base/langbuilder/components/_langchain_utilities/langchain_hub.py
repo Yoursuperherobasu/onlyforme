@@ -2,13 +2,13 @@ import re
 
 from langchain_core.prompts import HumanMessagePromptTemplate
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import DefaultPromptField, SecretStrInput, StrInput
 from langbuilder.io import Output
 from langbuilder.schema.message import Message
 
 
-class LangChainHubPromptComponent(Component):
+class LangChainHubPromptComponent(Node):
     display_name: str = "Prompt Hub"
     description: str = "Prompt Component that uses LangChain Hub prompts"
     beta = True
