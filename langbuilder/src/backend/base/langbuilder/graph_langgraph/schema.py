@@ -15,6 +15,13 @@ if TYPE_CHECKING:
     from langbuilder.graph_langgraph.vertex_wrapper import LangGraphVertex
 
 
+class VertexStates(str, Enum):
+    """Vertex states for conditional routing - ACTIVE, INACTIVE, or ERROR."""
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    ERROR = "ERROR"
+
+
 class InterfaceComponentTypes(str, Enum, metaclass=ContainsEnumMeta):
     """Types of interface components."""
     ChatInput = "ChatInput"

@@ -1351,7 +1351,7 @@ class LangGraphAdapter:
         Returns:
             Set of visited vertex IDs
         """
-        from langbuilder.graph.vertex.base import VertexStates
+        from langbuilder.graph_langgraph.schema import VertexStates
         
         is_first_call = visited is None
         if visited is None:
@@ -1434,7 +1434,7 @@ class LangGraphAdapter:
             vertex_id: Vertex ID to mark
             state: "ACTIVE" or "INACTIVE"
         """
-        from langbuilder.graph.vertex.base import VertexStates
+        from langbuilder.graph_langgraph.schema import VertexStates
         
         vertex = self.get_vertex(vertex_id)
         if vertex:
@@ -1472,8 +1472,7 @@ class LangGraphAdapter:
             name: The state name to match
             caller: The caller vertex ID
         """
-        from langbuilder.graph.vertex.base import VertexStates
-        from langbuilder.graph.vertex.vertex_types import StateVertex
+        from langbuilder.graph_langgraph.schema import VertexStates
         
         vertices_ids = set()
         new_predecessor_map = {}
@@ -1485,7 +1484,8 @@ class LangGraphAdapter:
             if vertex_id == caller or vertex.display_name == caller_vertex.display_name:
                 continue
             ctx_key = vertex.raw_params.get("context_key")
-            if isinstance(ctx_key, str) and name in ctx_key and vertex_id != caller and isinstance(vertex, StateVertex):
+            # Check is_state attribute instead of isinstance(vertex, StateVertex)
+            if isinstance(ctx_key, str) and name in ctx_key and vertex_id != caller and getattr(vertex, 'is_state', False):
                 activated_vertices.append(vertex_id)
                 vertices_ids.add(vertex_id)
                 successors = self.get_all_successors(vertex, flat=True)
