@@ -7,9 +7,9 @@ from langbuilder.io import DataInput, DropdownInput, Output
 from langbuilder.schema.data import Data
 
 
-class EmbeddingSimilarityComponent(Node):
+class EmbeddingSimilarity(Node):
     display_name: str = "Embedding Similarity"
-    description: str = "Compute selected form of similarity between two embedding vectors."
+    description: str = "Apply a similarity function to quantify the relationship between two embedding vectors."
     icon = "equal"
     legacy: bool = True
 
@@ -17,7 +17,7 @@ class EmbeddingSimilarityComponent(Node):
         DataInput(
             name="embedding_vectors",
             display_name="Embedding Vectors",
-            info="A list containing exactly two data objects with embedding vectors to compare.",
+            info="A list of two data objective with thier respective embedding vectors",
             is_list=True,
             required=True,
         ),

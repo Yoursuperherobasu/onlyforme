@@ -3,10 +3,9 @@ from langbuilder.io import MultilineInput, Output
 from langbuilder.schema.message import Message
 
 
-class TextOutputComponent(TextComponent):
+class TextOutput(TextComponent):
     display_name = "Text Output"
     description = "Sends text output via API."
-    documentation: str = "https://docs.langbuilder.org/components-io#text-output"
     icon = "type"
     name = "TextOutput"
 

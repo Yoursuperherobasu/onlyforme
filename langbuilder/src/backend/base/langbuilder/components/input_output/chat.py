@@ -19,7 +19,6 @@ from langbuilder.utils.constants import (
 class ChatInput(ChatComponent):
     display_name = "Chat Input"
     description = "Get chat inputs from the Playground."
-    documentation: str = "https://docs.langbuilder.org/components-io#chat-input"
     icon = "MessagesSquare"
     name = "ChatInput"
     minimized = True

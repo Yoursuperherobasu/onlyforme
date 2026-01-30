@@ -17,10 +17,9 @@ from langbuilder.io import (
 from langbuilder.schema.dotdict import dotdict
 
 
-class EmbeddingModelComponent(LCEmbeddingsModel):
+class EmbeddingModel(LCEmbeddingsModel):
     display_name = "Embedding Model"
     description = "Generate embeddings using a specified provider."
-    documentation: str = "https://docs.langbuilder.org/components-embedding-models"
     icon = "binary"
     name = "EmbeddingModel"
     category = "models"

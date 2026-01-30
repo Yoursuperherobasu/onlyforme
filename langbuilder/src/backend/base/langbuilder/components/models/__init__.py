@@ -5,15 +5,15 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from langbuilder.components.models.embedding_model import EmbeddingModelComponent
-    from langbuilder.components.models.language_model import LanguageModelComponent
+    from langbuilder.components.models.embedding_model import EmbeddingModel
+    from langbuilder.components.models.language_model import LanguageModel
 
 _dynamic_imports = {
-    "EmbeddingModelComponent": "embedding_model",
-    "LanguageModelComponent": "language_model",
+    "EmbeddingModel": "embedding_model",
+    "LanguageModel": "language_model",
 }
 
-__all__ = ["EmbeddingModelComponent", "LanguageModelComponent"]
+__all__ = ["EmbeddingModel", "LanguageModel"]
 
 
 def __getattr__(attr_name: str) -> Any:

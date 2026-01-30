@@ -17,7 +17,7 @@ MAX_DIMENSION = 768
 MIN_DIMENSION = 1
 
 
-class GoogleGenerativeAIEmbeddingsComponent(Node):
+class GoogleGenerativeAIEmbeddings(Node):
     display_name = "Google Generative AI Embeddings"
     description = (
         "Connect to Google's generative AI embeddings service using the GoogleGenerativeAIEmbeddings class, "

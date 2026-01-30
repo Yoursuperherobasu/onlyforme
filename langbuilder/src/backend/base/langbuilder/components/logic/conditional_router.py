@@ -5,10 +5,9 @@ from langbuilder.io import BoolInput, DropdownInput, IntInput, MessageInput, Mes
 from langbuilder.schema.message import Message
 
 
-class ConditionalRouterComponent(Node):
+class ConditionalRouter(Node):
     display_name = "If-Else"
     description = "Routes an input message to a corresponding output based on text comparison."
-    documentation: str = "https://docs.langbuilder.org/components-logic#conditional-router-if-else-component"
     icon = "split"
     name = "ConditionalRouter"
 

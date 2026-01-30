@@ -7,10 +7,9 @@ from langbuilder.schema.message import Message
 from langbuilder.template.field.base import Output
 
 
-class ParserComponent(Node):
+class Parser(Node):
     display_name = "Parser"
     description = "Extracts text using a template."
-    documentation: str = "https://docs.langbuilder.org/components-processing#parser"
     icon = "braces"
 
     inputs = [

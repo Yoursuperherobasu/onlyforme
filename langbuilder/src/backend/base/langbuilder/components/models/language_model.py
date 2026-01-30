@@ -15,10 +15,9 @@ from langbuilder.io import DropdownInput, MessageInput, MultilineInput, SecretSt
 from langbuilder.schema.dotdict import dotdict
 
 
-class LanguageModelComponent(LCModelComponent):
+class LanguageModel(LCModelComponent):
     display_name = "Language Model"
     description = "Runs a language model given a specified provider."
-    documentation: str = "https://docs.langbuilder.org/components-models"
     icon = "brain-circuit"
     category = "models"
     priority = 0  # Set priority to 0 to make it appear first

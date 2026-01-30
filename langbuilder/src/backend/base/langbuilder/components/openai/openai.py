@@ -6,7 +6,7 @@ from langbuilder.field_typing import Embeddings
 from langbuilder.io import BoolInput, DictInput, DropdownInput, FloatInput, IntInput, MessageTextInput, SecretStrInput
 
 
-class OpenAIEmbeddingsComponent(LCEmbeddingsModel):
+class OpenAIEmbeddings(LCEmbeddingsModel):
     display_name = "OpenAI Embeddings"
     description = "Generate embeddings using OpenAI models."
     icon = "OpenAI"

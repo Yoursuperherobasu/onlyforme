@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from langbuilder.components.embeddings.similarity import EmbeddingSimilarityComponent
-    from langbuilder.components.embeddings.text_embedder import TextEmbedderComponent
+    from langbuilder.components.embeddings.similarity import EmbeddingSimilarity
+    from langbuilder.components.embeddings.text_embedder import TextEmbedder
 
 _dynamic_imports = {
-    "EmbeddingSimilarityComponent": "similarity",
-    "TextEmbedderComponent": "text_embedder",
+    "EmbeddingSimilarity": "similarity",
+    "TextEmbedder": "text_embedder",
 }
 
 __all__ = [
-    "EmbeddingSimilarityComponent",
-    "TextEmbedderComponent",
+    "EmbeddingSimilarity",
+    "TextEmbedder",
 ]
 
 

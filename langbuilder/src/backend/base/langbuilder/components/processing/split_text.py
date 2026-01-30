@@ -8,10 +8,9 @@ from langbuilder.schema.message import Message
 from langbuilder.utils.util import unescape_string
 
 
-class SplitTextComponent(Node):
+class SplitText(Node):
     display_name: str = "Split Text"
     description: str = "Split text into chunks based on specified criteria."
-    documentation: str = "https://docs.langbuilder.org/components-processing#split-text"
     icon = "scissors-line-dashed"
     name = "SplitText"
 

@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from langbuilder.components.openai.openai import OpenAIEmbeddingsComponent
-    from langbuilder.components.openai.openai_chat_model import OpenAIModelComponent
+    from langbuilder.components.openai.openai import OpenAIEmbeddings
+    from langbuilder.components.openai.openai_chat_model import OpenAIModel
 
 _dynamic_imports = {
-    "OpenAIEmbeddingsComponent": "openai",
-    "OpenAIModelComponent": "openai_chat_model",
+    "OpenAIEmbeddings": "openai",
+    "OpenAIModel": "openai_chat_model",
 }
 
 __all__ = [
-    "OpenAIEmbeddingsComponent",
-    "OpenAIModelComponent",
+    "OpenAIEmbeddings",
+    "OpenAIModel",
 ]
 
 

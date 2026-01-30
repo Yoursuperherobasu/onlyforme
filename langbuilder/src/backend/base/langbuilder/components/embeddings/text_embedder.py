@@ -10,9 +10,9 @@ if TYPE_CHECKING:
     from langbuilder.schema.message import Message
 
 
-class TextEmbedderComponent(Node):
+class TextEmbedder(Node):
     display_name: str = "Text Embedder"
-    description: str = "Generate embeddings for a given message using the specified embedding model."
+    description: str = "Create embeddings for a given message using the specified embedding model."
     icon = "binary"
     legacy: bool = True
     inputs = [

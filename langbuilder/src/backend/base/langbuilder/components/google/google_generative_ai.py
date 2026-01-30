@@ -19,7 +19,7 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.dotdict import dotdict
 
 
-class GoogleGenerativeAIComponent(LCModelComponent):
+class GoogleGenerativeAI(LCModelComponent):
     display_name = "Google Generative AI"
     description = "Generate text using Google Generative AI."
     icon = "GoogleGenerativeAI"

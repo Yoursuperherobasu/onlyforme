@@ -7,17 +7,17 @@ from langbuilder.components._importing import import_mod
 if TYPE_CHECKING:
     from langbuilder.components.input_output.chat import ChatInput
     from langbuilder.components.input_output.chat_output import ChatOutput
-    from langbuilder.components.input_output.text import TextInputComponent
-    from langbuilder.components.input_output.text_output import TextOutputComponent
+    from langbuilder.components.input_output.text import TextInput
+    from langbuilder.components.input_output.text_output import TextOutput
 
 _dynamic_imports = {
     "ChatInput": "chat",
     "ChatOutput": "chat_output",
-    "TextInputComponent": "text",
-    "TextOutputComponent": "text_output",
+    "TextInput": "text",
+    "TextOutput": "text_output",
 }
 
-__all__ = ["ChatInput", "ChatOutput", "TextInputComponent", "TextOutputComponent"]
+__all__ = ["ChatInput", "ChatOutput", "TextInput", "TextOutput"]
 
 
 def __getattr__(attr_name: str) -> Any:

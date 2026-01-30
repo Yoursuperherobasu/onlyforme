@@ -22,7 +22,7 @@ from langbuilder.inputs.inputs import (
 from langbuilder.logging import logger
 
 
-class OpenAIModelComponent(LCModelComponent):
+class OpenAIModel(LCModelComponent):
     display_name = "OpenAI"
     description = "Generates text using OpenAI LLMs."
     icon = "OpenAI"
