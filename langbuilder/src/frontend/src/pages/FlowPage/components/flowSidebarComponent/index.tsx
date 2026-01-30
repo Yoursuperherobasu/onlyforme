@@ -536,13 +536,13 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
       (activeSection === "components" || activeSection === "search")) ||
     (hasSearchInput && hasCoreComponents && ENABLE_NEW_SIDEBAR) ||
     !ENABLE_NEW_SIDEBAR;
-  const showBundles =
-    (hasBundleItems && ENABLE_NEW_SIDEBAR && activeSection === "bundles") ||
-    (hasSearchInput && hasBundleItems && ENABLE_NEW_SIDEBAR) ||
-    !ENABLE_NEW_SIDEBAR;
-  const showMcp =
-    (ENABLE_NEW_SIDEBAR && activeSection === "mcp") ||
-    (hasSearchInput && hasMcpComponents && ENABLE_NEW_SIDEBAR);
+  // const showBundles =
+  //   (hasBundleItems && ENABLE_NEW_SIDEBAR && activeSection === "bundles") ||
+  //   (hasSearchInput && hasBundleItems && ENABLE_NEW_SIDEBAR) ||
+  //   !ENABLE_NEW_SIDEBAR;
+  // const showMcp =
+  //   (ENABLE_NEW_SIDEBAR && activeSection === "mcp") ||
+  //   (hasSearchInput && hasMcpComponents && ENABLE_NEW_SIDEBAR);
 
   const [category, component] = getFilterComponent?.split(".") ?? ["", ""];
 
@@ -631,7 +631,7 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
                         setShowConfig={setShowConfig}
                       />
                     )}
-                    {showMcp && (
+                    {/* {showMcp && (
                       <McpSidebarGroup
                         mcpComponents={
                           hasSearchInput
@@ -673,8 +673,8 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
                         showConfig={showConfig}
                         setShowConfig={setShowConfig}
                       />
-                    )}
-                    {showComponents && (
+                    )} */}
+                    {/* {showComponents && (
                       <Button
                         onClick={() => setActiveSection("bundles")}
                         variant="ghost"
@@ -688,7 +688,7 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
                         </span>
                         {t("Discover more components")}
                       </Button>
-                    )}
+                    )} */}
                   </>
                 ) : (
                   <NoResultsMessage
