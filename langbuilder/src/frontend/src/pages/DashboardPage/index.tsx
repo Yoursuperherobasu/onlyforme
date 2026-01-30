@@ -190,8 +190,8 @@ export default function DashboardAdmin(): JSX.Element {
         <div className="px-8 py-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold mb-2">
-                Analytics
+              <h1 className="text-2xl font-bold mb-2">
+                Dashboard
               </h1>
               <p className="text-sm text-muted-foreground">
                 Your AI workflows at a glance.
@@ -217,7 +217,7 @@ export default function DashboardAdmin(): JSX.Element {
               onClick={() => setTimeFilter(filter.value)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 timeFilter === filter.value
-                  ? "bg-primary text-primary-foreground"
+                  ? " !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
                   : "bg-muted hover:bg-muted/80"
               }`}
             >
