@@ -536,13 +536,13 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
       (activeSection === "components" || activeSection === "search")) ||
     (hasSearchInput && hasCoreComponents && ENABLE_NEW_SIDEBAR) ||
     !ENABLE_NEW_SIDEBAR;
-  // const showBundles =
-  //   (hasBundleItems && ENABLE_NEW_SIDEBAR && activeSection === "bundles") ||
-  //   (hasSearchInput && hasBundleItems && ENABLE_NEW_SIDEBAR) ||
-  //   !ENABLE_NEW_SIDEBAR;
-  // const showMcp =
-  //   (ENABLE_NEW_SIDEBAR && activeSection === "mcp") ||
-  //   (hasSearchInput && hasMcpComponents && ENABLE_NEW_SIDEBAR);
+  const showBundles =
+    (hasBundleItems && ENABLE_NEW_SIDEBAR && activeSection === "bundles") ||
+    (hasSearchInput && hasBundleItems && ENABLE_NEW_SIDEBAR) ||
+    !ENABLE_NEW_SIDEBAR;
+  const showMcp =
+    (ENABLE_NEW_SIDEBAR && activeSection === "mcp") ||
+    (hasSearchInput && hasMcpComponents && ENABLE_NEW_SIDEBAR);
 
   const [category, component] = getFilterComponent?.split(".") ?? ["", ""];
 
@@ -631,7 +631,7 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
                         setShowConfig={setShowConfig}
                       />
                     )}
-                    {/* {showMcp && (
+                    {showMcp && (
                       <McpSidebarGroup
                         mcpComponents={
                           hasSearchInput
@@ -654,41 +654,8 @@ export function FlowSidebarComponent({ isLoading }: FlowSidebarComponentProps) {
                         setShowConfig={setShowConfig}
                       />
                     )}
-                    {showBundles && (
-                      <MemoizedSidebarGroup
-                        BUNDLES={BUNDLES}
-                        search={search}
-                        sortedCategories={sortedCategories}
-                        dataFilter={dataFilter}
-                        nodeColors={nodeColors}
-                        onDragStart={onDragStart}
-                        sensitiveSort={sensitiveSort}
-                        openCategories={openCategories}
-                        setOpenCategories={setOpenCategories}
-                        handleKeyDownInput={handleKeyDownInput}
-                        showSearchConfigTrigger={
-                          activeSection === "bundles" ||
-                          (!showComponents && !showMcp)
-                        }
-                        showConfig={showConfig}
-                        setShowConfig={setShowConfig}
-                      />
-                    )} */}
-                    {/* {showComponents && (
-                      <Button
-                        onClick={() => setActiveSection("bundles")}
-                        variant="ghost"
-                        className="bg-muted hover:bg-muted/70 mx-3 px-2.5 !text-[13px] font-normal line-height-[16px] mb-3 group -mt-3 h-[34px]"
-                      >
-                        <span className="text-muted-foreground flex items-center">
-                          <ForwardedIconComponent
-                            name="blocks"
-                            className="h-4 w-4"
-                          />
-                        </span>
-                        {t("Discover more components")}
-                      </Button>
-                    )} */}
+                    
+                    
                   </>
                 ) : (
                   <NoResultsMessage
