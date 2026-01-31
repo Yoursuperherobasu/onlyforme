@@ -93,11 +93,11 @@ def _create_langbuilder_execution_context():
         context["Data"] = type("Data", (), {})
 
     try:
-        from langbuilder.custom import Component
+        from langbuilder.custom import Node
 
-        context["Component"] = Component
+        context["Node"] = Node
     except ImportError:
-        context["Component"] = type("Component", (), {})
+        context["Node"] = type("Node", (), {})
 
     try:
         from langbuilder.io import HandleInput, Output, TabInput
@@ -255,11 +255,25 @@ def create_class(code, class_name):
     if not hasattr(ast, "TypeIgnore"):
         ast.TypeIgnore = create_type_ignore_class()
 
-    code = code.replace("from langbuilder import CustomComponent", "from langbuilder.custom import CustomComponent")
+    # Transform old import paths to new ones (Component -> Node, CustomComponent -> ExecutableNode)
+    code = code.replace("from langbuilder import CustomComponent", "from langbuilder.custom import ExecutableNode")
+    code = code.replace("from langbuilder.custom import CustomComponent", "from langbuilder.custom import ExecutableNode")
+    code = code.replace("from langbuilder.custom import Component", "from langbuilder.custom import Node")
+    code = code.replace(
+        "from langbuilder.custom.custom_component.component import Component",
+        "from langbuilder.custom import Node",
+    )
+    code = code.replace(
+        "from langbuilder.custom.custom_component.custom_component import CustomComponent",
+        "from langbuilder.custom import ExecutableNode",
+    )
     code = code.replace(
         "from langbuilder.interface.custom.custom_component import CustomComponent",
-        "from langbuilder.custom import CustomComponent",
+        "from langbuilder.custom import ExecutableNode",
     )
+    # Also replace class inheritance references
+    code = code.replace("(CustomComponent)", "(ExecutableNode)")
+    code = code.replace("(Component)", "(Node)")
 
     code = DEFAULT_IMPORT_STRING + "\n" + code
     try:
@@ -479,10 +493,10 @@ def extract_class_name(code: str) -> str:
             # Check bases for Component inheritance
             # TODO: Build a more robust check for Component inheritance
             for base in node.bases:
-                if isinstance(base, ast.Name) and any(pattern in base.id for pattern in ["Component", "LC"]):
+                if isinstance(base, ast.Name) and any(pattern in base.id for pattern in ["Node", "LC", "Component"]):
                     return node.name
 
-        msg = f"No Component subclass found in the code string. Code snippet: {code[:100]}"
+        msg = f"No Node subclass found in the code string. Code snippet: {code[:100]}"
         raise TypeError(msg)
     except SyntaxError as e:
         msg = f"Invalid Python code: {e!s}"

@@ -44,7 +44,9 @@ class VertexTypesDict(LazyLoadDictBase):
         types = self._types()
         return {
             "CustomComponent": types.CustomComponentVertex,
+            "ExecutableNode": types.CustomComponentVertex,
             "Component": types.ComponentVertex,
+            "Node": types.ComponentVertex,
             **dict.fromkeys(CHAT_COMPONENTS, types.InterfaceVertex),
         }
 

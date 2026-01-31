@@ -1,9 +1,9 @@
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.schema.message import Message
 from langbuilder.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_USER
 
 
-class MessageComponent(CustomComponent):
+class MessageComponent(ExecutableNode):
     display_name = "Message"
     description = "Creates a Message object given a Session ID."
     name = "Message"

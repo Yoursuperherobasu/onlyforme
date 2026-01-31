@@ -2,7 +2,7 @@ from abc import abstractmethod
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import Text, VectorStore
 from langbuilder.helpers.data import docs_to_data
 from langbuilder.inputs.inputs import BoolInput
@@ -38,7 +38,7 @@ def check_cached_vector_store(f):
     return check_cached
 
 
-class LCVectorStoreComponent(Component):
+class LCVectorStoreComponent(Node):
     # Used to ensure a single vector store is built for each run of the flow
     _cached_vector_store: VectorStore | None = None
 

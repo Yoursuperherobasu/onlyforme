@@ -3,13 +3,13 @@ from typing import Any
 
 from typing_extensions import override
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import MessageTextInput, Output
 from langbuilder.schema.dotdict import dotdict
 from langbuilder.schema.message import Message
 
 
-class IDGeneratorComponent(Component):
+class IDGeneratorComponent(Node):
     display_name = "ID Generator"
     description = "Generates a unique ID."
     icon = "fingerprint"

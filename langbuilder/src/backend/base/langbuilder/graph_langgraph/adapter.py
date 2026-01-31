@@ -42,17 +42,23 @@ class LangGraphAdapter:
         flow_id: str | UUID | None = None,
         flow_name: str | None = None,
         user_id: str | None = None,
+        project_id: str | None = None,
+        project_name: str | None = None,
     ) -> None:
         """Initialize the LangGraph adapter.
-        
+
         Args:
             flow_id: The ID of the flow
             flow_name: The name of the flow
             user_id: The user ID
+            project_id: The project/folder ID for observability grouping
+            project_name: The project/folder name for observability display
         """
         self.flow_id = str(flow_id) if flow_id else None
         self.flow_name = flow_name
         self.user_id = user_id
+        self.project_id = project_id
+        self.project_name = project_name
         
         # Storage
         self.vertices: list[LangGraphVertex] = []
@@ -115,26 +121,36 @@ class LangGraphAdapter:
         flow_id: str | None = None,
         flow_name: str | None = None,
         user_id: str | None = None,
+        project_id: str | None = None,
+        project_name: str | None = None,
     ) -> LangGraphAdapter:
         """Create adapter from JSON payload (replaces Graph.from_payload).
-        
+
         Args:
             payload: The JSON payload with nodes and edges
             flow_id: The flow ID
             flow_name: The flow name
             user_id: The user ID
-            
+            project_id: The project/folder ID for observability grouping
+            project_name: The project/folder name for observability display
+
         Returns:
             LangGraphAdapter instance
         """
         if "data" in payload:
             payload = payload["data"]
-        
+
         try:
             vertices_data = payload["nodes"]
             edges_data = payload["edges"]
-            
-            adapter = cls(flow_id=flow_id, flow_name=flow_name, user_id=user_id)
+
+            adapter = cls(
+                flow_id=flow_id,
+                flow_name=flow_name,
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_name,
+            )
             adapter.add_nodes_and_edges(vertices_data, edges_data)
             
         except KeyError as exc:
@@ -513,6 +529,10 @@ class LangGraphAdapter:
                 run_name=run_name,
                 user_id=self.user_id,
                 session_id=self._session_id,
+                flow_id=self.flow_id,
+                flow_name=self.flow_name,
+                observability_project_id=self.project_id,
+                observability_project_name=self.project_name,
             )
     
     def set_run_id(self, run_id: str | None = None) -> None:
@@ -1333,7 +1353,7 @@ class LangGraphAdapter:
         Returns:
             Set of visited vertex IDs
         """
-        from langbuilder.graph.vertex.base import VertexStates
+        from langbuilder.graph_langgraph.schema import VertexStates
         
         is_first_call = visited is None
         if visited is None:
@@ -1416,7 +1436,7 @@ class LangGraphAdapter:
             vertex_id: Vertex ID to mark
             state: "ACTIVE" or "INACTIVE"
         """
-        from langbuilder.graph.vertex.base import VertexStates
+        from langbuilder.graph_langgraph.schema import VertexStates
         
         vertex = self.get_vertex(vertex_id)
         if vertex:
@@ -1454,8 +1474,7 @@ class LangGraphAdapter:
             name: The state name to match
             caller: The caller vertex ID
         """
-        from langbuilder.graph.vertex.base import VertexStates
-        from langbuilder.graph.vertex.vertex_types import StateVertex
+        from langbuilder.graph_langgraph.schema import VertexStates
         
         vertices_ids = set()
         new_predecessor_map = {}
@@ -1467,7 +1486,8 @@ class LangGraphAdapter:
             if vertex_id == caller or vertex.display_name == caller_vertex.display_name:
                 continue
             ctx_key = vertex.raw_params.get("context_key")
-            if isinstance(ctx_key, str) and name in ctx_key and vertex_id != caller and isinstance(vertex, StateVertex):
+            # Check is_state attribute instead of isinstance(vertex, StateVertex)
+            if isinstance(ctx_key, str) and name in ctx_key and vertex_id != caller and getattr(vertex, 'is_state', False):
                 activated_vertices.append(vertex_id)
                 vertices_ids.add(vertex_id)
                 successors = self.get_all_successors(vertex, flat=True)

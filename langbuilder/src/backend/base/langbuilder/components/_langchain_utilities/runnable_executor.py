@@ -1,12 +1,12 @@
 from langchain.agents import AgentExecutor
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import BoolInput, HandleInput, MessageTextInput
 from langbuilder.schema.message import Message
 from langbuilder.template.field.base import Output
 
 
-class RunnableExecComponent(Component):
+class RunnableExecComponent(Node):
     description = "Execute a runnable. It will try to guess the input and output keys."
     display_name = "Runnable Executor"
     name = "RunnableExecutor"

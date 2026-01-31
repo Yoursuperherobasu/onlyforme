@@ -55,7 +55,7 @@ class LangGraphVertex:
         self.layer: int | None = None
         
         # Vertex state (ACTIVE/INACTIVE) for conditional routing
-        from langbuilder.graph.vertex.base import VertexStates
+        from langbuilder.graph_langgraph.schema import VertexStates
         self.state = VertexStates.ACTIVE
         
         # State and flags
@@ -182,7 +182,7 @@ class LangGraphVertex:
         Args:
             state: "ACTIVE" or "INACTIVE"
         """
-        from langbuilder.graph.vertex.base import VertexStates
+        from langbuilder.graph_langgraph.schema import VertexStates
         self.state = VertexStates[state]
         
         # Track inactivated vertices in the graph
@@ -199,7 +199,7 @@ class LangGraphVertex:
         Returns:
             True if vertex is in ACTIVE state
         """
-        from langbuilder.graph.vertex.base import VertexStates
+        from langbuilder.graph_langgraph.schema import VertexStates
         return self.state == VertexStates.ACTIVE
     
     def update_param(self, param_name: str, value: Any) -> None:

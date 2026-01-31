@@ -1,3 +1,3 @@
-from .directory_reader import DirectoryReader
+from .directory_reader import NodeDirectoryScanner
 
-__all__ = ["DirectoryReader"]
+__all__ = ["NodeDirectoryScanner"]

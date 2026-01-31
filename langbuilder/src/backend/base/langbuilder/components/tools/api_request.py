@@ -12,7 +12,7 @@ import httpx
 import validators
 
 from langbuilder.base.curl.parse import parse_context
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import TabInput
 from langbuilder.io import (
     BoolInput,
@@ -42,7 +42,7 @@ MODE_FIELDS = {
 DEFAULT_FIELDS = ["mode"]
 
 
-class APIRequestComponent(Component):
+class APIRequestComponent(Node):
     display_name = "API Request"
     description = "Make HTTP requests using URL or cURL commands."
     documentation: str = "https://docs.langbuilder.org/components-data#api-request"

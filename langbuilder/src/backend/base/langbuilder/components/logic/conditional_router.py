@@ -1,11 +1,11 @@
 import re
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import BoolInput, DropdownInput, IntInput, MessageInput, MessageTextInput, Output
 from langbuilder.schema.message import Message
 
 
-class ConditionalRouterComponent(Component):
+class ConditionalRouterComponent(Node):
     display_name = "If-Else"
     description = "Routes an input message to a corresponding output based on text comparison."
     documentation: str = "https://docs.langbuilder.org/components-logic#conditional-router-if-else-component"

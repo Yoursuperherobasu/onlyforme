@@ -1,12 +1,12 @@
 from langchain_text_splitters import CharacterTextSplitter
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import HandleInput, IntInput, MessageTextInput, Output
 from langbuilder.schema.data import Data
 from langbuilder.utils.util import unescape_string
 
 
-class SplitTextComponent(Component):
+class SplitTextComponent(Node):
     display_name: str = "Split Text"
     description: str = "Split text into chunks based on specified criteria."
     icon = "scissors-line-dashed"

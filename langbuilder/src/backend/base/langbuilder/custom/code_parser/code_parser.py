@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from loguru import logger
 
 from langbuilder.custom.eval import eval_custom_component_code
-from langbuilder.custom.schema import CallableCodeDetails, ClassCodeDetails, MissingDefault
+from langbuilder.custom.schema import FunctionDefinitionInfo, ParsedClassInfo, NoDefault
 
 
 class CodeSyntaxError(HTTPException):
@@ -56,7 +56,7 @@ def imports_key(*args, **kwargs):
     return key
 
 
-class CodeParser:
+class NodeCodeParser:
     """A parser for Python source code, extracting code details."""
 
     def __init__(self, code: str | type) -> None:
@@ -163,7 +163,7 @@ class CodeParser:
             with contextlib.suppress(NameError):
                 return_type = eval(return_type_str, eval_env)  # noqa: S307
 
-        func = CallableCodeDetails(
+        func = FunctionDefinitionInfo(
             name=node.name,
             doc=ast.get_docstring(node),
             args=self.parse_function_args(node),
@@ -192,7 +192,7 @@ class CodeParser:
         num_args = len(node.args.args)
         num_defaults = len(node.args.defaults)
         num_missing_defaults = num_args - num_defaults
-        missing_defaults = [MissingDefault()] * num_missing_defaults
+        missing_defaults = [NoDefault()] * num_missing_defaults
         default_values = [ast.unparse(default).strip("'") if default else None for default in node.args.defaults]
         # Now check all default values to see if there
         # are any "None" values in the middle
@@ -294,7 +294,7 @@ class CodeParser:
         bases = self.get_base_classes()
         nodes = []
         for base in bases:
-            if base.__name__ == node.name or base.__name__ in {"CustomComponent", "Component", "BaseComponent"}:
+            if base.__name__ == node.name or base.__name__ in {"ExecutableNode", "Node", "NodeBase"}:
                 continue
             try:
                 class_node, import_nodes = find_class_ast_node(base)
@@ -306,7 +306,7 @@ class CodeParser:
             except Exception:  # noqa: BLE001
                 logger.exception("Error finding base class node")
         nodes.insert(0, node)
-        class_details = ClassCodeDetails(
+        class_details = ParsedClassInfo(
             name=node.name,
             doc=ast.get_docstring(node),
             bases=[b.__name__ for b in bases],

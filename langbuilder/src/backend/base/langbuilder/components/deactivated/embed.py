@@ -1,9 +1,9 @@
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.field_typing import Embeddings
 from langbuilder.schema.data import Data
 
 
-class EmbedComponent(CustomComponent):
+class EmbedComponent(ExecutableNode):
     display_name = "Embed Texts"
     name = "Embed"
 

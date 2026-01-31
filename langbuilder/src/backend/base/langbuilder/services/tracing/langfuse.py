@@ -112,6 +112,10 @@ class LangFuseTracer(BaseTracer):
         trace_id: UUID,
         user_id: str | None = None,
         session_id: str | None = None,
+        flow_id: str | None = None,
+        flow_name: str | None = None,
+        observability_project_id: str | None = None,
+        observability_project_name: str | None = None,
     ) -> None:
         self.project_name = project_name
         self.trace_name = trace_name
@@ -119,7 +123,11 @@ class LangFuseTracer(BaseTracer):
         self.trace_id = trace_id
         self.user_id = user_id
         self.session_id = session_id
-        self.flow_id = trace_name.split(" - ")[-1]
+        # Use provided flow_id or extract from trace_name
+        self.flow_id = flow_id or trace_name.split(" - ")[-1]
+        self.flow_name = flow_name
+        self.observability_project_id = observability_project_id
+        self.observability_project_name = observability_project_name
         self.spans: dict = OrderedDict()  # spans that are not ended
 
         config = self._get_config()
@@ -141,11 +149,21 @@ class LangFuseTracer(BaseTracer):
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"can not connect to Langfuse: {e}")
                 return False
+            # Build metadata with project info if available
+            trace_metadata = {}
+            if self.observability_project_id:
+                trace_metadata["project_id"] = self.observability_project_id
+            if self.observability_project_name:
+                trace_metadata["project_name"] = self.observability_project_name
+            if self.flow_id:
+                trace_metadata["flow_id"] = self.flow_id
+
             self.trace = self._client.trace(
                 id=str(self.trace_id),
-                name=self.flow_id,
+                name=self.flow_name or self.flow_id,
                 user_id=self.user_id,
                 session_id=self.session_id,
+                metadata=trace_metadata if trace_metadata else None,
             )
 
         except ImportError:

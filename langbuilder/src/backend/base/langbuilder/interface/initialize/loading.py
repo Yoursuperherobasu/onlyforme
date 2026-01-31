@@ -16,8 +16,8 @@ from langbuilder.services.deps import get_tracing_service, session_scope
 from langbuilder.utils.debug_logger import debug_log
 
 if TYPE_CHECKING:
-    from langbuilder.custom.custom_component.component import Component
-    from langbuilder.custom.custom_component.custom_component import CustomComponent
+    from langbuilder.custom.custom_component.component import Node
+    from langbuilder.custom.custom_component.custom_component import ExecutableNode
     from langbuilder.events.event_manager import EventManager
     from langbuilder.graph.vertex.base import Vertex
 
@@ -45,8 +45,8 @@ def instantiate_class(
     debug_log(f"🔍 INSTANTIATE_CLASS: after get_params, custom_params.tools={custom_params.get('tools', 'NOT_SET')}")
     
     code = custom_params.pop("code")
-    class_object: type[CustomComponent | Component] = eval_custom_component_code(code)
-    custom_component: CustomComponent | Component = class_object(
+    class_object: type[ExecutableNode | Node] = eval_custom_component_code(code)
+    custom_component: ExecutableNode | Node = class_object(
         _user_id=user_id,
         _parameters=custom_params,
         _vertex=vertex,
@@ -122,7 +122,7 @@ def convert_kwargs(params):
 
 
 async def update_params_with_load_from_db_fields(
-    custom_component: CustomComponent,
+    custom_component: ExecutableNode,
     params,
     load_from_db_fields,
     *,
@@ -157,7 +157,7 @@ async def update_params_with_load_from_db_fields(
 
 async def build_component(
     params: dict,
-    custom_component: Component,
+    custom_component: Node,
 ):
     # Now set the params as attributes of the custom_component
     custom_component.set_attributes(params)
@@ -166,7 +166,7 @@ async def build_component(
     return custom_component, build_results, artifacts
 
 
-async def build_custom_component(params: dict, custom_component: CustomComponent):
+async def build_custom_component(params: dict, custom_component: ExecutableNode):
     if "retriever" in params and hasattr(params["retriever"], "as_retriever"):
         params["retriever"] = params["retriever"].as_retriever()
 

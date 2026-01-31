@@ -1,14 +1,14 @@
 from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import HandleInput, MessageTextInput
 from langbuilder.io import Output
 from langbuilder.schema.data import Data
 from langbuilder.schema.message import Message
 
 
-class SelfQueryRetrieverComponent(Component):
+class SelfQueryRetrieverComponent(Node):
     display_name = "Self Query Retriever"
     description = "Retriever that uses a vector store and an LLM to generate the vector store queries."
     name = "SelfQueryRetriever"

@@ -1,7 +1,7 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 
 
-class ChatComponent(Component):
+class ChatComponent(Node):
     display_name = "Chat Component"
     description = "Use as base for chat components."
 

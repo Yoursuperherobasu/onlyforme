@@ -14,20 +14,20 @@ from fastapi import HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from langbuilder.custom.custom_component.component import Component
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.component import Node
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.custom.directory_reader.utils import (
     abuild_custom_component_list_from_path,
     build_custom_component_list_from_path,
     merge_nested_dicts_with_renaming,
 )
 from langbuilder.custom.eval import eval_custom_component_code
-from langbuilder.custom.schema import MissingDefault
+from langbuilder.custom.schema import NoDefault
 from langbuilder.field_typing.range_spec import RangeSpec
 from langbuilder.helpers.custom import format_type
 from langbuilder.schema.dotdict import dotdict
 from langbuilder.template.field.base import Input
-from langbuilder.template.frontend_node.custom_components import ComponentFrontendNode, CustomComponentFrontendNode
+from langbuilder.template.frontend_node.custom_components import NodeFrontendNode, ExecutableNodeFrontendNode
 from langbuilder.type_extraction.type_extraction import extract_inner_type
 from langbuilder.utils import validate
 from langbuilder.utils.util import get_base_classes
@@ -61,7 +61,7 @@ class UpdateBuildConfigError(Exception):
     pass
 
 
-def add_output_types(frontend_node: CustomComponentFrontendNode, return_types: list[str]) -> None:
+def add_output_types(frontend_node: ExecutableNodeFrontendNode, return_types: list[str]) -> None:
     """Add output types to the frontend node."""
     for return_type in return_types:
         if return_type is None:
@@ -84,7 +84,7 @@ def add_output_types(frontend_node: CustomComponentFrontendNode, return_types: l
         frontend_node.add_output_type(return_type_)
 
 
-def reorder_fields(frontend_node: CustomComponentFrontendNode, field_order: list[str]) -> None:
+def reorder_fields(frontend_node: ExecutableNodeFrontendNode, field_order: list[str]) -> None:
     """Reorder fields in the frontend node based on the specified field_order."""
     if not field_order:
         return
@@ -98,7 +98,7 @@ def reorder_fields(frontend_node: CustomComponentFrontendNode, field_order: list
     frontend_node.field_order = field_order
 
 
-def add_base_classes(frontend_node: CustomComponentFrontendNode, return_types: list[str]) -> None:
+def add_base_classes(frontend_node: ExecutableNodeFrontendNode, return_types: list[str]) -> None:
     """Add base classes to the frontend node."""
     for return_type_instance in return_types:
         if return_type_instance is None:
@@ -141,8 +141,8 @@ def get_field_properties(extra_field):
     # a required field is a field that does not contain
     # optional in field_type
     # and a field that does not have a default value
-    field_required = "optional" not in field_type.lower() and isinstance(field_value, MissingDefault)
-    field_value = field_value if not isinstance(field_value, MissingDefault) else None
+    field_required = "optional" not in field_type.lower() and isinstance(field_value, NoDefault)
+    field_value = field_value if not isinstance(field_value, NoDefault) else None
 
     if not field_required:
         field_type = extract_type_from_optional(field_type)
@@ -166,7 +166,7 @@ def process_type(field_type: str):
 
 def add_new_custom_field(
     *,
-    frontend_node: CustomComponentFrontendNode,
+    frontend_node: ExecutableNodeFrontendNode,
     field_name: str,
     field_type: str,
     field_value: Any,
@@ -276,7 +276,7 @@ def get_field_dict(field: Input | dict):
 
 
 def run_build_inputs(
-    custom_component: Component,
+    custom_component: Node,
 ):
     """Run the build inputs of a custom component."""
     try:
@@ -287,10 +287,10 @@ def run_build_inputs(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-def get_component_instance(custom_component: CustomComponent | Component, user_id: str | UUID | None = None):
+def get_component_instance(custom_component: ExecutableNode | Node, user_id: str | UUID | None = None):
     """Returns an instance of a custom component, evaluating its code if necessary.
 
-    If the input is already an instance of `Component` or `CustomComponent`, it is returned directly.
+    If the input is already an instance of `Node` or `ExecutableNode`, it is returned directly.
     Otherwise, the function evaluates the component's code to create and return an instance. Raises an
     HTTP 400 error if the code is missing, invalid, or instantiation fails.
     """
@@ -331,20 +331,20 @@ def get_component_instance(custom_component: CustomComponent | Component, user_i
         raise
 
 
-def is_a_preimported_component(custom_component: CustomComponent):
+def is_a_preimported_component(custom_component: ExecutableNode):
     """Check if the component is a preimported component."""
     klass = type(custom_component)
     # This avoids double type lookups, and may speed up the common-case short-circuit
-    return issubclass(klass, Component) and klass is not Component
+    return issubclass(klass, Node) and klass is not Node
 
 
 def run_build_config(
-    custom_component: CustomComponent,
+    custom_component: ExecutableNode,
     user_id: str | UUID | None = None,
-) -> tuple[dict, CustomComponent]:
+) -> tuple[dict, ExecutableNode]:
     """Builds the field configuration dictionary for a custom component.
 
-    If the input is an instance of a subclass of Component (excluding Component itself), returns its
+    If the input is an instance of a subclass of Node (excluding Node itself), returns its
     build configuration and the instance. Otherwise, evaluates the component's code to create an instance,
     calls its build_config method, and processes any RangeSpec objects in the configuration. Raises an
     HTTP 400 error if the code is missing or invalid, or if instantiation or configuration building fails.
@@ -352,8 +352,8 @@ def run_build_config(
     Returns:
         A tuple containing the field configuration dictionary and the component instance.
     """
-    # Check if the instance's class is a subclass of Component (but not Component itself)
-    # If we have a Component that is a subclass of Component, that means
+    # Check if the instance's class is a subclass of Node (but not Node itself)
+    # If we have a Node that is a subclass of Node, that means
     # we have imported it
     # If not, it means the component was loaded through LANGBUILDER_COMPONENTS_PATH
     # and loaded from a file
@@ -405,7 +405,7 @@ def run_build_config(
     )
 
 
-def add_code_field(frontend_node: CustomComponentFrontendNode, raw_code):
+def add_code_field(frontend_node: ExecutableNodeFrontendNode, raw_code):
     code_field = Input(
         dynamic=True,
         required=True,
@@ -440,7 +440,7 @@ def add_code_field_to_build_config(build_config: dict, raw_code: str):
 
 
 def build_custom_component_template_from_inputs(
-    custom_component: Component | CustomComponent, user_id: str | UUID | None = None, module_name: str | None = None
+    custom_component: Node | ExecutableNode, user_id: str | UUID | None = None, module_name: str | None = None
 ):
     # The List of Inputs fills the role of the build_config and the entrypoint_args
     """Builds a frontend node template from a custom component using its input-based configuration.
@@ -458,10 +458,10 @@ def build_custom_component_template_from_inputs(
         cc_instance = get_component_instance(custom_component, user_id=user_id)
 
         field_config = cc_instance.get_template_config(cc_instance)
-        frontend_node = ComponentFrontendNode.from_inputs(**field_config)
+        frontend_node = NodeFrontendNode.from_inputs(**field_config)
 
     else:
-        frontend_node = ComponentFrontendNode.from_inputs(**custom_component.template_config)
+        frontend_node = NodeFrontendNode.from_inputs(**custom_component.template_config)
         cc_instance = custom_component
     frontend_node = add_code_field(frontend_node, custom_component._code)
     # But we now need to calculate the return_type of the methods in the outputs
@@ -489,10 +489,10 @@ def build_custom_component_template_from_inputs(
 
 
 def build_custom_component_template(
-    custom_component: CustomComponent,
+    custom_component: ExecutableNode,
     user_id: str | UUID | None = None,
     module_name: str | None = None,
-) -> tuple[dict[str, Any], CustomComponent | Component]:
+) -> tuple[dict[str, Any], ExecutableNode | Node]:
     """Builds a frontend node template and instance for a custom component.
 
     If the component uses input-based configuration, delegates to the appropriate builder. Otherwise,
@@ -518,7 +518,7 @@ def build_custom_component_template(
         raise HTTPException(
             status_code=400,
             detail={
-                "error": ("Error building Component. Please check if you are importing Component correctly."),
+                "error": ("Error building Node. Please check if you are importing Node correctly."),
             },
         )
     try:
@@ -526,7 +526,7 @@ def build_custom_component_template(
             return build_custom_component_template_from_inputs(
                 custom_component, user_id=user_id, module_name=module_name
             )
-        frontend_node = CustomComponentFrontendNode(**custom_component.template_config)
+        frontend_node = ExecutableNodeFrontendNode(**custom_component.template_config)
 
         field_config, custom_instance = run_build_config(
             custom_component,
@@ -567,12 +567,12 @@ def build_custom_component_template(
 
 def create_component_template(
     component: dict | None = None,
-    component_extractor: Component | CustomComponent | None = None,
+    component_extractor: Node | ExecutableNode | None = None,
     module_name: str | None = None,
 ):
     """Creates a component template and instance from either a component dictionary or an existing component extractor.
 
-    If a component dictionary is provided, a new Component instance is created from its code. If a component
+    If a component dictionary is provided, a new Node instance is created from its code. If a component
     extractor is provided, it is used directly. The function returns the generated template and the component
     instance. Output types are set on the template if missing.
     """
@@ -581,7 +581,7 @@ def create_component_template(
         component_code = component["code"]
         component_output_types = component["output_types"]
 
-        component_extractor = Component(_code=component_code)
+        component_extractor = Node(_code=component_code)
 
     component_template, component_instance = build_custom_component_template(
         component_extractor, module_name=module_name
@@ -687,7 +687,7 @@ def get_instance_name(instance):
 
 
 async def update_component_build_config(
-    component: CustomComponent,
+    component: ExecutableNode,
     build_config: dotdict,
     field_value: Any,
     field_name: str | None = None,
@@ -828,4 +828,4 @@ async def load_custom_component(component_name: str, components_paths: list[str]
     return None
 
 
-_COMPONENT_TYPE_NAMES = {"Component", "CustomComponent"}
+_COMPONENT_TYPE_NAMES = {"Node", "ExecutableNode"}

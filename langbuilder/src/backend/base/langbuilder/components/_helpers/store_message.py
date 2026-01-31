@@ -1,4 +1,4 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import (
     HandleInput,
     MessageTextInput,
@@ -9,7 +9,7 @@ from langbuilder.template.field.base import Output
 from langbuilder.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI
 
 
-class MessageStoreComponent(Component):
+class MessageStoreComponent(Node):
     display_name = "Message Store"
     description = "Stores a chat message or text into Langbuilder tables or an external memory."
     icon = "message-square-text"

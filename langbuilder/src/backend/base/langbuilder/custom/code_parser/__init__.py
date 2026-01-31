@@ -1,3 +1,3 @@
-from .code_parser import CodeParser
+from .code_parser import NodeCodeParser
 
-__all__ = ["CodeParser"]
+__all__ = ["NodeCodeParser"]

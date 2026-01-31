@@ -26,7 +26,7 @@ from langbuilder.api.v1.schemas import (
     UpdateCustomComponentRequest,
     UploadFileResponse,
 )
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.custom.utils import (
     add_code_field_to_build_config,
     build_custom_component_template,
@@ -667,14 +667,14 @@ async def custom_component(
     raw_code: CustomComponentRequest,
     user: CurrentActiveUser,
 ) -> CustomComponentResponse:
-    component = Component(_code=raw_code.code)
+    component = Node(_code=raw_code.code)
 
     built_frontend_node, component_instance = build_custom_component_template(component, user_id=user.id)
     if raw_code.frontend_node is not None:
         built_frontend_node = await component_instance.update_frontend_node(built_frontend_node, raw_code.frontend_node)
 
     tool_mode: bool = built_frontend_node.get("tool_mode", False)
-    if isinstance(component_instance, Component):
+    if isinstance(component_instance, Node):
         await component_instance.run_and_validate_update_outputs(
             frontend_node=built_frontend_node,
             field_name="tool_mode",
@@ -700,7 +700,7 @@ async def custom_component_update(
         SerializationError: If serialization of the updated component node fails.
     """
     try:
-        component = Component(_code=code_request.code)
+        component = Node(_code=code_request.code)
         component_node, cc_instance = build_custom_component_template(
             component,
             user_id=user.id,
@@ -737,7 +737,7 @@ async def custom_component_update(
             updated_build_config = add_code_field_to_build_config(updated_build_config, code_request.code)
         component_node["template"] = updated_build_config
 
-        if isinstance(cc_instance, Component):
+        if isinstance(cc_instance, Node):
             await cc_instance.run_and_validate_update_outputs(
                 frontend_node=component_node,
                 field_name=code_request.field,

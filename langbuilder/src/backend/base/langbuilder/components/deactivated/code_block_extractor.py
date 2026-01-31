@@ -1,10 +1,10 @@
 import re
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import Input, Output, Text
 
 
-class CodeBlockExtractor(Component):
+class CodeBlockExtractor(Node):
     display_name = "Code Block Extractor"
     description = "Extracts code block from text."
     name = "CodeBlockExtractor"

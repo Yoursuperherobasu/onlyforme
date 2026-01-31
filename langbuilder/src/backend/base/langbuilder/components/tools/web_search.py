@@ -5,13 +5,13 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from langbuilder.custom import Component
+from langbuilder.custom import Node
 from langbuilder.io import IntInput, MessageTextInput, Output
 from langbuilder.schema import DataFrame
 from langbuilder.services.deps import get_settings_service
 
 
-class WebSearchComponent(Component):
+class WebSearchComponent(Node):
     display_name = "Web Search"
     description = "Performs a basic DuckDuckGo search (HTML scraping). May be subject to rate limits."
     documentation: str = "https://docs.langbuilder.org/components-data#web-search"

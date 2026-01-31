@@ -1,12 +1,12 @@
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing.constants import OutputParser
 from langbuilder.io import DropdownInput, Output
 from langbuilder.schema.message import Message
 
 
-class OutputParserComponent(Component):
+class OutputParserComponent(Node):
     display_name = "Output Parser"
     description = "Transforms the output of an LLM into a specified format."
     icon = "type"

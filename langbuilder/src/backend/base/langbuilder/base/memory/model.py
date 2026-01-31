@@ -2,13 +2,13 @@ from abc import abstractmethod
 
 from langchain.memory import ConversationBufferMemory
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import BaseChatMemory
 from langbuilder.field_typing.constants import Memory
 from langbuilder.template.field.base import Output
 
 
-class LCChatMemoryComponent(Component):
+class LCChatMemoryComponent(Node):
     trace_type = "chat_memory"
     outputs = [
         Output(

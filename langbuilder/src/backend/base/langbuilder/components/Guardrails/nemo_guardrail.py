@@ -1,10 +1,10 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import MessageTextInput
 from langbuilder.io import Output
 from langbuilder.schema.message import Message
 
 
-class NemoGuardrailComponent(Component):
+class NemoGuardrailComponent(Node):
     display_name = "NeMo Guardrails"
     description = "Apply NeMo Guardrails to validate and filter LLM inputs and outputs."
     documentation: str = "https://docs.langbuilder.org/components-guardrails#nemo-guardrails"

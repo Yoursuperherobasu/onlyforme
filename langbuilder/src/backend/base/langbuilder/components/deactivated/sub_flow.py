@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from langbuilder.base.flow_processing.utils import build_data_from_result_data
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.graph.graph.base import Graph
 from langbuilder.graph.vertex.base import Vertex
 from langbuilder.helpers.flow import get_flow_inputs
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from langbuilder.graph.schema import RunOutputs
 
 
-class SubFlowComponent(CustomComponent):
+class SubFlowComponent(ExecutableNode):
     display_name = "Sub Flow"
     description = (
         "Dynamically Generates a Component from a Flow. The output is a list of data with keys 'result' and 'message'."

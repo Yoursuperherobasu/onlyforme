@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from typing_extensions import override
 
-from langbuilder.custom.custom_component.component import Component, _get_component_toolkit
+from langbuilder.custom.custom_component.component import Node, _get_component_toolkit
 from langbuilder.field_typing import Tool
 from langbuilder.graph.graph.base import Graph
 from langbuilder.graph.vertex.base import Vertex
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from langbuilder.base.tools.component_tool import ComponentToolkit
 
 
-class RunFlowBaseComponent(Component):
+class RunFlowBaseComponent(Node):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_tool_output = True

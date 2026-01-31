@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, create_model
 from trustcall import create_extractor
 
 from langbuilder.base.models.chat_result import get_chat_result
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.helpers.base_model import build_model_from_schema
 from langbuilder.io import (
     HandleInput,
@@ -16,7 +16,7 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.schema.table import EditMode
 
 
-class StructuredOutputComponent(Component):
+class StructuredOutputComponent(Node):
     display_name = "Structured Output"
     description = "Uses an LLM to generate structured data. Ideal for extraction and consistency."
     documentation: str = "https://docs.langbuilder.org/components-processing#structured-output"
