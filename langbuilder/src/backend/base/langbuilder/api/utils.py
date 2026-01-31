@@ -161,13 +161,18 @@ async def _get_flow_name(flow_id: uuid.UUID) -> str:
 
 async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, use_langgraph: bool = True, **kwargs):
     """Build and cache the graph.
-    
+
     Args:
         flow_id: The flow ID
         payload: The flow payload with nodes and edges
         use_langgraph: Whether to use LangGraph (default: True) or custom Graph
-        **kwargs: Additional arguments
-    
+        **kwargs: Additional arguments including:
+            - flow_name: Name of the flow
+            - user_id: User ID for ownership
+            - session_id: Session ID for grouping
+            - project_id: Folder ID for observability project grouping
+            - project_name: Folder name for observability display
+
     Returns:
         LangGraphAdapter or Graph instance
     """
@@ -179,11 +184,22 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, use_lan
     str_flow_id = str(flow_id)
     session_id = kwargs.get("session_id") or str_flow_id
 
+    # Extract observability parameters
+    project_id = kwargs.get("project_id")
+    project_name = kwargs.get("project_name")
+
     # Use LangGraph by default, fallback to custom Graph if specified
     if use_langgraph:
         print(f"🚀 USING NEW LANGGRAPH ADAPTER! flow_id={str_flow_id}")
         logger.info(f"Using LangGraphAdapter (NEW) for flow_id={str_flow_id}")
-        graph = LangGraphAdapter.from_payload(payload, str_flow_id, flow_name, kwargs.get("user_id"))
+        graph = LangGraphAdapter.from_payload(
+            payload,
+            str_flow_id,
+            flow_name,
+            kwargs.get("user_id"),
+            project_id=project_id,
+            project_name=project_name,
+        )
     else:
         print(f"⚠️ USING OLD GRAPH! flow_id={str_flow_id}")
         logger.warning(f"Using old Graph implementation for flow_id={str_flow_id}")
@@ -204,11 +220,25 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, use_lan
 
 async def build_graph_from_db_no_cache(flow_id: uuid.UUID, session: AsyncSession, **kwargs):
     """Build and cache the graph."""
+    from langbuilder.services.database.models.folder.model import Folder
+
     flow: Flow | None = await session.get(Flow, flow_id)
     if not flow or not flow.data:
         msg = "Invalid flow ID"
         raise ValueError(msg)
     kwargs["user_id"] = kwargs.get("user_id") or str(flow.user_id)
+
+    # Pass folder_id as project_id for observability tracking
+    if flow.folder_id:
+        kwargs["project_id"] = str(flow.folder_id)
+        # Try to get folder name for project_name
+        try:
+            folder = await session.get(Folder, flow.folder_id)
+            if folder:
+                kwargs["project_name"] = folder.name
+        except Exception:
+            pass  # Folder name is optional
+
     return await build_graph_from_data(flow_id, flow.data, flow_name=flow.name, **kwargs)
 
 

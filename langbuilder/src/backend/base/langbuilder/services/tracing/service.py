@@ -65,12 +65,21 @@ class TraceContext:
         project_name: str | None,
         user_id: str | None,
         session_id: str | None,
+        flow_id: str | None = None,
+        flow_name: str | None = None,
+        observability_project_id: str | None = None,
+        observability_project_name: str | None = None,
     ):
         self.run_id: UUID | None = run_id
         self.run_name: str | None = run_name
         self.project_name: str | None = project_name
         self.user_id: str | None = user_id
         self.session_id: str | None = session_id
+        # Observability tracking fields
+        self.flow_id: str | None = flow_id
+        self.flow_name: str | None = flow_name
+        self.observability_project_id: str | None = observability_project_id
+        self.observability_project_name: str | None = observability_project_name
         self.tracers: dict[str, BaseTracer] = {}
         self.all_inputs: dict[str, dict] = defaultdict(dict)
         self.all_outputs: dict[str, dict] = defaultdict(dict)
@@ -175,6 +184,10 @@ class TracingService(Service):
             trace_id=trace_context.run_id,
             user_id=trace_context.user_id,
             session_id=trace_context.session_id,
+            flow_id=trace_context.flow_id,
+            flow_name=trace_context.flow_name,
+            observability_project_id=trace_context.observability_project_id,
+            observability_project_name=trace_context.observability_project_name,
         )
 
     def _initialize_arize_phoenix_tracer(self, trace_context: TraceContext) -> None:
@@ -208,18 +221,43 @@ class TracingService(Service):
         user_id: str | None,
         session_id: str | None,
         project_name: str | None = None,
+        flow_id: str | None = None,
+        flow_name: str | None = None,
+        observability_project_id: str | None = None,
+        observability_project_name: str | None = None,
     ) -> None:
         """Start a trace for a graph run.
 
         - create a trace context
         - start a worker for this trace context
         - initialize the tracers
+
+        Args:
+            run_id: Unique identifier for this run
+            run_name: Name of this run (typically flow_name - flow_id)
+            user_id: User ID for observability isolation
+            session_id: Session ID for grouping related traces
+            project_name: Langchain project name
+            flow_id: Flow UUID for observability tracking
+            flow_name: Flow name for observability display
+            observability_project_id: Folder ID for project-level grouping
+            observability_project_name: Folder name for project display
         """
         if self.deactivated:
             return
         try:
             project_name = project_name or os.getenv("LANGCHAIN_PROJECT", "Langbuilder")
-            trace_context = TraceContext(run_id, run_name, project_name, user_id, session_id)
+            trace_context = TraceContext(
+                run_id=run_id,
+                run_name=run_name,
+                project_name=project_name,
+                user_id=user_id,
+                session_id=session_id,
+                flow_id=flow_id,
+                flow_name=flow_name,
+                observability_project_id=observability_project_id,
+                observability_project_name=observability_project_name,
+            )
             trace_context_var.set(trace_context)
             await self._start(trace_context)
             self._initialize_langsmith_tracer(trace_context)
