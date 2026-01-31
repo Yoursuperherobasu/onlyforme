@@ -1,9 +1,9 @@
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.memory import aget_messages, astore_message
 from langbuilder.schema.message import Message
 
 
-class StoreMessageComponent(CustomComponent):
+class StoreMessageComponent(ExecutableNode):
     display_name = "Store Message"
     description = "Stores a chat message."
     name = "StoreMessage"

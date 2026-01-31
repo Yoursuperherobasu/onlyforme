@@ -24,11 +24,11 @@ test(
     await page.getByTestId("code-button-modal").last().click();
 
     const customComponentCode = `
-from langbuilder.custom import Component
+from langbuilder.custom import Node
 from langbuilder.io import Output
 from langbuilder.schema.message import Message
 
-class CustomComponent(Component):
+class CustomComponent(Node):
     display_name = "Custom Component"
     description = "Test component with multiple outputs"
     icon = "custom_components"

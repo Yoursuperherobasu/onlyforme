@@ -6,7 +6,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_google_genai._common import GoogleGenerativeAIError
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import MessageTextInput, Output, SecretStrInput
 
 MIN_DIMENSION_ERROR = "Output dimensionality must be at least 1"
@@ -17,7 +17,7 @@ MAX_DIMENSION = 768
 MIN_DIMENSION = 1
 
 
-class GoogleGenerativeAIEmbeddingsComponent(Component):
+class GoogleGenerativeAIEmbeddingsComponent(Node):
     display_name = "Google Generative AI Embeddings"
     description = (
         "Connect to Google's generative AI embeddings service using the GoogleGenerativeAIEmbeddings class, "

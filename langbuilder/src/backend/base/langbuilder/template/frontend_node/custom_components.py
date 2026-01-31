@@ -2,7 +2,7 @@ from langbuilder.template.field.base import Input
 from langbuilder.template.frontend_node.base import FrontendNode
 from langbuilder.template.template.base import Template
 
-DEFAULT_CUSTOM_COMPONENT_CODE = """from langbuilder.custom import CustomComponent
+DEFAULT_CUSTOM_COMPONENT_CODE = """from langbuilder.custom import Node
 
 from typing import Optional, List, Dict, Union
 from langbuilder.field_typing import (
@@ -29,7 +29,7 @@ from langbuilder.field_typing import (
 )
 
 
-class Component(CustomComponent):
+class MyComponent(Node):
     display_name: str = "Custom Component"
     description: str = "Create any custom component you want!"
 
@@ -42,15 +42,15 @@ class Component(CustomComponent):
 """
 
 
-class CustomComponentFrontendNode(FrontendNode):
+class ExecutableNodeFrontendNode(FrontendNode):
     _format_template: bool = False
-    name: str = "CustomComponent"
-    display_name: str | None = "CustomComponent"
+    name: str = "ExecutableNode"
+    display_name: str | None = "ExecutableNode"
     beta: bool = False
     legacy: bool = False
     minimized: bool = False
     template: Template = Template(
-        type_name="CustomComponent",
+        type_name="ExecutableNode",
         fields=[
             Input(
                 field_type="code",
@@ -70,15 +70,15 @@ class CustomComponentFrontendNode(FrontendNode):
     last_updated: str | None = None
 
 
-class ComponentFrontendNode(FrontendNode):
+class NodeFrontendNode(FrontendNode):
     _format_template: bool = False
-    name: str = "Component"
-    display_name: str | None = "Component"
+    name: str = "Node"
+    display_name: str | None = "Node"
     beta: bool = False
     minimized: bool = False
     legacy: bool = False
     template: Template = Template(
-        type_name="Component",
+        type_name="Node",
         fields=[
             Input(
                 field_type="code",

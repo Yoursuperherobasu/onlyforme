@@ -1,9 +1,9 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import Embeddings
 from langbuilder.io import Output
 
 
-class LCEmbeddingsModel(Component):
+class LCEmbeddingsModel(Node):
     trace_type = "embedding"
 
     outputs = [

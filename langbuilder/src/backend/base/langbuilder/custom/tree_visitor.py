@@ -4,7 +4,7 @@ from typing import Any
 from typing_extensions import override
 
 
-class RequiredInputsVisitor(ast.NodeVisitor):
+class FieldRequirementChecker(ast.NodeVisitor):
     def __init__(self, inputs: dict[str, Any]):
         self.inputs: dict[str, Any] = inputs
         self.required_inputs: set[str] = set()

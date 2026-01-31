@@ -1,9 +1,9 @@
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.schema.data import Data
 from langbuilder.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_USER
 
 
-class BaseMemoryComponent(CustomComponent):
+class BaseMemoryComponent(ExecutableNode):
     display_name = "Chat Memory"
     description = "Retrieves stored chat messages given a specific Session ID."
     beta: bool = True

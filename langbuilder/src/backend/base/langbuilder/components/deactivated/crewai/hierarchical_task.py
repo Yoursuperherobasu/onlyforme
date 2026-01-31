@@ -1,9 +1,9 @@
 from langbuilder.base.agents.crewai.tasks import HierarchicalTask
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import HandleInput, MultilineInput, Output
 
 
-class HierarchicalTaskComponent(Component):
+class HierarchicalTaskComponent(Node):
     display_name: str = "Hierarchical Task"
     description: str = "Each task must have a description, an expected output and an agent responsible for execution."
     icon = "CrewAI"

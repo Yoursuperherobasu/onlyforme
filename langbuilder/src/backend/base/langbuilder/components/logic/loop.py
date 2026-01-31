@@ -1,11 +1,11 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import HandleInput
 from langbuilder.schema.data import Data
 from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class LoopComponent(Component):
+class LoopComponent(Node):
     display_name = "Loop"
     description = (
         "Iterates over a list of Data objects, outputting one item at a time and aggregating results from loop inputs."

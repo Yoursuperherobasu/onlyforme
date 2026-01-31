@@ -10,7 +10,7 @@ from zipfile import ZipFile, is_zipfile
 
 import pandas as pd
 from loguru import logger
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import BoolInput, FileInput, HandleInput, Output, StrInput
 from langbuilder.schema.data import Data
 from langbuilder.schema.dataframe import DataFrame
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-class BaseFileComponent(Component, ABC):
+class BaseFileComponent(Node, ABC):
     """Base class for handling file processing components.
 
     This class provides common functionality for resolving, validating, and

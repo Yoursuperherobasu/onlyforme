@@ -1,10 +1,10 @@
 from langchain_core.documents import Document
 
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.schema.data import Data
 
 
-class DocumentsToDataComponent(CustomComponent):
+class DocumentsToDataComponent(ExecutableNode):
     display_name = "Documents ⇢ Data"
     description = "Convert LangChain Documents into Data."
     icon = "LangChain"

@@ -10,7 +10,7 @@ from cachetools import TTLCache
 from langchain_core.documents import Document
 from pydantic import BaseModel
 
-from langbuilder.custom.custom_component.base_component import BaseComponent
+from langbuilder.custom.custom_component.base_component import NodeBase
 from langbuilder.helpers.flow import list_flows, load_flow, run_flow
 from langbuilder.schema.data import Data
 from langbuilder.services.deps import get_storage_service, get_variable_service, session_scope
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from langbuilder.services.tracing.service import TracingService
 
 
-class CustomComponent(BaseComponent):
+class ExecutableNode(NodeBase):
     """Represents a custom component in Langbuilder.
 
     Attributes:
@@ -51,7 +51,7 @@ class CustomComponent(BaseComponent):
     """
 
     # True constants that should be shared (using ClassVar)
-    _code_class_base_inheritance: ClassVar[str] = "CustomComponent"
+    _code_class_base_inheritance: ClassVar[str] = "ExecutableNode"
     function_entrypoint_name: ClassVar[str] = "build"
     name: str | None = None
     """The name of the component used to styles. Defaults to None."""
@@ -343,7 +343,7 @@ class CustomComponent(BaseComponent):
             return {}
 
         component_classes = [
-            cls for cls in self.tree["classes"] if "Component" in cls["bases"] or "CustomComponent" in cls["bases"]
+            cls for cls in self.tree["classes"] if any(base in cls["bases"] for base in {"Node", "ExecutableNode"})
         ]
         if not component_classes:
             return {}

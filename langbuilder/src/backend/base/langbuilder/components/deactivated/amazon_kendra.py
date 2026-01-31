@@ -2,11 +2,11 @@
 from langchain_community.retrievers import AmazonKendraRetriever
 
 from langbuilder.base.vectorstores.model import check_cached_vector_store
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.io import DictInput, IntInput, StrInput
 
 
-class AmazonKendraRetrieverComponent(CustomComponent):
+class AmazonKendraRetrieverComponent(ExecutableNode):
     display_name: str = "Amazon Kendra Retriever"
     description: str = "Retriever that uses the Amazon Kendra API."
     name = "AmazonKendra"

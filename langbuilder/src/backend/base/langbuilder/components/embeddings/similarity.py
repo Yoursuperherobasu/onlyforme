@@ -2,12 +2,12 @@ from typing import Any
 
 import numpy as np
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import DataInput, DropdownInput, Output
 from langbuilder.schema.data import Data
 
 
-class EmbeddingSimilarityComponent(Component):
+class EmbeddingSimilarityComponent(Node):
     display_name: str = "Embedding Similarity"
     description: str = "Compute selected form of similarity between two embedding vectors."
     icon = "equal"

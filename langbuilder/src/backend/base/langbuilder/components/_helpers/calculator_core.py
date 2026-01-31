@@ -2,13 +2,13 @@ import ast
 import operator
 from collections.abc import Callable
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import MessageTextInput
 from langbuilder.io import Output
 from langbuilder.schema.data import Data
 
 
-class CalculatorComponent(Component):
+class CalculatorComponent(Node):
     display_name = "Calculator"
     description = "Perform basic arithmetic operations on a given expression."
     documentation: str = "https://docs.langbuilder.org/components-helpers#calculator"

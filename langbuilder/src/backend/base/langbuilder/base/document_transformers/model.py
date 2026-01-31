@@ -3,13 +3,13 @@ from typing import Any
 
 from langchain_core.documents import BaseDocumentTransformer
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.io import Output
 from langbuilder.schema.data import Data
 from langbuilder.utils.util import build_loader_repr_from_data
 
 
-class LCDocumentTransformerComponent(Component):
+class LCDocumentTransformerComponent(Node):
     trace_type = "document_transformer"
     outputs = [
         Output(display_name="Data", name="data", method="transform_data"),

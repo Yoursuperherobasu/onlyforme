@@ -1,10 +1,10 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import MessageTextInput, BoolInput
 from langbuilder.io import Output
 from langbuilder.schema.message import Message
 
 
-class HumanApprovalComponent(Component):
+class HumanApprovalComponent(Node):
     display_name = "Human Approval"
     description = "Pause workflow execution and wait for human approval before proceeding."
     documentation: str = "https://docs.langbuilder.org/components-human-in-the-loop#human-approval"

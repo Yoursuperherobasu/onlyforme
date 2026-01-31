@@ -8,7 +8,7 @@ from composio.exceptions import ApiKeyError
 from composio_langchain import ComposioToolSet
 from langchain_core.tools import Tool
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import (
     AuthInput,
     MessageTextInput,
@@ -22,7 +22,7 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.schema.message import Message
 
 
-class ComposioBaseComponent(Component):
+class ComposioBaseComponent(Node):
     """Base class for Composio components with common functionality."""
 
     # Common inputs that all Composio components will need

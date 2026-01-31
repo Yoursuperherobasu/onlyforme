@@ -3,10 +3,10 @@ from langbuilder.template import frontend_node
 # These should always be instantiated
 CUSTOM_NODES: dict[str, dict[str, frontend_node.base.FrontendNode]] = {
     "custom_components": {
-        "CustomComponent": frontend_node.custom_components.CustomComponentFrontendNode(),
+        "ExecutableNode": frontend_node.custom_components.ExecutableNodeFrontendNode(),
     },
     "component": {
-        "Component": frontend_node.custom_components.ComponentFrontendNode(),
+        "Node": frontend_node.custom_components.NodeFrontendNode(),
     },
 }
 

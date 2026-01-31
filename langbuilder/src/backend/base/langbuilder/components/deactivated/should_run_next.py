@@ -1,11 +1,11 @@
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import PromptTemplate
 
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.field_typing import LanguageModel, Text
 
 
-class ShouldRunNextComponent(CustomComponent):
+class ShouldRunNextComponent(ExecutableNode):
     display_name = "Should Run Next"
     description = "Determines if a vertex is runnable."
     name = "ShouldRunNext"

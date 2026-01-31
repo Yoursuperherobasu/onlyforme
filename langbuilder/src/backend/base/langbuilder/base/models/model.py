@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.output_parsers import BaseOutputParser
 
 from langbuilder.base.constants import STREAM_INFO_TEXT
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.field_typing import LanguageModel
 from langbuilder.inputs.inputs import BoolInput, InputTypes, MessageInput, MultilineInput
 from langbuilder.schema.message import Message
@@ -22,7 +22,7 @@ from langbuilder.utils.constants import MESSAGE_SENDER_AI
 DETAILED_THINKING_PREFIX = "detailed thinking on\n\n"
 
 
-class LCModelComponent(Component):
+class LCModelComponent(Node):
     display_name: str = "Model Name"
     description: str = "Model Description"
     trace_type = "llm"
@@ -353,7 +353,7 @@ class LCModelComponent(Component):
             raise ValueError(msg) from e
 
     def build_llm_model_from_inputs(
-        self, component: Component, inputs: list[InputTypes], prefix: str = ""
+        self, component: Node, inputs: list[InputTypes], prefix: str = ""
     ) -> LanguageModel:
         """Build LLM model from component and inputs.
 

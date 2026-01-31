@@ -1,4 +1,4 @@
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.helpers.data import safe_convert
 from langbuilder.inputs.inputs import BoolInput, HandleInput, MessageTextInput, MultilineInput, TabInput
 from langbuilder.schema.data import Data
@@ -7,7 +7,7 @@ from langbuilder.schema.message import Message
 from langbuilder.template.field.base import Output
 
 
-class ParserComponent(Component):
+class ParserComponent(Node):
     display_name = "Parser"
     description = "Extracts text using a template."
     documentation: str = "https://docs.langbuilder.org/components-processing#parser"

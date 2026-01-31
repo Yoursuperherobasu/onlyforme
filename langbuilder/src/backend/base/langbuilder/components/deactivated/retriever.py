@@ -1,11 +1,11 @@
 from langchain_core.tools import create_retriever_tool
 
-from langbuilder.custom.custom_component.custom_component import CustomComponent
+from langbuilder.custom.custom_component.custom_component import ExecutableNode
 from langbuilder.field_typing import BaseRetriever, Tool
 from langbuilder.io import HandleInput, StrInput
 
 
-class RetrieverToolComponent(CustomComponent):
+class RetrieverToolComponent(ExecutableNode):
     display_name = "RetrieverTool"
     description = "Tool for interacting with retriever"
     name = "RetrieverTool"

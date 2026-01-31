@@ -1,11 +1,11 @@
 from langchain.agents.agent_toolkits.vectorstore.toolkit import VectorStoreInfo
 
-from langbuilder.custom.custom_component.component import Component
+from langbuilder.custom.custom_component.component import Node
 from langbuilder.inputs.inputs import HandleInput, MessageTextInput, MultilineInput
 from langbuilder.template.field.base import Output
 
 
-class VectorStoreInfoComponent(Component):
+class VectorStoreInfoComponent(Node):
     display_name = "VectorStoreInfo"
     description = "Information about a VectorStore"
     name = "VectorStoreInfo"
