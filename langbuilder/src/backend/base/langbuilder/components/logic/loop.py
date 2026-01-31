@@ -80,7 +80,7 @@ class Loop(Node):
             self.aggregated_output()
             self.update_ctx({f"{self._id}_index": current_index + 1})
 
-        # Now we need to update the dependencies for the next run
+        # Now we need to update the dependencies for the next run0
         self.update_dependency()
         return current_item
 

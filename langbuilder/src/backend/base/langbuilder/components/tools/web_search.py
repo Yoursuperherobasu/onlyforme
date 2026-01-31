@@ -11,10 +11,9 @@ from langbuilder.schema import DataFrame
 from langbuilder.services.deps import get_settings_service
 
 
-class WebSearchComponent(Node):
+class WebSearch(Node):
     display_name = "Web Search"
     description = "Performs a basic DuckDuckGo search (HTML scraping). May be subject to rate limits."
-    documentation: str = "https://docs.langbuilder.org/components-data#web-search"
     icon = "search"
     name = "WebSearchNoAPI"
 

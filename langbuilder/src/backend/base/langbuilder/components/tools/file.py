@@ -7,7 +7,7 @@ from langbuilder.io import BoolInput, FileInput, IntInput, Output
 from langbuilder.schema.data import Data
 
 
-class FileComponent(BaseFileComponent):
+class File(BaseFileComponent):
     """Handles loading and processing of individual or zipped text files.
 
     This component supports processing multiple valid files within a zip archive,
@@ -16,7 +16,6 @@ class FileComponent(BaseFileComponent):
 
     display_name = "File"
     description = "Loads content from one or more files."
-    documentation: str = "https://docs.langbuilder.org/components-data#file"
     icon = "file-text"
     name = "File"
 

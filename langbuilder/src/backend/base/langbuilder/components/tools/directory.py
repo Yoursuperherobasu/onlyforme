@@ -11,10 +11,9 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class DirectoryComponent(Node):
+class Directory(Node):
     display_name = "Directory"
     description = "Recursively load files from a directory."
-    documentation: str = "https://docs.langbuilder.org/components-data#directory"
     icon = "folder"
     name = "Directory"
 
