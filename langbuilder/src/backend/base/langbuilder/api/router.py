@@ -12,6 +12,7 @@ from langbuilder.api.v1 import (
     mcp_projects_router,
     mcp_router,
     monitor_router,
+    observability_router,
     projects_router,
     publish_router,
     starter_projects_router,
@@ -50,6 +51,7 @@ router_v1.include_router(starter_projects_router)
 router_v1.include_router(mcp_router)
 router_v1.include_router(voice_mode_router)
 router_v1.include_router(mcp_projects_router)
+router_v1.include_router(observability_router)
 
 router_v2.include_router(files_router_v2)
 router_v2.include_router(mcp_router_v2)
