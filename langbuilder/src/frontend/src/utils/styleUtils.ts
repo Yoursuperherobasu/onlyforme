@@ -211,7 +211,8 @@ export const SIDEBAR_CATEGORIES = [
   { display_name: "Saved", name: "saved_components", icon: "GradientSave" },
   { display_name: "Input / Output", name: "input_output", icon: "Cable" },
   { display_name: "Agents", name: "agents", icon: "Bot" },
-  { display_name: "Models", name: "models", icon: "BrainCog" },
+  { display_name: "MCP", name: "mcp", icon: "Bot" },
+  { display_name: "Models Catalog", name: "models", icon: "BrainCog" },
   //{ display_name: "Tools", name: "data", icon: "Database" },
   ...(ENABLE_KNOWLEDGE_BASES
     ? [

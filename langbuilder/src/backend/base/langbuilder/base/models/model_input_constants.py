@@ -1,12 +1,12 @@
 from typing_extensions import TypedDict
 
 from langbuilder.base.models.model import LCModelComponent
-from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockComponent
-from langbuilder.components.anthropic.anthropic import AnthropicModelComponent
-from langbuilder.components.azure.azure_openai import AzureChatOpenAIComponent
-from langbuilder.components.google.google_generative_ai import GoogleGenerativeAIComponent
-from langbuilder.components.groq.groq import GroqModel
-from langbuilder.components.openai.openai_chat_model import OpenAIModelComponent
+from langbuilder.components.models.amazon_bedrock_model import AmazonBedrockComponent
+from langbuilder.components.models.anthropic import AnthropicModelComponent
+from langbuilder.components.models.azure_openai import AzureChatOpenAIComponent
+from langbuilder.components.models.google_generative_ai import GoogleGenerativeAIComponent
+from langbuilder.components.models.groq import GroqModel
+from langbuilder.components.models.openai_chat_model import OpenAIModelComponent
 from langbuilder.inputs.inputs import InputTypes, SecretStrInput
 from langbuilder.template.field.base import Input
 
@@ -87,7 +87,7 @@ def create_input_fields_dict(inputs: list[Input], prefix: str) -> dict[str, Inpu
 
 def _get_google_generative_ai_inputs_and_fields():
     try:
-        from langbuilder.components.google.google_generative_ai import GoogleGenerativeAIComponent
+        from langbuilder.components.models.google_generative_ai import GoogleGenerativeAIComponent
 
         google_generative_ai_inputs = get_filtered_inputs(GoogleGenerativeAIComponent)
     except ImportError as e:
@@ -101,7 +101,7 @@ def _get_google_generative_ai_inputs_and_fields():
 
 def _get_openai_inputs_and_fields():
     try:
-        from langbuilder.components.openai.openai_chat_model import OpenAIModelComponent
+        from langbuilder.components.models.openai_chat_model import OpenAIModelComponent
 
         openai_inputs = get_filtered_inputs(OpenAIModelComponent)
     except ImportError as e:
@@ -112,7 +112,7 @@ def _get_openai_inputs_and_fields():
 
 def _get_azure_inputs_and_fields():
     try:
-        from langbuilder.components.azure.azure_openai import AzureChatOpenAIComponent
+        from langbuilder.components.models.azure_openai import AzureChatOpenAIComponent
 
         azure_inputs = get_filtered_inputs(AzureChatOpenAIComponent)
     except ImportError as e:
@@ -123,7 +123,7 @@ def _get_azure_inputs_and_fields():
 
 def _get_groq_inputs_and_fields():
     try:
-        from langbuilder.components.groq.groq import GroqModel
+        from langbuilder.components.models.groq import GroqModel
 
         groq_inputs = get_filtered_inputs(GroqModel)
     except ImportError as e:
@@ -134,7 +134,7 @@ def _get_groq_inputs_and_fields():
 
 def _get_anthropic_inputs_and_fields():
     try:
-        from langbuilder.components.anthropic.anthropic import AnthropicModelComponent
+        from langbuilder.components.models.anthropic import AnthropicModelComponent
 
         anthropic_inputs = get_filtered_inputs(AnthropicModelComponent)
     except ImportError as e:
@@ -156,24 +156,13 @@ def _get_anthropic_inputs_and_fields():
 
 def _get_amazon_bedrock_inputs_and_fields():
     try:
-        from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockComponent
+        from langbuilder.components.models.amazon_bedrock_model import AmazonBedrockComponent
 
         amazon_bedrock_inputs = get_filtered_inputs(AmazonBedrockComponent)
     except ImportError as e:
         msg = "Amazon Bedrock is not installed. Please install it with `pip install langchain-amazon-bedrock`."
         raise ImportError(msg) from e
     return amazon_bedrock_inputs, create_input_fields_dict(amazon_bedrock_inputs, "")
-
-
-# def _get_sambanova_inputs_and_fields():
-#     try:
-#         from langbuilder.components.sambanova.sambanova import SambaNovaComponent
-
-#         sambanova_inputs = get_filtered_inputs(SambaNovaComponent)
-#     except ImportError as e:
-#         msg = "SambaNova is not installed. Please install it with `pip install langchain-sambanova`."
-#         raise ImportError(msg) from e
-#     return sambanova_inputs, create_input_fields_dict(sambanova_inputs, "")
 
 
 MODEL_PROVIDERS_DICT: dict[str, ModelProvidersDict] = {}
@@ -259,20 +248,6 @@ try:
 except ImportError:
     pass
 
-# try:
-#     sambanova_inputs, sambanova_fields = _get_sambanova_inputs_and_fields()
-#     MODEL_PROVIDERS_DICT["SambaNova"] = {
-#         "fields": sambanova_fields,
-#         "inputs": sambanova_inputs,
-#         "prefix": "",
-#         "component_class": SambaNovaComponent(),
-#         "icon": SambaNovaComponent.icon,
-#         "is_active": False,
-#     }
-# except ImportError:
-#     pass
-
-# Expose only active providers ----------------------------------------------
 ACTIVE_MODEL_PROVIDERS_DICT: dict[str, ModelProvidersDict] = {
     name: prov for name, prov in MODEL_PROVIDERS_DICT.items() if prov.get("is_active", True)
 }
