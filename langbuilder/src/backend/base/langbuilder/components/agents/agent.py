@@ -25,7 +25,7 @@ def set_advanced_true(component_input):
 
 
 class AgentComponent(ToolCallingAgentComponent):
-    display_name: str = "Agent"
+    display_name: str = "Worker Node"
     description: str = "Define the agent's instructions, then enter a task to complete using tools."
     documentation: str = "https://docs.langbuilder.org/agents"
     icon = "bot"

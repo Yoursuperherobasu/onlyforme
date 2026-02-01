@@ -17,7 +17,7 @@ class CalculatorToolComponent(LCToolComponent):
     description = "Perform basic arithmetic operations on a given expression."
     icon = "calculator"
     name = "CalculatorTool"
-    legacy = True
+    legacy = False
 
     inputs = [
         MessageTextInput(

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .google_generative_ai import GoogleGenerativeAIComponent
     from .google_generative_ai_embeddings import GoogleGenerativeAIEmbeddingsComponent
     from .groq import GroqModel
-    from .huggingface_inference_api import HuggingFaceInferenceAPIEmbeddingsComponent
+    from .mistral_embeddings import MistralAIEmbeddingsComponent
 
 
 _dynamic_imports = {
@@ -19,7 +19,7 @@ _dynamic_imports = {
     "AzureOpenAIEmbeddingsComponent": "azure_openai_embeddings",
     "GoogleGenerativeAIComponent":"google_chat",
     "GoogleGenerativeAIEmbeddingsComponent":"google_embedding",
-    "HuggingFaceInferenceAPIEmbeddingsComponent": "huggingface_inference_api",
+     "MistralAIEmbeddingsComponent": "mistral_embeddings",
 }
 
 __all__ = [
@@ -29,6 +29,7 @@ __all__ = [
     "GoogleGenerativeAIComponent",
     "GoogleGenerativeAIEmbeddingsComponent",
     "HuggingFaceInferenceAPIEmbeddingsComponent",
+    "MistralAIModelComponent",
 ]
 
 

@@ -86,9 +86,9 @@ class SmartRouterComponent(Node):
     ]
 
     outputs = [
-        Output(display_name="Route 1", name="Route 1", method="route_output", group_outputs=True),
-        Output(display_name="Route 2", name="Route 2", method="route_output", group_outputs=True),
-        Output(display_name="Route 3", name="Route 3", method="route_output", group_outputs=True),
+        Output(display_name="Route 1", name="Route 1", method="route_output", group_outputs=True, types=["Message", "Data"]),
+        Output(display_name="Route 2", name="Route 2", method="route_output", group_outputs=True, types=["Message", "Data"]),
+        Output(display_name="Route 3", name="Route 3", method="route_output", group_outputs=True, types=["Message", "Data"]),
     ]
 
     def __init__(self, **kwargs):
@@ -195,15 +195,23 @@ Important: The "selected_route" must be one of the exact route names listed abov
         default_route = route_names[0] if route_names else ""
 
         input_text = self._extract_input_text()
+        
+        print(f"\n{'='*60}")
+        print(f"🔀 SMART ROUTER - Evaluating Input")
+        print(f"{'='*60}")
+        print(f"📥 Input Text: {input_text[:500]}{'...' if len(input_text) > 500 else ''}")
+        print(f"📋 Available Routes: {route_names}")
 
         if not input_text.strip():
             self._selected_route = default_route
             self._routing_reasoning = "Empty input - using first route"
+            print(f"⚠️ Empty input - defaulting to: {default_route}")
             return self._selected_route
 
         prompt = self._build_routing_prompt(input_text)
 
         try:
+            print(f"🤖 Asking LLM to decide route...")
             response = await self.router_llm.ainvoke(prompt)
 
             if hasattr(response, "content"):
@@ -213,19 +221,26 @@ Important: The "selected_route" must be one of the exact route names listed abov
             else:
                 response_text = str(response)
 
+            print(f"💬 LLM Response: {response_text[:300]}{'...' if len(response_text) > 300 else ''}")
+
             selected_route, reasoning = self._parse_llm_response(response_text)
 
             if selected_route in route_names:
                 self._selected_route = selected_route
                 self._routing_reasoning = reasoning
+                print(f"✅ Selected Route: {selected_route}")
+                print(f"📝 Reasoning: {reasoning}")
             else:
                 self._selected_route = default_route
                 self._routing_reasoning = f"LLM selected '{selected_route}' which is not valid. Using default. Original reasoning: {reasoning}"
+                print(f"⚠️ Invalid route '{selected_route}' - defaulting to: {default_route}")
 
         except Exception as e:
             self._selected_route = default_route
             self._routing_reasoning = f"Error during routing: {e!s}. Using first route."
+            print(f"❌ Error during routing: {e!s}. Using first route.")
 
+        print(f"{'='*60}\n")
         return self._selected_route
 
     def _sync_evaluate_route(self) -> str:
@@ -256,6 +271,20 @@ Important: The "selected_route" must be one of the exact route names listed abov
             if self.include_reasoning and self._routing_reasoning:
                 self.status += f"\n📝 {self._routing_reasoning}"
 
+            # Log what's being passed to the agent
+            print(f"\n{'='*60}")
+            print(f"🚀 SMART ROUTER - Forwarding to Route: {current_output_name}")
+            print(f"{'='*60}")
+            if isinstance(self.input_data, Message):
+                print(f"📤 Passing Message to Agent:")
+                print(f"   Text: {self.input_data.text[:300]}{'...' if len(self.input_data.text or '') > 300 else ''}")
+            elif isinstance(self.input_data, Data):
+                print(f"📤 Passing Data to Agent:")
+                print(f"   Data: {str(self.input_data)[:300]}")
+            else:
+                print(f"📤 Passing: {type(self.input_data).__name__}")
+            print(f"{'='*60}\n")
+
             # Stop all other routes
             route_names = self._get_route_names()
             for route in route_names:
@@ -281,6 +310,7 @@ Important: The "selected_route" must be one of the exact route names listed abov
                                 name=route_name,
                                 method="route_output",
                                 group_outputs=True,
+                                types=["Message", "Data"],
                             )
                         )
 
