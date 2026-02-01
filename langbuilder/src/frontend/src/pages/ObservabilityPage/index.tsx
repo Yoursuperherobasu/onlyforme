@@ -918,7 +918,7 @@ export default function ObservabilityPage(): JSX.Element {
       {/* Header */}
       <div className="border-b bg-white px-8 py-6 shadow-sm">
         <div className="flex items-center gap-3">
-          <BarChart3 className="h-7 w-7" style={{ color: THEME.primary }} />
+          
           <div>
             <h1 className="text-2xl font-semibold" style={{ color: THEME.textMain }}>
               Observability
