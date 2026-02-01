@@ -62,11 +62,12 @@ export function DefaultEdge({
   });
 
   const { animated, selectable, deletable, selected, ...domSafeProps } = props;
-
+  
   return (
     <BaseEdge
       path={targetHandleObject.output_types ? edgePathLoop : edgePath}
       strokeDasharray={targetHandleObject.output_types ? "5 5" : "0"}
+      style={{ stroke: '#da2128' }}
       {...domSafeProps}
       data-animated={animated ? "true" : "false"}
       data-selectable={selectable ? "true" : "false"}

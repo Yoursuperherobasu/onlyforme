@@ -252,7 +252,7 @@ export default function AgentOrchestrator() {
             />
             <button
               onClick={handleSend}
-              className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground"
+              className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-md bg-[var(--button-primary)] text-primary-foreground"
             >
               <Send className="h-4 w-4" />
             </button>

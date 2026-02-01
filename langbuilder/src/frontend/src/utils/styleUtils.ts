@@ -83,7 +83,7 @@ export const swatchColors = [
 ];
 
 export const nodeColors: { [char: string]: string } = {
-  inputs: "#10B981",
+  inputs: "#da2128",
   outputs: "#AA2411",
   data: "#198BF6",
   prompts: "#4367BF",

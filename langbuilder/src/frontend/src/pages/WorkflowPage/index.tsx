@@ -1,6 +1,7 @@
 import {
   Search,
   Workflow,
+  X
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -222,8 +223,8 @@ export default function WorkflowsView({
       {/* Header - Fixed */}
       <div className="flex-shrink-0 px-8 py-6 border-b">
         <div className="flex items-center gap-3 mb-6">
-          <Workflow className="h-6 w-6 text-red-500" />
-          <h1 className="text-2xl font-semibold">Workflows</h1>
+          
+          <h1 className="text-2xl font-semibold">Agent Control Panel</h1>
         </div>
 
         {/* Search */}
@@ -249,13 +250,13 @@ export default function WorkflowsView({
                   Agent Name
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  User
+                  Creater
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   Department
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Created
+                  Created At
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   Last Run
@@ -264,10 +265,10 @@ export default function WorkflowsView({
                   Failed Runs
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Status
+                  Start/Stop
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Enabled
+                  Enable/Disable
                 </th>
               </tr>
             </thead>
@@ -306,7 +307,7 @@ export default function WorkflowsView({
                     {workflow.failedRuns !== null ? (
                       <div className="flex items-center gap-1.5 text-sm text-red-500">
                         <span className="flex h-5 w-5 items-center justify-center rounded-full border border-red-500">
-                          <span className="text-xs">⚠</span>
+                         <X className="h-3 w-3" />
                         </span>
                         <span className="font-medium">{workflow.failedRuns}</span>
                       </div>

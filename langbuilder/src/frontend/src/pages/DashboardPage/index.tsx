@@ -65,7 +65,7 @@ export default function DashboardAdmin(): JSX.Element {
       id: "1",
       name: "Customer Support Agent",
       type: "Conversational AI",
-      icon: "💬",
+      
       color: "bg-pink-500",
       executions: "2.4K",
       lastEdited: "2 hours ago",
@@ -75,7 +75,7 @@ export default function DashboardAdmin(): JSX.Element {
       id: "2",
       name: "Vector Store RAG",
       type: "Document Analysis",
-      icon: "📊",
+      
       color: "bg-blue-500",
       executions: "1.8K",
       lastEdited: "5 hours ago",
@@ -85,7 +85,7 @@ export default function DashboardAdmin(): JSX.Element {
       id: "3",
       name: "Data Extraction Pipeline",
       type: "ETL Process",
-      icon: "🔄",
+      
       color: "bg-green-500",
       executions: "3.2K",
       lastEdited: "1 day ago",
@@ -95,7 +95,7 @@ export default function DashboardAdmin(): JSX.Element {
       id: "4",
       name: "Sentiment Analysis",
       type: "NLP Model",
-      icon: "📈",
+      
       color: "bg-orange-500",
       executions: "856",
       lastEdited: "2 days ago",
@@ -190,8 +190,8 @@ export default function DashboardAdmin(): JSX.Element {
         <div className="px-8 py-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold mb-2">
-                Analytics
+              <h1 className="text-2xl font-bold mb-2">
+                Dashboard
               </h1>
               <p className="text-sm text-muted-foreground">
                 Your AI workflows at a glance.
@@ -217,7 +217,7 @@ export default function DashboardAdmin(): JSX.Element {
               onClick={() => setTimeFilter(filter.value)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 timeFilter === filter.value
-                  ? "bg-primary text-primary-foreground"
+                  ? " !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
                   : "bg-muted hover:bg-muted/80"
               }`}
             >
@@ -519,9 +519,7 @@ export default function DashboardAdmin(): JSX.Element {
                 key={project.id}
                 className="flex items-center gap-4 p-4 rounded-lg border hover:border-primary/50 transition-colors cursor-pointer"
               >
-                <div className={`w-12 h-12 rounded-lg ${project.color} flex items-center justify-center text-2xl`}>
-                  {project.icon}
-                </div>
+                
                 <div className="flex-1 min-w-0">
                   <h4 className="font-semibold truncate">{project.name}</h4>
                   <p className="text-xs text-muted-foreground">{project.type}</p>

@@ -123,12 +123,12 @@ export const MenuBar = memo((): JSX.Element => {
           >
             /
           </div>
-          <div className={cn(`flex rounded p-1`, swatchColors[swatchIndex])}>
-            <IconComponent
-              name={currentFlowIcon ?? "Workflow"}
-              className="h-3.5 w-3.5"
-            />
-          </div>
+          <div className="flex items-center justify-center rounded-lg bg-muted p-1.5">
+  <IconComponent
+    name="Workflow"
+    className="h-3.5 w-3.5"
+  />
+</div>
           <PopoverTrigger asChild>
             <div
               className="group relative -mr-5 flex shrink-0 cursor-pointer items-center gap-2 text-sm sm:whitespace-normal"

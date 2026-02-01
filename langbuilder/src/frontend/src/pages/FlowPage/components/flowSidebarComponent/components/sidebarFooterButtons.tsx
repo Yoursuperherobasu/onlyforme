@@ -78,7 +78,7 @@ const SidebarMenuButtons = ({
           className="h-4 w-4 text-muted-foreground"
         />
         <span className="group-data-[state=open]/collapsible:font-semibold">
-          {t("New Custom Component")}
+          {t("Code Editor Component")}
         </span>
       </Button>
     </SidebarMenuButton>

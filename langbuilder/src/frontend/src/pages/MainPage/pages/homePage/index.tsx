@@ -292,6 +292,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
                           <ListComponent
                             key={flow.id}
                             flowData={flow}
+                            index={index}
                             selected={selectedFlows.includes(flow.id)}
                             setSelected={(selected) =>
                               setSelectedFlow(selected, flow.id, index)
@@ -306,6 +307,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
                           <ListComponent
                             key={flow.id}
                             flowData={flow}
+                            index={index}
                             selected={selectedFlows.includes(flow.id)}
                             setSelected={(selected) =>
                               setSelectedFlow(selected, flow.id, index)
