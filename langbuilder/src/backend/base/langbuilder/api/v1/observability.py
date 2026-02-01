@@ -289,7 +289,7 @@ def calculate_latency_ms(start_time, end_time) -> float | None:
 def fetch_traces_from_langfuse(
     client,
     user_id: str,
-    limit: int = 50,
+    limit: int = 1000,
     from_timestamp: datetime | None = None,
     to_timestamp: datetime | None = None,
     name: str | None = None,
@@ -302,7 +302,7 @@ def fetch_traces_from_langfuse(
     Args:
         client: Langfuse client
         user_id: User ID to filter by
-        limit: Maximum number of traces to fetch
+        limit: Maximum number of traces to fetch (default 1000)
         from_timestamp: Start date filter (inclusive)
         to_timestamp: End date filter (inclusive)
         name: Filter traces by name (partial match)
@@ -723,7 +723,7 @@ async def debug_langfuse_data(
 @router.get("/traces")
 async def get_user_traces(
     current_user: Annotated[User, Depends(get_current_active_user)],
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     page: Annotated[int, Query(ge=1)] = 1,
     session_id: Annotated[str | None, Query()] = None,
 ) -> TracesListResponse:
@@ -740,7 +740,7 @@ async def get_user_traces(
         logger.info(f"Fetching traces for user_id: {user_id}")
 
         # Fetch traces
-        raw_traces = fetch_traces_from_langfuse(client, user_id, limit=100)
+        raw_traces = fetch_traces_from_langfuse(client, user_id, limit=1000)
 
         # Filter by session if specified
         if session_id:
@@ -1007,7 +1007,7 @@ async def get_session_detail(
         user_id = str(current_user.id)
 
         # Fetch traces for this user
-        raw_traces = fetch_traces_from_langfuse(client, user_id, limit=100)
+        raw_traces = fetch_traces_from_langfuse(client, user_id, limit=1000)
 
         # Filter to this session
         session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
@@ -1152,7 +1152,7 @@ async def get_user_metrics(
         raw_traces = fetch_traces_from_langfuse(
             client,
             user_id,
-            limit=100,
+            limit=1000,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
             name=search,

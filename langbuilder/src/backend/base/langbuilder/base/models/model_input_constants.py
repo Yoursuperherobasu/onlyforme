@@ -1,12 +1,9 @@
 from typing_extensions import TypedDict
 
 from langbuilder.base.models.model import LCModelComponent
-from langbuilder.components.models.amazon_bedrock_model import AmazonBedrockComponent
-from langbuilder.components.models.anthropic import AnthropicModelComponent
 from langbuilder.components.models.azure_openai import AzureChatOpenAIComponent
 from langbuilder.components.models.google_generative_ai import GoogleGenerativeAIComponent
 from langbuilder.components.models.groq import GroqModel
-from langbuilder.components.models.openai_chat_model import OpenAIModelComponent
 from langbuilder.inputs.inputs import InputTypes, SecretStrInput
 from langbuilder.template.field.base import Input
 
@@ -99,17 +96,6 @@ def _get_google_generative_ai_inputs_and_fields():
     return google_generative_ai_inputs, create_input_fields_dict(google_generative_ai_inputs, "")
 
 
-def _get_openai_inputs_and_fields():
-    try:
-        from langbuilder.components.models.openai_chat_model import OpenAIModelComponent
-
-        openai_inputs = get_filtered_inputs(OpenAIModelComponent)
-    except ImportError as e:
-        msg = "OpenAI is not installed. Please install it with `pip install langchain-openai`."
-        raise ImportError(msg) from e
-    return openai_inputs, create_input_fields_dict(openai_inputs, "")
-
-
 def _get_azure_inputs_and_fields():
     try:
         from langbuilder.components.models.azure_openai import AzureChatOpenAIComponent
@@ -132,54 +118,7 @@ def _get_groq_inputs_and_fields():
     return groq_inputs, create_input_fields_dict(groq_inputs, "")
 
 
-def _get_anthropic_inputs_and_fields():
-    try:
-        from langbuilder.components.models.anthropic import AnthropicModelComponent
-
-        anthropic_inputs = get_filtered_inputs(AnthropicModelComponent)
-    except ImportError as e:
-        msg = "Anthropic is not installed. Please install it with `pip install langchain-anthropic`."
-        raise ImportError(msg) from e
-    return anthropic_inputs, create_input_fields_dict(anthropic_inputs, "")
-
-
-# def _get_nvidia_inputs_and_fields():
-#     try:
-#         from langbuilder.components.nvidia.nvidia import NVIDIAModelComponent
-
-#         nvidia_inputs = get_filtered_inputs(NVIDIAModelComponent)
-#     except ImportError as e:
-#         msg = "NVIDIA is not installed. Please install it with `pip install langchain-nvidia`."
-#         raise ImportError(msg) from e
-#     return nvidia_inputs, create_input_fields_dict(nvidia_inputs, "")
-
-
-def _get_amazon_bedrock_inputs_and_fields():
-    try:
-        from langbuilder.components.models.amazon_bedrock_model import AmazonBedrockComponent
-
-        amazon_bedrock_inputs = get_filtered_inputs(AmazonBedrockComponent)
-    except ImportError as e:
-        msg = "Amazon Bedrock is not installed. Please install it with `pip install langchain-amazon-bedrock`."
-        raise ImportError(msg) from e
-    return amazon_bedrock_inputs, create_input_fields_dict(amazon_bedrock_inputs, "")
-
-
 MODEL_PROVIDERS_DICT: dict[str, ModelProvidersDict] = {}
-
-# Try to add each provider
-try:
-    openai_inputs, openai_fields = _get_openai_inputs_and_fields()
-    MODEL_PROVIDERS_DICT["OpenAI"] = {
-        "fields": openai_fields,
-        "inputs": openai_inputs,
-        "prefix": "",
-        "component_class": OpenAIModelComponent(),
-        "icon": OpenAIModelComponent.icon,
-        "is_active": True,
-    }
-except ImportError:
-    pass
 
 try:
     azure_inputs, azure_fields = _get_azure_inputs_and_fields()
@@ -207,33 +146,6 @@ try:
 except ImportError:
     pass
 
-try:
-    anthropic_inputs, anthropic_fields = _get_anthropic_inputs_and_fields()
-    MODEL_PROVIDERS_DICT["Anthropic"] = {
-        "fields": anthropic_fields,
-        "inputs": anthropic_inputs,
-        "prefix": "",
-        "component_class": AnthropicModelComponent(),
-        "icon": AnthropicModelComponent.icon,
-        "is_active": True,
-    }
-except ImportError:
-    pass
-
-# 
-
-try:
-    bedrock_inputs, bedrock_fields = _get_amazon_bedrock_inputs_and_fields()
-    MODEL_PROVIDERS_DICT["Amazon Bedrock"] = {
-        "fields": bedrock_fields,
-        "inputs": bedrock_inputs,
-        "prefix": "",
-        "component_class": AmazonBedrockComponent(),
-        "icon": AmazonBedrockComponent.icon,
-        "is_active": False,
-    }
-except ImportError:
-    pass
 
 try:
     google_generative_ai_inputs, google_generative_ai_fields = _get_google_generative_ai_inputs_and_fields()

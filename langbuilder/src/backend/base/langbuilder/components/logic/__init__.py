@@ -8,17 +8,23 @@ if TYPE_CHECKING:
     from langbuilder.components.logic.conditional_router import ConditionalRouterComponent
     from langbuilder.components.logic.flow_tool import FlowToolComponent
     from langbuilder.components.logic.loop import LoopComponent
+    from langbuilder.components.logic.llm_router import LLMRouterComponent
+    from langbuilder.components.logic.data_conditional_router import DataConditionalRouterComponent
 
 _dynamic_imports = {
     "ConditionalRouterComponent": "conditional_router",
     "FlowToolComponent": "flow_tool",
     "LoopComponent": "loop",
+    "LLMRouterComponent": "llm_router",
+    "DataConditionalRouterComponent": "data_conditional_router",
 }
 
 __all__ = [
     "ConditionalRouterComponent",
     "FlowToolComponent",
     "LoopComponent",
+    "LLMRouterComponent",
+    "DataConditionalRouterComponent",
 ]
 
 

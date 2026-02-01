@@ -20,11 +20,12 @@ if TYPE_CHECKING:
 
 
 class LangfuseCallbackWrapper(BaseCallbackHandler):
-    """Wrapper for Langfuse callback that suppresses 'parent run not found' and 'run not found' errors.
+    """Wrapper for Langfuse callback that:
+    1. Suppresses 'parent run not found' and 'run not found' errors
+    2. Filters out internal LangChain runnables (RunnableSequence, etc.) to keep traces clean
     
-    Inherits from BaseCallbackHandler to pass Pydantic validation in LangChain tools.
-    We must explicitly override callback methods because __getattr__ is not called
-    for methods that exist on the parent class (BaseCallbackHandler).
+    Only LLM/ChatModel calls are forwarded to Langfuse for token tracking.
+    Component-level tracing is handled by trace_component() separately.
     """
     
     def __init__(self, callback):
@@ -49,7 +50,7 @@ class LangfuseCallbackWrapper(BaseCallbackHandler):
                 raise
         return None
 
-    # LLM callbacks - required for token/model tracing
+    # LLM callbacks - required for token/model tracing (KEEP THESE)
     def on_llm_start(self, serialized, prompts, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
         return self._safe_call('on_llm_start', serialized, prompts, run_id=run_id, parent_run_id=parent_run_id, tags=tags, metadata=metadata, **kwargs)
 
@@ -62,39 +63,41 @@ class LangfuseCallbackWrapper(BaseCallbackHandler):
     def on_llm_error(self, error, *, run_id, parent_run_id=None, tags=None, **kwargs):
         return self._safe_call('on_llm_error', error, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
 
-    # Chat model callbacks
+    # Chat model callbacks - required for token/model tracing (KEEP THESE)
     def on_chat_model_start(self, serialized, messages, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
         return self._safe_call('on_chat_model_start', serialized, messages, run_id=run_id, parent_run_id=parent_run_id, tags=tags, metadata=metadata, **kwargs)
 
-    # Chain callbacks
+    # Chain callbacks - FILTERED OUT to avoid internal runnable noise
+    # (RunnableSequence, RunnableAssign, RunnableLambda, AgentExecutor, etc.)
     def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
-        return self._safe_call('on_chain_start', serialized, inputs, run_id=run_id, parent_run_id=parent_run_id, tags=tags, metadata=metadata, **kwargs)
+        # Don't forward chain callbacks - they create noise from internal runnables
+        pass
 
     def on_chain_end(self, outputs, *, run_id, parent_run_id=None, tags=None, **kwargs):
-        return self._safe_call('on_chain_end', outputs, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
+        pass
 
     def on_chain_error(self, error, *, run_id, parent_run_id=None, tags=None, **kwargs):
-        return self._safe_call('on_chain_error', error, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
+        pass
 
-    # Tool callbacks
+    # Tool callbacks - FILTERED OUT (component tracing handles this)
     def on_tool_start(self, serialized, input_str, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
-        return self._safe_call('on_tool_start', serialized, input_str, run_id=run_id, parent_run_id=parent_run_id, tags=tags, metadata=metadata, **kwargs)
+        pass
 
     def on_tool_end(self, output, *, run_id, parent_run_id=None, tags=None, **kwargs):
-        return self._safe_call('on_tool_end', output, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
+        pass
 
     def on_tool_error(self, error, *, run_id, parent_run_id=None, tags=None, **kwargs):
-        return self._safe_call('on_tool_error', error, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
+        pass
 
-    # Retriever callbacks
+    # Retriever callbacks - FILTERED OUT (component tracing handles this)
     def on_retriever_start(self, serialized, query, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
-        return self._safe_call('on_retriever_start', serialized, query, run_id=run_id, parent_run_id=parent_run_id, tags=tags, metadata=metadata, **kwargs)
+        pass
 
     def on_retriever_end(self, documents, *, run_id, parent_run_id=None, tags=None, **kwargs):
-        return self._safe_call('on_retriever_end', documents, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
+        pass
 
     def on_retriever_error(self, error, *, run_id, parent_run_id=None, tags=None, **kwargs):
-        return self._safe_call('on_retriever_error', error, run_id=run_id, parent_run_id=parent_run_id, tags=tags, **kwargs)
+        pass
 
     def __getattr__(self, name):
         """Delegate any other attribute access to the wrapped callback."""
