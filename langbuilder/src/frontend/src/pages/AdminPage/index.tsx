@@ -64,11 +64,8 @@ export default function AdminPage() {
  const hasFetchedRef = useRef(false);
 
 useEffect(() => {
-  if (hasFetchedRef.current) return;
-  hasFetchedRef.current = true;
   getUsers();
 }, []);
-
   const [filterUserList, setFilterUserList] = useState(userList.current);
 
   const { mutate: mutateGetUsers, isPending, isIdle } = useGetUsers({});
@@ -256,7 +253,7 @@ useEffect(() => {
         <div className="admin-page-panel flex h-full flex-col pb-8">
           <div className="main-page-nav-arrangement">
             <span className="main-page-nav-title">
-              <IconComponent name="Shield" className="w-6" />
+              
               {t(ADMIN_HEADER_TITLE)}
             </span>
           </div>
@@ -278,14 +275,11 @@ useEffect(() => {
                     setFilterUserList(userList.current);
                   }}
                 >
-                  <IconComponent name="X" className="w-6 text-foreground" />
+                  
                 </div>
               ) : (
                 <div>
-                  <IconComponent
-                    name="Search"
-                    className="w-6 text-foreground"
-                  />
+                 
                 </div>
               )}
             </div>
@@ -305,11 +299,11 @@ useEffect(() => {
               </UserManagementModal>
             </div>
           </div>
-          {isPending || isIdle ? (
+          {isPending ? (
             <div className="flex h-full w-full items-center justify-center">
               <CustomLoader remSize={12} />
             </div>
-          ) : userList.current.length === 0 && !isIdle ? (
+          ) : userList.current.length === 0 ? (
             <>
               <div className="m-4 flex items-center justify-between text-sm">
                 {t("No users registered.")}
