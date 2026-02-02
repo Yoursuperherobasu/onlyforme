@@ -1,120 +1,103 @@
-import { useState } from "react";
 import { useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
-import { SidebarProvider } from "@/components/ui/sidebar";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
 import useAddFlow from "@/hooks/flows/use-add-flow";
-import type { Category } from "@/types/templates/types";
 import type { newFlowModalPropsType } from "../../types/components";
 import BaseModal from "../baseModal";
-import GetStartedComponent from "./components/GetStartedComponent";
-import { Nav } from "./components/navComponent";
 import TemplateContentComponent from "./components/TemplateContentComponent";
 
 export default function TemplatesModal({
   open,
   setOpen,
 }: newFlowModalPropsType): JSX.Element {
-  const [currentTab, setCurrentTab] = useState("get-started");
   const addFlow = useAddFlow();
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
 
-  // Define categories and their items
-  const categories: Category[] = [
-    {
-      title: "Templates",
-      items: [
-        { title: "Get started", icon: "SquarePlay", id: "get-started" },
-        { title: "All templates", icon: "LayoutPanelTop", id: "all-templates" },
-      ],
-    },
-    {
-      title: "Use Cases",
-      items: [
-        { title: "Assistants", icon: "BotMessageSquare", id: "assistants" },
-        { title: "Classification", icon: "Tags", id: "classification" },
-        { title: "Coding", icon: "TerminalIcon", id: "coding" },
-        {
-          title: "Content Generation",
-          icon: "Newspaper",
-          id: "content-generation",
-        },
-        { title: "Q&A", icon: "Database", id: "q-a" },
-        // { title: "Summarization", icon: "Bot", id: "summarization" },
-        // { title: "Web Scraping", icon: "CodeXml", id: "web-scraping" },
-      ],
-    },
-    {
-      title: "Methodology",
-      items: [
-        { title: "Prompting", icon: "MessagesSquare", id: "chatbots" },
-        { title: "RAG", icon: "Database", id: "rag" },
-        { title: "Agents", icon: "Bot", id: "agents" },
-      ],
-    },
-    {
-      title: "CloudGeometry Flows",
-      items: [
-        { title: "All CloudGeometry Flows", icon: "Workflow", id: "cloudgeometry-flows" },
-      ],
-    },
-  ];
-
   return (
     <BaseModal size="templates" open={open} setOpen={setOpen} className="p-0">
-      <BaseModal.Content className="flex flex-col p-0">
-        <div className="flex h-full">
-          <SidebarProvider width="15rem" defaultOpen={false}>
-            <Nav
-              categories={categories}
-              currentTab={currentTab}
-              setCurrentTab={setCurrentTab}
-            />
-            <main className="flex flex-1 flex-col gap-4 overflow-auto p-6 md:gap-8">
-              {currentTab === "get-started" ? (
-                <GetStartedComponent />
-              ) : (
-                <TemplateContentComponent
-                  currentTab={currentTab}
-                  categories={categories.flatMap((category) => category.items)}
-                />
-              )}
-              <BaseModal.Footer>
-                <div className="flex w-full flex-col justify-between gap-4 pb-4 sm:flex-row sm:items-center">
-                  <div className="flex flex-col items-start justify-center">
-                    <div className="font-semibold">Start from scratch</div>
-                    <div className="text-sm text-muted-foreground">
-                      Begin with a fresh flow to build from scratch.
-                    </div>
+      <BaseModal.Content className="flex flex-col p-0 h-full overflow-hidden">
+        <div className="flex h-full flex-col">
+          <main className="flex flex-1 flex-col overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-6 md:gap-8 custom-scrollbar">
+              <div className="mb-6">
+                <h2 className="text-2xl font-semibold">All Templates</h2>
+              </div>
+              <TemplateContentComponent
+                currentTab="all-templates"
+                categories={[
+                  { title: "All templates", icon: "LayoutPanelTop", id: "all-templates" },
+                ]}
+              />
+            </div>
+            <BaseModal.Footer className="border-t bg-background">
+              <div className="flex w-full flex-col justify-between gap-4 p-4 sm:flex-row sm:items-center">
+                <div className="flex flex-col items-start justify-center">
+                  <div className="font-semibold">Start from scratch</div>
+                  <div className="text-sm text-muted-foreground">
+                    Begin with a fresh flow to build from scratch.
                   </div>
-                  <Button
-                    onClick={() => {
-                      addFlow().then((id) => {
-                        navigate(
-                          `/flow/${id}${folderId ? `/folder/${folderId}` : ""}`,
-                        );
-                      });
-                      track("New Flow Created", { template: "Blank Flow" });
-                    }}
-                    size="sm"
-                    data-testid="blank-flow"
-                    className="shrink-0"
-                  >
-                    <ForwardedIconComponent
-                      name="Plus"
-                      className="h-4 w-4 shrink-0"
-                    />
-                    Blank Flow
-                  </Button>
                 </div>
-              </BaseModal.Footer>
-            </main>
-          </SidebarProvider>
+                <Button
+                  onClick={() => {
+                    addFlow().then((id) => {
+                      navigate(
+                        `/flow/${id}${folderId ? `/folder/${folderId}` : ""}`,
+                      );
+                    });
+                    track("New Flow Created", { template: "Blank Flow" });
+                  }}
+                  size="sm"
+                  data-testid="blank-flow"
+                  className="shrink-0"
+                >
+                  <ForwardedIconComponent
+                    name="Plus"
+                    className="h-4 w-4 shrink-0"
+                  />
+                  Blank Flow
+                </Button>
+              </div>
+            </BaseModal.Footer>
+          </main>
         </div>
       </BaseModal.Content>
+      
+      <style>{`
+        .custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: transparent transparent;
+          transition: scrollbar-color 0.3s ease;
+        }
+
+        .custom-scrollbar:hover {
+          scrollbar-color: rgba(155, 155, 155, 0.5) transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: transparent;
+          border-radius: 4px;
+          transition: background-color 0.3s ease;
+        }
+
+        .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+          background-color: rgba(155, 155, 155, 0.5);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(155, 155, 155, 0.7);
+        }
+      `}</style>
     </BaseModal>
   );
 }

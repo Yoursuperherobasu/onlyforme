@@ -5,7 +5,7 @@ from langbuilder.schema.data import Data
 
 
 class CustomComponent(Node):
-    display_name = "Custom Component"
+    display_name = "Coder Editor"
     description = "Use as a template to create your own component."
     documentation: str = "https://docs.langbuilder.org/components-custom-components"
     icon = "code"

@@ -178,7 +178,7 @@ export default function AgentCatalogueView({
       <div className="flex-shrink-0 flex items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Agent Catalogue</h1>
+            <h1 className="text-2xl font-semibold">Agent Registry</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             Discover and deploy pre-built AI agents and workflows. Clone, customize, and integrate into your applications.
@@ -209,18 +209,12 @@ export default function AgentCatalogueView({
               key={agent.id}
               className="group relative border rounded-lg bg-card overflow-hidden hover:border-primary/50 transition-all"
             >
-              {/* Status Badge - Top Right */}
-              <div className="absolute top-4 right-4 z-10">
-                <StatusBadge status={agent.status} />
-              </div>
-
+             
               {/* Card Content */}
               <div className="p-6">
                 {/* Icon & Title */}
                 <div className="flex items-start gap-4 mb-4">
-                  <div className="w-14 h-14 rounded-lg border bg-muted flex items-center justify-center text-2xl flex-shrink-0">
-                    {agent.icon}
-                  </div>
+                 
                   <div className="flex-1 min-w-0">
                     <h3 className="text-lg font-semibold mb-1 truncate">
                       {agent.name}

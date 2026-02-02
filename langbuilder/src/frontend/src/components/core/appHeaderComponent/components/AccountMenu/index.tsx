@@ -19,17 +19,17 @@ import {
   HeaderMenuToggle,
 } from "../HeaderMenu";
 import ThemeButtons from "../ThemeButtons";
-import { usePermissionAny } from "@/contexts/PermissionCheck";
 
 export const AccountMenu = () => {
   const version = useDarkStore((state) => state.version);
   const latestVersion = useDarkStore((state) => state.latestVersion);
   const navigate = useCustomNavigate();
   const { mutate: mutationLogout } = useLogout();
-  const permissions = useAuthStore((s) => s.permissions);
-  const canAccessAdmin = usePermissionAny(["manage_users"]);
 
-  console.log("🟢 [AccountMenu] User permissions:", canAccessAdmin);
+  const { isAdmin } = useAuthStore((state) => ({
+    isAdmin: state.isAdmin,
+  }));
+
   const handleLogout = () => {
     mutationLogout();
   };
@@ -69,7 +69,7 @@ export const AccountMenu = () => {
               </span>
             </HeaderMenuItemButton>
 
-            {canAccessAdmin  && (
+            {isAdmin && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {
@@ -87,7 +87,7 @@ export const AccountMenu = () => {
             )}
             <HeaderMenuItemLink
               newPage
-              href={DOCS_URL}
+              href={ENABLE_DATASTAX_LANGBUILDER ? DATASTAX_DOCS_URL : DOCS_URL}
             >
               <span data-testid="menu_docs_button" id="menu_docs_button">
                 Docs

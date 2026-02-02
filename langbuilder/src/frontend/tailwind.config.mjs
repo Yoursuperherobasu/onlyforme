@@ -128,6 +128,12 @@ const config = {
         "dark-blue": "var(--dark-blue)",
         "dark-gray": "var(--dark-gray)",
         "dark-red": "var(--dark-red)",
+        button: {
+          primary: "hsl(var(--button-primary))",
+          "primary-foreground": "hsl(var(--button-primary-foreground))",
+          "primary-hover": "hsl(var(--button-primary-hover))",
+          "primary-disabled": "hsl(var(--button-primary-disabled))",
+        },
         error: {
           DEFAULT: "var(--error)",
           background: "var(--error-background)",

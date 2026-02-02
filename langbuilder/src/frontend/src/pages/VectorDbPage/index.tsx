@@ -149,7 +149,7 @@ export default function VectorDBView({
       <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <Database className="h-7 w-7 text-purple-500" />
+            
             <h1 className="text-2xl font-semibold">Vector Database Catalogue</h1>
           </div>
           <p className="text-sm text-muted-foreground">

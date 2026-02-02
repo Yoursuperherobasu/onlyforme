@@ -1401,7 +1401,7 @@
             "lf_version": "1.2.0",
             "metadata": {
               "code_hash": "8846de4e3ddd",
-              "module": "langbuilder.components.openai.openai.OpenAIEmbeddingsComponent"
+              "module": "langbuilder.components.models.openai.OpenAIEmbeddingsComponent"
             },
             "output_types": [],
             "outputs": [
@@ -1937,7 +1937,7 @@
             "lf_version": "1.1.1",
             "metadata": {
               "code_hash": "8846de4e3ddd",
-              "module": "langbuilder.components.openai.openai.OpenAIEmbeddingsComponent"
+              "module": "langbuilder.components.models.openai.OpenAIEmbeddingsComponent"
             },
             "output_types": [],
             "outputs": [

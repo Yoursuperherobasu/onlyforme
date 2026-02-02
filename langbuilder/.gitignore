@@ -251,7 +251,7 @@ dmypy.json
 .testenv/*
 langbuilder.db
 
-langbuilder/14a04b83-ceec-478d-8994-cccc08b49242/
+.chroma/
 
 .githooks/prepare-commit-msg
 .langchain.db

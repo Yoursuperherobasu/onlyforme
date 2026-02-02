@@ -19,7 +19,7 @@ export default function LoginAdminPage() {
   const [inputState, setInputState] =
     useState<loginInputStateType>(CONTROL_LOGIN_STATE);
   const { login } = useContext(AuthContext);
-const { t } = useTranslation();
+  const { t } = useTranslation();
   const { password, username } = inputState;
   const setErrorData = useAlertStore((state) => state.setErrorData);
   function handleInput({

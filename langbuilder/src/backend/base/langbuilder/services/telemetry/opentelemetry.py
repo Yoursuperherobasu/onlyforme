@@ -5,7 +5,6 @@ from typing import Any
 from weakref import WeakValueDictionary
 
 from opentelemetry import metrics
-from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.metrics._internal.instrument import Counter, Histogram, UpDownCounter
 from opentelemetry.sdk.metrics import MeterProvider
@@ -110,7 +109,6 @@ class OpenTelemetry(metaclass=ThreadSafeSingletonMetaUsingWeakref):
     _metrics: dict[str, Counter | ObservableGaugeWrapper | Histogram | UpDownCounter] = {}
     _meter_provider: MeterProvider | None = None
     _initialized: bool = False  # Add initialization flag
-    prometheus_enabled: bool = True
 
     def _add_metric(
         self, name: str, description: str, unit: str, metric_type: MetricType, labels: dict[str, bool]
@@ -141,9 +139,8 @@ class OpenTelemetry(metaclass=ThreadSafeSingletonMetaUsingWeakref):
             labels={"flow_id": mandatory_label},
         )
 
-    def __init__(self, *, prometheus_enabled: bool = True):
+    def __init__(self):
         # Only initialize once
-        self.prometheus_enabled = prometheus_enabled
         if OpenTelemetry._initialized:
             return
 
@@ -159,11 +156,7 @@ class OpenTelemetry(metaclass=ThreadSafeSingletonMetaUsingWeakref):
                 self._meter_provider = existing_provider
             else:
                 resource = Resource.create({"service.name": "langbuilder"})
-                metric_readers = []
-                if self.prometheus_enabled:
-                    metric_readers.append(PrometheusMetricReader())
-
-                self._meter_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
+                self._meter_provider = MeterProvider(resource=resource)
                 metrics.set_meter_provider(self._meter_provider)
 
         self.meter = self._meter_provider.get_meter(langbuilder_meter_name)

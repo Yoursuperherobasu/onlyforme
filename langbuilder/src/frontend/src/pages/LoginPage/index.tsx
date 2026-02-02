@@ -17,7 +17,7 @@ import { loginRequest } from "@/authConfig";
 import { useTranslation } from "react-i18next";
 import useAuthStore from "@/stores/authStore";
 
-import MothersonLogo from "@/assets/mothersonLogo.svg?react";
+import MothersonLogo from "@/assets/agentcore.svg";
 import { DotPattern } from "./components/DotPattern";
 import { Starfield } from "./components/StarField";
 
@@ -140,22 +140,37 @@ export default function LoginPage(): JSX.Element {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white overflow-hidden relative">
-      <DotPattern />
-      <Starfield />
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100 text-gray-900 overflow-hidden relative">
+      {/* Background decorative elements */}
+      <div className="absolute inset-0 opacity-30">
+        <div className="absolute top-0 right-0 w-64 h-64 sm:w-96 sm:h-96 bg-purple-200 rounded-full filter blur-3xl"></div>
+        <div className="absolute bottom-0 left-0 w-64 h-64 sm:w-96 sm:h-96 bg-blue-200 rounded-full filter blur-3xl"></div>
+      </div>
+      
+      {/* Dot pattern with dark dots for white background */}
+      <div className="absolute inset-0 opacity-[0.25]">
+        <div className="absolute inset-0" style={{
+          backgroundImage: 'radial-gradient(circle, #6b7280 1px, transparent 1px)',
+          backgroundSize: '24px 24px'
+        }}></div>
+      </div>
 
       <div className="relative z-10 min-h-screen flex flex-col lg:flex-row">
-        {/* LEFT */}
-        <div className="flex-1 flex flex-col justify-center px-6 sm:px-12 lg:px-16 xl:px-24 py-12 lg:py-0">
-          <div className="mb-4">
-            <MothersonLogo className="h-10 sm:h-12 w-auto" />
+        {/* LEFT SIDE */}
+        <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 md:px-12 lg:px-16 xl:px-24 py-8 sm:py-12 lg:py-0">
+          <div className="mb-6 sm:mb-8">
+            <img 
+              src={MothersonLogo} 
+              alt="AgentCore Logo" 
+              className="h-12 sm:h-16 md:h-20 w-auto"
+            />
           </div>
 
           <div className="max-w-md">
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl mb-4 font-bold">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl mb-3 sm:mb-4 font-bold text-gray-900 leading-tight">
               {t("Build AI Agents, faster.")}
             </h1>
-            <p className="text-gray-400 text-base sm:text-lg">
+            <p className="text-sm sm:text-base lg:text-lg text-gray-600 mb-6 sm:mb-8">
               {t(
                 "Connect your ideas to reality with AgentCore's powerful platform.",
               )}
@@ -163,43 +178,60 @@ export default function LoginPage(): JSX.Element {
           </div>
         </div>
 
-        {/* RIGHT */}
-        <div className="flex-1 flex items-center justify-center px-6 sm:px-12 lg:px-16 py-12 lg:py-0">
+        {/* SEPARATOR LINE - Vertical on desktop, Horizontal on mobile */}
+        <div className="relative">
+          {/* Desktop separator (vertical) - thicker with padding */}
+          <div className="hidden lg:block absolute top-16 bottom-16 left-0 w-[2px] bg-gradient-to-b from-transparent via-[#da2128] to-transparent opacity-40"></div>
+          
+          {/* Mobile separator (horizontal) - thicker with padding */}
+          <div className="lg:hidden mx-8 sm:mx-12 h-[2px] bg-gradient-to-r from-transparent via-[#da2128] to-transparent opacity-40 my-8"></div>
+        </div>
+
+        {/* RIGHT SIDE */}
+        <div className="flex-1 flex items-center justify-center px-4 sm:px-6 md:px-12 lg:px-16 py-8 sm:py-12 lg:py-0">
           <div className="w-full max-w-md">
-            <div className="mb-8 text-center">
-            <h2 className="text-2xl sm:text-3xl mb-2 font-semibold">
-              {t("Welcome back.")}
-            </h2>
+            {/* Login Card */}
+            <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl border border-gray-200 p-6 sm:p-8 md:p-10">
+              <div className="mb-6 sm:mb-8 text-center">
+                <h2 className="text-xl sm:text-2xl md:text-3xl mb-2 font-semibold text-gray-900">
+                  {t("Welcome back.")}
+                </h2>
 
-            <p className="text-gray-400 text-sm sm:text-base whitespace-nowrap">
-              {t("Sign in to your account to continue building intelligent agents.")}
-            </p>
-          </div>
-
-            <Form.Root
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (password !== "") signIn();
-              }}
-              className="space-y-4"
-            >
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                type="button"
-                onClick={handleAzureSSO}
-                className="col-span-2 h-12 !bg-[#9810FA] hover:!bg-[#8a0ee0] text-white flex items-center justify-center gap-2"
-              >
-
-                  <svg className="w-5 h-5" viewBox="0 0 23 23">
-                    <path fill="#f25022" d="M1 1h10v10H1z" />
-                    <path fill="#7fba00" d="M12 1h10v10H12z" />
-                    <path fill="#00a4ef" d="M1 12h10v10H1z" />
-                    <path fill="#ffb900" d="M12 12h10v10H12z" />
-                  </svg>
-                  {t("SSO")}
-                </Button>
+                <p className="text-gray-600 text-xs sm:text-sm md:text-base px-2">
+                  {t("Sign in to your account to continue building intelligent agents.")}
+                </p>
               </div>
-            </Form.Root>
+
+              <Form.Root
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (password !== "") signIn();
+                }}
+                className="space-y-4"
+              >
+                <div className="grid grid-cols-1 gap-3">
+                  <Button
+                    type="button"
+                    onClick={handleAzureSSO}
+                    className="h-11 sm:h-12 !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-white flex items-center justify-center gap-2 rounded-lg font-medium transition-all text-sm sm:text-base"
+                  >
+                    <svg className="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 23 23">
+                      <path fill="#f25022" d="M1 1h10v10H1z" />
+                      <path fill="#7fba00" d="M12 1h10v10H12z" />
+                      <path fill="#00a4ef" d="M1 12h10v10H1z" />
+                      <path fill="#ffb900" d="M12 12h10v10H12z" />
+                    </svg>
+                    <span className="whitespace-nowrap">{t("Continue with Microsoft SSO")}</span>
+                  </Button>
+                </div>
+              </Form.Root>
+              
+              <div className="mt-4 sm:mt-6 text-center">
+                <p className="text-[10px] sm:text-xs text-gray-500 px-2">
+                  By signing in, you agree to our Terms of Service and Privacy Policy
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -83,7 +83,7 @@ export const swatchColors = [
 ];
 
 export const nodeColors: { [char: string]: string } = {
-  inputs: "#10B981",
+  inputs: "#da2128",
   outputs: "#AA2411",
   data: "#198BF6",
   prompts: "#4367BF",
@@ -210,8 +210,9 @@ export const FILE_ICONS = {
 export const SIDEBAR_CATEGORIES = [
   { display_name: "Saved", name: "saved_components", icon: "GradientSave" },
   { display_name: "Input / Output", name: "input_output", icon: "Cable" },
-  { display_name: "Agents", name: "agents", icon: "Bot" },
-  { display_name: "Models", name: "models", icon: "BrainCog" },
+  { display_name: "Worker Node", name: "agents", icon: "Bot" },
+  { display_name: "MCP", name: "mcp", icon: "Bot" },
+  { display_name: "Models Catalog", name: "models", icon: "BrainCog" },
   //{ display_name: "Tools", name: "data", icon: "Database" },
   ...(ENABLE_KNOWLEDGE_BASES
     ? [

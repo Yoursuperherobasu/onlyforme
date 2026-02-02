@@ -114,14 +114,14 @@ const HeaderComponent = ({
         <>
           <div className={cn("flex flex-row-reverse pb-4")}>
             <div className="w-full border-b dark:border-border" />
-            {tabTypes.map((type) => (
+            {/* {tabTypes.map((type) => (
               <Button
                 key={type}
                 unstyled
                 id={`${type}-btn`}
                 data-testid={`${type}-btn`}
                 onClick={() => {
-                  setFlowType(type as "flows" | "components" | "mcp");
+                  setFlowType(type as "flows" | "components");
                 }}
                 className={`border-b ${
                   flowType === type
@@ -136,6 +136,7 @@ const HeaderComponent = ({
                 </div>
               </Button>
             ))}
+             */}
           </div>
           {/* Search and filters */}
           {flowType !== "mcp" && (

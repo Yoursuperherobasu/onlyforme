@@ -16,6 +16,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { DEFAULT_FOLDER } from "@/constants/constants";
 import { useUpdateUser } from "@/controllers/API/queries/auth";
@@ -54,6 +55,10 @@ import { InputEditFolderName } from "./components/input-edit-folder-name";
 import { MCPServerNotice } from "./components/mcp-server-notice";
 import { SelectOptions } from "./components/select-options";
 
+// Import your logos here
+// import FullLogo from "@/assets/full-logo.svg"; // Your full logo when expanded
+// import CollapsedLogo from "@/assets/collapsed-logo.svg"; // Your icon/small logo when collapsed
+
 type SideBarFoldersButtonsComponentProps = {
   handleChangeFolder?: (id: string) => void;
   handleDeleteFolder?: (item: FolderType) => void;
@@ -71,6 +76,9 @@ const SideBarFoldersButtonsComponent = ({
   const refInput = useRef<HTMLInputElement>(null);
 
   const _navigate = useCustomNavigate();
+  
+  // Get sidebar state to detect if it's collapsed
+  const { open: sidebarOpen } = useSidebar();
 
   const currentFolder = pathname.split("/");
   const urlWithoutPath =
@@ -347,6 +355,14 @@ const SideBarFoldersButtonsComponent = ({
     userDismissedMcpDialog,
   );
 
+  // Dispatch custom event when sidebar state changes
+  useEffect(() => {
+    const event = new CustomEvent("sidebar-state-change", {
+      detail: { open: sidebarOpen }
+    });
+    window.dispatchEvent(event);
+  }, [sidebarOpen]);
+
   const handleDismissMcpDialog = () => {
     setIsDismissedMcpDialog(true);
     updateUser({
@@ -383,8 +399,8 @@ const SideBarFoldersButtonsComponent = ({
         />
       </div>
       <SidebarHeader className="flex h-12 items-center px-3">
-        {/* Left side (title or spacer) */}
-        <div className="flex flex-1 items-center"></div>
+        {/* Logo changes based on sidebar collapse state */}
+        
       </SidebarHeader>
 
       {/* ================= CONTENT ================= */}
@@ -399,7 +415,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/dashboard-admin")}
             onClick={() => _navigate("/dashboard-admin")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="LayoutDashboard"
@@ -415,7 +431,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/flows")}
             onClick={() => _navigate("/flows")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="FolderKanban"
@@ -431,7 +447,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/approval")}
             onClick={() => _navigate("/approval")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="ClipboardCheck"
@@ -447,7 +463,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/agent-catalogue")}
             onClick={() => _navigate("/agent-catalogue")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Bot"
@@ -463,7 +479,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/model-catalogue")}
             onClick={() => _navigate("/model-catalogue")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Database"
@@ -479,7 +495,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/workflows")}
             onClick={() => _navigate("/workflows")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="PlayCircle"
@@ -495,7 +511,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/orchestrator-chat")}
             onClick={() => _navigate("/orchestrator-chat")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="GitBranch"
@@ -511,7 +527,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/observability-dashboard")}
             onClick={() => _navigate("/observability-dashboard")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Activity"
@@ -526,13 +542,13 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/guardrails")}
             onClick={() => _navigate("/guardrails")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="ShieldCheck"
               className="h-4 w-4"
             />
-            Guardrails
+            Guardrails Catalogue
           </SidebarMenuButton>
         </SidebarMenuItem>
 
@@ -541,7 +557,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/vector-db")}
             onClick={() => _navigate("/vector-db")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Database"
@@ -556,7 +572,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/mcp-servers")}
             onClick={() => _navigate("/mcp-servers")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Server"
@@ -572,7 +588,7 @@ const SideBarFoldersButtonsComponent = ({
             size="md"
             isActive={pathname.startsWith("/timeout-settings")}
             onClick={() => _navigate("/timeout-settings")}
-            className="text-[var(--sidebar-foreground)]"
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Clock"
@@ -595,7 +611,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuButton
             onClick={() => _navigate("/settings")}
             size="md"
-            className="text-sm text-[var(--sidebar-foreground)]"
+           className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Settings"

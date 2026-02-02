@@ -186,7 +186,7 @@ export default function ModelCardsView({
         <div>
           <div className="mb-2 flex items-center gap-3">
             
-            <h1 className="text-2xl font-semibold">Model Catalogue</h1>
+            <h1 className="text-2xl font-semibold">Model Registry</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             Browse and manage AI models
