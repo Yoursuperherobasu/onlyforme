@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from langbuilder.base.tools.component_tool import ComponentToolkit
 
 
-class RunFlowBaseComponent(Node):
+class RunFlowBaseNode(Node):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_tool_output = True

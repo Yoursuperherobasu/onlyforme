@@ -1,11 +1,11 @@
 from langbuilder.base.models.aws_constants import AWS_EMBEDDING_MODEL_IDS, AWS_REGIONS
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import Embeddings
 from langbuilder.inputs.inputs import SecretStrInput
 from langbuilder.io import DropdownInput, MessageTextInput, Output
 
 
-class AmazonBedrockEmbeddingsComponent(LCModelComponent):
+class AmazonBedrockEmbeddingsComponent(LCModelNode):
     display_name: str = "Amazon Bedrock Embeddings"
     description: str = "Generate embeddings using Amazon Bedrock models."
     icon = "Amazon"

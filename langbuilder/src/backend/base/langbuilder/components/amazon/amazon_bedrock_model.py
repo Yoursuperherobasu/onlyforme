@@ -1,18 +1,18 @@
 from langbuilder.base.models.aws_constants import AWS_REGIONS, AWS_MODEL_IDs
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import LanguageModel
 from langbuilder.inputs.inputs import MessageTextInput, SecretStrInput
 from langbuilder.io import DictInput, DropdownInput
 
 
-class AmazonBedrockComponent(LCModelComponent):
+class AmazonBedrockComponent(LCModelNode):
     display_name: str = "Amazon Bedrock"
     description: str = "Generate text using Amazon Bedrock LLMs."
     icon = "Amazon"
     name = "AmazonBedrockModel"
 
     inputs = [
-        *LCModelComponent._base_inputs,
+        *LCModelNode._base_inputs,
         DropdownInput(
             name="model_id",
             display_name="Model ID",

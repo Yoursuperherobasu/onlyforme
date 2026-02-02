@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-class BaseFileComponent(Node, ABC):
+class BaseFileNode(Node, ABC):
     """Base class for handling file processing components.
 
     This class provides common functionality for resolving, validating, and
@@ -452,7 +452,7 @@ class BaseFileComponent(Node, ABC):
             new_data_list = data_dict.get(str(base_file.path), [])
             merged_data_list = base_file.merge_data(new_data_list)
             updated_base_files.append(
-                BaseFileComponent.BaseFile(
+                BaseFileNode.BaseFile(
                     data=merged_data_list,
                     path=base_file.path,
                     delete_after_processing=base_file.delete_after_processing,
@@ -531,7 +531,7 @@ class BaseFileComponent(Node, ABC):
                 if not self.silent_errors:
                     raise ValueError(msg)
             resolved_files.append(
-                BaseFileComponent.BaseFile(data, resolved_path, delete_after_processing=delete_after_processing)
+                BaseFileNode.BaseFile(data, resolved_path, delete_after_processing=delete_after_processing)
             )
 
         file_path = self._file_path_as_list()
@@ -591,7 +591,7 @@ class BaseFileComponent(Node, ABC):
                 # Recurse into directories
                 collected_files.extend(
                     [
-                        BaseFileComponent.BaseFile(
+                        BaseFileNode.BaseFile(
                             data,
                             sub_path,
                             delete_after_processing=delete_after_processing,
@@ -610,7 +610,7 @@ class BaseFileComponent(Node, ABC):
                 self.log(f"Unpacked bundle {path.name} into {subpaths}")
                 collected_files.extend(
                     [
-                        BaseFileComponent.BaseFile(
+                        BaseFileNode.BaseFile(
                             data,
                             sub_path,
                             delete_after_processing=delete_after_processing,

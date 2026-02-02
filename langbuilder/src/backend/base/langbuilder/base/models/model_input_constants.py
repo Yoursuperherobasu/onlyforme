@@ -1,6 +1,6 @@
 from typing_extensions import TypedDict
 
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockComponent
 from langbuilder.components.anthropic.anthropic import AnthropicModelComponent
 from langbuilder.components.azure.azure_openai import AzureChatOpenAIComponent
@@ -15,13 +15,13 @@ class ModelProvidersDict(TypedDict):
     fields: dict
     inputs: list[InputTypes]
     prefix: str
-    component_class: LCModelComponent
+    component_class: LCModelNode
     icon: str
     is_active: bool
 
 
 def get_filtered_inputs(component_class):
-    base_input_names = {field.name for field in LCModelComponent._base_inputs}
+    base_input_names = {field.name for field in LCModelNode._base_inputs}
     component_instance = component_class()
 
     return [process_inputs(input_) for input_ in component_instance.inputs if input_.name not in base_input_names]

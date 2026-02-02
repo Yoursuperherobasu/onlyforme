@@ -22,7 +22,7 @@ from langbuilder.utils.constants import MESSAGE_SENDER_AI
 DETAILED_THINKING_PREFIX = "detailed thinking on\n\n"
 
 
-class LCModelComponent(Node):
+class LCModelNode(Node):
     display_name: str = "Model Name"
     description: str = "Model Description"
     trace_type = "llm"

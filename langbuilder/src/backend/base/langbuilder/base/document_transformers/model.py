@@ -9,7 +9,7 @@ from langbuilder.schema.data import Data
 from langbuilder.utils.util import build_loader_repr_from_data
 
 
-class LCDocumentTransformerComponent(Node):
+class LCDocumentTransformerNode(Node):
     trace_type = "document_transformer"
     outputs = [
         Output(display_name="Data", name="data", method="transform_data"),

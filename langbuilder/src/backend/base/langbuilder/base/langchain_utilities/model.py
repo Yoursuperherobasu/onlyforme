@@ -8,7 +8,7 @@ from langbuilder.schema.data import Data
 from langbuilder.schema.dataframe import DataFrame
 
 
-class LCToolComponent(Node):
+class LCToolNode(Node):
     trace_type = "tool"
     outputs = [
         Output(name="api_run_model", display_name="Data", method="run_model"),

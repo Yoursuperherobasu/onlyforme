@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from .mongodb_atlas import MongoVectorStoreComponent
     from .opensearch import OpenSearchVectorStoreComponent
     from .pgvector import PGVectorStoreComponent
-    from .pinecone import PineconeVectorStoreComponent
+    from .pinecone import PineconeVectorStoreNode
     from .qdrant import QdrantVectorStoreComponent
     from .redis import RedisVectorStoreComponent
     from .supabase import SupabaseVectorStoreComponent
@@ -47,7 +47,7 @@ _dynamic_imports = {
     "MongoVectorStoreComponent": "mongodb_atlas",
     "OpenSearchVectorStoreComponent": "opensearch",
     "PGVectorStoreComponent": "pgvector",
-    "PineconeVectorStoreComponent": "pinecone",
+    "PineconeVectorStoreNode": "pinecone",
     "QdrantVectorStoreComponent": "qdrant",
     "RedisVectorStoreComponent": "redis",
     "SupabaseVectorStoreComponent": "supabase",

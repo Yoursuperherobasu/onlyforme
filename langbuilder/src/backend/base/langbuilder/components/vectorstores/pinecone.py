@@ -1,13 +1,13 @@
 import numpy as np
 from langchain_core.vectorstores import VectorStore
 
-from langbuilder.base.vectorstores.model import LCVectorStoreComponent, check_cached_vector_store
+from langbuilder.base.vectorstores.model import LCVectorStoreNode, check_cached_vector_store
 from langbuilder.helpers.data import docs_to_data
 from langbuilder.io import DropdownInput, HandleInput, IntInput, SecretStrInput, StrInput
 from langbuilder.schema.data import Data
 
 
-class PineconeVectorStoreComponent(LCVectorStoreComponent):
+class PineconeVectorStoreNode(LCVectorStoreNode):
     display_name = "Pinecone"
     description = "Pinecone Vector Store with search capabilities"
     name = "Pinecone"
@@ -30,7 +30,7 @@ class PineconeVectorStoreComponent(LCVectorStoreComponent):
             value="text",
             advanced=True,
         ),
-        *LCVectorStoreComponent.inputs,
+        *LCVectorStoreNode.inputs,
         HandleInput(name="embedding", display_name="Embedding", input_types=["Embeddings"]),
         IntInput(
             name="number_of_results",

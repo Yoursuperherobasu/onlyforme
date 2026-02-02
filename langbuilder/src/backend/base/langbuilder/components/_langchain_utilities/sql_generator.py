@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from langchain.chains import create_sql_query_chain
 from langchain_core.prompts import PromptTemplate
 
-from langbuilder.base.chains.model import LCChainComponent
+from langbuilder.base.chains.model import LCChainNode
 from langbuilder.inputs.inputs import HandleInput, IntInput, MultilineInput
 from langbuilder.schema.message import Message
 from langbuilder.template.field.base import Output
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from langchain_core.runnables import Runnable
 
 
-class SQLGeneratorComponent(LCChainComponent):
+class SQLGeneratorComponent(LCChainNode):
     display_name = "Natural Language to SQL"
     description = "Generate SQL from natural language."
     name = "SQLGenerator"

@@ -5,7 +5,7 @@ import orjson
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 
-from langbuilder.base.io.chat import ChatComponent
+from langbuilder.base.io.chat import ChatNode
 from langbuilder.helpers.data import safe_convert
 from langbuilder.inputs.inputs import BoolInput, DropdownInput, HandleInput, MessageTextInput
 from langbuilder.schema.data import Data
@@ -20,7 +20,7 @@ from langbuilder.utils.constants import (
 )
 
 
-class ChatOutput(ChatComponent):
+class ChatOutput(ChatNode):
     display_name = "Chat Output"
     description = "Display a chat message in the Playground."
     icon = "MessagesSquare"

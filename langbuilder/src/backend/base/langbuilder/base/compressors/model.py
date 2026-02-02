@@ -8,7 +8,7 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class LCCompressorComponent(Node):
+class ComposioBaseNode(Node):
     inputs = [
         MultilineInput(
             name="search_query",

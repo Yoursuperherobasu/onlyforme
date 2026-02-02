@@ -62,12 +62,12 @@ def build_output_getter(method: Callable, *, validate: bool = True) -> Callable:
         - This function is typically used internally by create_state_model.
 
     Example:
-        >>> class ChatComponent:
+        >>> class ChatNode:
         ...     def get_output_by_method(self, method):
         ...         return type('Output', (), {'value': "Hello, World!"})()
         ...     def get_message(self) -> str:
         ...         pass
-        >>> component = ChatComponent()
+        >>> component = ChatNode()
         >>> getter = build_output_getter(component.get_message)
         >>> print(getter(None))  # This will print "Hello, World!"
     """
@@ -115,12 +115,12 @@ def build_output_setter(method: Callable, *, validate: bool = True) -> Callable:
         - The setter allows for dynamic updating of component states in a graph.
 
     Example:
-        >>> class ChatComponent:
+        >>> class ChatNode:
         ...     def get_output_by_method(self, method):
         ...         return type('Output', (), {'value': None})()
         ...     def set_message(self):
         ...         pass
-        >>> component = ChatComponent()
+        >>> component = ChatNode()
         >>> setter = build_output_setter(component.set_message)
         >>> setter(component, "New message")
         >>> print(component.get_output_by_method(component.set_message).value)  # Prints "New message"

@@ -2,15 +2,14 @@ from typing import Any
 
 from langchain_text_splitters import CharacterTextSplitter, TextSplitter
 
-from langbuilder.base.textsplitters.model import LCTextSplitterComponent
+from langbuilder.base.textsplitters.model import LCTextSplitterNode
 from langbuilder.inputs.inputs import DataInput, IntInput, MessageTextInput
 from langbuilder.utils.util import unescape_string
 
 
-class CharacterTextSplitterComponent(LCTextSplitterComponent):
+class CharacterTextSplitterComponent(LCTextSplitterNode):
     display_name = "Character Text Splitter"
     description = "Split text by number of characters."
-    documentation = "https://docs.langbuilder.org/components/text-splitters#charactertextsplitter"
     name = "CharacterTextSplitter"
     icon = "LangChain"
 

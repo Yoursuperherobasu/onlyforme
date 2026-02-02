@@ -8,7 +8,7 @@ from langbuilder.field_typing.constants import Memory
 from langbuilder.template.field.base import Output
 
 
-class LCChatMemoryComponent(Node):
+class LCChatMemoryNode(Node):
     trace_type = "chat_memory"
     outputs = [
         Output(

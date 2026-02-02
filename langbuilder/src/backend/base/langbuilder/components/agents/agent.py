@@ -3,7 +3,7 @@ import re
 
 from langchain_core.tools import StructuredTool
 
-from langbuilder.base.agents.agent import LCToolsAgentComponent
+from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.base.agents.events import ExceptionWithMessageError
 from langbuilder.base.models.model_input_constants import (
     ALL_PROVIDER_FIELDS,
@@ -79,7 +79,7 @@ class AgentComponent(ToolCallingAgentComponent):
             advanced=True,
             show=True,
         ),
-        *LCToolsAgentComponent._base_inputs,
+        *LCToolsAgentNode._base_inputs,
         # removed memory inputs from agent component
         # *memory_inputs,
         BoolInput(

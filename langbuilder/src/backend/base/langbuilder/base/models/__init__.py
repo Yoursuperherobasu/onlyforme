@@ -1,3 +1,3 @@
-from .model import LCModelComponent
+from .model import LCModelNode
 
-__all__ = ["LCModelComponent"]
+__all__ = ["LCModelNode"]

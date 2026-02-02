@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 
 from langbuilder.base.models.anthropic_constants import ANTHROPIC_MODELS
 from langbuilder.base.models.google_generative_ai_constants import GOOGLE_GENERATIVE_AI_MODELS
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.base.models.openai_constants import OPENAI_CHAT_MODEL_NAMES, OPENAI_REASONING_MODEL_NAMES
 from langbuilder.field_typing import LanguageModel
 from langbuilder.field_typing.range_spec import RangeSpec
@@ -15,7 +15,7 @@ from langbuilder.io import DropdownInput, MessageInput, MultilineInput, SecretSt
 from langbuilder.schema.dotdict import dotdict
 
 
-class LanguageModel(LCModelComponent):
+class LanguageModel(LCModelNode):
     display_name = "Language Model"
     description = "Runs a language model given a specified provider."
     icon = "brain-circuit"

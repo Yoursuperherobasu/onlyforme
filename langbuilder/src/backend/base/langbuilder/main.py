@@ -484,7 +484,7 @@ if __name__ == "__main__":
     configure()
     uvicorn.run(
         "langbuilder.main:create_app",
-        host="localhost",
+        host="127.0.0.1",
         port=7860,
         workers=get_number_of_workers(),
         log_level="error",

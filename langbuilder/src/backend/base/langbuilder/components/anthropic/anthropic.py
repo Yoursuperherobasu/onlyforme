@@ -10,21 +10,21 @@ from langbuilder.base.models.anthropic_constants import (
     TOOL_CALLING_SUPPORTED_ANTHROPIC_MODELS,
     TOOL_CALLING_UNSUPPORTED_ANTHROPIC_MODELS,
 )
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import LanguageModel
 from langbuilder.field_typing.range_spec import RangeSpec
 from langbuilder.io import BoolInput, DropdownInput, IntInput, MessageTextInput, SecretStrInput, SliderInput
 from langbuilder.schema.dotdict import dotdict
 
 
-class AnthropicModelComponent(LCModelComponent):
+class AnthropicModelComponent(LCModelNode):
     display_name = "Anthropic"
     description = "Generate text using Anthropic's Messages API and models."
     icon = "Anthropic"
     name = "AnthropicModel"
 
     inputs = [
-        *LCModelComponent._base_inputs,
+        *LCModelNode._base_inputs,
         IntInput(
             name="max_tokens",
             display_name="Max Tokens",

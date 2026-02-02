@@ -1,12 +1,12 @@
 from langchain_openai import AzureOpenAIEmbeddings
 
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.base.models.openai_constants import OPENAI_EMBEDDING_MODEL_NAMES
 from langbuilder.field_typing import Embeddings
 from langbuilder.io import DropdownInput, IntInput, MessageTextInput, Output, SecretStrInput
 
 
-class AzureOpenAIEmbeddingsComponent(LCModelComponent):
+class AzureOpenAIEmbeddingsComponent(LCModelNode):
     display_name: str = "Azure OpenAI Embeddings"
     description: str = "Generate embeddings using Azure OpenAI models."
     documentation: str = "https://python.langchain.com/docs/integrations/text_embedding/azureopenai"

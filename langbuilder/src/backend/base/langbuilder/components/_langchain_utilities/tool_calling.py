@@ -1,7 +1,7 @@
 from langchain.agents import create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 
-from langbuilder.base.agents.agent import LCToolsAgentComponent
+from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.inputs.inputs import (
     DataInput,
     HandleInput,
@@ -10,14 +10,14 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.data import Data
 
 
-class ToolCallingAgentComponent(LCToolsAgentComponent):
+class ToolCallingAgentComponent(LCToolsAgentNode):
     display_name: str = "Tool Calling Agent"
     description: str = "An agent designed to utilize various tools seamlessly within workflows."
     icon = "LangChain"
     name = "ToolCallingAgent"
 
     inputs = [
-        *LCToolsAgentComponent._base_inputs,
+        *LCToolsAgentNode._base_inputs,
         HandleInput(
             name="llm",
             display_name="Language Model",

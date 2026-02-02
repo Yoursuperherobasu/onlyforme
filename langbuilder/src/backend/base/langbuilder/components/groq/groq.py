@@ -7,20 +7,20 @@ from langbuilder.base.models.groq_constants import (
     TOOL_CALLING_UNSUPPORTED_GROQ_MODELS,
     UNSUPPORTED_GROQ_MODELS,
 )
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import LanguageModel
 from langbuilder.field_typing.range_spec import RangeSpec
 from langbuilder.io import BoolInput, DropdownInput, IntInput, MessageTextInput, SecretStrInput, SliderInput
 
 
-class GroqModel(LCModelComponent):
+class GroqModel(LCModelNode):
     display_name: str = "Groq"
     description: str = "Generate text using Groq."
     icon = "Groq"
     name = "GroqModel"
 
     inputs = [
-        *LCModelComponent._base_inputs,
+        *LCModelNode._base_inputs,
         SecretStrInput(
             name="api_key", display_name="Groq API Key", info="API key for the Groq API.", real_time_refresh=True
         ),

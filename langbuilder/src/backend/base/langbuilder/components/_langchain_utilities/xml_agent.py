@@ -1,7 +1,7 @@
 from langchain.agents import create_xml_agent
 from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, PromptTemplate
 
-from langbuilder.base.agents.agent import LCToolsAgentComponent
+from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.inputs.inputs import (
     DataInput,
     HandleInput,
@@ -10,14 +10,14 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.data import Data
 
 
-class XMLAgentComponent(LCToolsAgentComponent):
+class XMLAgentComponent(LCToolsAgentNode):
     display_name: str = "XML Agent"
     description: str = "Agent that uses tools formatting instructions as xml to the Language Model."
     icon = "LangChain"
     beta = True
     name = "XMLAgent"
     inputs = [
-        *LCToolsAgentComponent._base_inputs,
+        *LCToolsAgentNode._base_inputs,
         HandleInput(name="llm", display_name="Language Model", input_types=["LanguageModel"], required=True),
         DataInput(name="chat_history", display_name="Chat History", is_list=True, advanced=True),
         MultilineInput(

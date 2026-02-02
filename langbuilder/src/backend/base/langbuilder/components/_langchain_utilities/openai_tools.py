@@ -1,7 +1,7 @@
 from langchain.agents import create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, PromptTemplate
 
-from langbuilder.base.agents.agent import LCToolsAgentComponent
+from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.inputs.inputs import (
     DataInput,
     HandleInput,
@@ -10,14 +10,14 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.data import Data
 
 
-class OpenAIToolsAgentComponent(LCToolsAgentComponent):
+class OpenAIToolsAgentComponent(LCToolsAgentNode):
     display_name: str = "OpenAI Tools Agent"
     description: str = "Agent that uses tools via openai-tools."
     icon = "LangChain"
     name = "OpenAIToolsAgent"
 
     inputs = [
-        *LCToolsAgentComponent._base_inputs,
+        *LCToolsAgentNode._base_inputs,
         HandleInput(
             name="llm",
             display_name="Language Model",

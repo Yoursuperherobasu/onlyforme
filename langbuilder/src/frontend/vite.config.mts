@@ -23,8 +23,8 @@ export default defineConfig(({ mode }) => {
 
   const apiRoutes = API_ROUTES || ["^/api/v1/", "^/api/v2/", "/health"];
 
-  const target =
-    envLangbuilder.VITE_PROXY_TARGET || env.VITE_PROXY_TARGET || PROXY_TARGET || "http://localhost:7860";
+  const target = "http://127.0.0.1:7860";
+
   
   const port = Number(envLangbuilder.VITE_PORT || env.VITE_PORT) || PORT || 3000;
 
@@ -45,7 +45,7 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       "process.env.BACKEND_URL": JSON.stringify(
-        envLangbuilder.BACKEND_URL ?? "http://localhost:7860",
+        envLangbuilder.BACKEND_URL ?? "http://127.0.0.1:7860",
       ),
       "process.env.ACCESS_TOKEN_EXPIRE_SECONDS": JSON.stringify(
         envLangbuilder.ACCESS_TOKEN_EXPIRE_SECONDS ?? 60,

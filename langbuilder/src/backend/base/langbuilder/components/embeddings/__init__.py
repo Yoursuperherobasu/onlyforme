@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 _dynamic_imports = {
     "EmbeddingSimilarity": "similarity",
     "TextEmbedder": "text_embedder",
-}
+} 
 
 __all__ = [
     "EmbeddingSimilarity",

@@ -1,5 +1,5 @@
 from langbuilder.base.data.utils import IMG_FILE_TYPES, TEXT_FILE_TYPES
-from langbuilder.base.io.chat import ChatComponent
+from langbuilder.base.io.chat import ChatNode
 from langbuilder.inputs.inputs import BoolInput
 from langbuilder.io import (
     DropdownInput,
@@ -16,7 +16,7 @@ from langbuilder.utils.constants import (
 )
 
 
-class ChatInput(ChatComponent):
+class ChatInput(ChatNode):
     display_name = "Chat Input"
     description = "Get chat inputs from the Playground."
     icon = "MessagesSquare"

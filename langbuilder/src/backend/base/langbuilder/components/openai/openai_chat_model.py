@@ -3,7 +3,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 from pydantic.v1 import SecretStr
 
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.base.models.openai_constants import (
     OPENAI_CHAT_MODEL_NAMES,
     OPENAI_REASONING_MODEL_NAMES,
@@ -22,14 +22,14 @@ from langbuilder.inputs.inputs import (
 from langbuilder.logging import logger
 
 
-class OpenAIModel(LCModelComponent):
+class OpenAIModel(LCModelNode):
     display_name = "OpenAI"
     description = "Generates text using OpenAI LLMs."
     icon = "OpenAI"
     name = "OpenAIModel"
 
     inputs = [
-        *LCModelComponent._base_inputs,
+        *LCModelNode._base_inputs,
         IntInput(
             name="max_tokens",
             display_name="Max Tokens",

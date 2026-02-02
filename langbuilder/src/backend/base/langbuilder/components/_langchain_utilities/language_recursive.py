@@ -2,14 +2,13 @@ from typing import Any
 
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter, TextSplitter
 
-from langbuilder.base.textsplitters.model import LCTextSplitterComponent
+from langbuilder.base.textsplitters.model import LCTextSplitterNode
 from langbuilder.inputs.inputs import DataInput, DropdownInput, IntInput
 
 
-class LanguageRecursiveTextSplitterComponent(LCTextSplitterComponent):
+class LanguageRecursiveTextSplitterComponent(LCTextSplitterNode):
     display_name: str = "Language Recursive Text Splitter"
     description: str = "Split text into chunks of a specified length based on language."
-    documentation: str = "https://docs.langbuilder.org/components/text-splitters#languagerecursivetextsplitter"
     name = "LanguageRecursiveTextSplitter"
     icon = "LangChain"
 
