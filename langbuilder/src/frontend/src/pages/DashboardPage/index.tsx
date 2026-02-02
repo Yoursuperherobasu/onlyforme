@@ -193,9 +193,7 @@ export default function DashboardAdmin(): JSX.Element {
               <h1 className="text-2xl font-bold mb-2">
                 Dashboard
               </h1>
-              <p className="text-sm text-muted-foreground">
-                Your AI workflows at a glance.
-              </p>
+            
             </div>
            
           </div>

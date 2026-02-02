@@ -15,7 +15,7 @@ qdrant_storage
 .dspy_cache
 # Mac
 .DS_Store
-
+langbuilder/*/*.bin
 # VSCode
 .vscode/settings.json
 .chroma
