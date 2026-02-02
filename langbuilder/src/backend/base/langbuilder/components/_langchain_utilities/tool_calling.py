@@ -10,7 +10,7 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.data import Data
 
 
-class ToolCallingAgentComponent(LCToolsAgentNode):
+class ToolCallingAgentNode(LCToolsAgentNode):
     display_name: str = "Tool Calling Agent"
     description: str = "An agent designed to utilize various tools seamlessly within workflows."
     icon = "LangChain"

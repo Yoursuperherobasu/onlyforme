@@ -141,7 +141,7 @@ from langbuilder.io import MessageInput
 from langbuilder.io import Output
 
 
-class AmazonBedrockComponent(LCModelNode):
+class AmazonBedrockNode(LCModelNode):
     display_name: str = "Amazon Bedrock"
     description: str = "Generate text using Amazon Bedrock LLMs."
     icon = "Amazon"

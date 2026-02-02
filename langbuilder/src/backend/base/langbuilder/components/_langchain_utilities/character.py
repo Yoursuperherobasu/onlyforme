@@ -7,7 +7,7 @@ from langbuilder.inputs.inputs import DataInput, IntInput, MessageTextInput
 from langbuilder.utils.util import unescape_string
 
 
-class CharacterTextSplitterComponent(LCTextSplitterNode):
+class CharacterTextSplitterNode(LCTextSplitterNode):
     display_name = "Character Text Splitter"
     description = "Split text by number of characters."
     name = "CharacterTextSplitter"

@@ -6,7 +6,7 @@ from langbuilder.schema.message import Message
 from langbuilder.template.field.base import Output
 
 
-class LLMMathChainComponent(LCChainNode):
+class LLMMathChainNode(LCChainNode):
     display_name = "LLMMathChain"
     description = "Chain that interprets a prompt and executes python code to do math."
     documentation = "https://python.langchain.com/docs/modules/chains/additional/llm_math"

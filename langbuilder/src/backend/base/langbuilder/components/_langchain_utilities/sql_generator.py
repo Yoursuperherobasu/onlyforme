@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from langchain_core.runnables import Runnable
 
 
-class SQLGeneratorComponent(LCChainNode):
+class SQLGeneratorNode(LCChainNode):
     display_name = "Natural Language to SQL"
     description = "Generate SQL from natural language."
     name = "SQLGenerator"

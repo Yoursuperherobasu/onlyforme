@@ -1,6 +1,6 @@
 from langchain_experimental.agents.agent_toolkits.csv.base import create_csv_agent
 
-from langbuilder.base.agents.agent import LCAgentComponent
+from langbuilder.base.agents.agent import LCAgentNode
 from langbuilder.field_typing import AgentExecutor
 from langbuilder.inputs.inputs import (
     DictInput,
@@ -13,15 +13,14 @@ from langbuilder.schema.message import Message
 from langbuilder.template.field.base import Output
 
 
-class CSVAgentComponent(LCAgentComponent):
+class CSVAgentNode(LCAgentNode):
     display_name = "CSV Agent"
     description = "Construct a CSV agent from a CSV and tools."
-    documentation = "https://python.langchain.com/docs/modules/agents/toolkits/csv"
     name = "CSVAgent"
     icon = "LangChain"
 
     inputs = [
-        *LCAgentComponent._base_inputs,
+        *LCAgentNode._base_inputs,
         HandleInput(
             name="llm",
             display_name="Language Model",

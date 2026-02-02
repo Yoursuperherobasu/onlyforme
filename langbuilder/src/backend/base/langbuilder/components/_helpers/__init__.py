@@ -5,32 +5,32 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from langbuilder.components.helpers.calculator_core import CalculatorComponent
-    from langbuilder.components.helpers.create_list import CreateListComponent
-    from langbuilder.components.helpers.current_date import CurrentDateComponent
-    from langbuilder.components.helpers.id_generator import IDGeneratorComponent
+    from langbuilder.components.helpers.calculator_core import CalculatorNode
+    from langbuilder.components.helpers.create_list import CreateListNode
+    from langbuilder.components.helpers.current_date import CurrentDateNode
+    from langbuilder.components.helpers.id_generator import IDGeneratorNode
     from langbuilder.components.helpers.memory import MemoryComponent
-    from langbuilder.components.helpers.output_parser import OutputParserComponent
-    from langbuilder.components.helpers.store_message import MessageStoreComponent
+    from langbuilder.components.helpers.output_parser import OutputParserNode
+    from langbuilder.components.helpers.store_message import MessageStoreNode
 
 _dynamic_imports = {
-    "CalculatorComponent": "calculator_core",
-    "CreateListComponent": "create_list",
-    "CurrentDateComponent": "current_date",
-    "IDGeneratorComponent": "id_generator",
+    "CalculatorNode": "calculator_core",
+    "CreateListNode": "create_list",
+    "CurrentDateNode": "current_date",
+    "IDGeneratorNode": "id_generator",
     "MemoryComponent": "memory",
-    "OutputParserComponent": "output_parser",
-    "MessageStoreComponent": "store_message",
+    "OutputParserNode": "output_parser",
+    "MessageStoreNode": "store_message",
 }
 
 __all__ = [
-    "CalculatorComponent",
-    "CreateListComponent",
-    "CurrentDateComponent",
-    "IDGeneratorComponent",
+    "CalculatorNode",
+    "CreateListNode",
+    "CurrentDateNode",
+    "IDGeneratorNode",
     "MemoryComponent",
-    "MessageStoreComponent",
-    "OutputParserComponent",
+    "MessageStoreNode",
+    "OutputParserNode",
 ]
 
 

@@ -1,4 +1,4 @@
-from .agent import AgentComponent
-from .mcp_component import MCPToolsComponent
+from .agent import AgentNode
+from .mcp_component import MCPToolsNode
 
-__all__ = ["AgentComponent", "MCPToolsComponent"]
+__all__ = ["AgentNode", "MCPToolsNode"]

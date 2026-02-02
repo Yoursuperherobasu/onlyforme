@@ -6,7 +6,7 @@ from langbuilder.schema.message import Message
 from langbuilder.template.field.base import Output
 
 
-class RunnableExecComponent(Node):
+class RunnableExecNode(Node):
     description = "Execute a runnable. It will try to guess the input and output keys."
     display_name = "Runnable Executor"
     name = "RunnableExecutor"

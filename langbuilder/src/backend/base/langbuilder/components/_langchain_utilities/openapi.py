@@ -7,17 +7,17 @@ from langchain_community.agent_toolkits.openapi.toolkit import OpenAPIToolkit
 from langchain_community.tools.json.tool import JsonSpec
 from langchain_community.utilities.requests import TextRequestsWrapper
 
-from langbuilder.base.agents.agent import LCAgentComponent
+from langbuilder.base.agents.agent import LCAgentNode
 from langbuilder.inputs.inputs import BoolInput, FileInput, HandleInput
 
 
-class OpenAPIAgentComponent(LCAgentComponent):
+class OpenAPIAgentNode(LCAgentNode):
     display_name = "OpenAPI Agent"
     description = "Agent to interact with OpenAPI API."
     name = "OpenAPIAgent"
     icon = "LangChain"
     inputs = [
-        *LCAgentComponent._base_inputs,
+        *LCAgentNode._base_inputs,
         HandleInput(name="llm", display_name="Language Model", input_types=["LanguageModel"], required=True),
         FileInput(name="path", display_name="File Path", file_types=["json", "yaml", "yml"], required=True),
         BoolInput(name="allow_dangerous_requests", display_name="Allow Dangerous Requests", value=False, required=True),

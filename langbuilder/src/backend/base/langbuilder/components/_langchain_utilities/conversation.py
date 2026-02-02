@@ -5,7 +5,7 @@ from langbuilder.inputs.inputs import HandleInput, MultilineInput
 from langbuilder.schema.message import Message
 
 
-class ConversationChainComponent(LCChainNode):
+class ConversationChainNode(LCChainNode):
     display_name = "ConversationChain"
     description = "Chain to have a conversation and load context from memory."
     name = "ConversationChain"

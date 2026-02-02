@@ -32,8 +32,8 @@
         "animated": false,
         "data": {
           "sourceHandle": {
-            "dataType": "CalculatorComponent",
-            "id": "CalculatorComponent-nctUz",
+            "dataType": "CalculatorNode",
+            "id": "CalculatorNode-nctUz",
             "name": "component_as_tool",
             "output_types": [
               "Tool"
@@ -48,10 +48,10 @@
             "type": "other"
           }
         },
-        "id": "xy-edge__CalculatorComponent-nctUz{œdataTypeœ:œCalculatorComponentœ,œidœ:œCalculatorComponent-nctUzœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-bNGtH{œfieldNameœ:œtoolsœ,œidœ:œAgent-bNGtHœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "id": "xy-edge__CalculatorNode-nctUz{œdataTypeœ:œCalculatorNodeœ,œidœ:œCalculatorNode-nctUzœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-bNGtH{œfieldNameœ:œtoolsœ,œidœ:œAgent-bNGtHœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "CalculatorComponent-nctUz",
-        "sourceHandle": "{œdataTypeœ: œCalculatorComponentœ, œidœ: œCalculatorComponent-nctUzœ, œnameœ: œcomponent_as_toolœ, œoutput_typesœ: [œToolœ]}",
+        "source": "CalculatorNode-nctUz",
+        "sourceHandle": "{œdataTypeœ: œCalculatorNodeœ, œidœ: œCalculatorNode-nctUzœ, œnameœ: œcomponent_as_toolœ, œoutput_typesœ: [œToolœ]}",
         "target": "Agent-bNGtH",
         "targetHandle": "{œfieldNameœ: œtoolsœ, œidœ: œAgent-bNGtHœ, œinputTypesœ: [œToolœ], œtypeœ: œotherœ}"
       },
@@ -693,7 +693,7 @@
       },
       {
         "data": {
-          "id": "CalculatorComponent-nctUz",
+          "id": "CalculatorNode-nctUz",
           "node": {
             "base_classes": [
               "Data"
@@ -711,12 +711,12 @@
             ],
             "frozen": false,
             "icon": "calculator",
-            "key": "CalculatorComponent",
+            "key": "CalculatorNode",
             "legacy": false,
             "lf_version": "1.4.2",
             "metadata": {
               "code_hash": "670be5e6c1fa",
-              "module": "langbuilder.components.helpers.calculator_core.CalculatorComponent"
+              "module": "langbuilder.components.helpers.calculator_core.CalculatorNode"
             },
             "minimized": false,
             "output_types": [],
@@ -759,7 +759,7 @@
                 "show": true,
                 "title_case": false,
                 "type": "code",
-                "value": "import ast\nimport operator\nfrom collections.abc import Callable\n\nfrom langbuilder.custom.custom_component.component import Node\nfrom langbuilder.inputs.inputs import MessageTextInput\nfrom langbuilder.io import Output\nfrom langbuilder.schema.data import Data\n\n\nclass CalculatorComponent(Node):\n    display_name = \"Calculator\"\n    description = \"Perform basic arithmetic operations on a given expression.\"\n    documentation: str = \"https://docs.langbuilder.org/components-helpers#calculator\"\n    icon = \"calculator\"\n\n    # Cache operators dictionary as a class variable\n    OPERATORS: dict[type[ast.operator], Callable] = {\n        ast.Add: operator.add,\n        ast.Sub: operator.sub,\n        ast.Mult: operator.mul,\n        ast.Div: operator.truediv,\n        ast.Pow: operator.pow,\n    }\n\n    inputs = [\n        MessageTextInput(\n            name=\"expression\",\n            display_name=\"Expression\",\n            info=\"The arithmetic expression to evaluate (e.g., '4*4*(33/22)+12-20').\",\n            tool_mode=True,\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Data\", name=\"result\", type_=Data, method=\"evaluate_expression\"),\n    ]\n\n    def _eval_expr(self, node: ast.AST) -> float:\n        \"\"\"Evaluate an AST node recursively.\"\"\"\n        if isinstance(node, ast.Constant):\n            if isinstance(node.value, int | float):\n                return float(node.value)\n            error_msg = f\"Unsupported constant type: {type(node.value).__name__}\"\n            raise TypeError(error_msg)\n        if isinstance(node, ast.Num):  # For backwards compatibility\n            if isinstance(node.n, int | float):\n                return float(node.n)\n            error_msg = f\"Unsupported number type: {type(node.n).__name__}\"\n            raise TypeError(error_msg)\n\n        if isinstance(node, ast.BinOp):\n            op_type = type(node.op)\n            if op_type not in self.OPERATORS:\n                error_msg = f\"Unsupported binary operator: {op_type.__name__}\"\n                raise TypeError(error_msg)\n\n            left = self._eval_expr(node.left)\n            right = self._eval_expr(node.right)\n            return self.OPERATORS[op_type](left, right)\n\n        error_msg = f\"Unsupported operation or expression type: {type(node).__name__}\"\n        raise TypeError(error_msg)\n\n    def evaluate_expression(self) -> Data:\n        \"\"\"Evaluate the mathematical expression and return the result.\"\"\"\n        try:\n            tree = ast.parse(self.expression, mode=\"eval\")\n            result = self._eval_expr(tree.body)\n\n            formatted_result = f\"{float(result):.6f}\".rstrip(\"0\").rstrip(\".\")\n            self.log(f\"Calculation result: {formatted_result}\")\n\n            self.status = formatted_result\n            return Data(data={\"result\": formatted_result})\n\n        except ZeroDivisionError:\n            error_message = \"Error: Division by zero\"\n            self.status = error_message\n            return Data(data={\"error\": error_message, \"input\": self.expression})\n\n        except (SyntaxError, TypeError, KeyError, ValueError, AttributeError, OverflowError) as e:\n            error_message = f\"Invalid expression: {e!s}\"\n            self.status = error_message\n            return Data(data={\"error\": error_message, \"input\": self.expression})\n\n    def build(self):\n        \"\"\"Return the main evaluation function.\"\"\"\n        return self.evaluate_expression\n"
+                "value": "import ast\nimport operator\nfrom collections.abc import Callable\n\nfrom langbuilder.custom.custom_component.component import Node\nfrom langbuilder.inputs.inputs import MessageTextInput\nfrom langbuilder.io import Output\nfrom langbuilder.schema.data import Data\n\n\nclass CalculatorNode(Node):\n    display_name = \"Calculator\"\n    description = \"Perform basic arithmetic operations on a given expression.\"\n    documentation: str = \"https://docs.langbuilder.org/components-helpers#calculator\"\n    icon = \"calculator\"\n\n    # Cache operators dictionary as a class variable\n    OPERATORS: dict[type[ast.operator], Callable] = {\n        ast.Add: operator.add,\n        ast.Sub: operator.sub,\n        ast.Mult: operator.mul,\n        ast.Div: operator.truediv,\n        ast.Pow: operator.pow,\n    }\n\n    inputs = [\n        MessageTextInput(\n            name=\"expression\",\n            display_name=\"Expression\",\n            info=\"The arithmetic expression to evaluate (e.g., '4*4*(33/22)+12-20').\",\n            tool_mode=True,\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Data\", name=\"result\", type_=Data, method=\"evaluate_expression\"),\n    ]\n\n    def _eval_expr(self, node: ast.AST) -> float:\n        \"\"\"Evaluate an AST node recursively.\"\"\"\n        if isinstance(node, ast.Constant):\n            if isinstance(node.value, int | float):\n                return float(node.value)\n            error_msg = f\"Unsupported constant type: {type(node.value).__name__}\"\n            raise TypeError(error_msg)\n        if isinstance(node, ast.Num):  # For backwards compatibility\n            if isinstance(node.n, int | float):\n                return float(node.n)\n            error_msg = f\"Unsupported number type: {type(node.n).__name__}\"\n            raise TypeError(error_msg)\n\n        if isinstance(node, ast.BinOp):\n            op_type = type(node.op)\n            if op_type not in self.OPERATORS:\n                error_msg = f\"Unsupported binary operator: {op_type.__name__}\"\n                raise TypeError(error_msg)\n\n            left = self._eval_expr(node.left)\n            right = self._eval_expr(node.right)\n            return self.OPERATORS[op_type](left, right)\n\n        error_msg = f\"Unsupported operation or expression type: {type(node).__name__}\"\n        raise TypeError(error_msg)\n\n    def evaluate_expression(self) -> Data:\n        \"\"\"Evaluate the mathematical expression and return the result.\"\"\"\n        try:\n            tree = ast.parse(self.expression, mode=\"eval\")\n            result = self._eval_expr(tree.body)\n\n            formatted_result = f\"{float(result):.6f}\".rstrip(\"0\").rstrip(\".\")\n            self.log(f\"Calculation result: {formatted_result}\")\n\n            self.status = formatted_result\n            return Data(data={\"result\": formatted_result})\n\n        except ZeroDivisionError:\n            error_message = \"Error: Division by zero\"\n            self.status = error_message\n            return Data(data={\"error\": error_message, \"input\": self.expression})\n\n        except (SyntaxError, TypeError, KeyError, ValueError, AttributeError, OverflowError) as e:\n            error_message = f\"Invalid expression: {e!s}\"\n            self.status = error_message\n            return Data(data={\"error\": error_message, \"input\": self.expression})\n\n    def build(self):\n        \"\"\"Return the main evaluation function.\"\"\"\n        return self.evaluate_expression\n"
               },
               "expression": {
                 "_input_type": "MessageTextInput",
@@ -811,8 +811,8 @@
                         "type": "string"
                       }
                     },
-                    "description": "CalculatorComponent. evaluate_expression - Perform basic arithmetic operations on a given expression.",
-                    "display_description": "CalculatorComponent. evaluate_expression - Perform basic arithmetic operations on a given expression.",
+                    "description": "CalculatorNode. evaluate_expression - Perform basic arithmetic operations on a given expression.",
+                    "display_description": "CalculatorNode. evaluate_expression - Perform basic arithmetic operations on a given expression.",
                     "display_name": "evaluate_expression",
                     "name": "evaluate_expression",
                     "readonly": false,
@@ -828,10 +828,10 @@
           },
           "selected_output": "component_as_tool",
           "showNode": true,
-          "type": "CalculatorComponent"
+          "type": "CalculatorNode"
         },
         "dragging": false,
-        "id": "CalculatorComponent-nctUz",
+        "id": "CalculatorNode-nctUz",
         "measured": {
           "height": 218,
           "width": 320

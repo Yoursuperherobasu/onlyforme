@@ -8,10 +8,9 @@ from langbuilder.io import Output
 from langbuilder.schema.data import Data
 
 
-class CalculatorComponent(Node):
+class CalculatorNode(Node):
     display_name = "Calculator"
-    description = "Perform basic arithmetic operations on a given expression."
-    documentation: str = "https://docs.langbuilder.org/components-helpers#calculator"
+    description = "Perform basic arithmetic operations for a given expression."
     icon = "calculator"
 
     # Cache operators dictionary as a class variable
@@ -27,7 +26,7 @@ class CalculatorComponent(Node):
         MessageTextInput(
             name="expression",
             display_name="Expression",
-            info="The arithmetic expression to evaluate (e.g., '4*4*(33/22)+12-20').",
+            info="The arithmetic expression to evaluate (e.g., '3*4*(54/12)+22-11').",
             tool_mode=True,
         ),
     ]

@@ -5,7 +5,7 @@ from langbuilder.inputs.inputs import HandleInput, MessageTextInput, MultilineIn
 from langbuilder.template.field.base import Output
 
 
-class VectorStoreInfoComponent(Node):
+class VectorStoreInfoNode(Node):
     display_name = "VectorStoreInfo"
     description = "Information about a VectorStore"
     name = "VectorStoreInfo"

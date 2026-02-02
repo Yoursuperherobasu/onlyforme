@@ -1,18 +1,18 @@
 from langchain.agents import AgentExecutor, create_vectorstore_router_agent
 from langchain.agents.agent_toolkits.vectorstore.toolkit import VectorStoreRouterToolkit
 
-from langbuilder.base.agents.agent import LCAgentComponent
+from langbuilder.base.agents.agent import LCAgentNode
 from langbuilder.inputs.inputs import HandleInput
 
 
-class VectorStoreRouterAgentComponent(LCAgentComponent):
+class VectorStoreRouterAgentNode(LCAgentNode):
     display_name = "VectorStoreRouterAgent"
     description = "Construct an agent from a Vector Store Router."
     name = "VectorStoreRouterAgent"
     legacy: bool = True
 
     inputs = [
-        *LCAgentComponent._base_inputs,
+        *LCAgentNode._base_inputs,
         HandleInput(
             name="llm",
             display_name="Language Model",

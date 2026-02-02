@@ -5,89 +5,89 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from .character import CharacterTextSplitterComponent
-    from .conversation import ConversationChainComponent
-    from .csv_agent import CSVAgentComponent
+    from .character import CharacterTextSplitterNode
+    from .conversation import ConversationChainNode
+    from .csv_agent import CSVAgentNode
     from .fake_embeddings import FakeEmbeddingsComponent
-    from .html_link_extractor import HtmlLinkExtractorComponent
-    from .json_agent import JsonAgentComponent
-    from .langchain_hub import LangChainHubPromptComponent
-    from .language_recursive import LanguageRecursiveTextSplitterComponent
-    from .language_semantic import SemanticTextSplitterComponent
-    from .llm_checker import LLMCheckerChainComponent
-    from .llm_math import LLMMathChainComponent
-    from .natural_language import NaturalLanguageTextSplitterComponent
-    from .openai_tools import OpenAIToolsAgentComponent
-    from .openapi import OpenAPIAgentComponent
-    from .recursive_character import RecursiveCharacterTextSplitterComponent
-    from .retrieval_qa import RetrievalQAComponent
+    from .html_link_extractor import HtmlLinkExtractorNode
+    from .json_agent import JsonAgentNode
+    from .langchain_hub import LangChainHubPromptNode
+    from .language_recursive import LanguageRecursiveTextSplitterNode
+    from .language_semantic import SemanticTextSplitterNode
+    from .llm_checker import LLMCheckerChainNode
+    from .llm_math import LLMMathChainNode
+    from .natural_language import NaturalLanguageTextSplitterNode
+    from .openai_tools import OpenAIToolsAgentNode
+    from .openapi import OpenAPIAgentNode
+    from .recursive_character import RecursiveCharacterTextSplitterNode
+    from .retrieval_qa import RetrievalQANode
     from .runnable_executor import RunnableExecComponent
-    from .self_query import SelfQueryRetrieverComponent
+    from .self_query import SelfQueryRetrieverNode
     from .spider import SpiderTool
-    from .sql import SQLAgentComponent
-    from .sql_database import SQLDatabaseComponent
-    from .sql_generator import SQLGeneratorComponent
-    from .tool_calling import ToolCallingAgentComponent
-    from .vector_store_info import VectorStoreInfoComponent
-    from .vector_store_router import VectorStoreRouterAgentComponent
-    from .xml_agent import XMLAgentComponent
+    from .sql import SQLAgentNode
+    from .sql_database import SQLDatabaseNode
+    from .sql_generator import SQLGeneratorNode
+    from .tool_calling import ToolCallingAgentNode
+    from .vector_store_info import VectorStoreInfoNode
+    from .vector_store_router import VectorStoreRouterAgentNode
+    from .xml_agent import XMLAgentNode
 
 _dynamic_imports = {
-    "CharacterTextSplitterComponent": "character",
-    "ConversationChainComponent": "conversation",
-    "CSVAgentComponent": "csv_agent",
+    "CharacterTextSplitterNode": "character",
+    "ConversationChainNode": "conversation",
+    "CSVAgentNode": "csv_agent",
     "FakeEmbeddingsComponent": "fake_embeddings",
-    "HtmlLinkExtractorComponent": "html_link_extractor",
-    "JsonAgentComponent": "json_agent",
-    "LangChainHubPromptComponent": "langchain_hub",
-    "LanguageRecursiveTextSplitterComponent": "language_recursive",
-    "LLMCheckerChainComponent": "llm_checker",
-    "LLMMathChainComponent": "llm_math",
-    "NaturalLanguageTextSplitterComponent": "natural_language",
-    "OpenAIToolsAgentComponent": "openai_tools",
-    "OpenAPIAgentComponent": "openapi",
-    "RecursiveCharacterTextSplitterComponent": "recursive_character",
-    "RetrievalQAComponent": "retrieval_qa",
+    "HtmlLinkExtractorNode": "html_link_extractor",
+    "JsonAgentNode": "json_agent",
+    "LangChainHubPromptNode": "langchain_hub",
+    "LanguageRecursiveTextSplitterNode": "language_recursive",
+    "LLMCheckerChainNode": "llm_checker",
+    "LLMMathChainNode": "llm_math",
+    "NaturalLanguageTextSplitterNode": "natural_language",
+    "OpenAIToolsAgentNode": "openai_tools",
+    "OpenAPIAgentNode": "openapi",
+    "RecursiveCharacterTextSplitterNode": "recursive_character",
+    "RetrievalQANode": "retrieval_qa",
     "RunnableExecComponent": "runnable_executor",
-    "SelfQueryRetrieverComponent": "self_query",
-    "SemanticTextSplitterComponent": "language_semantic",
+    "SelfQueryRetrieverNode": "self_query",
+    "SemanticTextSplitterNode": "language_semantic",
     "SpiderTool": "spider",
-    "SQLAgentComponent": "sql",
-    "SQLDatabaseComponent": "sql_database",
-    "SQLGeneratorComponent": "sql_generator",
-    "ToolCallingAgentComponent": "tool_calling",
-    "VectorStoreInfoComponent": "vector_store_info",
-    "VectorStoreRouterAgentComponent": "vector_store_router",
-    "XMLAgentComponent": "xml_agent",
+    "SQLAgentNode": "sql",
+    "SQLDatabaseNode": "sql_database",
+    "SQLGeneratorNode": "sql_generator",
+    "ToolCallingAgentNode": "tool_calling",
+    "VectorStoreInfoNode": "vector_store_info",
+    "VectorStoreRouterAgentNode": "vector_store_router",
+    "XMLAgentNode": "xml_agent",
 }
 
 __all__ = [
-    "CSVAgentComponent",
-    "CharacterTextSplitterComponent",
-    "ConversationChainComponent",
+    "CSVAgentNode",
+    "CharacterTextSplitterNode",
+    "ConversationChainNode",
     "FakeEmbeddingsComponent",
-    "HtmlLinkExtractorComponent",
-    "JsonAgentComponent",
-    "LLMCheckerChainComponent",
-    "LLMMathChainComponent",
-    "LangChainHubPromptComponent",
-    "LanguageRecursiveTextSplitterComponent",
-    "NaturalLanguageTextSplitterComponent",
-    "OpenAIToolsAgentComponent",
-    "OpenAPIAgentComponent",
-    "RecursiveCharacterTextSplitterComponent",
-    "RetrievalQAComponent",
+    "HtmlLinkExtractorNode",
+    "JsonAgentNode",
+    "LLMCheckerChainNode",
+    "LLMMathChainNode",
+    "LangChainHubPromptNode",
+    "LanguageRecursiveTextSplitterNode",
+    "NaturalLanguageTextSplitterNode",
+    "OpenAIToolsAgentNode",
+    "OpenAPIAgentNode",
+    "RecursiveCharacterTextSplitterNode",
+    "RetrievalQANode",
     "RunnableExecComponent",
-    "SQLAgentComponent",
-    "SQLDatabaseComponent",
-    "SQLGeneratorComponent",
-    "SelfQueryRetrieverComponent",
-    "SemanticTextSplitterComponent",
+    "SQLAgentNode",
+    "SQLDatabaseNode",
+    "SQLGeneratorNode",
+    "SelfQueryRetrieverNode",
+    "SemanticTextSplitterNode",
     "SpiderTool",
-    "ToolCallingAgentComponent",
-    "VectorStoreInfoComponent",
-    "VectorStoreRouterAgentComponent",
-    "XMLAgentComponent",
+    "ToolCallingAgentNode",
+    "VectorStoreInfoNode",
+    "VectorStoreRouterAgentNode",
+    "XMLAgentNode",
 ]
 
 

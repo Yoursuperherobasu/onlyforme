@@ -17,7 +17,7 @@ from langbuilder.io import BoolInput, DropdownInput, IntInput, MessageTextInput,
 from langbuilder.schema.dotdict import dotdict
 
 
-class AnthropicModelComponent(LCModelNode):
+class AnthropicModelNode(LCModelNode):
     display_name = "Anthropic"
     description = "Generate text using Anthropic's Messages API and models."
     icon = "Anthropic"

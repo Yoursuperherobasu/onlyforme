@@ -1,8 +1,8 @@
 from typing_extensions import TypedDict
 
 from langbuilder.base.models.model import LCModelNode
-from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockComponent
-from langbuilder.components.anthropic.anthropic import AnthropicModelComponent
+from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockNode
+from langbuilder.components.anthropic.anthropic import AnthropicModelNode
 from langbuilder.components.azure.azure_openai import AzureChatOpenAIComponent
 from langbuilder.components.google.google_generative_ai import GoogleGenerativeAIComponent
 from langbuilder.components.groq.groq import GroqModel
@@ -134,9 +134,9 @@ def _get_groq_inputs_and_fields():
 
 def _get_anthropic_inputs_and_fields():
     try:
-        from langbuilder.components.anthropic.anthropic import AnthropicModelComponent
+        from langbuilder.components.anthropic.anthropic import AnthropicModelNode
 
-        anthropic_inputs = get_filtered_inputs(AnthropicModelComponent)
+        anthropic_inputs = get_filtered_inputs(AnthropicModelNode)
     except ImportError as e:
         msg = "Anthropic is not installed. Please install it with `pip install langchain-anthropic`."
         raise ImportError(msg) from e
@@ -156,9 +156,9 @@ def _get_anthropic_inputs_and_fields():
 
 def _get_amazon_bedrock_inputs_and_fields():
     try:
-        from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockComponent
+        from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockNode
 
-        amazon_bedrock_inputs = get_filtered_inputs(AmazonBedrockComponent)
+        amazon_bedrock_inputs = get_filtered_inputs(AmazonBedrockNode)
     except ImportError as e:
         msg = "Amazon Bedrock is not installed. Please install it with `pip install langchain-amazon-bedrock`."
         raise ImportError(msg) from e
@@ -224,8 +224,8 @@ try:
         "fields": anthropic_fields,
         "inputs": anthropic_inputs,
         "prefix": "",
-        "component_class": AnthropicModelComponent(),
-        "icon": AnthropicModelComponent.icon,
+        "component_class": AnthropicModelNode(),
+        "icon": AnthropicModelNode.icon,
         "is_active": True,
     }
 except ImportError:
@@ -239,8 +239,8 @@ try:
         "fields": bedrock_fields,
         "inputs": bedrock_inputs,
         "prefix": "",
-        "component_class": AmazonBedrockComponent(),
-        "icon": AmazonBedrockComponent.icon,
+        "component_class": AmazonBedrockNode(),
+        "icon": AmazonBedrockNode.icon,
         "is_active": False,
     }
 except ImportError:

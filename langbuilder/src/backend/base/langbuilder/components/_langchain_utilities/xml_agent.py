@@ -10,7 +10,7 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.data import Data
 
 
-class XMLAgentComponent(LCToolsAgentNode):
+class XMLAgentNode(LCToolsAgentNode):
     display_name: str = "XML Agent"
     description: str = "Agent that uses tools formatting instructions as xml to the Language Model."
     icon = "LangChain"

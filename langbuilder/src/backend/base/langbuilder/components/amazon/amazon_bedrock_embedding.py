@@ -5,7 +5,7 @@ from langbuilder.inputs.inputs import SecretStrInput
 from langbuilder.io import DropdownInput, MessageTextInput, Output
 
 
-class AmazonBedrockEmbeddingsComponent(LCModelNode):
+class AmazonBedrockEmbeddingsNode(LCModelNode):
     display_name: str = "Amazon Bedrock Embeddings"
     description: str = "Generate embeddings using Amazon Bedrock models."
     icon = "Amazon"

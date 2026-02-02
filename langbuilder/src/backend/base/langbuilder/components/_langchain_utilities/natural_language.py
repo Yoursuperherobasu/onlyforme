@@ -4,10 +4,10 @@ from langchain_text_splitters import NLTKTextSplitter, TextSplitter
 
 from langbuilder.base.textsplitters.model import LCTextSplitterNode
 from langbuilder.inputs.inputs import DataInput, IntInput, MessageTextInput
-from langbuilder.utils.util import unescape_string
+from langbuilder.utils.util import unescape_string88
 
 
-class NaturalLanguageTextSplitterComponent(LCTextSplitterNode):
+class NaturalLanguageTextSplitterNode(LCTextSplitterNode):
     display_name = "Natural Language Text Splitter"
     description = "Split text based on natural language boundaries, optimized for a specified language."
     documentation = (

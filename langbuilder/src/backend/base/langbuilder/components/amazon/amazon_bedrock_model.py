@@ -5,7 +5,7 @@ from langbuilder.inputs.inputs import MessageTextInput, SecretStrInput
 from langbuilder.io import DictInput, DropdownInput
 
 
-class AmazonBedrockComponent(LCModelNode):
+class AmazonBedrockNode(LCModelNode):
     display_name: str = "Amazon Bedrock"
     description: str = "Generate text using Amazon Bedrock LLMs."
     icon = "Amazon"

@@ -13,7 +13,7 @@ from langbuilder.io import (
 from langbuilder.schema.data import Data
 
 
-class SemanticTextSplitterComponent(LCTextSplitterNode):
+class SemanticTextSplitterNode(LCTextSplitterNode):
     """Split text into semantically meaningful chunks using semantic similarity."""
 
     display_name: str = "Semantic Text Splitter"

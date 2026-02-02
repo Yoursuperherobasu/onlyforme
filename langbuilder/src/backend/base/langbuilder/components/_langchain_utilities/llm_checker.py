@@ -5,10 +5,9 @@ from langbuilder.inputs.inputs import HandleInput, MultilineInput
 from langbuilder.schema.message import Message
 
 
-class LLMCheckerChainComponent(LCChainNode):
+class LLMCheckerChainNode(LCChainNode):
     display_name = "LLMCheckerChain"
     description = "Chain for question-answering with self-verification."
-    documentation = "https://python.langchain.com/docs/modules/chains/additional/llm_checker"
     name = "LLMCheckerChain"
     legacy: bool = True
     icon = "LangChain"

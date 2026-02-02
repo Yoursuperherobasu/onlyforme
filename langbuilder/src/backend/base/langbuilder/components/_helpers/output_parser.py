@@ -6,7 +6,7 @@ from langbuilder.io import DropdownInput, Output
 from langbuilder.schema.message import Message
 
 
-class OutputParserComponent(Node):
+class OutputParserNode(Node):
     display_name = "Output Parser"
     description = "Transforms the output of an LLM into a specified format."
     icon = "type"

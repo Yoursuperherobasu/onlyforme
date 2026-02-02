@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from .custom_component import CustomComponent
+    from .custom_component import CodeEditorNode
 
 _dynamic_imports = {
-    "CustomComponent": "custom_component",
+    "CodeEditorNode": "custom_component",
 }
 
 __all__ = [
-    "CustomComponent",
+    "CodeEditorNode",
 ]
 
 

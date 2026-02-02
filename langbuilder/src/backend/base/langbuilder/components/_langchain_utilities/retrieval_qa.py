@@ -7,7 +7,7 @@ from langbuilder.inputs.inputs import BoolInput, DropdownInput, HandleInput, Mul
 from langbuilder.schema.message import Message
 
 
-class RetrievalQAComponent(LCChainNode):
+class RetrievalQANode(LCChainNode):
     display_name = "Retrieval QA"
     description = "Chain for question-answering querying sources from a retriever."
     name = "RetrievalQA"

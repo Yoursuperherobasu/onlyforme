@@ -10,7 +10,7 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.data import Data
 
 
-class OpenAIToolsAgentComponent(LCToolsAgentNode):
+class OpenAIToolsAgentNode(LCToolsAgentNode):
     display_name: str = "OpenAI Tools Agent"
     description: str = "Agent that uses tools via openai-tools."
     icon = "LangChain"

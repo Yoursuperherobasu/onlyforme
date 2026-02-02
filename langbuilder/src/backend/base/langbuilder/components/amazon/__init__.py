@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from langbuilder.components.amazon.amazon_bedrock_embedding import AmazonBedrockEmbeddingsComponent
-    from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockComponent
+    from langbuilder.components.amazon.amazon_bedrock_embedding import AmazonBedrockEmbeddingsNode
+    from langbuilder.components.amazon.amazon_bedrock_model import AmazonBedrockNode
 
 _dynamic_imports = {
-    "AmazonBedrockEmbeddingsComponent": "amazon_bedrock_embedding",
-    "AmazonBedrockComponent": "amazon_bedrock_model",
+    "AmazonBedrockEmbeddingsNode": "amazon_bedrock_embedding",
+    "AmazonBedrockNode": "amazon_bedrock_model",
 }
 
 __all__ = [
-    "AmazonBedrockComponent",
-    "AmazonBedrockEmbeddingsComponent",
+    "AmazonBedrockNode",
+    "AmazonBedrockEmbeddingsNode",
 ]
 
 

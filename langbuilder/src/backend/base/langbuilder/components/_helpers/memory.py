@@ -13,10 +13,9 @@ from langbuilder.utils.component_utils import set_current_fields, set_field_disp
 from langbuilder.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI, MESSAGE_SENDER_USER
 
 
-class MemoryComponent(Node):
+class MemoryNode(Node):
     display_name = "Message History"
-    description = "Stores or retrieves stored chat messages from Langbuilder tables or an external memory."
-    documentation: str = "https://docs.langbuilder.org/components-helpers#message-history"
+    description = "Stores or retrieves stored chat messages from agentCore tables or an external memory."
     icon = "message-square-more"
     name = "Memory"
     default_keys = ["mode", "memory"]

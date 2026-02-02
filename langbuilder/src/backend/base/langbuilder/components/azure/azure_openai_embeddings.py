@@ -6,7 +6,7 @@ from langbuilder.field_typing import Embeddings
 from langbuilder.io import DropdownInput, IntInput, MessageTextInput, Output, SecretStrInput
 
 
-class AzureOpenAIEmbeddingsComponent(LCModelNode):
+class AzureOpenAIEmbeddingsNode(LCModelNode):
     display_name: str = "Azure OpenAI Embeddings"
     description: str = "Generate embeddings using Azure OpenAI models."
     documentation: str = "https://python.langchain.com/docs/integrations/text_embedding/azureopenai"

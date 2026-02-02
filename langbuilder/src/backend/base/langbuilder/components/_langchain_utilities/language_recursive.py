@@ -6,7 +6,7 @@ from langbuilder.base.textsplitters.model import LCTextSplitterNode
 from langbuilder.inputs.inputs import DataInput, DropdownInput, IntInput
 
 
-class LanguageRecursiveTextSplitterComponent(LCTextSplitterNode):
+class LanguageRecursiveTextSplitterNode(LCTextSplitterNode):
     display_name: str = "Language Recursive Text Splitter"
     description: str = "Split text into chunks of a specified length based on language."
     name = "LanguageRecursiveTextSplitter"

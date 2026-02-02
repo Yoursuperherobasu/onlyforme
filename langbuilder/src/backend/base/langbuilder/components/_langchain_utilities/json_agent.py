@@ -6,18 +6,18 @@ from langchain_community.agent_toolkits import create_json_agent
 from langchain_community.agent_toolkits.json.toolkit import JsonToolkit
 from langchain_community.tools.json.tool import JsonSpec
 
-from langbuilder.base.agents.agent import LCAgentComponent
+from langbuilder.base.agents.agent import LCAgentNode
 from langbuilder.inputs.inputs import FileInput, HandleInput
 
 
-class JsonAgentComponent(LCAgentComponent):
+class JsonAgentNode(LCAgentNode):
     display_name = "JsonAgent"
     description = "Construct a json agent from an LLM and tools."
     name = "JsonAgent"
     legacy: bool = True
 
     inputs = [
-        *LCAgentComponent._base_inputs,
+        *LCAgentNode._base_inputs,
         HandleInput(
             name="llm",
             display_name="Language Model",

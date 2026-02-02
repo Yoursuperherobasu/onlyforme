@@ -6,16 +6,16 @@ from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
     from .azure_openai import AzureChatOpenAIComponent
-    from .azure_openai_embeddings import AzureOpenAIEmbeddingsComponent
+    from .azure_openai_embeddings import AzureOpenAIEmbeddingsNode
 
 _dynamic_imports = {
     "AzureChatOpenAIComponent": "azure_openai",
-    "AzureOpenAIEmbeddingsComponent": "azure_openai_embeddings",
+    "AzureOpenAIEmbeddingsNode": "azure_openai_embeddings",
 }
 
 __all__ = [
     "AzureChatOpenAIComponent",
-    "AzureOpenAIEmbeddingsComponent",
+    "AzureOpenAIEmbeddingsNode",
 ]
 
 
