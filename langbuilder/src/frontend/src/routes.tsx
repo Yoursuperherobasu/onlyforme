@@ -32,9 +32,9 @@ import KnowledgePage from "./pages/MainPage/pages/knowledgePage";
 import CollectionPage from "./pages/MainPage/pages/main-page";
 import SettingsPage from "./pages/SettingsPage";
 import ApiKeysPage from "./pages/SettingsPage/pages/ApiKeysPage";
-import GeneralPage from "./pages/SettingsPage/pages/GeneralPage";
+
 import GlobalVariablesPage from "./pages/SettingsPage/pages/GlobalVariablesPage";
-import MCPServersPage from "./pages/SettingsPage/pages/MCPServersPage";
+import MCPServersPage from "./pages/McpServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
@@ -46,9 +46,11 @@ import { Workflow } from "lucide-react";
 import WorkflowCatalogueView from "./pages/WorkflowPage";
 import WorkflowsView from "./pages/WorkflowPage";
 import Dashboard from "./pages/DashboardPage";
-import Dashboard from "./pages/DashboardPage";
 import DashboardAdmin from "./pages/DashboardPage";
 import TimeoutSettings from "./pages/TimeoutSettings";
+import ObservabilityDashboard from "./pages/ObservabilityPage";
+import GuardrailsView from "./pages/GuardrailsCatalogue";
+import VectorDBView from "./pages/VectorDbPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -93,13 +95,25 @@ const router = createBrowserRouter(
                 <Route path="" element={<CollectionPage />}>
                   <Route
                     index
-                    element={<CustomNavigate replace to={"flows"} />}
+                    element={<CustomNavigate replace to={"dashboard-admin"} />}
                   />
                   <Route path="approval" element={<ApprovalPage />} />
                   <Route path="model-catalogue" element={<ModelCatalogue />} />
                   <Route
                     path="orchestrator-chat"
                     element={<AgentOrchestrator />}
+                  />
+                  <Route
+                    path="guardrails"
+                    element={<GuardrailsView />}
+                  />
+                  <Route
+                    path="vector-db"
+                    element={<VectorDBView />}
+                  />
+                  <Route
+                    path="mcp-servers"
+                    element={<MCPServersPage />}
                   />
                   <Route
                     path="dashboard-admin"
@@ -109,9 +123,14 @@ const router = createBrowserRouter(
                     path="timeout-settings"
                     element={<TimeoutSettings />}
                   />
+                  
                   <Route
                     path="agent-catalogue"
                     element={<AgentCatalogueView />}
+                  />
+                  <Route
+                    path="observability-dashboard"
+                    element={<ObservabilityDashboard />}
                   />
 
                   <Route path="workflows" element={<WorkflowsView />} />
@@ -168,22 +187,15 @@ const router = createBrowserRouter(
                 <Route path="settings" element={<SettingsPage />}>
                   <Route
                     index
-                    element={<CustomNavigate replace to={"general"} />}
+                    element={<CustomNavigate replace to={"global-variables"} />}
                   />
                   <Route
                     path="global-variables"
                     element={<GlobalVariablesPage />}
                   />
-                  <Route path="mcp-servers" element={<MCPServersPage />} />
+                  
                   <Route path="api-keys" element={<ApiKeysPage />} />
-                  <Route
-                    path="general/:scrollId?"
-                    element={
-                      <AuthSettingsGuard>
-                        <GeneralPage />
-                      </AuthSettingsGuard>
-                    }
-                  />
+                 
                   <Route path="shortcuts" element={<ShortcutsPage />} />
                   <Route path="messages" element={<MessagesPage />} />
                   {CustomRoutesStore()}

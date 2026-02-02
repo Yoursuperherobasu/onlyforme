@@ -23,34 +23,10 @@ if TYPE_CHECKING:
     from langbuilder.services.tracing.schema import Log
 
 
-def _get_langsmith_tracer():
-    from langbuilder.services.tracing.langsmith import LangSmithTracer
-
-    return LangSmithTracer
-
-
-def _get_langwatch_tracer():
-    from langbuilder.services.tracing.langwatch import LangWatchTracer
-
-    return LangWatchTracer
-
-
 def _get_langfuse_tracer():
     from langbuilder.services.tracing.langfuse import LangFuseTracer
 
     return LangFuseTracer
-
-
-def _get_arize_phoenix_tracer():
-    from langbuilder.services.tracing.arize_phoenix import ArizePhoenixTracer
-
-    return ArizePhoenixTracer
-
-
-def _get_opik_tracer():
-    from langbuilder.services.tracing.opik import OpikTracer
-
-    return OpikTracer
 
 
 trace_context_var: ContextVar[TraceContext | None] = ContextVar("trace_context", default=None)
@@ -65,12 +41,21 @@ class TraceContext:
         project_name: str | None,
         user_id: str | None,
         session_id: str | None,
+        flow_id: str | None = None,
+        flow_name: str | None = None,
+        observability_project_id: str | None = None,
+        observability_project_name: str | None = None,
     ):
         self.run_id: UUID | None = run_id
         self.run_name: str | None = run_name
         self.project_name: str | None = project_name
         self.user_id: str | None = user_id
         self.session_id: str | None = session_id
+        # Observability tracking fields
+        self.flow_id: str | None = flow_id
+        self.flow_name: str | None = flow_name
+        self.observability_project_id: str | None = observability_project_id
+        self.observability_project_name: str | None = observability_project_name
         self.tracers: dict[str, BaseTracer] = {}
         self.all_inputs: dict[str, dict] = defaultdict(dict)
         self.all_outputs: dict[str, dict] = defaultdict(dict)
@@ -140,30 +125,6 @@ class TracingService(Service):
         except Exception:  # noqa: BLE001
             logger.exception("Error starting tracing service")
 
-    def _initialize_langsmith_tracer(self, trace_context: TraceContext) -> None:
-        langsmith_tracer = _get_langsmith_tracer()
-        trace_context.tracers["langsmith"] = langsmith_tracer(
-            trace_name=trace_context.run_name,
-            trace_type="chain",
-            project_name=trace_context.project_name,
-            trace_id=trace_context.run_id,
-        )
-
-    def _initialize_langwatch_tracer(self, trace_context: TraceContext) -> None:
-        if self.deactivated:
-            return
-        if (
-            "langwatch" not in trace_context.tracers
-            or trace_context.tracers["langwatch"].trace_id != trace_context.run_id
-        ):
-            langwatch_tracer = _get_langwatch_tracer()
-            trace_context.tracers["langwatch"] = langwatch_tracer(
-                trace_name=trace_context.run_name,
-                trace_type="chain",
-                project_name=trace_context.project_name,
-                trace_id=trace_context.run_id,
-            )
-
     def _initialize_langfuse_tracer(self, trace_context: TraceContext) -> None:
         if self.deactivated:
             return
@@ -175,30 +136,10 @@ class TracingService(Service):
             trace_id=trace_context.run_id,
             user_id=trace_context.user_id,
             session_id=trace_context.session_id,
-        )
-
-    def _initialize_arize_phoenix_tracer(self, trace_context: TraceContext) -> None:
-        if self.deactivated:
-            return
-        arize_phoenix_tracer = _get_arize_phoenix_tracer()
-        trace_context.tracers["arize_phoenix"] = arize_phoenix_tracer(
-            trace_name=trace_context.run_name,
-            trace_type="chain",
-            project_name=trace_context.project_name,
-            trace_id=trace_context.run_id,
-        )
-
-    def _initialize_opik_tracer(self, trace_context: TraceContext) -> None:
-        if self.deactivated:
-            return
-        opik_tracer = _get_opik_tracer()
-        trace_context.tracers["opik"] = opik_tracer(
-            trace_name=trace_context.run_name,
-            trace_type="chain",
-            project_name=trace_context.project_name,
-            trace_id=trace_context.run_id,
-            user_id=trace_context.user_id,
-            session_id=trace_context.session_id,
+            flow_id=trace_context.flow_id,
+            flow_name=trace_context.flow_name,
+            observability_project_id=trace_context.observability_project_id,
+            observability_project_name=trace_context.observability_project_name,
         )
 
     async def start_tracers(
@@ -208,25 +149,46 @@ class TracingService(Service):
         user_id: str | None,
         session_id: str | None,
         project_name: str | None = None,
+        flow_id: str | None = None,
+        flow_name: str | None = None,
+        observability_project_id: str | None = None,
+        observability_project_name: str | None = None,
     ) -> None:
         """Start a trace for a graph run.
 
         - create a trace context
         - start a worker for this trace context
         - initialize the tracers
+
+        Args:
+            run_id: Unique identifier for this run
+            run_name: Name of this run (typically flow_name - flow_id)
+            user_id: User ID for observability isolation
+            session_id: Session ID for grouping related traces
+            project_name: Langchain project name
+            flow_id: Flow UUID for observability tracking
+            flow_name: Flow name for observability display
+            observability_project_id: Folder ID for project-level grouping
+            observability_project_name: Folder name for project display
         """
         if self.deactivated:
             return
         try:
             project_name = project_name or os.getenv("LANGCHAIN_PROJECT", "Langbuilder")
-            trace_context = TraceContext(run_id, run_name, project_name, user_id, session_id)
+            trace_context = TraceContext(
+                run_id=run_id,
+                run_name=run_name,
+                project_name=project_name,
+                user_id=user_id,
+                session_id=session_id,
+                flow_id=flow_id,
+                flow_name=flow_name,
+                observability_project_id=observability_project_id,
+                observability_project_name=observability_project_name,
+            )
             trace_context_var.set(trace_context)
             await self._start(trace_context)
-            self._initialize_langsmith_tracer(trace_context)
-            self._initialize_langwatch_tracer(trace_context)
             self._initialize_langfuse_tracer(trace_context)
-            self._initialize_arize_phoenix_tracer(trace_context)
-            self._initialize_opik_tracer(trace_context)
         except Exception as e:  # noqa: BLE001
             logger.debug(f"Error initializing tracers: {e}")
 

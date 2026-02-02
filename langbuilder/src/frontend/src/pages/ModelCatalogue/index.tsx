@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import EditModelModal from "./components/edit-model-modal";
-import { SiGoogle, SiOpenai, SiAnthropic, SiMeta, SiGooglegemini } from "react-icons/si";
+import { getProviderIcon } from "@/utils/logo_provider";
 
 
 interface ModelCardsViewProps {
@@ -161,21 +161,15 @@ export default function ModelCardsView({
 
 
   const getProviderLogo = (provider: string) => {
-  const baseClass = "h-4 w-4";
-
-  switch (provider) {
-    case "google":
-      return <SiGooglegemini className={baseClass} />;
-    case "openai":
-      return <SiOpenai className={`${baseClass} text-foreground`} />;
-    case "anthropic":
-      return <SiAnthropic className={`${baseClass} text-[#D97706]`} />;
-    case "meta":
-      return <SiMeta className={baseClass} />;
-    default:
-      return <span className="text-xs">?</span>;
-  }
-};
+    const iconSrc = getProviderIcon(provider);
+    return (
+      <img 
+        src={iconSrc} 
+        alt={`${provider} icon`} 
+        className="h-4 w-4 object-contain"
+      />
+    );
+  };
 
 
   const getProviderName = (provider: string) =>
@@ -192,7 +186,7 @@ export default function ModelCardsView({
         <div>
           <div className="mb-2 flex items-center gap-3">
             
-            <h1 className="text-2xl font-semibold">Model Catalogue</h1>
+            <h1 className="text-2xl font-semibold">Model Registry</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             Browse and manage AI models

@@ -69,6 +69,7 @@ async def read_current_user(
             print(f"User from cache {current_user.id}")
         else:
             cached_user = current_user.model_dump()
+            
             await user_cache.set_user(current_user)  # Cache it
             print(f"Cached user {current_user.id}")
     except Exception as e:

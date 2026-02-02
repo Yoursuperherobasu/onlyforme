@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
+<<<<<<< HEAD
     from langbuilder.components.models.embedding_model import EmbeddingModel
     from langbuilder.components.models.language_model import LanguageModel
 
@@ -14,10 +15,37 @@ _dynamic_imports = {
 }
 
 __all__ = ["EmbeddingModel", "LanguageModel"]
+=======
+    from .azure_openai import AzureChatOpenAIComponent
+    from .azure_openai_embeddings import AzureOpenAIEmbeddingsComponent
+    from .google_generative_ai import GoogleGenerativeAIComponent
+    from .google_generative_ai_embeddings import GoogleGenerativeAIEmbeddingsComponent
+    from .groq import GroqModel
+    from .mistral_embeddings import MistralAIEmbeddingsComponent
+
+
+_dynamic_imports = {
+    "GroqModel": "groq",
+    "AzureChatOpenAIComponent": "azure_openai",
+    "AzureOpenAIEmbeddingsComponent": "azure_openai_embeddings",
+    "GoogleGenerativeAIComponent":"google_chat",
+    "GoogleGenerativeAIEmbeddingsComponent":"google_embedding",
+     "MistralAIEmbeddingsComponent": "mistral_embeddings",
+}
+
+__all__ = [
+    "GroqModel",
+    "AzureChatOpenAIComponent",
+    "AzureOpenAIEmbeddingsComponent",
+    "GoogleGenerativeAIComponent",
+    "GoogleGenerativeAIEmbeddingsComponent",
+    "HuggingFaceInferenceAPIEmbeddingsComponent",
+    "MistralAIModelComponent",
+]
+>>>>>>> origin/code_cleanup_02_03
 
 
 def __getattr__(attr_name: str) -> Any:
-    """Lazily import model components on attribute access."""
     if attr_name not in _dynamic_imports:
         msg = f"module '{__name__}' has no attribute '{attr_name}'"
         raise AttributeError(msg)

@@ -58,16 +58,25 @@ class LCModelNode(Node):
         return str(e)
 
     def supports_tool_calling(self, model: LanguageModel) -> bool:
+        """Check if a model supports tool calling by testing bind_tools method."""
         try:
             # Check if the bind_tools method is the same as the base class's method
             if model.bind_tools is BaseChatModel.bind_tools:
                 return False
 
             def test_tool(x: int) -> int:
+                """A test tool that returns the input."""
                 return x
 
             model_with_tool = model.bind_tools([test_tool])
-            return hasattr(model_with_tool, "tools") and len(model_with_tool.tools) > 0
+            
+            # RunnableBinding stores tools in kwargs['tools'], not as direct attribute
+            # Check both locations for compatibility
+            tools_from_kwargs = model_with_tool.kwargs.get('tools', []) if hasattr(model_with_tool, 'kwargs') else []
+            tools_from_attr = getattr(model_with_tool, 'tools', []) or []
+            
+            tools = tools_from_kwargs or tools_from_attr
+            return len(tools) > 0 if tools else False
         except (AttributeError, TypeError, ValueError):
             return False
 

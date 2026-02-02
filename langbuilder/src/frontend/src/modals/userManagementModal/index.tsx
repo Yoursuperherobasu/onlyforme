@@ -33,6 +33,7 @@ export default function UserManagementModal({
   const [confirmPassword, setConfirmPassword] = useState(data?.password ?? "");
   const [isActive, setIsActive] = useState(data?.is_active ?? false);
   const [isSuperUser, setIsSuperUser] = useState(data?.is_superuser ?? false);
+  const [role, setRole] = useState(data?.is_superuser ? "admin" : "business_user");
   const [inputState, setInputState] = useState<UserInputType>(CONTROL_NEW_USER);
   const { userData } = useContext(AuthContext);
 
@@ -50,6 +51,7 @@ export default function UserManagementModal({
         setUserName(data.username);
         setIsActive(data.is_active);
         setIsSuperUser(data.is_superuser);
+        setRole(data.is_superuser ? "admin" : "business_user");
 
         handleInput({ target: { name: "username", value: username } });
         handleInput({ target: { name: "is_active", value: isActive } });
@@ -64,6 +66,14 @@ export default function UserManagementModal({
     setConfirmPassword("");
     setIsActive(false);
     setIsSuperUser(false);
+    setRole("business_user");
+  }
+
+  function handleRoleChange(selectedRole: string) {
+    setRole(selectedRole);
+    const isSuperUserValue = selectedRole === "admin" || selectedRole === "department_admin";
+    setIsSuperUser(isSuperUserValue);
+    handleInput({ target: { name: "is_superuser", value: isSuperUserValue } });
   }
 
   return (
@@ -254,29 +264,25 @@ export default function UserManagementModal({
                   </Form.Control>
                 </div>
               </Form.Field>
-              {userData?.is_superuser && (
-                <Form.Field name="is_superuser">
-                  <div>
-                    <Form.Label className="data-[invalid]:label-invalid mr-3">
-                      Superuser
-                    </Form.Label>
-                    <Form.Control asChild>
-                      <Checkbox
-                        checked={isSuperUser}
-                        value={isSuperUser}
-                        id="is_superuser"
-                        className="relative top-0.5"
-                        onCheckedChange={(value) => {
-                          handleInput({
-                            target: { name: "is_superuser", value },
-                          });
-                          setIsSuperUser(value);
-                        }}
-                      />
-                    </Form.Control>
-                  </div>
-                </Form.Field>
-              )}
+              <Form.Field name="role">
+                <div className="flex flex-col">
+                  <Form.Label className="data-[invalid]:label-invalid mb-2">
+                    Role
+                  </Form.Label>
+                  <Form.Control asChild>
+                    <select
+                      value={role}
+                      onChange={(e) => handleRoleChange(e.target.value)}
+                      className="primary-input cursor-pointer"
+                    >
+                      <option value="business_user">Business User</option>
+                      <option value="developer">Developer</option>
+                      <option value="department_admin">Department Admin</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </Form.Control>
+                </div>
+              </Form.Field>
             </div>
           </div>
 

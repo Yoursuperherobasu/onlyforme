@@ -39,7 +39,7 @@ class LCAgentNode(Node):
             name="input_value",
             display_name="Input",
             info="The input provided by the user for the agent to process.",
-            tool_mode=True,
+            tool_mode=False,
         ),
         BoolInput(
             name="handle_parsing_errors",

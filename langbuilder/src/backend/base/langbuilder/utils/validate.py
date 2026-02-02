@@ -255,14 +255,25 @@ def create_class(code, class_name):
     if not hasattr(ast, "TypeIgnore"):
         ast.TypeIgnore = create_type_ignore_class()
 
-    # Support both old and new import paths
+    # Transform old import paths to new ones (Component -> Node, CustomComponent -> ExecutableNode)
     code = code.replace("from langbuilder import CustomComponent", "from langbuilder.custom import ExecutableNode")
+    code = code.replace("from langbuilder.custom import CustomComponent", "from langbuilder.custom import ExecutableNode")
+    code = code.replace("from langbuilder.custom import Component", "from langbuilder.custom import Node")
+    code = code.replace(
+        "from langbuilder.custom.custom_component.component import Component",
+        "from langbuilder.custom import Node",
+    )
+    code = code.replace(
+        "from langbuilder.custom.custom_component.custom_component import CustomComponent",
+        "from langbuilder.custom import ExecutableNode",
+    )
     code = code.replace(
         "from langbuilder.interface.custom.custom_component import CustomComponent",
         "from langbuilder.custom import ExecutableNode",
     )
-    code = code.replace("from langbuilder.custom import CustomComponent", "from langbuilder.custom import ExecutableNode")
-    code = code.replace("from langbuilder import Component", "from langbuilder.custom import Node")
+    # Also replace class inheritance references
+    code = code.replace("(CustomComponent)", "(ExecutableNode)")
+    code = code.replace("(Component)", "(Node)")
 
     code = DEFAULT_IMPORT_STRING + "\n" + code
     try:

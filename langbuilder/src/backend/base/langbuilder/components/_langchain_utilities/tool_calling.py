@@ -1,5 +1,6 @@
 from langchain.agents import create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 
 from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.inputs.inputs import (
@@ -44,16 +45,56 @@ class ToolCallingAgentNode(LCToolsAgentNode):
         return self.chat_history
 
     def create_agent_runnable(self):
-        messages = [
-            ("system", "{system_prompt}"),
-            ("placeholder", "{chat_history}"),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}"),
-        ]
-        prompt = ChatPromptTemplate.from_messages(messages)
-        self.validate_tool_names()
-        try:
-            return create_tool_calling_agent(self.llm, self.tools or [], prompt)
-        except NotImplementedError as e:
-            message = f"{self.display_name} does not support tool calling. Please try using a compatible model."
-            raise NotImplementedError(message) from e
+        # Check if we have actual tools to use
+        has_tools = self.tools and len(self.tools) > 0
+        
+        if has_tools:
+            # Use tool-calling agent when tools are available
+            messages = [
+                ("system", "{system_prompt}"),
+                ("placeholder", "{chat_history}"),
+                ("human", "{input}"),
+                ("placeholder", "{agent_scratchpad}"),
+            ]
+            prompt = ChatPromptTemplate.from_messages(messages)
+            self.validate_tool_names()
+            try:
+                return create_tool_calling_agent(self.llm, self.tools, prompt)
+            except NotImplementedError as e:
+                message = f"{self.display_name} does not support tool calling. Please try using a compatible model."
+                raise NotImplementedError(message) from e
+        else:
+            # No tools - create a simple chain that doesn't bind tools to the LLM
+            # This prevents the "Tool choice is none, but model called a tool" error
+            from langchain.agents.output_parsers.tools import ToolsAgentOutputParser
+            from langchain_core.agents import AgentFinish
+            from langchain_core.runnables import RunnableLambda
+            
+            messages = [
+                ("system", "{system_prompt}"),
+                ("placeholder", "{chat_history}"),
+                ("human", "{input}"),
+            ]
+            prompt = ChatPromptTemplate.from_messages(messages)
+            
+            # Create a simple chain that returns an AgentFinish directly
+            def wrap_as_agent_finish(response):
+                """Wrap LLM response as AgentFinish for compatibility with AgentExecutor."""
+                if hasattr(response, 'content'):
+                    content = response.content
+                else:
+                    content = str(response)
+                return AgentFinish(
+                    return_values={"output": content},
+                    log=content,
+                )
+            
+            # Simple chain: prompt | llm | wrap as AgentFinish
+            # Pass through agent_scratchpad but don't use it (for compatibility)
+            chain = (
+                RunnablePassthrough.assign(agent_scratchpad=lambda x: [])
+                | prompt 
+                | self.llm 
+                | RunnableLambda(wrap_as_agent_finish)
+            )
+            return chain

@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from langbuilder.services.factory import ServiceFactory
-from langbuilder.services.variable.service import DatabaseVariableService, VariableService
+from langbuilder.services.variable.base import VariableService
+from langbuilder.services.variable.service import DatabaseVariableService
 
 if TYPE_CHECKING:
     from langbuilder.services.settings.service import SettingsService
@@ -17,12 +18,4 @@ class VariableServiceFactory(ServiceFactory):
 
     @override
     def create(self, settings_service: SettingsService):
-        # here you would have logic to create and configure a VariableService
-        # based on the settings_service
-
-        if settings_service.settings.variable_store == "kubernetes":
-            # Keep it here to avoid import errors
-            from langbuilder.services.variable.kubernetes import KubernetesSecretService
-
-            return KubernetesSecretService(settings_service)
         return DatabaseVariableService(settings_service)
