@@ -352,7 +352,7 @@
             "legacy": false,
             "lf_version": "1.4.2",
             "metadata": {
-              "code_hash": "124111d8af99",
+              "code_hash": "5d100cba80d5",
               "module": "langbuilder.components.input_output.text.TextInput"
             },
             "output_types": [],
@@ -391,7 +391,7 @@
                 "show": true,
                 "title_case": false,
                 "type": "code",
-                "value": "from langbuilder.base.io.text import TextComponent\nfrom langbuilder.io import MultilineInput, Output\nfrom langbuilder.schema.message import Message\n\n\nclass TextInput(TextComponent):\n    display_name = \"Text Input\"\n    description = \"Get user text inputs.\"\n    icon = \"type\"\n    name = \"TextInput\"\n\n    inputs = [\n        MultilineInput(\n            name=\"input_value\",\n            display_name=\"Text\",\n            info=\"Text to be passed as input.\",\n        ),\n    ]\n    outputs = [\n        Output(display_name=\"Output Text\", name=\"text\", method=\"text_response\"),\n    ]\n\n    def text_response(self) -> Message:\n        return Message(\n            text=self.input_value,\n        )\n"
+                "value": "from langbuilder.base.io.text import TextNode\nfrom langbuilder.io import MultilineInput, Output\nfrom langbuilder.schema.message import Message\n\n\nclass TextInput(TextNode):\n    display_name = \"Text Input\"\n    description = \"Get user text inputs.\"\n    icon = \"type\"\n    name = \"TextInput\"\n\n    inputs = [\n        MultilineInput(\n            name=\"input_value\",\n            display_name=\"Text\",\n            info=\"Text to be passed as input.\",\n        ),\n    ]\n    outputs = [\n        Output(display_name=\"Output Text\", name=\"text\", method=\"text_response\"),\n    ]\n\n    def text_response(self) -> Message:\n        return Message(\n            text=self.input_value,\n        )\n"
               },
               "input_value": {
                 "_input_type": "MultilineInput",

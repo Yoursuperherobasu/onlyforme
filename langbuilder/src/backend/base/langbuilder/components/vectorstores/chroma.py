@@ -5,7 +5,7 @@ from chromadb.config import Settings
 from langchain_chroma import Chroma
 from typing_extensions import override
 
-from langbuilder.base.vectorstores.model import LCVectorStoreComponent, check_cached_vector_store
+from langbuilder.base.vectorstores.model import LCVectorStoreNode, check_cached_vector_store
 from langbuilder.base.vectorstores.utils import chroma_collection_to_data
 from langbuilder.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, StrInput
 from langbuilder.schema.data import Data
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from langbuilder.schema.dataframe import DataFrame
 
 
-class ChromaVectorStoreComponent(LCVectorStoreComponent):
+class ChromaVectorStoreComponent(LCVectorStoreNode):
     """Chroma Vector Store with search capabilities."""
 
     display_name: str = "Chroma DB"
@@ -32,7 +32,7 @@ class ChromaVectorStoreComponent(LCVectorStoreComponent):
             name="persist_directory",
             display_name="Persist Directory",
         ),
-        *LCVectorStoreComponent.inputs,
+        *LCVectorStoreNode.inputs,
         HandleInput(name="embedding", display_name="Embedding", input_types=["Embeddings"]),
         StrInput(
             name="chroma_server_cors_allow_origins",

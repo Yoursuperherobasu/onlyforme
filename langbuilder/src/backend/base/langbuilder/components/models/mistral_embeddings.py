@@ -1,12 +1,12 @@
 
 from pydantic.v1 import SecretStr
 
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import Embeddings
 from langbuilder.io import DropdownInput, IntInput, MessageTextInput, Output, SecretStrInput
 
 
-class MistralAIEmbeddingsComponent(LCModelComponent):
+class MistralAIEmbeddingsComponent(LCModelNode):
     display_name = "MistralAI Embeddings"
     description = "Generate embeddings using MistralAI models."
     icon = "MistralAI"
