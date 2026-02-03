@@ -5,6 +5,17 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
+<<<<<<< HEAD
+    from langbuilder.components.models.embedding_model import EmbeddingModel
+    from langbuilder.components.models.language_model import LanguageModel
+
+_dynamic_imports = {
+    "EmbeddingModel": "embedding_model",
+    "LanguageModel": "language_model",
+}
+
+__all__ = ["EmbeddingModel", "LanguageModel"]
+=======
     from .azure_openai import AzureChatOpenAIComponent
     from .azure_openai_embeddings import AzureOpenAIEmbeddingsComponent
     from .google_generative_ai import GoogleGenerativeAIComponent
@@ -31,6 +42,7 @@ __all__ = [
     "HuggingFaceInferenceAPIEmbeddingsComponent",
     "MistralAIModelComponent",
 ]
+>>>>>>> origin/code_cleanup_02_03
 
 
 def __getattr__(attr_name: str) -> Any:

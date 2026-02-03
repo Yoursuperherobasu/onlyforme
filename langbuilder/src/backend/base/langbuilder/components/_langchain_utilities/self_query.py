@@ -8,7 +8,7 @@ from langbuilder.schema.data import Data
 from langbuilder.schema.message import Message
 
 
-class SelfQueryRetrieverComponent(Node):
+class SelfQueryRetrieverNode(Node):
     display_name = "Self Query Retriever"
     description = "Retriever that uses a vector store and an LLM to generate the vector store queries."
     name = "SelfQueryRetriever"

@@ -32,7 +32,7 @@ DEFAULT_TOOLS_DESCRIPTION = "A helpful assistant with access to the following to
 DEFAULT_AGENT_NAME = "Agent ({tools_names})"
 
 
-class LCAgentComponent(Node):
+class LCAgentNode(Node):
     trace_type = "agent"
     _base_inputs: list[InputTypes] = [
         MessageInput(
@@ -225,7 +225,7 @@ class LCAgentComponent(Node):
                     raise ValueError(msg)
 
 
-class LCToolsAgentComponent(LCAgentComponent):
+class LCToolsAgentNode(LCAgentNode):
     _base_inputs = [
         HandleInput(
             name="tools",
@@ -235,7 +235,7 @@ class LCToolsAgentComponent(LCAgentComponent):
             required=False,
             info="These are the tools that the agent can use to help with tasks.",
         ),
-        *LCAgentComponent._base_inputs,
+        *LCAgentNode._base_inputs,
     ]
 
     def build_agent(self) -> AgentExecutor:

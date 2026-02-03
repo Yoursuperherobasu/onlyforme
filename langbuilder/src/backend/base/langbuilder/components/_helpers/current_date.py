@@ -8,10 +8,9 @@ from langbuilder.io import DropdownInput, Output
 from langbuilder.schema.message import Message
 
 
-class CurrentDateComponent(Node):
+class CurrentDateNode(Node):
     display_name = "Current Date"
     description = "Returns the current date and time in the selected timezone."
-    documentation: str = "https://docs.langbuilder.org/components-helpers#current-date"
     icon = "clock"
     name = "CurrentDate"
 

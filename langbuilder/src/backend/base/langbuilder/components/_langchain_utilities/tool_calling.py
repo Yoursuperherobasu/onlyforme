@@ -2,7 +2,7 @@ from langchain.agents import create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 
-from langbuilder.base.agents.agent import LCToolsAgentComponent
+from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.inputs.inputs import (
     DataInput,
     HandleInput,
@@ -11,29 +11,14 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.data import Data
 
 
-def message_formatter(intermediate_steps):
-    """Format intermediate steps for the agent scratchpad."""
-    from langchain_core.messages import AIMessage, ToolMessage
-    messages = []
-    for action, observation in intermediate_steps:
-        if hasattr(action, 'tool_calls') and action.tool_calls:
-            messages.append(AIMessage(content="", tool_calls=action.tool_calls))
-            for tool_call in action.tool_calls:
-                messages.append(ToolMessage(content=str(observation), tool_call_id=tool_call["id"]))
-        elif hasattr(action, 'tool'):
-            messages.append(AIMessage(content=f"Calling tool: {action.tool}"))
-            messages.append(ToolMessage(content=str(observation), tool_call_id=action.tool))
-    return messages
-
-
-class ToolCallingAgentComponent(LCToolsAgentComponent):
+class ToolCallingAgentNode(LCToolsAgentNode):
     display_name: str = "Tool Calling Agent"
     description: str = "An agent designed to utilize various tools seamlessly within workflows."
     icon = "LangChain"
     name = "ToolCallingAgent"
 
     inputs = [
-        *LCToolsAgentComponent._base_inputs,
+        *LCToolsAgentNode._base_inputs,
         HandleInput(
             name="llm",
             display_name="Language Model",

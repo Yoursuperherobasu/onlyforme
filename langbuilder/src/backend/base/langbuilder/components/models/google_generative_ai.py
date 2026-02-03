@@ -5,7 +5,7 @@ from loguru import logger
 from pydantic.v1 import SecretStr
 
 from langbuilder.base.models.google_generative_ai_constants import GOOGLE_GENERATIVE_AI_MODELS
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import LanguageModel
 from langbuilder.field_typing.range_spec import RangeSpec
 from langbuilder.inputs.inputs import (
@@ -19,14 +19,14 @@ from langbuilder.inputs.inputs import (
 from langbuilder.schema.dotdict import dotdict
 
 
-class GoogleGenerativeAIComponent(LCModelComponent):
+class GoogleGenerativeAI(LCModelNode):
     display_name = "Google Generative AI"
     description = "Generate text using Google Generative AI."
     icon = "GoogleGenerativeAI"
     name = "GoogleGenerativeAIModel"
 
     inputs = [
-        *LCModelComponent._base_inputs,
+        *LCModelNode._base_inputs,
         IntInput(
             name="max_output_tokens", display_name="Max Output Tokens", info="The maximum number of tokens to generate."
         ),

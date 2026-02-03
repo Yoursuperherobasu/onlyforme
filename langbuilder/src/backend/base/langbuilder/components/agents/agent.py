@@ -3,12 +3,12 @@ import re
 
 from langchain_core.tools import StructuredTool
 
-from langbuilder.base.agents.agent import LCToolsAgentComponent
+from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.base.agents.events import ExceptionWithMessageError
 from langbuilder.base.models.model_utils import get_model_name
-from langbuilder.components._helpers.current_date import CurrentDateComponent
+from langbuilder.components._helpers.current_date import CurrentDateNode
 from langbuilder.components._helpers.memory import MemoryComponent
-from langbuilder.components._langchain_utilities.tool_calling import ToolCallingAgentComponent
+from langbuilder.components._langchain_utilities.tool_calling import ToolCallingAgentNode
 from langbuilder.custom.custom_component.component import _get_component_toolkit
 from langbuilder.field_typing import Tool
 from langbuilder.io import BoolInput, HandleInput, IntInput, MultilineInput, Output
@@ -24,10 +24,9 @@ def set_advanced_true(component_input):
     return component_input
 
 
-class AgentComponent(ToolCallingAgentComponent):
+class AgentNode(ToolCallingAgentNode):
     display_name: str = "Worker Node"
     description: str = "Define the agent's instructions, then enter a task to complete using tools."
-    documentation: str = "https://docs.langbuilder.org/agents"
     icon = "bot"
     beta = False
     name = "Agent"
@@ -57,7 +56,7 @@ class AgentComponent(ToolCallingAgentComponent):
             advanced=True,
             show=True,
         ),
-        *LCToolsAgentComponent._base_inputs,
+        *LCToolsAgentNode._base_inputs,
         # removed memory inputs from agent component
         # *memory_inputs,
         BoolInput(
@@ -110,9 +109,9 @@ class AgentComponent(ToolCallingAgentComponent):
             
             # Add current date tool if enabled
             if self.add_current_date_tool:
-                current_date_tool = (await CurrentDateComponent(**self.get_base_args()).to_toolkit()).pop(0)
+                current_date_tool = (await CurrentDateNode(**self.get_base_args()).to_toolkit()).pop(0)
                 if not isinstance(current_date_tool, StructuredTool):
-                    msg = "CurrentDateComponent must be converted to a StructuredTool"
+                    msg = "CurrentDateNode must be converted to a StructuredTool"
                     raise TypeError(msg)
                 self.tools.append(current_date_tool)
             

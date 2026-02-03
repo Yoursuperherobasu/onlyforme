@@ -16,10 +16,9 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.schema.table import EditMode
 
 
-class StructuredOutputComponent(Node):
+class StructuredOutput(Node):
     display_name = "Structured Output"
     description = "Uses an LLM to generate structured data. Ideal for extraction and consistency."
-    documentation: str = "https://docs.langbuilder.org/components-processing#structured-output"
     name = "StructuredOutput"
     icon = "braces"
 

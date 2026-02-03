@@ -7,26 +7,26 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from langbuilder.components.processing.batch_run import BatchRunComponent
-    from langbuilder.components.processing.parser import ParserComponent
-    from langbuilder.components.processing.prompt import PromptComponent
-    from langbuilder.components.processing.split_text import SplitTextComponent
-    from langbuilder.components.processing.structured_output import StructuredOutputComponent
+    from langbuilder.components.processing.batch_run import BatchRun
+    from langbuilder.components.processing.parser import Parser
+    from langbuilder.components.processing.prompt import Prompt
+    from langbuilder.components.processing.split_text import SplitText
+    from langbuilder.components.processing.structured_output import StructuredOutput
 
 _dynamic_imports = {
-    "BatchRunComponent": "batch_run",
-    "ParserComponent": "parser",
-    "PromptComponent": "prompt",
-    "SplitTextComponent": "split_text",
-    "StructuredOutputComponent": "structured_output",
+    "BatchRun": "batch_run",
+    "Parser": "parser",
+    "Prompt": "prompt",
+    "SplitText": "split_text",
+    "StructuredOutput": "structured_output",
 }
 
 __all__ = [
-    "BatchRunComponent",
-    "ParserComponent",
-    "PromptComponent",
-    "SplitTextComponent",
-    "StructuredOutputComponent",
+    "BatchRun",
+    "Parser",
+    "Prompt",
+    "SplitText",
+    "StructuredOutput",
 ]
 
 

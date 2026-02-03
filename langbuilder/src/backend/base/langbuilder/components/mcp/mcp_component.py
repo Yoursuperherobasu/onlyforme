@@ -28,7 +28,7 @@ from langbuilder.services.database.models.user.crud import get_user_by_id
 from langbuilder.services.deps import get_session, get_settings_service, get_storage_service
 
 
-class MCPToolsComponent(NodeWithCache):
+class MCPToolsNode(NodeWithCache):
     schema_inputs: list = []
     tools: list[StructuredTool] = []
     _not_load_actions: bool = False

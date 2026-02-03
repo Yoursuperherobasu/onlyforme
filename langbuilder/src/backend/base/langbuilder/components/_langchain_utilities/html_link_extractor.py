@@ -3,14 +3,13 @@ from typing import Any
 from langchain_community.graph_vectorstores.extractors import HtmlLinkExtractor, LinkExtractorTransformer
 from langchain_core.documents import BaseDocumentTransformer
 
-from langbuilder.base.document_transformers.model import LCDocumentTransformerComponent
+from langbuilder.base.document_transformers.model import LCDocumentTransformerNode
 from langbuilder.inputs.inputs import BoolInput, DataInput, StrInput
 
 
-class HtmlLinkExtractorComponent(LCDocumentTransformerComponent):
+class HtmlLinkExtractorNode(LCDocumentTransformerNode):
     display_name = "HTML Link Extractor"
     description = "Extract hyperlinks from HTML content."
-    documentation = "https://python.langchain.com/v0.2/api_reference/community/graph_vectorstores/langchain_community.graph_vectorstores.extractors.html_link_extractor.HtmlLinkExtractor.html"
     name = "HtmlLinkExtractor"
     icon = "LangChain"
 

@@ -7,10 +7,9 @@ from langbuilder.inputs.inputs import DataInput, IntInput, MessageTextInput
 from langbuilder.utils.util import unescape_string
 
 
-class RecursiveCharacterTextSplitterComponent(LCTextSplitterComponent):
+class RecursiveCharacterTextSplitterNode(LCTextSplitterComponent):
     display_name: str = "Recursive Character Text Splitter"
     description: str = "Split text trying to keep all related text together."
-    documentation: str = "https://docs.langbuilder.org/components-processing"
     name = "RecursiveCharacterTextSplitter"
     icon = "LangChain"
 

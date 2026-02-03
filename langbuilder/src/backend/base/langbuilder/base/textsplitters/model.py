@@ -3,10 +3,10 @@ from abc import abstractmethod
 from langchain_core.documents import BaseDocumentTransformer
 from langchain_text_splitters import TextSplitter
 
-from langbuilder.base.document_transformers.model import LCDocumentTransformerComponent
+from langbuilder.base.document_transformers.model import LCDocumentTransformerNode
 
 
-class LCTextSplitterComponent(LCDocumentTransformerComponent):
+class LCTextSplitterNode(LCDocumentTransformerNode):
     trace_type = "text_splitter"
 
     def _validate_outputs(self) -> None:

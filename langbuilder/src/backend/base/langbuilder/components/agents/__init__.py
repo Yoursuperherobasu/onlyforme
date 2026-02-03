@@ -1,3 +1,3 @@
-from .agent import AgentComponent
+from .agent import AgentNode
 
-__all__ = ["AgentComponent"]
+__all__ = ["AgentNode"]

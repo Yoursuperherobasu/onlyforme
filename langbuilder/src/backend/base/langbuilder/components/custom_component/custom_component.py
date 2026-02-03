@@ -4,12 +4,11 @@ from langbuilder.io import MessageTextInput, Output
 from langbuilder.schema.data import Data
 
 
-class CustomComponent(Node):
-    display_name = "Coder Editor"
+class CodeEditorNode(Node):
+    display_name = "Custom Code"
     description = "Use as a template to create your own component."
-    documentation: str = "https://docs.langbuilder.org/components-custom-components"
-    icon = "code"
-    name = "CustomComponent"
+    icon = "Pythoncode"
+    name = "Code Editor"
 
     inputs = [
         MessageTextInput(

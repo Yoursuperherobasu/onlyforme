@@ -1,5 +1,5 @@
-from .base_file import BaseFileComponent
+from .base_file import BaseFileNode
 
 __all__ = [
-    "BaseFileComponent",
+    "BaseFileNode",
 ]

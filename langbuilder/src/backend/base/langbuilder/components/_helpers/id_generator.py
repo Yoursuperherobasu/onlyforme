@@ -9,7 +9,7 @@ from langbuilder.schema.dotdict import dotdict
 from langbuilder.schema.message import Message
 
 
-class IDGeneratorComponent(Node):
+class IDGeneratorNode(Node):
     display_name = "ID Generator"
     description = "Generates a unique ID."
     icon = "fingerprint"

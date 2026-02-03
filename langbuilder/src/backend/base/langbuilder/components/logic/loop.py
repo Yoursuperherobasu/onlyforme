@@ -5,12 +5,11 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class LoopComponent(Node):
+class Loop(Node):
     display_name = "Loop"
     description = (
         "Iterates over a list of Data objects, outputting one item at a time and aggregating results from loop inputs."
     )
-    documentation: str = "https://docs.langbuilder.org/components-logic#loop"
     icon = "infinity"
 
     inputs = [
@@ -81,7 +80,7 @@ class LoopComponent(Node):
             self.aggregated_output()
             self.update_ctx({f"{self._id}_index": current_index + 1})
 
-        # Now we need to update the dependencies for the next run
+        # Now we need to update the dependencies for the next run0
         self.update_dependency()
         return current_item
 

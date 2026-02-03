@@ -9,7 +9,7 @@ from langbuilder.io import (
 )
 
 
-class SQLDatabaseComponent(Node):
+class SQLDatabaseNode(Node):
     display_name = "SQLDatabase"
     description = "SQL Database"
     name = "SQLDatabase"

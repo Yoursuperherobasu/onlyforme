@@ -1,7 +1,7 @@
 from langchain_community.chat_models.litellm import ChatLiteLLM, ChatLiteLLMException
 
 from langbuilder.base.constants import STREAM_INFO_TEXT
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import LanguageModel
 from langbuilder.io import (
     BoolInput,
@@ -15,7 +15,7 @@ from langbuilder.io import (
 )
 
 
-class ChatLiteLLMModelComponent(LCModelComponent):
+class ChatLiteLLMModelComponent(LCModelNode):
     display_name = "LiteLLM"
     description = "`LiteLLM` collection of large language models."
     documentation = "https://python.langchain.com/docs/integrations/chat/litellm"

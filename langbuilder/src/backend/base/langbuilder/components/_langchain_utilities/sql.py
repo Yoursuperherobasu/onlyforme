@@ -3,18 +3,18 @@ from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.agent_toolkits.sql.base import create_sql_agent
 from langchain_community.utilities import SQLDatabase
 
-from langbuilder.base.agents.agent import LCAgentComponent
+from langbuilder.base.agents.agent import LCAgentNode
 from langbuilder.inputs.inputs import HandleInput, MessageTextInput
 from langbuilder.template.field.base import Output
 
 
-class SQLAgentComponent(LCAgentComponent):
+class SQLAgentNode(LCAgentNode):
     display_name = "SQLAgent"
     description = "Construct an SQL agent from an LLM and tools."
     name = "SQLAgent"
     icon = "LangChain"
     inputs = [
-        *LCAgentComponent._base_inputs,
+        *LCAgentNode._base_inputs,
         HandleInput(name="llm", display_name="Language Model", input_types=["LanguageModel"], required=True),
         MessageTextInput(name="database_uri", display_name="Database URI", required=True),
         HandleInput(

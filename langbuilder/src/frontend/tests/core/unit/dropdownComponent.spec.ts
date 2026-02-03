@@ -134,14 +134,14 @@ test(
     const emptyOptionsCode = `from langchain_community.chat_models.bedrock import BedrockChat
 
 from langbuilder.base.constants import STREAM_INFO_TEXT
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import BaseLanguageModel, Text
 from langbuilder.io import BoolInput, DictInput, DropdownInput, StrInput
 from langbuilder.io import MessageInput
 from langbuilder.io import Output
 
 
-class AmazonBedrockComponent(LCModelComponent):
+class AmazonBedrockNode(LCModelNode):
     display_name: str = "Amazon Bedrock"
     description: str = "Generate text using Amazon Bedrock LLMs."
     icon = "Amazon"

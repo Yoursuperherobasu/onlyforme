@@ -1,3 +1,3 @@
-from .mcp_component import MCPToolsComponent
+from .mcp_component import MCPToolsNode
 
-__all__ = ["MCPToolsComponent"]
+__all__ = ["MCPToolsNode"]

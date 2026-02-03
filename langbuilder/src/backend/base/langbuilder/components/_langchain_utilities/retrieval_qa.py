@@ -2,12 +2,12 @@ from typing import cast
 
 from langchain.chains import RetrievalQA
 
-from langbuilder.base.chains.model import LCChainComponent
+from langbuilder.base.chains.model import LCChainNode
 from langbuilder.inputs.inputs import BoolInput, DropdownInput, HandleInput, MultilineInput
 from langbuilder.schema.message import Message
 
 
-class RetrievalQAComponent(LCChainComponent):
+class RetrievalQANode(LCChainNode):
     display_name = "Retrieval QA"
     description = "Chain for question-answering querying sources from a retriever."
     name = "RetrievalQA"

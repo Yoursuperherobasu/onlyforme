@@ -1,13 +1,13 @@
 from copy import deepcopy
 from typing import Any
 
-from langbuilder.base.data.base_file import BaseFileComponent
+from langbuilder.base.data.base_file import BaseFileNode
 from langbuilder.base.data.utils import TEXT_FILE_TYPES, parallel_load_data, parse_text_file_to_data
 from langbuilder.io import BoolInput, FileInput, IntInput, Output
 from langbuilder.schema.data import Data
 
 
-class FileComponent(BaseFileComponent):
+class File(BaseFileNode):
     """Handles loading and processing of individual or zipped text files.
 
     This component supports processing multiple valid files within a zip archive,
@@ -16,13 +16,12 @@ class FileComponent(BaseFileComponent):
 
     display_name = "File"
     description = "Loads content from one or more files."
-    documentation: str = "https://docs.langbuilder.org/components-data#file"
     icon = "file-text"
     name = "File"
 
     VALID_EXTENSIONS = TEXT_FILE_TYPES
 
-    _base_inputs = deepcopy(BaseFileComponent._base_inputs)
+    _base_inputs = deepcopy(BaseFileNode._base_inputs)
 
     for input_item in _base_inputs:
         if isinstance(input_item, FileInput) and input_item.name == "path":
@@ -87,14 +86,14 @@ class FileComponent(BaseFileComponent):
 
         return frontend_node
 
-    def process_files(self, file_list: list[BaseFileComponent.BaseFile]) -> list[BaseFileComponent.BaseFile]:
+    def process_files(self, file_list: list[BaseFileNode.BaseFile]) -> list[BaseFileNode.BaseFile]:
         """Processes files either sequentially or in parallel, depending on concurrency settings.
 
         Args:
-            file_list (list[BaseFileComponent.BaseFile]): List of files to process.
+            file_list (list[BaseFileNode.BaseFile]): List of files to process.
 
         Returns:
-            list[BaseFileComponent.BaseFile]: Updated list of files with merged data.
+            list[BaseFileNode.BaseFile]: Updated list of files with merged data.
         """
 
         def process_file(file_path: str, *, silent_errors: bool = False) -> Data | None:

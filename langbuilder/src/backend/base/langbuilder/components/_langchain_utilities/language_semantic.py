@@ -1,7 +1,7 @@
 from langchain.docstore.document import Document
 from langchain_experimental.text_splitter import SemanticChunker
 
-from langbuilder.base.textsplitters.model import LCTextSplitterComponent
+from langbuilder.base.textsplitters.model import LCTextSplitterNode
 from langbuilder.io import (
     DropdownInput,
     FloatInput,
@@ -13,7 +13,7 @@ from langbuilder.io import (
 from langbuilder.schema.data import Data
 
 
-class SemanticTextSplitterComponent(LCTextSplitterComponent):
+class SemanticTextSplitterNode(LCTextSplitterNode):
     """Split text into semantically meaningful chunks using semantic similarity."""
 
     display_name: str = "Semantic Text Splitter"

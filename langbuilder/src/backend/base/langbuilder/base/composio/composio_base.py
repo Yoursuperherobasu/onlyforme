@@ -22,7 +22,7 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.schema.message import Message
 
 
-class ComposioBaseComponent(Node):
+class ComposioBaseNode(Node):
     """Base class for Composio components with common functionality."""
 
     # Common inputs that all Composio components will need

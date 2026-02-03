@@ -5,7 +5,7 @@ from langbuilder.schema.dataframe import DataFrame
 from langbuilder.template.field.base import Output
 
 
-class CreateListComponent(Node):
+class CreateListNode(Node):
     display_name = "Create List"
     description = "Creates a list of texts."
     icon = "list"

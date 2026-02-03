@@ -1,13 +1,13 @@
 from langchain_openai import AzureChatOpenAI
 
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.field_typing import LanguageModel
 from langbuilder.field_typing.range_spec import RangeSpec
 from langbuilder.inputs.inputs import MessageTextInput
 from langbuilder.io import DropdownInput, IntInput, SecretStrInput, SliderInput
 
 
-class AzureChatOpenAIComponent(LCModelComponent):
+class AzureChatOpenAIComponent(LCModelNode):
     display_name: str = "Azure OpenAI"
     description: str = "Generate text using Azure OpenAI LLMs."
     documentation: str = "https://python.langchain.com/docs/integrations/llms/azure_openai"
@@ -31,7 +31,7 @@ class AzureChatOpenAIComponent(LCModelComponent):
     ]
 
     inputs = [
-        *LCModelComponent._base_inputs,
+        *LCModelNode._base_inputs,
         MessageTextInput(
             name="azure_endpoint",
             display_name="Azure Endpoint",

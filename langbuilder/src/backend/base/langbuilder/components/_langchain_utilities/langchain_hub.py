@@ -8,7 +8,7 @@ from langbuilder.io import Output
 from langbuilder.schema.message import Message
 
 
-class LangChainHubPromptComponent(Node):
+class LangChainHubPromptNode(Node):
     display_name: str = "Prompt Hub"
     description: str = "Prompt Component that uses LangChain Hub prompts"
     beta = True

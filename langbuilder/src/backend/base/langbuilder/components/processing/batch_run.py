@@ -13,10 +13,9 @@ if TYPE_CHECKING:
     from langchain_core.runnables import Runnable
 
 
-class BatchRunComponent(Node):
+class BatchRun(Node):
     display_name = "Batch Run"
     description = "Runs an LLM on each row of a DataFrame column. If no column is specified, all columns are used."
-    documentation: str = "https://docs.langbuilder.org/components-processing#batch-run"
     icon = "List"
 
     inputs = [

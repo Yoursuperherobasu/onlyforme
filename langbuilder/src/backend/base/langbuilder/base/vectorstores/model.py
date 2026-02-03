@@ -38,7 +38,7 @@ def check_cached_vector_store(f):
     return check_cached
 
 
-class LCVectorStoreComponent(Node):
+class LCVectorStoreNode(Node):
     # Used to ensure a single vector store is built for each run of the flow
     _cached_vector_store: VectorStore | None = None
 

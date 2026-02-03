@@ -3,10 +3,9 @@ from langbuilder.io import MultilineInput, Output
 from langbuilder.schema.message import Message
 
 
-class TextInputComponent(TextComponent):
+class TextInput(TextComponent):
     display_name = "Text Input"
     description = "Get user text inputs."
-    documentation: str = "https://docs.langbuilder.org/components-io#text-input"
     icon = "type"
     name = "TextInput"
 

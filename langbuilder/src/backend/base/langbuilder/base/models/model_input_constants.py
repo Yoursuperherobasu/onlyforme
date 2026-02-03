@@ -1,6 +1,6 @@
 from typing_extensions import TypedDict
 
-from langbuilder.base.models.model import LCModelComponent
+from langbuilder.base.models.model import LCModelNode
 from langbuilder.components.models.azure_openai import AzureChatOpenAIComponent
 from langbuilder.components.models.google_generative_ai import GoogleGenerativeAIComponent
 from langbuilder.components.models.groq import GroqModel
@@ -12,13 +12,13 @@ class ModelProvidersDict(TypedDict):
     fields: dict
     inputs: list[InputTypes]
     prefix: str
-    component_class: LCModelComponent
+    component_class: LCModelNode
     icon: str
     is_active: bool
 
 
 def get_filtered_inputs(component_class):
-    base_input_names = {field.name for field in LCModelComponent._base_inputs}
+    base_input_names = {field.name for field in LCModelNode._base_inputs}
     component_instance = component_class()
 
     return [process_inputs(input_) for input_ in component_instance.inputs if input_.name not in base_input_names]
@@ -146,6 +146,36 @@ try:
 except ImportError:
     pass
 
+<<<<<<< HEAD
+try:
+    anthropic_inputs, anthropic_fields = _get_anthropic_inputs_and_fields()
+    MODEL_PROVIDERS_DICT["Anthropic"] = {
+        "fields": anthropic_fields,
+        "inputs": anthropic_inputs,
+        "prefix": "",
+        "component_class": AnthropicModelNode(),
+        "icon": AnthropicModelNode.icon,
+        "is_active": True,
+    }
+except ImportError:
+    pass
+
+# 
+
+try:
+    bedrock_inputs, bedrock_fields = _get_amazon_bedrock_inputs_and_fields()
+    MODEL_PROVIDERS_DICT["Amazon Bedrock"] = {
+        "fields": bedrock_fields,
+        "inputs": bedrock_inputs,
+        "prefix": "",
+        "component_class": AmazonBedrockNode(),
+        "icon": AmazonBedrockNode.icon,
+        "is_active": False,
+    }
+except ImportError:
+    pass
+=======
+>>>>>>> origin/code_cleanup_02_03
 
 try:
     google_generative_ai_inputs, google_generative_ai_fields = _get_google_generative_ai_inputs_and_fields()
