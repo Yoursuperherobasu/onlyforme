@@ -6,7 +6,6 @@ from langbuilder.io import BoolInput, DictInput, HandleInput, MultilineInput, Ou
 class SequentialTaskAgentComponent(Node):
     display_name = "Sequential Task Agent"
     description = "Creates a CrewAI Task and its associated Agent."
-    documentation = "https://docs.crewai.com/how-to/LLM-Connections/"
     icon = "CrewAI"
     legacy = True
 

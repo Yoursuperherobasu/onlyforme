@@ -18,7 +18,6 @@ class SpiderTool(Node):
     display_name: str = "Spider Web Crawler & Scraper"
     description: str = "Spider API for web crawling and scraping."
     output_types: list[str] = ["Document"]
-    documentation: str = "https://spider.cloud/docs/api"
 
     inputs = [
         SecretStrInput(

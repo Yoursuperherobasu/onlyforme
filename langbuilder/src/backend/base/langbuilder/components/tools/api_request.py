@@ -45,7 +45,6 @@ DEFAULT_FIELDS = ["mode"]
 class APIRequest(Node):
     display_name = "API Request"
     description = "Make HTTP requests using URL or cURL commands."
-    documentation: str = "https://docs.langbuilder.org/components-data#api-request"
     icon = "Globe"
     name = "APIRequest"
 

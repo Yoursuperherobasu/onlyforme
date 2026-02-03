@@ -7,7 +7,6 @@ from langbuilder.schema.message import Message
 class NemoGuardrailComponent(Node):
     display_name = "NeMo Guardrails"
     description = "Apply NeMo Guardrails to validate and filter LLM inputs and outputs."
-    documentation: str = "https://docs.langbuilder.org/components-guardrails#nemo-guardrails"
     icon = "Shield"
     name = "NemoGuardrails"
 
