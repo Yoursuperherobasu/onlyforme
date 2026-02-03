@@ -9,7 +9,6 @@ from langbuilder.io import DropdownInput, IntInput, MessageTextInput, Output, Se
 class AzureOpenAIEmbeddingsNode(LCModelNode):
     display_name: str = "Azure OpenAI Embeddings"
     description: str = "Generate embeddings using Azure OpenAI models."
-    documentation: str = "https://python.langchain.com/docs/integrations/text_embedding/azureopenai"
     icon = "Azure"
     name = "AzureOpenAIEmbeddings"
 

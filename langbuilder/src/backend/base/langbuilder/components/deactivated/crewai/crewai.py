@@ -18,7 +18,6 @@ class CrewAIAgentComponent(Node):
 
     display_name = "CrewAI Agent"
     description = "Represents an agent of CrewAI."
-    documentation: str = "https://docs.crewai.com/how-to/LLM-Connections/"
     icon = "CrewAI"
     legacy = True
 

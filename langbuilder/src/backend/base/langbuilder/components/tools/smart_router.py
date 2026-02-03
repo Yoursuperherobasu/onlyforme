@@ -25,7 +25,6 @@ class SmartRouterComponent(Node):
 
     display_name = "Smart Router"
     description = "Routes an input message using LLM-based categorization."
-    documentation: str = "https://docs.langbuilder.org/components-tools#smart-router"
     icon = "route"
     name = "SmartRouter"
 

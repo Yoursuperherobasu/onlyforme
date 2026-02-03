@@ -22,7 +22,6 @@ class MCPStdio(Node):
     description = (
         "Connects to an MCP server over stdio and exposes it's tools as langbuilder tools to be used by an Agent."
     )
-    documentation: str = "https://docs.langbuilder.org/components-custom-components"
     icon = "code"
     name = "MCPStdio"
     legacy = True

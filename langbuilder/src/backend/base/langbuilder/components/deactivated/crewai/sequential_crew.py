@@ -6,7 +6,6 @@ from langbuilder.schema.message import Message
 class SequentialCrewComponent(BaseCrewComponent):
     display_name: str = "Sequential Crew"
     description: str = "Represents a group of agents with tasks that are executed sequentially."
-    documentation: str = "https://docs.crewai.com/how-to/Sequential/"
     icon = "CrewAI"
     legacy = True
 

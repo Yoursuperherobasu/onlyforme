@@ -7,7 +7,6 @@ class HierarchicalCrewComponent(BaseCrewComponent):
     description: str = (
         "Represents a group of agents, defining how they should collaborate and the tasks they should perform."
     )
-    documentation: str = "https://docs.crewai.com/how-to/Hierarchical/"
     icon = "CrewAI"
     legacy = True
 

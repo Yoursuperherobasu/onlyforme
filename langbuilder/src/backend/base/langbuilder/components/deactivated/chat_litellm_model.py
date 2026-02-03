@@ -18,7 +18,6 @@ from langbuilder.io import (
 class ChatLiteLLMModelComponent(LCModelNode):
     display_name = "LiteLLM"
     description = "`LiteLLM` collection of large language models."
-    documentation = "https://python.langchain.com/docs/integrations/chat/litellm"
     icon = "🚄"
 
     inputs = [

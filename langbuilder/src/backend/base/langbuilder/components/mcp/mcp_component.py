@@ -67,7 +67,6 @@ class MCPToolsNode(NodeWithCache):
 
     display_name = "MCP Tools"
     description = "Connect to an MCP server to use its tools."
-    documentation: str = "https://docs.langbuilder.org/mcp-client"
     icon = "Mcp"
     name = "MCPTools"
 

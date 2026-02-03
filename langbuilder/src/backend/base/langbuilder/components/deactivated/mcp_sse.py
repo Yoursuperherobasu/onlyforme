@@ -20,7 +20,6 @@ class MCPSse(Node):
     tool_names = [str]
     display_name = "MCP Tools (SSE) [DEPRECATED]"
     description = "Connects to an MCP server over SSE and exposes it's tools as langbuilder tools to be used by an Agent."
-    documentation: str = "https://docs.langbuilder.org/components-custom-components"
     icon = "code"
     name = "MCPSse"
     legacy = True

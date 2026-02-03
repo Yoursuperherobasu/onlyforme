@@ -7,7 +7,6 @@ from langbuilder.schema.message import Message
 class HumanApprovalComponent(Node):
     display_name = "Human Approval"
     description = "Pause workflow execution and wait for human approval before proceeding."
-    documentation: str = "https://docs.langbuilder.org/components-human-in-the-loop#human-approval"
     icon = "UserCheck"
     name = "HumanApproval"
 
