@@ -5,20 +5,20 @@ from typing import TYPE_CHECKING, Any
 from langbuilder.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from langbuilder.components.helpers.calculator_core import CalculatorNode
-    from langbuilder.components.helpers.create_list import CreateListNode
-    from langbuilder.components.helpers.current_date import CurrentDateNode
-    from langbuilder.components.helpers.id_generator import IDGeneratorNode
-    from langbuilder.components.helpers.memory import MemoryComponent
-    from langbuilder.components.helpers.output_parser import OutputParserNode
-    from langbuilder.components.helpers.store_message import MessageStoreNode
+    from langbuilder.components._helpers.calculator_core import CalculatorNode
+    from langbuilder.components._helpers.create_list import CreateListNode
+    from langbuilder.components._helpers.current_date import CurrentDateNode
+    from langbuilder.components._helpers.id_generator import IDGeneratorNode
+    from langbuilder.components._helpers.memory import MemoryNode
+    from langbuilder.components._helpers.output_parser import OutputParserNode
+    from langbuilder.components._helpers.store_message import MessageStoreNode
 
 _dynamic_imports = {
     "CalculatorNode": "calculator_core",
     "CreateListNode": "create_list",
     "CurrentDateNode": "current_date",
     "IDGeneratorNode": "id_generator",
-    "MemoryComponent": "memory",
+    "MemoryNode": "memory",
     "OutputParserNode": "output_parser",
     "MessageStoreNode": "store_message",
 }
@@ -28,7 +28,7 @@ __all__ = [
     "CreateListNode",
     "CurrentDateNode",
     "IDGeneratorNode",
-    "MemoryComponent",
+    "MemoryNode",
     "MessageStoreNode",
     "OutputParserNode",
 ]

@@ -3,7 +3,7 @@ from typing import Any
 from loguru import logger
 from typing_extensions import override
 
-from langbuilder.base.langchain_utilities.model import LCToolComponent
+from langbuilder.base.langchain_utilities.model import LCToolNode
 from langbuilder.base.tools.flow_tool import FlowTool
 from langbuilder.field_typing import Tool
 from langbuilder.graph.graph.base import Graph
@@ -13,7 +13,7 @@ from langbuilder.schema.data import Data
 from langbuilder.schema.dotdict import dotdict
 
 
-class FlowTool(LCToolComponent):
+class FlowTool(LCToolNode):
     display_name = "Flow as Tool"
     description = "Construct a Tool from a function that runs the loaded Flow."
     field_order = ["flow_name", "name", "description", "return_direct"]

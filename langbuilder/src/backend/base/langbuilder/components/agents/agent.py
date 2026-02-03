@@ -7,7 +7,7 @@ from langbuilder.base.agents.agent import LCToolsAgentNode
 from langbuilder.base.agents.events import ExceptionWithMessageError
 from langbuilder.base.models.model_utils import get_model_name
 from langbuilder.components._helpers.current_date import CurrentDateNode
-from langbuilder.components._helpers.memory import MemoryComponent
+from langbuilder.components._helpers.memory import MemoryNode
 from langbuilder.components._langchain_utilities.tool_calling import ToolCallingAgentNode
 from langbuilder.custom.custom_component.component import _get_component_toolkit
 from langbuilder.field_typing import Tool
@@ -31,12 +31,13 @@ class AgentNode(ToolCallingAgentNode):
     beta = False
     name = "Agent"
 
-    memory_inputs = [set_advanced_true(component_input) for component_input in MemoryComponent().inputs]
+    memory_inputs = [set_advanced_true(component_input) for component_input in MemoryNode().inputs]
 
     inputs = [
         HandleInput(
             name="agent_llm",
             display_name="LLM",
+
             info="Connect a language model component to the agent.",
             input_types=["LanguageModel"],
             required=True,
@@ -183,7 +184,7 @@ class AgentNode(ToolCallingAgentNode):
     async def get_memory_data(self):
         # TODO: This is a temporary fix to avoid message duplication. We should develop a function for this.
         messages = (
-            await MemoryComponent(**self.get_base_args())
+            await MemoryNode(**self.get_base_args())
             .set(session_id=self.graph.session_id, order="Ascending", n_messages=self.n_messages)
             .retrieve_messages()
         )

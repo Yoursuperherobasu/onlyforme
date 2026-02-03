@@ -6,13 +6,13 @@ from langchain_core.tools import ToolException
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from langbuilder.base.langchain_utilities.model import LCToolComponent
+from langbuilder.base.langchain_utilities.model import LCToolNode
 from langbuilder.field_typing import Tool
 from langbuilder.inputs.inputs import MessageTextInput
 from langbuilder.schema.data import Data
 
 
-class CalculatorTool(LCToolComponent):
+class CalculatorTool(LCToolNode):
     display_name = "Calculator"
     description = "Perform basic arithmetic operations on a given expression."
     icon = "calculator"

@@ -1,9 +1,9 @@
-from langbuilder.base.io.text import TextComponent
+from langbuilder.base.io.text import TextNode
 from langbuilder.io import MultilineInput, Output
 from langbuilder.schema.message import Message
 
 
-class TextOutput(TextComponent):
+class TextOutput(TextNode):
     display_name = "Text Output"
     description = "Sends text output via API."
     icon = "type"
