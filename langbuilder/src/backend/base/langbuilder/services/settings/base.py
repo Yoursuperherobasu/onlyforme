@@ -152,13 +152,14 @@ class Settings(BaseSettings):
     # cache configuration
     cache_type: Literal["async", "redis", "memory", "disk"] = "async"
     """The cache type can be 'async' or 'redis'."""
-    redis_host: str = "agentcoreredis.redis.cache.windows.net"
+    redis_host: str = "rdatabase.redis.cache.windows.net"
     redis_port: int = 6380
     redis_db: int = 0
     redis_url: str | None = None
-    redis_password: str = "7iQsiMysElkfTwCNsyAuiQng3Eeeat6jFAzCaCPfsQw="
+    redis_password: str = "orXj8WWhk0ne8w0CfpkFy3IM29702C6OGAzCaFEFEF8="
     redis_ssl: bool = True
     cache_expire: int = 3600
+    redis_cache_expire: int = 3600
     """The cache expire in seconds."""
     variable_store: str = "db"
     """The store can be 'db' or 'kubernetes'."""
