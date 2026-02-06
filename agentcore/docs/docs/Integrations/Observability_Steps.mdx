@@ -1,0 +1,470 @@
+# Observability Implementation Steps
+
+This document describes all the code changes made to implement user-isolated observability in LangBuilder using Langfuse OSS.
+
+---
+
+## Summary of Changes
+
+The observability feature enables users to monitor their AI usage, costs, tokens, and latency metrics through an integrated dashboard. Each user can only see their own traces, ensuring data isolation.
+
+---
+
+## Files Created
+
+### 1. Backend API Endpoints
+
+**File:** `agentcore/src/backend/base/agentcore/api/v1/observability.py`
+
+**Purpose:** Provides REST API endpoints for the observability dashboard to fetch user-specific metrics from Langfuse.
+
+**Key Features:**
+- All endpoints require JWT authentication
+- Data is filtered by the current user's ID
+- Supports pagination for large datasets (Langfuse max 100 per request)
+- Includes debug endpoint for troubleshooting
+
+**Endpoints Created:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/observability/status` | GET | Check Langfuse connection status |
+| `/api/v1/observability/debug` | GET | Debug info for troubleshooting |
+| `/api/v1/observability/traces` | GET | Get user's traces (paginated) |
+| `/api/v1/observability/traces/{id}` | GET | Get specific trace with observations |
+| `/api/v1/observability/sessions` | GET | Get user's chat sessions |
+| `/api/v1/observability/sessions/{id}` | GET | Get session details |
+| `/api/v1/observability/metrics` | GET | Get aggregated usage metrics |
+| `/api/v1/observability/agents` | GET | Get agents (flows) with metrics |
+| `/api/v1/observability/agents/{id}` | GET | Get agent detail with sessions |
+| `/api/v1/observability/projects` | GET | Get projects (folders) with metrics |
+| `/api/v1/observability/projects/{id}` | GET | Get project detail with agents |
+
+**Response Models:**
+- `LangfuseStatusResponse` - Connection status
+- `ObservationResponse` - Single LLM call/span
+- `TraceListItem` / `TraceDetailResponse` - Trace data
+- `SessionListItem` / `SessionDetailResponse` - Session data
+- `MetricsResponse` - Aggregated metrics
+- `AgentListItem` / `AgentDetailResponse` - Agent (flow) data
+- `ProjectListItem` / `ProjectDetailResponse` - Project (folder) data
+
+**Helper Functions:**
+- `get_langfuse_client()` - Creates Langfuse client from env vars
+- `fetch_traces_from_langfuse()` - Fetches traces with pagination
+- `fetch_observations_for_trace()` - Gets observations for a trace
+- `parse_observation()` - Parses Langfuse observation to response model
+- `_is_vertex_trace()` - Filters out vertex-level traces
+- `_match_trace_to_flow()` - Matches traces to database flows
+
+---
+
+### 2. Frontend Dashboard
+
+**File:** `agentcore/src/frontend/src/pages/ObservabilityPage/index.tsx`
+
+**Purpose:** Replaces the dummy observability page with a full-featured dashboard.
+
+**Key Features:**
+- **Overview Tab:** Summary cards (traces, tokens, cost, sessions), performance metrics, model usage table, recent sessions
+  - **Tokens Over Time Chart:** AreaChart showing token usage trends by date
+  - **Model Distribution Chart:** PieChart showing token distribution across models
+  - **Cost Over Time Chart:** LineChart showing cost trends
+- **Agents Tab:** List of AI agents with metrics, click to drill down
+- **Projects Tab:** List of projects (folders) with aggregated metrics
+- **Sessions Tab:** All chat sessions with metrics
+- **Models Tab:** Detailed model usage breakdown
+- **Usage Tab:** Daily usage breakdown with charts
+  - **Traces & Observations Chart:** BarChart showing daily activity breakdown
+  - **Input vs Output Tokens Chart:** AreaChart showing token breakdown over time
+  - **Daily Usage Table:** Detailed tabular data
+
+**Filter Capabilities:**
+- Date range presets (Today, 7d, 30d, 90d, All time)
+- Search by trace name
+- Filter by model
+- Clear filters button
+
+**Dialog Components:**
+- Session Detail Dialog - Shows traces in a session
+- Trace Detail Dialog - Shows observations timeline with expandable I/O
+- Agent Detail Dialog - Shows sessions for an agent
+- Project Detail Dialog - Shows agents in a project
+
+**Debug Panel:**
+- Shows when no data is found or manually toggled
+- Displays user ID, trace counts, sample data
+- Helps diagnose user ID mismatches
+
+---
+
+## Files Modified
+
+### 1. Backend Router Registration
+
+**File:** `agentcore/src/backend/base/agentcore/api/v1/__init__.py`
+
+**Change:** Added import for observability router
+
+```python
+# Added import
+from agentcore.api.v1.observability import router as observability_router
+
+# Added to __all__
+"observability_router",
+```
+
+**Reason:** Registers the observability module so it can be included in the API router.
+
+---
+
+### 2. Backend Router Include
+
+**File:** `agentcore/src/backend/base/agentcore/api/router.py`
+
+**Change:** Added import and include for observability router
+
+```python
+# Added to imports
+from agentcore.api.v1 import (
+    # ... existing imports ...
+    observability_router,
+)
+
+# Added router include
+router_v1.include_router(observability_router)
+```
+
+**Reason:** Makes the observability endpoints available at `/api/v1/observability/*`.
+
+---
+
+### 3. Langfuse Tracer Enhancement
+
+**File:** `agentcore/src/backend/base/agentcore/services/tracing/langfuse.py`
+
+**Changes:**
+
+1. **Extended `__init__` parameters:**
+```python
+def __init__(
+    self,
+    # ... existing params ...
+    flow_id: str | None = None,
+    flow_name: str | None = None,
+    observability_project_id: str | None = None,
+    observability_project_name: str | None = None,
+) -> None:
+```
+
+2. **Enhanced `setup_langfuse` method:**
+```python
+# Build tags for filtering
+tags = []
+if self.flow_id:
+    tags.append(f"flow_id:{self.flow_id}")
+if self.flow_name:
+    tags.append(f"flow_name:{self.flow_name}")
+if self.observability_project_id:
+    tags.append(f"project_id:{self.observability_project_id}")
+
+# Metadata for detailed queries
+trace_metadata = {
+    "flow_id": self.flow_id,
+    "flow_name": self.flow_name,
+    "project_id": self.observability_project_id,
+    "project_name": self.observability_project_name,
+}
+
+self.trace = self._client.trace(
+    # ... existing params ...
+    tags=tags if tags else None,
+    metadata=trace_metadata,
+)
+```
+
+**Reason:** Traces now include flow and project information in both tags and metadata, enabling:
+- Filtering traces by agent (flow) or project
+- Matching old traces that don't have metadata using name matching
+- Better organization in the observability dashboard
+
+---
+
+### 4. Tracing Service Enhancement
+
+**File:** `agentcore/src/backend/base/agentcore/services/tracing/service.py`
+
+**Changes:**
+
+1. **Extended `TraceContext` class:**
+```python
+class TraceContext:
+    def __init__(
+        self,
+        # ... existing params ...
+        flow_id: str | None = None,
+        flow_name: str | None = None,
+        observability_project_id: str | None = None,
+        observability_project_name: str | None = None,
+    ):
+        # Store new fields
+        self.flow_id = flow_id
+        self.flow_name = flow_name
+        self.observability_project_id = observability_project_id
+        self.observability_project_name = observability_project_name
+```
+
+2. **Updated `_initialize_langfuse_tracer` method:**
+```python
+def _initialize_langfuse_tracer(self, trace_context: TraceContext) -> None:
+    trace_context.tracers["langfuse"] = langfuse_tracer(
+        # ... existing params ...
+        flow_id=trace_context.flow_id,
+        flow_name=trace_context.flow_name,
+        observability_project_id=trace_context.observability_project_id,
+        observability_project_name=trace_context.observability_project_name,
+    )
+```
+
+3. **Extended `start_tracers` method:**
+```python
+async def start_tracers(
+    self,
+    # ... existing params ...
+    flow_id: str | None = None,
+    flow_name: str | None = None,
+    observability_project_id: str | None = None,
+    observability_project_name: str | None = None,
+) -> None:
+```
+
+**Reason:** Allows the tracing service to pass flow and project information through to the Langfuse tracer when starting a trace.
+
+---
+
+### 5. LangGraph Adapter Enhancement
+
+**File:** `agentcore/src/backend/base/agentcore/graph_langgraph/adapter.py`
+
+**Changes:**
+
+1. **Extended `__init__` parameters:**
+```python
+def __init__(
+    self,
+    # ... existing params ...
+    project_id: str | None = None,
+    project_name: str | None = None,
+) -> None:
+    # Store project info
+    self.project_id = project_id
+    self.project_name = project_name
+```
+
+2. **Extended `from_payload` classmethod:**
+```python
+@classmethod
+def from_payload(
+    cls,
+    payload: dict,
+    flow_id: str | None = None,
+    flow_name: str | None = None,
+    user_id: str | None = None,
+    project_id: str | None = None,
+    project_name: str | None = None,
+) -> LangGraphAdapter:
+```
+
+3. **Updated `initialize_run` method:**
+```python
+await self.tracing_service.start_tracers(
+    # ... existing params ...
+    flow_id=self.flow_id,
+    flow_name=self.flow_name,
+    observability_project_id=self.project_id,
+    observability_project_name=self.project_name,
+)
+```
+
+4. **Updated `__deepcopy__` method** to include project_id and project_name
+
+**Reason:** The adapter now carries project information through to tracing, enabling project-level observability.
+
+---
+
+### 6. API Utils Enhancement
+
+**File:** `agentcore/src/backend/base/agentcore/api/utils.py`
+
+**Changes:**
+
+1. **Updated `build_graph_from_db_no_cache`:**
+```python
+async def build_graph_from_db_no_cache(flow_id: uuid.UUID, session: AsyncSession, **kwargs):
+    from agentcore.services.database.models.folder.model import Folder
+
+    flow: Flow | None = await session.get(Flow, flow_id)
+    # ... existing code ...
+
+    # Pass folder_id as project_id for observability tracking
+    if flow.folder_id:
+        kwargs["project_id"] = str(flow.folder_id)
+        # Try to get folder name for project_name
+        try:
+            folder = await session.get(Folder, flow.folder_id)
+            if folder:
+                kwargs["project_name"] = folder.name
+        except Exception:
+            pass  # Folder name is optional
+
+    return await build_graph_from_data(flow_id, flow.data, flow_name=flow.name, **kwargs)
+```
+
+2. **Updated `build_graph_from_data`:**
+```python
+async def build_graph_from_data(flow_id, payload, use_langgraph=True, **kwargs):
+    # Extract observability parameters
+    project_id = kwargs.get("project_id")
+    project_name = kwargs.get("project_name")
+
+    if use_langgraph:
+        graph = LangGraphAdapter.from_payload(
+            payload,
+            str_flow_id,
+            flow_name,
+            kwargs.get("user_id"),
+            project_id=project_id,
+            project_name=project_name,
+        )
+```
+
+**Reason:** When building a graph from the database, the folder_id (project) is automatically extracted and passed to the adapter, ensuring all traces are tagged with their project.
+
+---
+
+## Data Flow
+
+### When a User Runs a Flow:
+
+```
+1. User clicks "Run" on a flow
+2. build_graph_from_db_no_cache() extracts folder_id as project_id
+3. build_graph_from_data() creates LangGraphAdapter with project info
+4. LangGraphAdapter.initialize_run() starts tracing with project metadata
+5. LangFuseTracer.setup_langfuse() creates trace with:
+   - tags: ["flow_id:xxx", "flow_name:Agent1", "project_id:yyy"]
+   - metadata: { flow_id, flow_name, project_id, project_name }
+6. Trace is sent to Langfuse with user_id for isolation
+```
+
+### When a User Views the Dashboard:
+
+```
+1. User opens Observability page
+2. Frontend calls /api/v1/observability/metrics (or other endpoints)
+3. Backend extracts user_id from JWT token
+4. Backend fetches all user flows from DATABASE (source of truth)
+5. Backend fetches traces from Langfuse with user_id filter
+6. Backend uses _match_trace_to_flow() to match traces to database flows
+7. Vertex-level traces are filtered out
+8. Data is aggregated and returned
+9. Frontend displays filtered, user-specific data
+```
+
+---
+
+## Environment Variables
+
+The following environment variables must be set for observability to work:
+
+```bash
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_HOST=http://localhost:3000
+```
+
+These are used by:
+1. The Langfuse tracer (to send traces)
+2. The observability API (to query traces)
+
+---
+
+## Security
+
+- **Authentication:** All endpoints require valid JWT token
+- **Authorization:** Backend filters ALL data by `current_user.id`
+- **Data Isolation:** Users cannot access other users' trace IDs
+- **Credential Security:** Langfuse credentials stay in backend (never sent to frontend)
+
+---
+
+## Troubleshooting
+
+### No Data Showing
+
+1. Click "Debug" button in the dashboard
+2. Check if your user ID matches any traces in Langfuse
+3. Verify Langfuse environment variables are set
+4. Run a flow to generate new traces
+
+### Costs Showing as $0.00
+
+Configure model pricing in Langfuse:
+1. Go to Langfuse dashboard → Settings → Models
+2. Add your model with pricing info
+3. Note: Cost is calculated at trace creation time, not retroactively
+
+### Agent/Project Tab Empty
+
+- Agents tab requires traces to be matched to database flows
+- Projects tab requires flows to be in folders
+- Old traces without metadata are matched by name
+- Vertex-level traces (vertex_build_*) are filtered out
+
+### Tokens Showing as 0 / Input-Output Not Showing
+
+This can happen if the trace context is not properly propagated to LLM calls:
+
+1. **Check trace structure:** Use the Debug panel to see if traces exist
+2. **Verify callback propagation:** The `build_vertex` method should NOT create separate traces - it should use the trace context from `initialize_run()`
+3. **Check tracing service:** Ensure `_tracing_service` is being passed to components
+4. **LLM callbacks:** Components must call `get_langchain_callbacks()` when invoking LLMs
+
+**Technical fix applied (v1.1):** Removed separate trace context creation in `adapter.build_vertex()` so that:
+- All observations are nested under the main flow trace
+- Token/cost data aggregates correctly on the flow trace
+- Input/output data is captured by Langfuse callbacks
+
+---
+
+## Dependencies
+
+The frontend dashboard uses the following charting library:
+- **recharts** - React charting library for data visualization
+  - Components used: LineChart, AreaChart, BarChart, PieChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, Line, Bar, Pie, Cell
+
+---
+
+## Changelog
+
+### v1.1 (Token/Input-Output Fix)
+- **Fixed:** Removed separate trace context creation in `adapter.build_vertex()`
+  - Previously, each vertex build created its own trace (`vertex_build_*`), which broke token aggregation
+  - Now vertex builds use the trace context set up by `initialize_run()`
+  - This ensures LLM callbacks capture tokens and input/output data correctly
+- **Result:** Token counts, costs, and input/output JSON now display properly in trace details
+
+### v1.0 (Initial Implementation)
+- Created observability backend API with 12 endpoints
+- Created full-featured frontend dashboard with 6 tabs
+- Added flow and project metadata to Langfuse traces
+- Implemented database-based trace matching for old traces
+- Added date range, search, and model filters
+- Added drill-down dialogs (Session → Trace → Observation)
+- Added debug panel for troubleshooting
+- Added interactive charts using recharts:
+  - Tokens Over Time (AreaChart)
+  - Model Distribution (PieChart)
+  - Cost Over Time (LineChart)
+  - Traces & Observations (BarChart)
+  - Input vs Output Tokens (AreaChart)
