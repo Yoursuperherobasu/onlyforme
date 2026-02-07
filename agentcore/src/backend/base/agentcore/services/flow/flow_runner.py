@@ -16,7 +16,7 @@ from agentcore.services.auth.utils import (
     get_password_hash,
 )
 from agentcore.services.cache.service import AsyncBaseCacheService
-from agentcore.services.database.models import Flow, User, Variable
+from agentcore.services.database.models import Flow, User
 from agentcore.services.database.utils import initialize_database
 from agentcore.services.deps import get_cache_service, get_storage_service, session_scope
 from agentcore.utils.util import update_settings
@@ -236,7 +236,7 @@ class AgentcoreRunnerExperimental:
             flow_ids: list[UUID] = [fid for fid in flows.scalars().all() if fid is not None]
             for flow_id in flow_ids:
                 await cascade_delete_flow(session, flow_id)
-            await session.exec(delete(Variable).where(Variable.user_id == user_id))
+            # [VARIABLE REMOVED] Variable rows will be cleaned up when table is dropped
             await session.exec(delete(User).where(User.id == user_id))
 
     async def init_db_if_needed(self):

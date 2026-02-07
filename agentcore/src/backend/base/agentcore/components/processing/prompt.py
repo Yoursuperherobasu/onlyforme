@@ -1,5 +1,5 @@
 from agentcore.base.prompts.api_utils import process_prompt_template
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import DefaultPromptField
 from agentcore.io import MessageTextInput, Output, PromptInput
 from agentcore.schema.message import Message

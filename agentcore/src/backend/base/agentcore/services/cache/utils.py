@@ -9,7 +9,7 @@ from fastapi import UploadFile
 from platformdirs import user_cache_dir
 
 if TYPE_CHECKING:
-    from agentcore.api.v1.schemas import BuildStatus
+    from agentcore.api.v1_schemas import BuildStatus
 
 CACHE: dict[str, Any] = {}
 

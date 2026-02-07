@@ -2,7 +2,7 @@ import ast
 import operator
 from collections.abc import Callable
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import MessageTextInput
 from agentcore.io import Output
 from agentcore.schema.data import Data

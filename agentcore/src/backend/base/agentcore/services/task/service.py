@@ -16,7 +16,6 @@ class TaskService(Service):
 
     def __init__(self, settings_service: SettingsService):
         self.settings_service = settings_service
-        self.use_celery = False
         self.backend = self.get_backend()
 
     @property

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from langchain.callbacks.base import BaseCallbackHandler
 
-    from agentcore.custom.custom_component.component import Node
+    from agentcore.custom.custom_node.node import Node
     from agentcore.graph_langgraph import LangGraphVertex as Vertex
     from agentcore.services.settings.service import SettingsService
     from agentcore.services.tracing.base import BaseTracer

@@ -14,8 +14,8 @@ from fastapi import HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from agentcore.custom.custom_component.component import Node
-from agentcore.custom.custom_component.custom_component import ExecutableNode
+from agentcore.custom.custom_node.node import Node
+from agentcore.custom.custom_node.custom_node import ExecutableNode
 from agentcore.custom.directory_reader.utils import (
     abuild_custom_component_list_from_path,
     build_custom_component_list_from_path,

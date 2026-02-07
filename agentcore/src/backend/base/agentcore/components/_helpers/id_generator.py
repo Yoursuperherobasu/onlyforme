@@ -3,7 +3,7 @@ from typing import Any
 
 from typing_extensions import override
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import MessageTextInput, Output
 from agentcore.schema.dotdict import dotdict
 from agentcore.schema.message import Message

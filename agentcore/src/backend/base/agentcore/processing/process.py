@@ -12,7 +12,7 @@ from agentcore.schema.schema import INPUT_FIELD_NAME
 from agentcore.services.deps import get_settings_service
 
 if TYPE_CHECKING:
-    from agentcore.api.v1.schemas import InputValueRequest
+    from agentcore.api.v1_schemas import InputValueRequest
     from agentcore.graph_langgraph import LangGraphAdapter as Graph, RunOutputs
     from agentcore.services.event_manager import EventManager
 

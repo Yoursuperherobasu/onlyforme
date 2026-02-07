@@ -1,4 +1,4 @@
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import Text
 from agentcore.io import BoolInput, DropdownInput, MessageTextInput, Output
 

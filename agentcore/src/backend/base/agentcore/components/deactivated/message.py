@@ -1,4 +1,4 @@
-from agentcore.custom.custom_component.custom_component import ExecutableNode
+from agentcore.custom.custom_node.custom_node import ExecutableNode
 from agentcore.schema.message import Message
 from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_USER
 

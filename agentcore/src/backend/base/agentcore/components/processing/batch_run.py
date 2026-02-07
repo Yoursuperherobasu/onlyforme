@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 import toml  # type: ignore[import-untyped]
 from loguru import logger
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import BoolInput, DataFrameInput, HandleInput, MessageTextInput, MultilineInput, Output
 from agentcore.schema.dataframe import DataFrame
 

@@ -9,8 +9,6 @@ from fastapi import BackgroundTasks, HTTPException, Response
 from loguru import logger
 from sqlmodel import select
 
-# Test log to verify logger is working on module import
-logger.info("✅ BUILD MODULE LOADED - Logger is working!")
 
 from agentcore.api.disconnect import DisconnectHandlerStreamingResponse
 from agentcore.api.utils import (
@@ -23,7 +21,7 @@ from agentcore.api.utils import (
     get_top_level_vertices,
     parse_exception,
 )
-from agentcore.api.v1.schemas import (
+from agentcore.api.v1_schemas import (
     FlowDataRequest,
     InputValueRequest,
     ResultDataResponse,

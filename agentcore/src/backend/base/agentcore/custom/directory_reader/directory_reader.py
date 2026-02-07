@@ -7,7 +7,7 @@ import anyio
 from aiofile import async_open
 from loguru import logger
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 
 MAX_DEPTH = 2
 

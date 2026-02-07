@@ -6,10 +6,6 @@ from agentcore.services.deps import get_settings_service
 
 class LimitVertexBuildBackgroundTasks(BackgroundTasks):
     """A subclass of FastAPI BackgroundTasks that limits the number of tasks added per vertex_id.
-
-    If more than max_vertex_builds_per_vertex tasks are added for a given vertex_id,
-    the oldest task is removed so that only the most recent remain.
-    This only applies to log_vertex_build tasks.
     """
 
     def add_task(self, func, *args, **kwargs):

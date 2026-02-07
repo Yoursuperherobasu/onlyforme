@@ -2,7 +2,7 @@ import re
 
 from langchain_core.prompts import HumanMessagePromptTemplate
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import DefaultPromptField, SecretStrInput, StrInput
 from agentcore.io import Output
 from agentcore.schema.message import Message

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from agentcore.utils import validate
 
 if TYPE_CHECKING:
-    from agentcore.custom.custom_component.custom_component import ExecutableNode
+    from agentcore.custom.custom_node.custom_node import ExecutableNode
 
 
 def eval_custom_component_code(code: str) -> type["ExecutableNode"]:

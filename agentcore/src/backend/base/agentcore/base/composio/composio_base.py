@@ -8,7 +8,7 @@ from composio.exceptions import ApiKeyError
 from composio_langchain import ComposioToolSet
 from langchain_core.tools import Tool
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import (
     AuthInput,
     MessageTextInput,

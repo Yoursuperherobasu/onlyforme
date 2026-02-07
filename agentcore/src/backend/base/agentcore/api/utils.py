@@ -20,11 +20,9 @@ from agentcore.services.database.models.transactions.model import TransactionTab
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.vertex_builds.model import VertexBuildTable
 from agentcore.services.deps import get_session, session_scope
-from agentcore.services.store.utils import get_lf_version_from_pypi
 
 if TYPE_CHECKING:
     from agentcore.services.chat.service import ChatService
-    from agentcore.services.store.schema import StoreComponentCreate
 
 
 API_WORDS = ["api", "key", "token"]
@@ -71,8 +69,7 @@ def build_input_keys_response(langchain_object, artifacts):
     for key, value in artifacts.items():
         if key in input_keys_response["input_keys"]:
             input_keys_response["input_keys"][key] = value
-    # If the object has memory, that memory will have a memory_variables attribute
-    # memory variables should be removed from the input keys
+    
     if hasattr(langchain_object, "memory") and hasattr(langchain_object.memory, "memory_variables"):
         # Remove memory variables from input keys
         input_keys_response["input_keys"] = {
@@ -105,24 +102,6 @@ def validate_is_component(flows: list[Flow]):
 def get_is_component_from_data(data: dict):
     """Returns True if the data is a component."""
     return data.get("is_component")
-
-
-async def check_agentcore_version(component: StoreComponentCreate) -> None:
-    from agentcore.utils.version import get_version_info
-
-    __version__ = get_version_info()["version"]
-
-    if not component.last_tested_version:
-        component.last_tested_version = __version__
-
-    agentcore_version = await get_lf_version_from_pypi()
-    if agentcore_version is None:
-        raise HTTPException(status_code=500, detail="Unable to verify the latest version of Agentcore")
-    if agentcore_version != component.last_tested_version:
-        logger.warning(
-            f"Your version of Agentcore ({component.last_tested_version}) is outdated. "
-            f"Please update to the latest version ({agentcore_version}) and try again."
-        )
 
 
 def format_elapsed_time(elapsed_time: float) -> str:
@@ -175,7 +154,6 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, **kwarg
         LangGraphAdapter instance
     """
     from loguru import logger
-    logger.info(f"📊 BUILD_GRAPH_FROM_DATA: flow_id={flow_id}")
     # Get flow name
     if "flow_name" not in kwargs:
         flow_name = await _get_flow_name(flow_id if isinstance(flow_id, uuid.UUID) else uuid.UUID(flow_id))
@@ -188,7 +166,7 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, **kwarg
     project_id = kwargs.get("project_id")
     project_name = kwargs.get("project_name")
 
-    logger.info(f"📊 BUILD_GRAPH_FROM_DATA: Calling LangGraphAdapter.from_payload for flow_id={flow_id}")
+    logger.info(f"BUILD_GRAPH_FROM_DATA: Calling LangGraphAdapter.from_payload for flow_id={flow_id}")
     # Build graph using LangGraphAdapter
     graph = LangGraphAdapter.from_payload(
         payload,
@@ -198,7 +176,6 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, **kwarg
         project_id=project_id,
         project_name=project_name,
     )
-    logger.info(f"📊 BUILD_GRAPH_FROM_DATA: LangGraphAdapter created, vertices={len(graph.vertices)}")
 
     for vertex_id in graph.has_session_id_vertices:
         vertex = graph.get_vertex(vertex_id)
@@ -209,9 +186,7 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, **kwarg
             vertex.update_raw_params({"session_id": session_id}, overwrite=True)
 
     graph.session_id = session_id
-    logger.info(f"📊 BUILD_GRAPH_FROM_DATA: Calling graph.initialize_run()")
     await graph.initialize_run()
-    logger.info(f"📊 BUILD_GRAPH_FROM_DATA: initialize_run completed")
     return graph
 
 

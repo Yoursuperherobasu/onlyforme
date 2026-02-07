@@ -1,4 +1,4 @@
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import safe_convert
 from agentcore.inputs.inputs import BoolInput, HandleInput, MessageTextInput, MultilineInput, TabInput
 from agentcore.schema.data import Data

@@ -260,11 +260,11 @@ def create_class(code, class_name):
     code = code.replace("from agentcore.custom import CustomComponent", "from agentcore.custom import ExecutableNode")
     code = code.replace("from agentcore.custom import Component", "from agentcore.custom import Node")
     code = code.replace(
-        "from agentcore.custom.custom_component.component import Component",
+        "from agentcore.custom.custom_node.node import Component",
         "from agentcore.custom import Node",
     )
     code = code.replace(
-        "from agentcore.custom.custom_component.custom_component import CustomComponent",
+        "from agentcore.custom.custom_node.custom_node import CustomComponent",
         "from agentcore.custom import ExecutableNode",
     )
     code = code.replace(

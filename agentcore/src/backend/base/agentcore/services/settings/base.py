@@ -24,7 +24,7 @@ from pydantic_settings import (
 from typing_extensions import override
 
 from agentcore.serialization.constants import MAX_ITEMS_LENGTH, MAX_TEXT_LENGTH
-from agentcore.services.settings.constants import VARIABLES_TO_GET_FROM_ENVIRONMENT
+# [VARIABLE REMOVED] from agentcore.services.settings.constants import VARIABLES_TO_GET_FROM_ENVIRONMENT
 from agentcore.utils.util_strings import is_valid_database_url
 
 # BASE_COMPONENTS_PATH = str(Path(__file__).parent / "components")
@@ -161,8 +161,7 @@ class Settings(BaseSettings):
     cache_expire: int = 3600
     redis_cache_expire: int = 3600
     """The cache expire in seconds."""
-    variable_store: str = "db"
-    """The store can be 'db' or 'kubernetes'."""
+    # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault
 
     prometheus_enabled: bool = False
     """If set to True, Agentcore will expose Prometheus metrics."""
@@ -190,11 +189,6 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float | None = 1.0
     sentry_profiles_sample_rate: float | None = 1.0
 
-    store: bool | None = True
-    store_url: str | None = "https://api.agentcore.store"
-    download_webhook_url: str | None = "https://api.agentcore.store/flows/trigger/ec611a61-8460-4438-b187-a4f65e5559d4"
-    like_webhook_url: str | None = "https://api.agentcore.store/flows/trigger/64275852-ec00-45c1-984e-3bff814732da"
-
     storage_type: str = "local"
 
     celery_enabled: bool = False
@@ -203,10 +197,8 @@ class Settings(BaseSettings):
     """If set to True, Global Variables set in the UI will fallback to a environment variable
     with the same name in case Agentcore fails to retrieve the variable value."""
 
-    store_environment_variables: bool = True
-    """Whether to store environment variables as Global Variables in the database."""
-    variables_to_get_from_environment: list[str] = VARIABLES_TO_GET_FROM_ENVIRONMENT
-    """List of environment variables to get from the environment and store in the database."""
+    # [VARIABLE REMOVED] store_environment_variables and variables_to_get_from_environment removed
+    #Azure Key Vault
     worker_timeout: int = 300
     """Timeout for the API calls in seconds."""
     frontend_timeout: int = 0
@@ -337,12 +329,7 @@ class Settings(BaseSettings):
         logger.debug(f"Setting user agent to {value}")
         return value
 
-    @field_validator("variables_to_get_from_environment", mode="before")
-    @classmethod
-    def set_variables_to_get_from_environment(cls, value):
-        if isinstance(value, str):
-            value = value.split(",")
-        return list(set(VARIABLES_TO_GET_FROM_ENVIRONMENT + value))
+    # [VARIABLE REMOVED] variables_to_get_from_environment validator removed
 
     @field_validator("log_file", mode="before")
     @classmethod

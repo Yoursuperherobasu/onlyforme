@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from collections.abc import Sequence
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import Tool
 from agentcore.io import Output
 from agentcore.schema.data import Data

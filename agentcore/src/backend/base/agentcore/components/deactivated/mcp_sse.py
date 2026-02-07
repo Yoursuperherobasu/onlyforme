@@ -9,7 +9,7 @@ from agentcore.base.mcp.util import (
     create_tool_coroutine,
     create_tool_func,
 )
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import Tool
 from agentcore.io import MessageTextInput, Output
 

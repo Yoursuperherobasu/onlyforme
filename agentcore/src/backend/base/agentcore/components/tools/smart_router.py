@@ -12,7 +12,7 @@ from agentcore.inputs.inputs import (
 from agentcore.schema.data import Data
 from agentcore.schema.message import Message
 from agentcore.template.field.base import Output
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 
 class SmartRouterComponent(Node):
     """Smart Router component that uses semantic understanding to route inputs.

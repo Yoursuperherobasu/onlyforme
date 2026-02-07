@@ -67,8 +67,7 @@ class PublishRecordBase(SQLModel):
 
 
 class PublishRecord(PublishRecordBase, table=True):  # type: ignore[call-arg]
-    """Tracks flow publications to external platforms like OpenWebUI."""
-
+    
     __tablename__ = "publish_record"
 
     # id: UUID = Field(default_factory=uuid4, primary_key=True, unique=True)

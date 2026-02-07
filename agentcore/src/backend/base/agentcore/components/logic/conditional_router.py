@@ -1,6 +1,6 @@
 import re
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import BoolInput, DropdownInput, IntInput, MessageInput, MessageTextInput, Output
 from agentcore.schema.message import Message
 

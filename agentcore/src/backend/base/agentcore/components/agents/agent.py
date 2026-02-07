@@ -9,7 +9,7 @@ from agentcore.base.models.model_utils import get_model_name
 from agentcore.components._helpers.current_date import CurrentDateNode
 from agentcore.components._helpers.memory import MemoryNode
 from agentcore.components._langchain_utilities.tool_calling import ToolCallingAgentNode
-from agentcore.custom.custom_component.component import _get_component_toolkit
+from agentcore.custom.custom_node.node import _get_component_toolkit
 from agentcore.field_typing import Tool
 from agentcore.io import BoolInput, HandleInput, IntInput, MultilineInput, Output
 from agentcore.logging import logger

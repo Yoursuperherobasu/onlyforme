@@ -1,5 +1,5 @@
 from agentcore.base.agents.crewai.crew import convert_llm, convert_tools
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import BoolInput, DictInput, HandleInput, MultilineInput, Output
 
 

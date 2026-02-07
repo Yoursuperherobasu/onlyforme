@@ -2,7 +2,7 @@ from abc import abstractmethod
 
 from langchain.memory import ConversationBufferMemory
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import BaseChatMemory
 from agentcore.field_typing.constants import Memory
 from agentcore.template.field.base import Output

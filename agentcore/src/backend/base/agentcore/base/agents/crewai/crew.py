@@ -4,7 +4,7 @@ from typing import Any, cast
 import litellm
 from pydantic import SecretStr
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import HandleInput, InputTypes
 from agentcore.io import BoolInput, IntInput, Output
 from agentcore.schema.data import Data

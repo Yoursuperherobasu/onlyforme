@@ -1,7 +1,7 @@
 from spider.spider import Spider
 
 from agentcore.base.langchain_utilities.spider_constants import MODES
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import (
     BoolInput,
     DictInput,

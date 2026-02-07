@@ -1,4 +1,4 @@
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import MessageTextInput, BoolInput
 from agentcore.io import Output
 from agentcore.schema.message import Message

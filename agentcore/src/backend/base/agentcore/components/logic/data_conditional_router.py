@@ -1,6 +1,6 @@
 from typing import Any
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import DataInput, DropdownInput, MessageTextInput, Output
 from agentcore.schema.data import Data
 from agentcore.schema.dotdict import dotdict

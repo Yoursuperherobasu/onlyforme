@@ -1,6 +1,6 @@
 from langchain.agents.agent_toolkits.vectorstore.toolkit import VectorStoreInfo
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import HandleInput, MessageTextInput, MultilineInput
 from agentcore.template.field.base import Output
 

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from typing_extensions import override
 
-from agentcore.custom.custom_component.component import Node, _get_component_toolkit
+from agentcore.src.backend.base.agentcore.custom.custom_node.node import Node, _get_component_toolkit
 from agentcore.field_typing import Tool
 from agentcore.graph_langgraph import LangGraphAdapter as Graph
 from agentcore.graph_langgraph import LangGraphVertex as Vertex

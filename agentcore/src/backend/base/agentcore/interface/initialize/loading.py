@@ -16,8 +16,8 @@ from agentcore.services.deps import get_tracing_service, session_scope
 from agentcore.utils.debug_logger import debug_log
 
 if TYPE_CHECKING:
-    from agentcore.custom.custom_component.component import Node
-    from agentcore.custom.custom_component.custom_component import ExecutableNode
+    from agentcore.custom.custom_node.node import Node
+    from agentcore.custom.custom_node.custom_node import ExecutableNode
     from agentcore.events.event_manager import EventManager
     from agentcore.graph_langgraph import LangGraphVertex as Vertex
 

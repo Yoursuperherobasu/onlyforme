@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from agentcore.base.flow_processing.utils import build_data_from_result_data
-from agentcore.custom.custom_component.custom_component import ExecutableNode
+from agentcore.custom.custom_node.custom_node import ExecutableNode
 from agentcore.graph_langgraph import LangGraphAdapter as Graph
 from agentcore.graph_langgraph import LangGraphVertex as Vertex
 from agentcore.helpers.flow import get_flow_inputs

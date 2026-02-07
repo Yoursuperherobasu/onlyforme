@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.output_parsers import BaseOutputParser
 
 from agentcore.base.constants import STREAM_INFO_TEXT
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import LanguageModel
 from agentcore.inputs.inputs import BoolInput, InputTypes, MessageInput, MultilineInput
 from agentcore.schema.message import Message

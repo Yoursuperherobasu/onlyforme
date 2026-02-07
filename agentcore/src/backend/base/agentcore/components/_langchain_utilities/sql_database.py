@@ -2,7 +2,7 @@ from langchain_community.utilities.sql_database import SQLDatabase
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import (
     Output,
     StrInput,

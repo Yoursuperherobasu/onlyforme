@@ -25,7 +25,6 @@ from rich.panel import Panel
 from rich.table import Table
 from sqlmodel import select
 
-from agentcore.cli.progress import create_agentcore_progress
 from agentcore.initial_setup.setup import get_or_create_default_folder
 from agentcore.logging.logger import configure, logger
 from agentcore.main import setup_app
@@ -265,88 +264,66 @@ def run(
 
     configure(log_level=log_level, log_file=log_file, log_rotation=log_rotation)
 
-    # Create progress indicator (show verbose timing if log level is DEBUG)
-    verbose = log_level == "debug"
-    progress = create_agentcore_progress(verbose=verbose)
+    # Initializing Agentcore
+    logger.debug(f"Loading config from file: '{env_file}'" if env_file else "No env_file provided.")
+    set_var_for_macos_issue()
+    settings_service = get_settings_service()
 
-    # Step 0: Initializing Agentcore
-    with progress.step(0):
-        logger.debug(f"Loading config from file: '{env_file}'" if env_file else "No env_file provided.")
-        set_var_for_macos_issue()
-        settings_service = get_settings_service()
+    # Checking Environment
+    for key, value in os.environ.items():
+        new_key = key.replace("AGENTCORE_", "")
+        if hasattr(settings_service.auth_settings, new_key):
+            setattr(settings_service.auth_settings, new_key, value)
 
-    # Step 1: Checking Environment
-    with progress.step(1):
-        for key, value in os.environ.items():
-            new_key = key.replace("AGENTCORE_", "")
-            if hasattr(settings_service.auth_settings, new_key):
-                setattr(settings_service.auth_settings, new_key, value)
+    frame = inspect.currentframe()
+    valid_args: list = []
+    values: dict = {}
+    if frame is not None:
+        arguments, _, _, values = inspect.getargvalues(frame)
+        valid_args = [arg for arg in arguments if values[arg] is not None]
 
-        frame = inspect.currentframe()
-        valid_args: list = []
-        values: dict = {}
-        if frame is not None:
-            arguments, _, _, values = inspect.getargvalues(frame)
-            valid_args = [arg for arg in arguments if values[arg] is not None]
+    for arg in valid_args:
+        if arg == "components_path":
+            settings_service.settings.update_settings(components_path=components_path)
+        elif hasattr(settings_service.settings, arg):
+            settings_service.set(arg, values[arg])
+        elif hasattr(settings_service.auth_settings, arg):
+            settings_service.auth_settings.set(arg, values[arg])
+        logger.debug(f"Loading config from cli parameter '{arg}': '{values[arg]}'")
 
-        for arg in valid_args:
-            if arg == "components_path":
-                settings_service.settings.update_settings(components_path=components_path)
-            elif hasattr(settings_service.settings, arg):
-                settings_service.set(arg, values[arg])
-            elif hasattr(settings_service.auth_settings, arg):
-                settings_service.auth_settings.set(arg, values[arg])
-            logger.debug(f"Loading config from cli parameter '{arg}': '{values[arg]}'")
+    # Get final values from settings
+    host = settings_service.settings.host
+    port = settings_service.settings.port
+    workers = settings_service.settings.workers
+    worker_timeout = settings_service.settings.worker_timeout
+    log_level = settings_service.settings.log_level
+    frontend_path = settings_service.settings.frontend_path
+    backend_only = settings_service.settings.backend_only
+    ssl_cert_file_path = (
+        settings_service.settings.ssl_cert_file if ssl_cert_file_path is None else ssl_cert_file_path
+    )
+    ssl_key_file_path = settings_service.settings.ssl_key_file if ssl_key_file_path is None else ssl_key_file_path
 
-        # Get final values from settings
-        host = settings_service.settings.host
-        port = settings_service.settings.port
-        workers = settings_service.settings.workers
-        worker_timeout = settings_service.settings.worker_timeout
-        log_level = settings_service.settings.log_level
-        frontend_path = settings_service.settings.frontend_path
-        backend_only = settings_service.settings.backend_only
-        ssl_cert_file_path = (
-            settings_service.settings.ssl_cert_file if ssl_cert_file_path is None else ssl_cert_file_path
-        )
-        ssl_key_file_path = settings_service.settings.ssl_key_file if ssl_key_file_path is None else ssl_key_file_path
+    # create path object if frontend_path is provided
+    static_files_dir: Path | None = Path(frontend_path) if frontend_path else None
 
-        # create path object if frontend_path is provided
-        static_files_dir: Path | None = Path(frontend_path) if frontend_path else None
+    # Starting Core Services
+    app = setup_app(static_files_dir=static_files_dir, backend_only=backend_only)
 
-    # Step 2: Starting Core Services
-    with progress.step(2):
-        app = setup_app(static_files_dir=static_files_dir, backend_only=backend_only)
+    # Connecting Database (this happens inside setup_app via dependencies)
+    # check if port is being used
+    if is_port_in_use(port, host):
+        port = get_free_port(port)
 
-    # Step 3: Connecting Database (this happens inside setup_app via dependencies)
-    with progress.step(3):
-        # check if port is being used
-        if is_port_in_use(port, host):
-            port = get_free_port(port)
+    protocol = "https" if ssl_cert_file_path and ssl_key_file_path else "http"
 
-        protocol = "https" if ssl_cert_file_path and ssl_key_file_path else "http"
-
-    # Step 4: Loading Components (placeholder for components loading)
-    with progress.step(4):
-        pass  # Components are loaded during app startup
-
-    # Step 5: Adding Starter Projects (placeholder for starter projects)
-    if get_settings_service().settings.create_starter_projects:
-        with progress.step(5):
-            pass  # Starter projects are added during app startup
-
-    # Step 6: Launching Agentcore
+    # Launching Agentcore
     if platform.system() == "Windows":
-        with progress.step(6):
-            import uvicorn
+        import uvicorn
 
-            # Print summary and banner before starting the server, since uvicorn is a blocking call.
-            # We _may_ be able to subprocess, but with window's spawn behavior, we'd have to move all
-            # non-picklable code to the subprocess.
-            progress.print_summary()
-            print_banner(host, port, protocol)
+        print_banner(host, port, protocol)
 
-        # Blocking call, so must be outside of the progress step
+        # Blocking call
         uvicorn.run(
             app,
             host=host,
@@ -357,28 +334,25 @@ def run(
             loop="asyncio",
         )
     else:
-        with progress.step(6):
-            # Use Gunicorn with AgentcoreUvicornWorker for non-Windows systems
-            from agentcore.server import AgentcoreApplication
+        # Use Gunicorn with AgentcoreUvicornWorker for non-Windows systems
+        from agentcore.server import AgentcoreApplication
 
-            options = {
-                "bind": f"{host}:{port}",
-                "workers": get_number_of_workers(workers),
-                "timeout": worker_timeout,
-                "certfile": ssl_cert_file_path,
-                "keyfile": ssl_key_file_path,
-                "log_level": log_level.lower(),
-            }
-            server = AgentcoreApplication(app, options)
+        options = {
+            "bind": f"{host}:{port}",
+            "workers": get_number_of_workers(workers),
+            "timeout": worker_timeout,
+            "certfile": ssl_cert_file_path,
+            "keyfile": ssl_key_file_path,
+            "log_level": log_level.lower(),
+        }
+        server = AgentcoreApplication(app, options)
 
-            # Start the webapp process
-            process_manager.webapp_process = Process(target=server.run)
-            process_manager.webapp_process.start()
+        # Start the webapp process
+        process_manager.webapp_process = Process(target=server.run)
+        process_manager.webapp_process.start()
 
-            wait_for_server_ready(host, port, protocol)
+        wait_for_server_ready(host, port, protocol)
 
-        # Print summary and banner after server is ready
-        progress.print_summary()
         print_banner(host, port, protocol)
 
         # Handle browser opening

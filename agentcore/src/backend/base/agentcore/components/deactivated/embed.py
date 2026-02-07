@@ -1,4 +1,4 @@
-from agentcore.custom.custom_component.custom_component import ExecutableNode
+from agentcore.custom.custom_node.custom_node import ExecutableNode
 from agentcore.field_typing import Embeddings
 from agentcore.schema.data import Data
 

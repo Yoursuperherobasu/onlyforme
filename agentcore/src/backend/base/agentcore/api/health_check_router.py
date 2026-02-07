@@ -25,17 +25,14 @@ class HealthResponse(BaseModel):
         return any(v.startswith("error") for v in self.model_dump().values())
 
 
-# /health is also supported by uvicorn
-# it means uvicorn's /health serves first before the agentcore instance is up
-# therefore it's not a reliable health check for a agentcore instance
-# we keep this for backward compatibility
+
+#  /health serves first before the agentcore instance is up
 @health_check_router.get("/health")
 async def health():
     return {"status": "ok"}
 
 
 # /health_check evaluates key services
-# It's a reliable health check for a agentcore instance
 @health_check_router.get("/health_check")
 async def health_check(
     session: DbSession,

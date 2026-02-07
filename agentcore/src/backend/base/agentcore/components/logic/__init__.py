@@ -6,18 +6,15 @@ from agentcore.components._importing import import_mod
 
 if TYPE_CHECKING:
     from agentcore.components.logic.conditional_router import ConditionalRouter
-    from agentcore.components.logic.flow_tool import FlowTool
     from agentcore.components.logic.loop import Loop
 
 _dynamic_imports = {
     "ConditionalRouter": "conditional_router",
-    "FlowTool": "flow_tool",
     "Loop": "loop",
 }
 
 __all__ = [
     "ConditionalRouter",
-    "FlowTool",
     "Loop",
 ]
 

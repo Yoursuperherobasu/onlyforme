@@ -1,4 +1,4 @@
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import Embeddings
 from agentcore.io import Output
 

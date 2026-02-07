@@ -40,7 +40,6 @@ _sys.stdout.flush()
 
 
 import anyio
-import httpx 
 import sqlalchemy
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,13 +54,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from agentcore.api import health_check_router, log_router, router
 from agentcore.api.openai_compat_router import router as openai_router
-from agentcore.api.v1.mcp_projects import init_mcp_servers
-from agentcore.initial_setup.setup import (
-    create_or_update_starter_projects,
-    load_bundles_from_urls,
-    load_flows_from_directory,
-    sync_flows_from_fs,
-)
+from agentcore.api.mcp_projects import init_mcp_servers
 from agentcore.interface.components import get_and_cache_all_types_dict
 from agentcore.interface.utils import setup_llm_caching
 from agentcore.logging.logger import configure
@@ -132,14 +125,6 @@ class JavaScriptMIMETypeMiddleware(BaseHTTPMiddleware):
         return response
 
 
-async def load_bundles_with_error_handling():
-    try:
-        return await load_bundles_from_urls()
-    except (httpx.TimeoutException, httpx.HTTPError, httpx.RequestError) as exc:
-        logger.error(f"Error loading bundles from URLs: {exc}")
-        return [], []
-
-
 def get_lifespan(*, fix_migration=True, version=None):
     telemetry_service = get_telemetry_service()
 
@@ -159,7 +144,6 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug("Starting Agentcore...")
 
         temp_dirs: list[TemporaryDirectory] = []
-        sync_flows_from_fs_task = None
 
         try:
             start_time = asyncio.get_event_loop().time()
@@ -174,41 +158,9 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug(f"LLM caching setup in {asyncio.get_event_loop().time() - current_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
-            logger.debug("Loading bundles")
-            temp_dirs, bundles_components_paths = await load_bundles_with_error_handling()
-            get_settings_service().settings.components_path.extend(bundles_components_paths)
-            logger.debug(f"Bundles loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
-
-            current_time = asyncio.get_event_loop().time()
             logger.debug("Caching types")
             all_types_dict = await get_and_cache_all_types_dict(get_settings_service())
             logger.debug(f"Types cached in {asyncio.get_event_loop().time() - current_time:.2f}s")
-
-            # Use file-based lock to prevent multiple workers from creating duplicate starter projects concurrently.
-            # Note that it's still possible that one worker may complete this task, release the lock,
-            # then another worker pick it up, but the operation is idempotent so worst case it duplicates
-            # the initialization work.
-            current_time = asyncio.get_event_loop().time()
-            logger.debug("Creating/updating starter projects")
-            import tempfile
-
-            from filelock import FileLock
-
-            lock_file = Path(tempfile.gettempdir()) / "agentcore_starter_projects.lock"
-            lock = FileLock(lock_file, timeout=1)
-            try:
-                with lock:
-                    await create_or_update_starter_projects(all_types_dict)
-                    logger.debug(
-                        f"Starter projects created/updated in {asyncio.get_event_loop().time() - current_time:.2f}s"
-                    )
-            except TimeoutError:
-                # Another process has the lock
-                logger.debug("Another worker is creating starter projects, skipping")
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    f"Failed to acquire lock for starter projects: {e}. Starter projects may not be created or updated."
-                )
 
             current_time = asyncio.get_event_loop().time()
             logger.debug("Starting telemetry service")
@@ -216,9 +168,6 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug(f"started telemetry service in {asyncio.get_event_loop().time() - current_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
-            logger.debug("Loading flows")
-            await load_flows_from_directory()
-            sync_flows_from_fs_task = asyncio.create_task(sync_flows_from_fs())
             queue_service = get_queue_service()
             if not queue_service.is_started():  # Start if not already started
                 queue_service.start()
@@ -240,48 +189,23 @@ def get_lifespan(*, fix_migration=True, version=None):
                 logger.exception(exc)
             raise
         finally:
-            # Clean shutdown with progress indicator
-            # Create shutdown progress (show verbose timing if log level is DEBUG)
-            from agentcore.__main__ import get_number_of_workers
-            from agentcore.cli.progress import create_agentcore_shutdown_progress
-
-            log_level = os.getenv("AGENTCORE_LOG_LEVEL", "info").lower()
-            num_workers = get_number_of_workers(get_settings_service().settings.workers)
-            shutdown_progress = create_agentcore_shutdown_progress(
-                verbose=log_level == "debug", multiple_workers=num_workers > 1
-            )
-
+            # Clean shutdown
             try:
-                # Step 0: Stopping Server
-                with shutdown_progress.step(0):
-                    logger.debug("Stopping server gracefully...")
-                    # The actual server stopping is handled by the lifespan context
-                    await asyncio.sleep(0.1)  # Brief pause for visual effect
+                # Stopping Server
+                logger.debug("Stopping server gracefully...")
 
-                # Step 1: Cancelling Background Tasks
-                with shutdown_progress.step(1):
-                    if sync_flows_from_fs_task:
-                        sync_flows_from_fs_task.cancel()
-                        await asyncio.wait([sync_flows_from_fs_task])
+                # Cleaning Up Services
+                try:
+                    await asyncio.wait_for(teardown_services(), timeout=10)
+                except asyncio.TimeoutError:
+                    logger.warning("Teardown services timed out.")
 
-                # Step 2: Cleaning Up Services
-                with shutdown_progress.step(2):
-                    try:
-                        await asyncio.wait_for(teardown_services(), timeout=10)
-                    except asyncio.TimeoutError:
-                        logger.warning("Teardown services timed out.")
+                # Clearing Temporary Files
+                temp_dir_cleanups = [asyncio.to_thread(temp_dir.cleanup) for temp_dir in temp_dirs]
+                await asyncio.gather(*temp_dir_cleanups)
 
-                # Step 3: Clearing Temporary Files
-                with shutdown_progress.step(3):
-                    temp_dir_cleanups = [asyncio.to_thread(temp_dir.cleanup) for temp_dir in temp_dirs]
-                    await asyncio.gather(*temp_dir_cleanups)
-
-                # Step 4: Finalizing Shutdown
-                with shutdown_progress.step(4):
-                    logger.debug("Agentcore shutdown complete")
-
-                # Show completion summary and farewell
-                shutdown_progress.print_shutdown_summary()
+                # Finalizing Shutdown
+                logger.debug("Agentcore shutdown complete")
 
             except (sqlalchemy.exc.OperationalError, sqlalchemy.exc.DBAPIError) as e:
                 # Case where the database connection is closed during shutdown
@@ -393,13 +317,8 @@ def create_app():
             msg = f"Invalid port number {prome_port_str}"
             raise ValueError(msg)
 
-    if settings.prometheus_enabled:
-        from prometheus_client import start_http_server
-
-        start_http_server(settings.prometheus_port)
-
     if settings.mcp_server_enabled:
-        from agentcore.api.v1 import mcp_router
+        from agentcore.api import mcp_router
 
         router.include_router(mcp_router)
 

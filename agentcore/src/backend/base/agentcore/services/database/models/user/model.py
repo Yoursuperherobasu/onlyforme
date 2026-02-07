@@ -11,7 +11,6 @@ from agentcore.schema.serialize import UUIDstr
 if TYPE_CHECKING:
     from agentcore.services.database.models.flow.model import Flow
     from agentcore.services.database.models.folder.model import Folder
-    from agentcore.services.database.models.variable.model import Variable
 
 
 class UserOptin(BaseModel):
@@ -35,10 +34,7 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
     # TODO: api_keys relationship removed - migrating to Azure Key Vault
     store_api_key: str | None = Field(default=None, nullable=True)
     flows: list["Flow"] = Relationship(back_populates="user")
-    variables: list["Variable"] = Relationship(
-        back_populates="user",
-        sa_relationship_kwargs={"cascade": "delete"},
-    )
+    # [VARIABLE REMOVED] variables relationship removed — migrating to Azure Key Vault
     folders: list["Folder"] = Relationship(
         back_populates="user",
         sa_relationship_kwargs={"cascade": "delete"},

@@ -3,7 +3,7 @@ from typing import Any
 
 from langchain_core.documents import BaseDocumentTransformer
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import Output
 from agentcore.schema.data import Data
 from agentcore.utils.util import build_loader_repr_from_data

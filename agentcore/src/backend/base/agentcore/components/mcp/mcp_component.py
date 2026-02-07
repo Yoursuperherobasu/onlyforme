@@ -6,7 +6,7 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool  # noqa: TC002
 
-from agentcore.api.v2.mcp import get_server
+from agentcore.api.mcp_config import get_server
 from agentcore.base.agents.utils import maybe_unflatten_dict, safe_cache_get, safe_cache_set
 from agentcore.base.mcp.util import (
     MCPSseClient,
@@ -14,7 +14,7 @@ from agentcore.base.mcp.util import (
     create_input_schema_from_json_schema,
     update_tools,
 )
-from agentcore.custom.custom_component.component_with_cache import NodeWithCache
+from agentcore.custom.custom_node.node_with_cache import NodeWithCache
 from agentcore.inputs.inputs import InputTypes  # noqa: TC001
 from agentcore.io import DropdownInput, McpInput, MessageTextInput, Output
 from agentcore.io.schema import flatten_schema, schema_to_agentcore_inputs

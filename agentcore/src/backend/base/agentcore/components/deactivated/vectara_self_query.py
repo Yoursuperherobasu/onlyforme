@@ -5,7 +5,7 @@ from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
 
 from agentcore.base.vectorstores.model import check_cached_vector_store
-from agentcore.custom.custom_component.custom_component import ExecutableNode
+from agentcore.custom.custom_node.custom_node import ExecutableNode
 from agentcore.io import HandleInput, StrInput
 
 

@@ -1,3 +1,4 @@
+
 import re
 from abc import abstractmethod
 from typing import TYPE_CHECKING, cast
@@ -10,7 +11,7 @@ from langchain_core.runnables import Runnable
 from agentcore.base.agents.callback import AgentAsyncHandler
 from agentcore.base.agents.events import ExceptionWithMessageError, process_agent_events
 from agentcore.base.agents.utils import data_to_messages
-from agentcore.custom.custom_component.component import Node, _get_component_toolkit
+from agentcore.custom.custom_node.node import Node, _get_component_toolkit
 from agentcore.field_typing import Tool
 from agentcore.inputs.inputs import InputTypes, MultilineInput
 from agentcore.io import BoolInput, HandleInput, IntInput, MessageInput

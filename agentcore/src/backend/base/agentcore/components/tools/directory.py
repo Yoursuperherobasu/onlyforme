@@ -6,7 +6,7 @@ from agentcore.base.data.utils import (
     parse_text_file_to_data,
     retrieve_file_paths,
 )
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import BoolInput, IntInput, MessageTextInput, MultiselectInput
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame

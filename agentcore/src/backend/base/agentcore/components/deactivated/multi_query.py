@@ -1,7 +1,7 @@
 from langchain.prompts import PromptTemplate
 from langchain.retrievers import MultiQueryRetriever
 
-from agentcore.custom.custom_component.custom_component import ExecutableNode
+from agentcore.custom.custom_node.custom_node import ExecutableNode
 from agentcore.field_typing import BaseRetriever, LanguageModel, Text
 from agentcore.inputs.inputs import HandleInput, StrInput
 

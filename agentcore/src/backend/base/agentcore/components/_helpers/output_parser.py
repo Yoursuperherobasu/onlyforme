@@ -1,6 +1,6 @@
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing.constants import OutputParser
 from agentcore.io import DropdownInput, Output
 from agentcore.schema.message import Message

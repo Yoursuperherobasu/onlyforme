@@ -10,7 +10,7 @@ from zipfile import ZipFile, is_zipfile
 
 import pandas as pd
 from loguru import logger
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import BoolInput, FileInput, HandleInput, Output, StrInput
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame

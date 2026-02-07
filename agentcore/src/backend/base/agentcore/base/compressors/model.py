@@ -1,6 +1,6 @@
 from abc import abstractmethod
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import BaseDocumentCompressor
 from agentcore.io import DataInput, IntInput, MultilineInput
 from agentcore.schema.data import Data

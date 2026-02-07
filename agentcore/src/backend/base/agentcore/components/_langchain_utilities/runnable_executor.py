@@ -1,6 +1,6 @@
 from langchain.agents import AgentExecutor
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import BoolInput, HandleInput, MessageTextInput
 from agentcore.schema.message import Message
 from agentcore.template.field.base import Output

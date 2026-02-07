@@ -1,36 +1,24 @@
+// [STORE REMOVED] Backend store service deleted — this Zustand store now returns disabled defaults
 import { create } from "zustand";
-import { ENABLE_LANGBUILDER_STORE } from "@/customization/feature-flags";
-import { checkHasApiKey, checkHasStore } from "../controllers/API";
+// import { ENABLE_LANGBUILDER_STORE } from "@/customization/feature-flags";
+// import { checkHasApiKey, checkHasStore } from "../controllers/API";
 import type { StoreStoreType } from "../types/zustand/store";
 
 export const useStoreStore = create<StoreStoreType>((set) => ({
-  hasStore: ENABLE_LANGBUILDER_STORE,
+  hasStore: false,
   validApiKey: false,
   hasApiKey: false,
-  loadingApiKey: true,
+  loadingApiKey: false,
   checkHasStore: () => {
-    checkHasStore().then((res) => {
-      set({
-        hasStore: ENABLE_LANGBUILDER_STORE && (res?.enabled ?? false),
-      });
-    });
+    // [STORE REMOVED] was: checkHasStore().then(...)
+    set({ hasStore: false });
   },
   updateValidApiKey: (validApiKey) => set(() => ({ validApiKey: validApiKey })),
   updateLoadingApiKey: (loadingApiKey) =>
     set(() => ({ loadingApiKey: loadingApiKey })),
   updateHasApiKey: (hasApiKey) => set(() => ({ hasApiKey: hasApiKey })),
   fetchApiData: async () => {
-    set({ loadingApiKey: true });
-    try {
-      const res = await checkHasApiKey();
-      set({
-        validApiKey: res?.is_valid ?? false,
-        hasApiKey: res?.has_api_key ?? false,
-        loadingApiKey: false,
-      });
-    } catch (e) {
-      set({ loadingApiKey: false });
-      console.error(e);
-    }
+    // [STORE REMOVED] was: checkHasApiKey().then(...)
+    set({ loadingApiKey: false, validApiKey: false, hasApiKey: false });
   },
 }));

@@ -5,7 +5,6 @@ from .message import MessageTable
 from .publish_record import PublishRecord
 from .transactions import TransactionTable
 from .user import User
-from .variable import Variable
 
 __all__ = [
     "File",
@@ -15,5 +14,4 @@ __all__ = [
     "PublishRecord",
     "TransactionTable",
     "User",
-    "Variable",
 ]

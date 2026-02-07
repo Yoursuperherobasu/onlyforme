@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from langchain_core.callbacks import Callbacks
 
-    from agentcore.custom.custom_component.component import Node
+    from agentcore.custom.custom_node.node import Node
     from agentcore.events.event_manager import EventManager
     from agentcore.inputs.inputs import InputTypes
     from agentcore.io import Output

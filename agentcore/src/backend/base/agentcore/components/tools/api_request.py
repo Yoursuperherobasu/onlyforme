@@ -12,7 +12,7 @@ import httpx
 import validators
 
 from agentcore.base.curl.parse import parse_context
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import TabInput
 from agentcore.io import (
     BoolInput,

@@ -23,11 +23,9 @@ if TYPE_CHECKING:
     from agentcore.services.socket.service import SocketIOService
     from agentcore.services.state.service import StateService
     from agentcore.services.storage.service import StorageService
-    from agentcore.services.store.service import StoreService
     from agentcore.services.task.service import TaskService
     from agentcore.services.telemetry.service import TelemetryService
     from agentcore.services.tracing.service import TracingService
-    from agentcore.services.variable.service import VariableService
 
 
 def get_service(service_type: ServiceType, default=None):
@@ -102,18 +100,6 @@ def get_storage_service() -> StorageService:
     from agentcore.services.storage.factory import StorageServiceFactory
 
     return get_service(ServiceType.STORAGE_SERVICE, default=StorageServiceFactory())
-
-
-def get_variable_service() -> VariableService:
-    """Retrieves the VariableService instance from the service manager.
-
-    Returns:
-        The VariableService instance.
-
-    """
-    from agentcore.services.variable.factory import VariableServiceFactory
-
-    return get_service(ServiceType.VARIABLE_SERVICE, VariableServiceFactory())
 
 
 def get_settings_service() -> SettingsService:
@@ -233,15 +219,6 @@ def get_chat_service() -> ChatService:
         ChatService: The chat service instance.
     """
     return get_service(ServiceType.CHAT_SERVICE)
-
-
-def get_store_service() -> StoreService:
-    """Retrieves the StoreService instance from the service manager.
-
-    Returns:
-        StoreService: The StoreService instance.
-    """
-    return get_service(ServiceType.STORE_SERVICE)
 
 
 def get_queue_service() -> JobQueueService:

@@ -10,7 +10,7 @@ import { useGetGlobalVariablesMutation } from "@/controllers/API/queries/variabl
 import useAuthStore from "@/stores/authStore";
 import { setLocalStorage } from "@/utils/local-storage-util";
 import { getAuthCookie, setAuthCookie } from "@/utils/utils";
-import { useStoreStore } from "../stores/storeStore";
+// [STORE REMOVED] import { useStoreStore } from "../stores/storeStore";
 import type { Users } from "../types/api";
 import type { AuthContextType } from "../types/contexts/auth";
 
@@ -46,8 +46,8 @@ export function AuthProvider({ children }): React.ReactElement {
     getAuthCookie(cookies, LANGBUILDER_API_TOKEN),
   );
 
-  const checkHasStore = useStoreStore((state) => state.checkHasStore);
-  const fetchApiData = useStoreStore((state) => state.fetchApiData);
+  // [STORE REMOVED] const checkHasStore = useStoreStore((state) => state.checkHasStore);
+  // [STORE REMOVED] const fetchApiData = useStoreStore((state) => state.fetchApiData);
   const setIsAuthenticated = useAuthStore((state) => state.setIsAuthenticated);
 
   const { mutate: mutateLoggedUser } = useGetUserData();
@@ -75,8 +75,8 @@ export function AuthProvider({ children }): React.ReactElement {
           setUserData(user);
           const isSuperUser = user!.is_superuser;
           useAuthStore.getState().setIsAdmin(isSuperUser);
-          checkHasStore();
-          fetchApiData();
+          // [STORE REMOVED] checkHasStore();
+          // [STORE REMOVED] fetchApiData();
         },
         onError: () => {
           setUserData(null);

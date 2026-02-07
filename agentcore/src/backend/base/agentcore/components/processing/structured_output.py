@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, create_model
 from trustcall import create_extractor
 
 from agentcore.base.models.chat_result import get_chat_result
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.base_model import build_model_from_schema
 from agentcore.io import (
     HandleInput,

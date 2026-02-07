@@ -2,7 +2,7 @@ from abc import abstractmethod
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import Text, VectorStore
 from agentcore.helpers.data import docs_to_data
 from agentcore.inputs.inputs import BoolInput

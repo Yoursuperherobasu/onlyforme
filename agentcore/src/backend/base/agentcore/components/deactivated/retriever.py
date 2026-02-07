@@ -1,6 +1,6 @@
 from langchain_core.tools import create_retriever_tool
 
-from agentcore.custom.custom_component.custom_component import ExecutableNode
+from agentcore.custom.custom_node.custom_node import ExecutableNode
 from agentcore.field_typing import BaseRetriever, Tool
 from agentcore.io import HandleInput, StrInput
 

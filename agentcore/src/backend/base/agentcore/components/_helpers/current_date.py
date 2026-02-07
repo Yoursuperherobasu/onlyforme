@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo, available_timezones
 
 from loguru import logger
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import DropdownInput, Output
 from agentcore.schema.message import Message
 

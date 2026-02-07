@@ -6,7 +6,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_google_genai._common import GoogleGenerativeAIError
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.io import MessageTextInput, Output, SecretStrInput
 
 MIN_DIMENSION_ERROR = "Output dimensionality must be at least 1"

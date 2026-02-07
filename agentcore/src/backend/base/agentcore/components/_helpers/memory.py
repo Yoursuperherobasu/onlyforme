@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from agentcore.custom.custom_component.component import Node
+from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
 from agentcore.inputs.inputs import DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
 from agentcore.memory import aget_messages, astore_message

@@ -11,8 +11,8 @@ from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlmodel import select
 
-from agentcore.api.v1.endpoints import simple_run_flow
-from agentcore.api.v1.schemas import SimplifiedAPIRequest
+from agentcore.api.endpoints import simple_run_flow
+from agentcore.api.v1_schemas import SimplifiedAPIRequest
 from agentcore.helpers.flow import get_flow_by_id_or_endpoint_name
 from agentcore.services.auth.utils import api_key_header, api_key_query, api_key_security
 from agentcore.services.database.models.flow.model import AccessTypeEnum, Flow, FlowRead
@@ -211,7 +211,6 @@ async def list_models(current_user: Annotated[UserRead, Depends(_resolve_current
 @router.post("/v1/chat/completions")
 async def chat(req: ChatRequest, current_user: Annotated[UserRead, Depends(_resolve_current_user)]):
     if req.stream:
-        # OpenWebUI may set stream=true by default; we currently respond non-streaming.
         req.stream = False  # type: ignore[assignment]
     if not req.messages:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
