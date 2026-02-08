@@ -169,7 +169,7 @@ def get_default_factory(module: str, function: str):
 
         with warnings.catch_warnings():
             warnings.filterwarnings(
-                "ignore", message="Support for class-based `config` is deprecated", category=DeprecationWarning
+                "ignore", message="Support for class-based `config`", category=DeprecationWarning
             )
             warnings.filterwarnings("ignore", message="Valid config keys have changed in V2", category=UserWarning)
             imported_module = importlib.import_module(module)

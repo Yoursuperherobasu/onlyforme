@@ -1,5 +1,3 @@
-# LangBuilder Dependencies
-# Generated from pyproject.toml
 
 # Install agentcore-base first: pip install src/backend/base
 beautifulsoup4==4.12.3

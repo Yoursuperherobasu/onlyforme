@@ -32,7 +32,7 @@ class File(BaseFileNode):
         *_base_inputs,
         BoolInput(
             name="use_multithreading",
-            display_name="[Deprecated] Use Multithreading",
+            display_name="Use Multithreading",
             advanced=True,
             value=True,
             info="Set 'Processing Concurrency' greater than 1 to enable multithreading.",

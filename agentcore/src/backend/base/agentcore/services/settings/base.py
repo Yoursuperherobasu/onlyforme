@@ -84,9 +84,6 @@ class Settings(BaseSettings):
     max_overflow: int = 30
     """The number of connections to allow that can be opened beyond the pool size.
     Should be 2x the pool_size for optimal performance under load."""
-    db_connect_timeout: int = 30
-    """The number of seconds to wait before giving up on a lock to released or establishing a connection to the
-    database."""
 
     mcp_server_timeout: int = 20
     """The number of seconds to wait before giving up on a lock to released or establishing a connection to the
@@ -166,8 +163,6 @@ class Settings(BaseSettings):
 
     storage_type: str = "local"
 
-    celery_enabled: bool = False
-
     fallback_to_env_var: bool = True
     """If set to True, Global Variables set in the UI will fallback to a environment variable
     with the same name in case Agentcore fails to retrieve the variable value."""
@@ -207,8 +202,6 @@ class Settings(BaseSettings):
     """The path to log file for Alembic for SQLAlchemy."""
     frontend_path: str | None = None
     """The path to the frontend directory containing build files. This is for development purposes only.."""
-    open_browser: bool = False
-    """If set to True, Agentcore will open the browser on startup."""
     auto_saving: bool = True
     """If set to True, Agentcore will auto save flows."""
     auto_saving_interval: int = 1000
@@ -227,8 +220,6 @@ class Settings(BaseSettings):
     """The maximum number of builds to keep per vertex. Older builds will be deleted."""
     webhook_polling_interval: int = 5000
     """The polling interval for the webhook in ms."""
-    fs_flows_polling_interval: int = 10000
-    """The polling interval in milliseconds for synchronizing flows from the file system."""
     ssl_cert_file: str | None = None
     """Path to the SSL certificate file on the local system."""
     ssl_key_file: str | None = None
@@ -437,13 +428,6 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (MyCustomSource(settings_cls),)
-
-
-def save_settings_to_yaml(settings: Settings, file_path: str) -> None:
-    with Path(file_path).open("w", encoding="utf-8") as f:
-        settings_dict = settings.model_dump()
-        yaml.dump(settings_dict, f)
-
 
 async def load_settings_from_yaml(file_path: str) -> Settings:
     # Check if a string is a valid path or a file name

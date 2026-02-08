@@ -11,8 +11,7 @@ class ModelMetadata(TypedDict, total=False):
     reasoning: bool  # Reasoning models (defaults to False)
     search: bool  # Search models (defaults to False)
     preview: bool  # Whether model is in preview/beta (defaults to False)
-    not_supported: bool  # Whether model is not supported or deprecated (defaults to False)
-    deprecated: bool  # Whether model is deprecated (defaults to False)
+    not_supported: bool  # Whether model is not supported
 
 
 def create_model_metadata(
@@ -25,7 +24,6 @@ def create_model_metadata(
     search: bool = False,
     preview: bool = False,
     not_supported: bool = False,
-    deprecated: bool = False,
 ) -> ModelMetadata:
     """Helper function to create ModelMetadata with explicit defaults."""
     return ModelMetadata(
@@ -37,5 +35,4 @@ def create_model_metadata(
         search=search,
         preview=preview,
         not_supported=not_supported,
-        deprecated=deprecated,
     )

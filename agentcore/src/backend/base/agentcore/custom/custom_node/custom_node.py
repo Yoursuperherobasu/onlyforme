@@ -401,23 +401,16 @@ class ExecutableNode(NodeBase):
         return self._template_config
 
     def variables(self, name: str, field: str):
-        """DEPRECATED - This is kept for backward compatibility. Use get_variables instead."""
+        """Use get_variables instead."""
         return run_until_complete(self.get_variables(name, field))
 
     async def get_variables(self, name: str, field: str):
-        """DEPRECATED - This is kept for backward compatibility. Use get_variable instead."""
+        """ Use get_variable instead."""
         async with session_scope() as session:
             return await self.get_variable(name, field, session)
 
     async def get_variable(self, name: str, field: str, session):
-        """Returns the variable for the current user with the specified name.
-
-        [VARIABLE REMOVED] Stubbed out — migrating to Azure Key Vault.
-        Falls back to environment variable lookup.
-
-        Returns:
-            The variable value from environment, or raises ValueError.
-        """
+       
         import os
 
         value = os.environ.get(name)
@@ -482,7 +475,6 @@ class ExecutableNode(NodeBase):
         )
 
     def list_agents(self) -> list[Data]:
-        """DEPRECATED - This is kept for backward compatibility. Using alist_agents instead is recommended."""
         return run_until_complete(self.alist_agents())
 
     async def alist_agents(self) -> list[Data]:
@@ -508,7 +500,6 @@ class ExecutableNode(NodeBase):
         raise NotImplementedError
 
     def post_code_processing(self, new_frontend_node: dict, current_frontend_node: dict):
-        """DEPRECATED - Kept for backward compatibility. Use update_frontend_node instead."""
         run_until_complete(self.update_frontend_node(new_frontend_node, current_frontend_node))
 
     async def update_frontend_node(self, new_frontend_node: dict, current_frontend_node: dict):

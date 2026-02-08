@@ -45,7 +45,7 @@ class AgentNode(ToolCallingAgentNode):
             name="system_prompt",
             display_name="Agent Instructions",
             info="System Prompt: Initial instructions and context provided to guide the agent's behavior.",
-            value="You are a helpful assistant that can use tools to answer questions and perform tasks.",
+            value="You are a helpful assistant that answer questions",
             advanced=False,
         ),
         IntInput(

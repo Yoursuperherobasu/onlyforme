@@ -52,21 +52,7 @@ def get_messages(
     agent_id: UUID | None = None,
     limit: int | None = None,
 ) -> list[Message]:
-    """DEPRECATED - Retrieves messages from the monitor service based on the provided filters.
-
-    DEPRECATED: Use `aget_messages` instead.
-
-    Args:
-        sender (Optional[str]): The sender of the messages (e.g., "Machine" or "User")
-        sender_name (Optional[str]): The name of the sender.
-        session_id (Optional[str]): The session ID associated with the messages.
-        order_by (Optional[str]): The field to order the messages by. Defaults to "timestamp".
-        order (Optional[str]): The order in which to retrieve the messages. Defaults to "DESC".
-        agent_id (Optional[UUID]): The flow ID associated with the messages.
-        limit (Optional[int]): The maximum number of messages to retrieve.
-
-    Returns:
-        List[Data]: A list of Data objects representing the retrieved messages.
+    """Retrieves messages from the monitor service based on the provided filters.
     """
     return run_until_complete(aget_messages(sender, sender_name, session_id, order_by, order, agent_id, limit))
 
@@ -101,10 +87,7 @@ async def aget_messages(
 
 
 def add_messages(messages: Message | list[Message], agent_id: str | UUID | None = None):
-    """DEPRECATED - Add a message to the monitor service.
-
-    DEPRECATED: Use `aadd_messages` instead.
-    """
+   
     return run_until_complete(aadd_messages(messages, agent_id=agent_id))
 
 
@@ -195,13 +178,6 @@ async def aadd_messagetables(messages: list[ConversationTable], session: AsyncSe
 
 
 def delete_messages(session_id: str) -> None:
-    """DEPRECATED - Delete messages from the monitor service based on the provided session ID.
-
-    DEPRECATED: Use `adelete_messages` instead.
-
-    Args:
-        session_id (str): The session ID associated with the messages to delete.
-    """
     return run_until_complete(adelete_messages(session_id))
 
 
@@ -237,21 +213,7 @@ def store_message(
     message: Message,
     agent_id: str | UUID | None = None,
 ) -> list[Message]:
-    """DEPRECATED: Stores a message in the memory.
 
-    DEPRECATED: Use `astore_message` instead.
-
-    Args:
-        message (Message): The message to store.
-        agent_id (Optional[str | UUID]): The flow ID associated with the message.
-            When running from the CustomComponent you can access this using `self.graph.agent_id`.
-
-    Returns:
-        List[Message]: A list of data containing the stored message.
-
-    Raises:
-        ValueError: If any of the required parameters (session_id, sender, sender_name) is not provided.
-    """
     return run_until_complete(astore_message(message, agent_id=agent_id))
 
 
@@ -296,7 +258,6 @@ async def astore_message(
 
 
 class LCBuiltinChatMemory(BaseChatMessageHistory):
-    """DEPRECATED: Kept for backward compatibility."""
 
     def __init__(
         self,

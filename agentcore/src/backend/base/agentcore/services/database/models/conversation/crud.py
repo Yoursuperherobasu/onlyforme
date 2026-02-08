@@ -22,5 +22,4 @@ async def _update_message(message_id: UUID | str, message: ConversationUpdate | 
 
 
 def update_message(message_id: UUID | str, message: ConversationUpdate | dict):
-    """DEPRECATED - Kept for backward compatibility. Do not use."""
     return run_until_complete(_update_message(message_id, message))

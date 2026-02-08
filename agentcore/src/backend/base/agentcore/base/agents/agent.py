@@ -63,7 +63,6 @@ class LCAgentNode(Node):
             info=(
                 "The description of the agent. This is only used when in Tool Mode. "
                 f"Defaults to '{DEFAULT_TOOLS_DESCRIPTION}' and tools are added dynamically. "
-                "This feature is deprecated and will be removed in future versions."
             ),
             advanced=True,
             value=DEFAULT_TOOLS_DESCRIPTION,

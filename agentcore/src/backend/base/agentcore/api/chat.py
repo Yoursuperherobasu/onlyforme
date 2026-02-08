@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 router = APIRouter(tags=["Chat"])
 
 
-@router.post("/build/{agent_id}/vertices", deprecated=True)
+@router.post("/build/{agent_id}/vertices")
 async def retrieve_vertices_order(
     *,
     agent_id: uuid.UUID,
@@ -255,7 +255,7 @@ async def cancel_build(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
-@router.post("/build/{agent_id}/vertices/{vertex_id}", deprecated=True)
+@router.post("/build/{agent_id}/vertices/{vertex_id}")
 async def build_vertex(
     *,
     agent_id: uuid.UUID,
@@ -501,8 +501,7 @@ async def _stream_vertex(agent_id: str, vertex_id: str, chat_service: ChatServic
 
 @router.get(
     "/build/{agent_id}/{vertex_id}/stream",
-    response_class=StreamingResponse,
-    deprecated=True,
+    response_class=StreamingResponse
 )
 async def build_vertex_stream(
     agent_id: uuid.UUID,
