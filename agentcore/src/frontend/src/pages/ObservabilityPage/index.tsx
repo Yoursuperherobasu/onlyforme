@@ -206,7 +206,7 @@ interface SessionDetailResponse {
 }
 
 interface AgentListItem {
-  flow_id: string;
+  agent_id: string;
   flow_name: string | null;
   project_id: string | null;
   project_name: string | null;
@@ -221,7 +221,7 @@ interface AgentListItem {
 }
 
 interface AgentDetailResponse {
-  flow_id: string;
+  agent_id: string;
   flow_name: string | null;
   trace_count: number;
   session_count: number;
@@ -387,7 +387,7 @@ function getUserTimezoneOffset(): number {
 }
 
 async function fetchStatus(): Promise<LangfuseStatus> {
-  const response = await api.get<LangfuseStatus>("/api/v1/observability/status");
+  const response = await api.get<LangfuseStatus>("/api/observability/status");
   return response.data;
 }
 
@@ -401,7 +401,7 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
 
   const queryString = searchParams.toString();
-  const url = `/api/v1/observability/metrics?${queryString}`;
+  const url = `/api/observability/metrics?${queryString}`;
   const response = await api.get<Metrics>(url);
   return response.data;
 }
@@ -412,17 +412,17 @@ async function fetchSessions(params: FetchMetricsParams = {}): Promise<{ session
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
 
-  const response = await api.get(`/api/v1/observability/sessions?${searchParams.toString()}`);
+  const response = await api.get(`/api/observability/sessions?${searchParams.toString()}`);
   return response.data;
 }
 
 async function fetchSessionDetail(sessionId: string): Promise<SessionDetailResponse> {
-  const response = await api.get<SessionDetailResponse>(`/api/v1/observability/sessions/${encodeURIComponent(sessionId)}`);
+  const response = await api.get<SessionDetailResponse>(`/api/observability/sessions/${encodeURIComponent(sessionId)}`);
   return response.data;
 }
 
 async function fetchTraceDetail(traceId: string): Promise<TraceDetailResponse> {
-  const response = await api.get<TraceDetailResponse>(`/api/v1/observability/traces/${traceId}`);
+  const response = await api.get<TraceDetailResponse>(`/api/observability/traces/${traceId}`);
   return response.data;
 }
 
@@ -433,14 +433,14 @@ async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: A
   if (params.search) searchParams.set("search", params.search);
 
   const queryString = searchParams.toString();
-  const url = queryString ? `/api/v1/observability/agents?${queryString}` : "/api/v1/observability/agents";
+  const url = queryString ? `/api/observability/agents?${queryString}` : "/api/observability/agents";
   const response = await api.get(url);
   return response.data;
 }
 
 async function fetchAgentDetail(flowId: string): Promise<AgentDetailResponse> {
   const tzOffset = getUserTimezoneOffset();
-  const response = await api.get<AgentDetailResponse>(`/api/v1/observability/agents/${flowId}?tz_offset=${tzOffset}`);
+  const response = await api.get<AgentDetailResponse>(`/api/observability/agents/${flowId}?tz_offset=${tzOffset}`);
   return response.data;
 }
 
@@ -450,14 +450,14 @@ async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ project
   if (params.to_date) searchParams.set("to_date", params.to_date);
 
   const queryString = searchParams.toString();
-  const url = queryString ? `/api/v1/observability/projects?${queryString}` : "/api/v1/observability/projects";
+  const url = queryString ? `/api/observability/projects?${queryString}` : "/api/observability/projects";
   const response = await api.get(url);
   return response.data;
 }
 
 async function fetchProjectDetail(projectId: string): Promise<ProjectDetailResponse> {
   const tzOffset = getUserTimezoneOffset();
-  const response = await api.get<ProjectDetailResponse>(`/api/v1/observability/projects/${projectId}?tz_offset=${tzOffset}`);
+  const response = await api.get<ProjectDetailResponse>(`/api/observability/projects/${projectId}?tz_offset=${tzOffset}`);
   return response.data;
 }
 
@@ -664,7 +664,7 @@ function RecentAgentActivityPanel({ agentsData }: {
           <div className="space-y-3">
             {recentAgents.map((agent) => (
               <div
-                key={agent.flow_id}
+                key={agent.agent_id}
                 className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 <div
@@ -1486,9 +1486,9 @@ export default function ObservabilityPage(): JSX.Element {
                       <TableBody>
                         {filteredAgents.map((agent) => (
                           <TableRow
-                            key={agent.flow_id}
+                            key={agent.agent_id}
                             className="cursor-pointer border-gray-100 hover:bg-gray-50"
-                            onClick={() => setSelectedAgent(agent.flow_id)}
+                            onClick={() => setSelectedAgent(agent.agent_id)}
                           >
                             <TableCell className="font-medium" style={{ color: THEME.textMain }}>
                               <div className="flex items-center gap-3">
@@ -2296,11 +2296,11 @@ export default function ObservabilityPage(): JSX.Element {
                 <div className="space-y-2">
                   {projectDetail.agents.map((agent) => (
                     <div
-                      key={agent.flow_id}
+                      key={agent.agent_id}
                       className="p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
                       onClick={() => {
                         setSelectedProject(null);
-                        setSelectedAgent(agent.flow_id);
+                        setSelectedAgent(agent.agent_id);
                       }}
                     >
                       <div className="flex justify-between items-center">

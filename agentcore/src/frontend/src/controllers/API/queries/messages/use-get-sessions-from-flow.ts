@@ -23,7 +23,7 @@ export const useGetSessionsFromFlowQuery: useQueryFunctionType<
     const isPlaygroundPage = useFlowStore.getState().playgroundPage;
     const config = {};
     if (id) {
-      config["params"] = { flow_id: id };
+      config["params"] = { agent_id: id };
     }
 
     if (!isPlaygroundPage) {

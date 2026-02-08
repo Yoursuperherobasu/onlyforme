@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Text, UniqueConstraint
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
-from agentcore.services.database.models.flow.model import Flow, FlowRead
+from agentcore.services.database.models.agent.model import Agent, AgentRead
 from agentcore.services.database.models.user.model import User
 
 
@@ -29,7 +29,7 @@ class Folder(FolderBase, table=True):  # type: ignore[call-arg]
     children: list["Folder"] = Relationship(back_populates="parent")
     user_id: UUID | None = Field(default=None, foreign_key="user.id")
     user: User = Relationship(back_populates="folders")
-    flows: list[Flow] = Relationship(
+    agents: list[Agent] = Relationship(
         back_populates="folder", sa_relationship_kwargs={"cascade": "all, delete, delete-orphan"}
     )
 
@@ -38,7 +38,7 @@ class Folder(FolderBase, table=True):  # type: ignore[call-arg]
 
 class FolderCreate(FolderBase):
     components_list: list[UUID] | None = None
-    flows_list: list[UUID] | None = None
+    agents_list: list[UUID] | None = None
 
 
 class FolderRead(FolderBase):
@@ -46,10 +46,16 @@ class FolderRead(FolderBase):
     parent_id: UUID | None = Field()
 
 
-class FolderReadWithFlows(FolderBase):
+class FolderReadWithAgents(FolderBase):
     id: UUID
     parent_id: UUID | None = Field()
-    flows: list[FlowRead] = Field(default=[])
+    agents: list[AgentRead] = Field(default=[])
+
+    def model_dump(self, **kwargs) -> dict:
+        d = super().model_dump(**kwargs)
+        if "agents" in d:
+            d["flows"] = d.pop("agents")
+        return d
 
 
 class FolderUpdate(SQLModel):
@@ -57,5 +63,5 @@ class FolderUpdate(SQLModel):
     description: str | None = None
     parent_id: UUID | None = None
     components: list[UUID] = Field(default_factory=list)
-    flows: list[UUID] = Field(default_factory=list)
+    agents: list[UUID] = Field(default_factory=list)
     auth_settings: dict | None = None

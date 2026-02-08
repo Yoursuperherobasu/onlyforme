@@ -30,7 +30,7 @@ def create_node_function(vertex: LangGraphVertex):
         logger.debug(f"Executing node for vertex: {vertex.id} ({vertex.display_name})")
         
         start_time = time.time()
-        flow_id = state.get("flow_id")
+        agent_id = state.get("agent_id")
         
         try:
             # 1. Resolve dependencies from state
@@ -75,7 +75,7 @@ def create_node_function(vertex: LangGraphVertex):
             logger.debug(f"Vertex {vertex.id} completed in {elapsed_time:.2f}s")
             
             # 7. Log vertex build to database
-            if flow_id:
+            if agent_id:
                 try:
                     # Prepare data for logging
                     data_dict = {}
@@ -83,7 +83,7 @@ def create_node_function(vertex: LangGraphVertex):
                         data_dict = {"result": str(vertex.built_result)}
                     
                     await log_vertex_build(
-                        flow_id=flow_id if isinstance(flow_id, UUID) else UUID(flow_id),
+                        agent_id=agent_id if isinstance(agent_id, UUID) else UUID(agent_id),
                         vertex_id=vertex.id,
                         valid=True,
                         params=vertex.raw_params,
@@ -109,10 +109,10 @@ def create_node_function(vertex: LangGraphVertex):
             state["events"].append(error_event)
             
             # Log failed vertex build to database
-            if flow_id:
+            if agent_id:
                 try:
                     await log_vertex_build(
-                        flow_id=flow_id if isinstance(flow_id, UUID) else UUID(flow_id),
+                        agent_id=agent_id if isinstance(agent_id, UUID) else UUID(agent_id),
                         vertex_id=vertex.id,
                         valid=False,
                         params=vertex.raw_params,

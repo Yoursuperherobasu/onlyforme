@@ -30,7 +30,7 @@ def _vertex_to_primitive_dict(vertex_params: dict) -> dict:
 
 
 async def log_transaction(
-    flow_id: str | UUID,
+    agent_id: str | UUID,
     vertex_id: str,
     status: str,
     inputs: dict | None = None,
@@ -41,7 +41,7 @@ async def log_transaction(
     """Asynchronously logs a transaction record for a vertex in a flow if transaction storage is enabled.
 
     Args:
-        flow_id: The flow ID (string or UUID)
+        agent_id: The flow ID (string or UUID)
         vertex_id: The source vertex ID
         status: Transaction status ("success" or "error")
         inputs: The vertex inputs (optional)
@@ -50,15 +50,15 @@ async def log_transaction(
         error: Error message if status is "error" (optional)
     """
     try:
-        logger.debug(f"LOG_TRANSACTION called: vertex_id={vertex_id}, flow_id={flow_id}, status={status}")
+        logger.debug(f"LOG_TRANSACTION called: vertex_id={vertex_id}, agent_id={agent_id}, status={status}")
         
         if not get_settings_service().settings.transactions_storage_enabled:
             logger.warning("Transaction storage is disabled in settings")
             return
         
-        # Convert flow_id to UUID if needed
-        if isinstance(flow_id, str):
-            flow_id = UUID(flow_id)
+        # Convert agent_id to UUID if needed
+        if isinstance(agent_id, str):
+            agent_id = UUID(agent_id)
         
         # Serialize inputs and outputs
         serialized_inputs = serialize(inputs, max_length=get_max_text_length(), max_items=get_max_items_length()) if inputs else None
@@ -71,7 +71,7 @@ async def log_transaction(
             outputs=serialized_outputs,
             status=status,
             error=error,
-            flow_id=flow_id,
+            agent_id=agent_id,
         )
         
         async with session_getter(get_db_service()) as session:
@@ -85,7 +85,7 @@ async def log_transaction(
 
 async def log_vertex_build(
     *,
-    flow_id: str | UUID,
+    agent_id: str | UUID,
     vertex_id: str,
     valid: bool,
     params: Any,
@@ -98,7 +98,7 @@ async def log_vertex_build(
     Converts parameters to string if present. Handles exceptions by logging errors.
     
     Args:
-        flow_id: The flow ID (string or UUID)
+        agent_id: The flow ID (string or UUID)
         vertex_id: The vertex ID
         valid: Whether the build was successful
         params: The vertex parameters
@@ -106,21 +106,21 @@ async def log_vertex_build(
         artifacts: The generated artifacts (optional)
     """
     try:
-        logger.debug(f"LOG_VERTEX_BUILD called: vertex_id={vertex_id}, flow_id={flow_id}, valid={valid}")
+        logger.debug(f"LOG_VERTEX_BUILD called: vertex_id={vertex_id}, agent_id={agent_id}, valid={valid}")
         
         if not get_settings_service().settings.vertex_builds_storage_enabled:
             logger.warning("Vertex builds storage is disabled in settings")
             return
         
         try:
-            if isinstance(flow_id, str):
-                flow_id = UUID(flow_id)
+            if isinstance(agent_id, str):
+                agent_id = UUID(agent_id)
         except ValueError:
-            msg = f"Invalid flow_id passed to log_vertex_build: {flow_id!r}(type: {type(flow_id)})"
+            msg = f"Invalid agent_id passed to log_vertex_build: {agent_id!r}(type: {type(agent_id)})"
             raise ValueError(msg) from None
 
         vertex_build = VertexBuildBase(
-            flow_id=flow_id,
+            agent_id=agent_id,
             id=vertex_id,
             valid=valid,
             params=str(params) if params else None,

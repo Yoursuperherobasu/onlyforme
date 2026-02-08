@@ -107,7 +107,7 @@ const authHeaders = { 'x-api-key': apiKey };`
         const chatUploadOptions${index + 1} = {
             hostname: '${hostname}',
             port: ${port},
-            path: \`/api/v1/files/upload/\${FLOW_ID}\`,
+            path: \`/api/v1/files/upload/\${AGENT_ID}\`,
             method: 'POST',
             headers: {
                 'Content-Type': \`multipart/form-data; boundary=\${chatBoundary${
@@ -204,7 +204,7 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE_URL = "${baseUrl}";
-const FLOW_ID = "${flowId}";
+const AGENT_ID = "${flowId}";
 const protocol = new URL(BASE_URL).protocol;
 const httpModule = protocol === 'https:' ? require('https') : require('http');
 

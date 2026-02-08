@@ -34,7 +34,7 @@ export const useUpdateMessage: useMutationFunctionType<
       messages[messageIndex] = {
         ...messages[messageIndex],
         ...message,
-        flow_id: flowId,
+        agent_id: flowId,
       };
       sessionStorage.setItem(flowId, JSON.stringify(messages));
     } else {

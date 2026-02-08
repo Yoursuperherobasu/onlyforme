@@ -7,31 +7,31 @@ from agentcore.services.database.models.vertex_builds.model import VertexBuildBa
 from agentcore.services.deps import get_settings_service
 
 
-async def get_vertex_builds_by_flow_id(
-    db: AsyncSession, flow_id: UUID, limit: int | None = 1000
+async def get_vertex_builds_by_agent_id(
+    db: AsyncSession, agent_id: UUID, limit: int | None = 1000
 ) -> list[VertexBuildTable]:
-    """Get the most recent vertex builds for a given flow ID.
+    """Get the most recent vertex builds for a given agent ID.
 
-    This function retrieves vertex builds associated with a specific flow, ordered by timestamp.
+    This function retrieves vertex builds associated with a specific agent, ordered by timestamp.
     It uses a subquery to get the latest timestamp for each build ID to ensure we get the most
     recent versions.
 
     Args:
         db (AsyncSession): The database session for executing queries.
-        flow_id (UUID): The unique identifier of the flow to get builds for. Can be string or UUID.
+        agent_id (UUID): The unique identifier of the agent to get builds for. Can be string or UUID.
         limit (int | None, optional): Maximum number of builds to return. Defaults to 1000.
 
     Returns:
         list[VertexBuildTable]: List of vertex builds, ordered chronologically by timestamp.
 
     Note:
-        If flow_id is provided as a string, it will be converted to UUID automatically.
+        If agent_id is provided as a string, it will be converted to UUID automatically.
     """
-    if isinstance(flow_id, str):
-        flow_id = UUID(flow_id)
+    if isinstance(agent_id, str):
+        agent_id = UUID(agent_id)
     subquery = (
         select(VertexBuildTable.id, func.max(VertexBuildTable.timestamp).label("max_timestamp"))
-        .where(VertexBuildTable.flow_id == flow_id)
+        .where(VertexBuildTable.agent_id == agent_id)
         .group_by(VertexBuildTable.id)
         .subquery()
     )
@@ -40,7 +40,7 @@ async def get_vertex_builds_by_flow_id(
         .join(
             subquery, (VertexBuildTable.id == subquery.c.id) & (VertexBuildTable.timestamp == subquery.c.max_timestamp)
         )
-        .where(VertexBuildTable.flow_id == flow_id)
+        .where(VertexBuildTable.agent_id == agent_id)
         .order_by(col(VertexBuildTable.timestamp))
         .limit(limit)
     )
@@ -98,14 +98,14 @@ async def log_vertex_build(
         keep_vertex_subq = (
             select(VertexBuildTable.build_id)
             .where(
-                VertexBuildTable.flow_id == vertex_build.flow_id,
+                VertexBuildTable.agent_id == vertex_build.agent_id,
                 VertexBuildTable.id == vertex_build.id,
             )
             .order_by(col(VertexBuildTable.timestamp).desc(), col(VertexBuildTable.build_id).desc())
             .limit(max_per_vertex)
         )
         delete_vertex_older = delete(VertexBuildTable).where(
-            VertexBuildTable.flow_id == vertex_build.flow_id,
+            VertexBuildTable.agent_id == vertex_build.agent_id,
             VertexBuildTable.id == vertex_build.id,
             col(VertexBuildTable.build_id).not_in(keep_vertex_subq),
         )
@@ -130,16 +130,16 @@ async def log_vertex_build(
     return table
 
 
-async def delete_vertex_builds_by_flow_id(db: AsyncSession, flow_id: UUID) -> None:
-    """Delete all vertex builds associated with a specific flow ID.
+async def delete_vertex_builds_by_agent_id(db: AsyncSession, agent_id: UUID) -> None:
+    """Delete all vertex builds associated with a specific agent ID.
 
     Args:
         db (AsyncSession): The database session for executing queries.
-        flow_id (UUID): The unique identifier of the flow whose builds should be deleted.
+        agent_id (UUID): The unique identifier of the agent whose builds should be deleted.
 
     Note:
         This operation is permanent and cannot be undone. Use with caution.
         The function commits the transaction automatically.
     """
-    stmt = delete(VertexBuildTable).where(VertexBuildTable.flow_id == flow_id)
+    stmt = delete(VertexBuildTable).where(VertexBuildTable.agent_id == agent_id)
     await db.exec(stmt)

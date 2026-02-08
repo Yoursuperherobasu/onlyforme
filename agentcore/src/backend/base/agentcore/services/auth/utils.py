@@ -27,7 +27,7 @@ from agentcore.services.auth.permissions import ROLE_PERMISSIONS
 
 # API key to Azure Key Vault
 
-oauth2_login = OAuth2PasswordBearer(tokenUrl="api/v1/login", auto_error=False)
+oauth2_login = OAuth2PasswordBearer(tokenUrl="api/login", auto_error=False)
 
 API_KEY_NAME = "x-api-key"
 

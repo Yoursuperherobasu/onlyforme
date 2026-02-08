@@ -158,7 +158,7 @@ class MemoryNode(Node):
             if message.sender:
                 stored_messages = [m for m in stored_messages if m.sender == message.sender]
         else:
-            await astore_message(message, flow_id=self.graph.flow_id)
+            await astore_message(message, agent_id=self.graph.agent_id)
             stored_messages = (
                 await aget_messages(
                     session_id=message.session_id, sender_name=message.sender_name, sender=message.sender

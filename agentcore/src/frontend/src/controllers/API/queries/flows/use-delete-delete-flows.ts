@@ -5,7 +5,7 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 interface IDeleteFlows {
-  flow_ids: string[];
+  agent_ids: string[];
 }
 
 export const useDeleteDeleteFlows: useMutationFunctionType<
@@ -16,7 +16,7 @@ export const useDeleteDeleteFlows: useMutationFunctionType<
 
   const deleteFlowsFn = async (payload: IDeleteFlows): Promise<any> => {
     const response = await api.delete<any>(`${getURL("FLOWS")}/`, {
-      data: payload.flow_ids,
+      data: payload.agent_ids,
     });
 
     return response.data;

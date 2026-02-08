@@ -50,7 +50,7 @@ export const useGetTransactionsQuery: useQueryFunctionType<
 
     const config = {};
 
-    config["params"] = { flow_id: id };
+    config["params"] = { agent_id: id };
     if (params) {
       config["params"] = { ...config["params"], ...params };
     }

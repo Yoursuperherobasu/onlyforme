@@ -19,7 +19,7 @@ router = APIRouter(prefix="/publish", tags=["Publish"])
 class PublishRequest(BaseModel):
     """Request schema for publishing a flow."""
 
-    flow_id: UUID = Field(..., description="UUID of the flow to publish")
+    agent_id: UUID = Field(..., description="UUID of the flow to publish")
 
 
 class PublishResponse(BaseModel):
@@ -31,7 +31,7 @@ class PublishResponse(BaseModel):
 class UnpublishRequest(BaseModel):
     """Request schema for unpublishing a flow."""
 
-    flow_id: UUID = Field(..., description="UUID of the flow to unpublish")
+    agent_id: UUID = Field(..., description="UUID of the flow to unpublish")
 
 
 # ── Stub routes ───────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ async def unpublish_flow(request: UnpublishRequest) -> PublishResponse:
     raise HTTPException(status_code=501, detail="Unpublish API not implemented — migrating to internal portal.")
 
 
-@router.get("/status/{flow_id}", status_code=501, response_model=PublishResponse)
-async def get_publish_status(flow_id: UUID) -> PublishResponse:
+@router.get("/status/{agent_id}", status_code=501, response_model=PublishResponse)
+async def get_publish_status(agent_id: UUID) -> PublishResponse:
     """Get publish status. [PUBLISH STUBBED] — migrating to internal portal."""
     raise HTTPException(status_code=501, detail="Publish status API not implemented — migrating to internal portal.")

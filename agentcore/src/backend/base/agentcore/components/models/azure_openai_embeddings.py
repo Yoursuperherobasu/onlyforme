@@ -1,9 +1,23 @@
 from langchain_openai import AzureOpenAIEmbeddings
 
 from agentcore.base.models.model import LCModelNode
-from agentcore.base.models.openai_constants import OPENAI_EMBEDDING_MODEL_NAMES
 from agentcore.field_typing import Embeddings
 from agentcore.io import DropdownInput, IntInput, MessageTextInput, Output, SecretStrInput
+
+OPENAI_EMBEDDING_MODEL_NAMES = [
+    "text-embedding-3-small",
+    "text-embedding-3-large",
+    "text-embedding-ada-002",
+]
+
+API_VERSION_OPTIONS = [
+    "2022-12-01",
+    "2023-03-15-preview",
+    "2023-05-15",
+    "2023-06-01-preview",
+    "2023-07-01-preview",
+    "2023-08-01-preview",
+]
 
 
 class AzureOpenAIEmbeddingsNode(LCModelNode):
@@ -11,15 +25,6 @@ class AzureOpenAIEmbeddingsNode(LCModelNode):
     description: str = "Generate embeddings using Azure OpenAI models."
     icon = "Azure"
     name = "AzureOpenAIEmbeddings"
-
-    API_VERSION_OPTIONS = [
-        "2022-12-01",
-        "2023-03-15-preview",
-        "2023-05-15",
-        "2023-06-01-preview",
-        "2023-07-01-preview",
-        "2023-08-01-preview",
-    ]
 
     inputs = [
         DropdownInput(

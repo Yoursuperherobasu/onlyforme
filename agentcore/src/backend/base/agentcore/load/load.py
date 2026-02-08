@@ -14,7 +14,7 @@ from agentcore.utils.async_helpers import run_until_complete
 from agentcore.utils.util import update_settings
 
 
-async def aload_flow_from_json(
+async def aload_agent_from_json(
     flow: Path | str | dict,
     *,
     tweaks: dict | None = None,
@@ -80,7 +80,7 @@ async def aload_flow_from_json(
     return Graph.from_payload(graph_data)
 
 
-def load_flow_from_json(
+def load_agent_from_json(
     flow: Path | str | dict,
     *,
     tweaks: dict | None = None,
@@ -113,7 +113,7 @@ def load_flow_from_json(
 
     """
     return run_until_complete(
-        aload_flow_from_json(
+        aload_agent_from_json(
             flow,
             tweaks=tweaks,
             log_level=log_level,
@@ -126,7 +126,7 @@ def load_flow_from_json(
     )
 
 
-async def arun_flow_from_json(
+async def arun_agent_from_json(
     flow: Path | str | dict,
     input_value: str,
     *,
@@ -168,7 +168,7 @@ async def arun_flow_from_json(
     if tweaks is None:
         tweaks = {}
     tweaks["stream"] = False
-    graph = await aload_flow_from_json(
+    graph = await aload_agent_from_json(
         flow=flow,
         tweaks=tweaks,
         log_level=log_level,
@@ -191,7 +191,7 @@ async def arun_flow_from_json(
     return result
 
 
-def run_flow_from_json(
+def run_agent_from_json(
     flow: Path | str | dict,
     input_value: str,
     *,
@@ -211,7 +211,7 @@ def run_flow_from_json(
     """Run a flow from a JSON file or dictionary.
 
     Note:
-        This function is a synchronous wrapper around `arun_flow_from_json`.
+        This function is a synchronous wrapper around `arun_agent_from_json`.
         It creates an event loop if one does not exist and runs the flow.
 
     Args:
@@ -235,7 +235,7 @@ def run_flow_from_json(
         List[RunOutputs]: A list of RunOutputs objects representing the results of running the flow.
     """
     return run_until_complete(
-        arun_flow_from_json(
+        arun_agent_from_json(
             flow,
             input_value,
             session_id=session_id,

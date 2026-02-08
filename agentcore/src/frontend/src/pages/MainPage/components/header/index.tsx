@@ -82,7 +82,7 @@ const HeaderComponent = ({
 
   const handleDelete = () => {
     deleteFlows(
-      { flow_ids: selectedFlows },
+      { agent_ids: selectedFlows },
       {
         onSuccess: () => {
           setSuccessData({ title: "Flows deleted successfully" });

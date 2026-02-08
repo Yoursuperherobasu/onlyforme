@@ -12,7 +12,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agentcore.schema.message import Message
-from agentcore.services.database.models.message.model import MessageRead, MessageTable
+from agentcore.services.database.models.conversation.model import ConversationRead, ConversationTable
 from agentcore.services.deps import session_scope
 from agentcore.utils.async_helpers import run_until_complete
 
@@ -23,20 +23,20 @@ def _get_variable_query(
     session_id: str | UUID | None = None,
     order_by: str | None = "timestamp",
     order: str | None = "DESC",
-    flow_id: UUID | None = None,
+    agent_id: UUID | None = None,
     limit: int | None = None,
 ):
-    stmt = select(MessageTable).where(MessageTable.error == False)  # noqa: E712
+    stmt = select(ConversationTable).where(ConversationTable.error == False)  # noqa: E712
     if sender:
-        stmt = stmt.where(MessageTable.sender == sender)
+        stmt = stmt.where(ConversationTable.sender == sender)
     if sender_name:
-        stmt = stmt.where(MessageTable.sender_name == sender_name)
+        stmt = stmt.where(ConversationTable.sender_name == sender_name)
     if session_id:
-        stmt = stmt.where(MessageTable.session_id == session_id)
-    if flow_id:
-        stmt = stmt.where(MessageTable.flow_id == flow_id)
+        stmt = stmt.where(ConversationTable.session_id == session_id)
+    if agent_id:
+        stmt = stmt.where(ConversationTable.agent_id == agent_id)
     if order_by:
-        col = getattr(MessageTable, order_by).desc() if order == "DESC" else getattr(MessageTable, order_by).asc()
+        col = getattr(ConversationTable, order_by).desc() if order == "DESC" else getattr(ConversationTable, order_by).asc()
         stmt = stmt.order_by(col)
     if limit:
         stmt = stmt.limit(limit)
@@ -49,7 +49,7 @@ def get_messages(
     session_id: str | UUID | None = None,
     order_by: str | None = "timestamp",
     order: str | None = "DESC",
-    flow_id: UUID | None = None,
+    agent_id: UUID | None = None,
     limit: int | None = None,
 ) -> list[Message]:
     """DEPRECATED - Retrieves messages from the monitor service based on the provided filters.
@@ -62,13 +62,13 @@ def get_messages(
         session_id (Optional[str]): The session ID associated with the messages.
         order_by (Optional[str]): The field to order the messages by. Defaults to "timestamp".
         order (Optional[str]): The order in which to retrieve the messages. Defaults to "DESC".
-        flow_id (Optional[UUID]): The flow ID associated with the messages.
+        agent_id (Optional[UUID]): The flow ID associated with the messages.
         limit (Optional[int]): The maximum number of messages to retrieve.
 
     Returns:
         List[Data]: A list of Data objects representing the retrieved messages.
     """
-    return run_until_complete(aget_messages(sender, sender_name, session_id, order_by, order, flow_id, limit))
+    return run_until_complete(aget_messages(sender, sender_name, session_id, order_by, order, agent_id, limit))
 
 
 async def aget_messages(
@@ -77,7 +77,7 @@ async def aget_messages(
     session_id: str | UUID | None = None,
     order_by: str | None = "timestamp",
     order: str | None = "DESC",
-    flow_id: UUID | None = None,
+    agent_id: UUID | None = None,
     limit: int | None = None,
 ) -> list[Message]:
     """Retrieves messages from the monitor service based on the provided filters.
@@ -88,27 +88,27 @@ async def aget_messages(
         session_id (Optional[str]): The session ID associated with the messages.
         order_by (Optional[str]): The field to order the messages by. Defaults to "timestamp".
         order (Optional[str]): The order in which to retrieve the messages. Defaults to "DESC".
-        flow_id (Optional[UUID]): The flow ID associated with the messages.
+        agent_id (Optional[UUID]): The flow ID associated with the messages.
         limit (Optional[int]): The maximum number of messages to retrieve.
 
     Returns:
         List[Data]: A list of Data objects representing the retrieved messages.
     """
     async with session_scope() as session:
-        stmt = _get_variable_query(sender, sender_name, session_id, order_by, order, flow_id, limit)
+        stmt = _get_variable_query(sender, sender_name, session_id, order_by, order, agent_id, limit)
         messages = await session.exec(stmt)
         return [await Message.create(**d.model_dump()) for d in messages]
 
 
-def add_messages(messages: Message | list[Message], flow_id: str | UUID | None = None):
+def add_messages(messages: Message | list[Message], agent_id: str | UUID | None = None):
     """DEPRECATED - Add a message to the monitor service.
 
     DEPRECATED: Use `aadd_messages` instead.
     """
-    return run_until_complete(aadd_messages(messages, flow_id=flow_id))
+    return run_until_complete(aadd_messages(messages, agent_id=agent_id))
 
 
-async def aadd_messages(messages: Message | list[Message], flow_id: str | UUID | None = None):
+async def aadd_messages(messages: Message | list[Message], agent_id: str | UUID | None = None):
     """Add a message to the monitor service."""
     if not isinstance(messages, list):
         messages = [messages]
@@ -119,7 +119,7 @@ async def aadd_messages(messages: Message | list[Message], flow_id: str | UUID |
         raise ValueError(msg)
 
     try:
-        messages_models = [MessageTable.from_message(msg, flow_id=flow_id) for msg in messages]
+        messages_models = [ConversationTable.from_message(msg, agent_id=agent_id) for msg in messages]
         async with session_scope() as session:
             messages_models = await aadd_messagetables(messages_models, session)
         result_messages = []
@@ -137,9 +137,9 @@ async def aupdate_messages(messages: Message | list[Message]) -> list[Message]:
         messages = [messages]
 
     async with session_scope() as session:
-        updated_messages: list[MessageTable] = []
+        updated_messages: list[ConversationTable] = []
         for message in messages:
-            msg = await session.get(MessageTable, message.id)
+            msg = await session.get(ConversationTable, message.id)
             if msg:
                 # CRITICAL: Save the original timestamp from database BEFORE any update
                 # This is the authoritative creation time that must never change
@@ -151,9 +151,9 @@ async def aupdate_messages(messages: Message | list[Message]) -> list[Message]:
                 # CRITICAL: Force restore the original timestamp after sqlmodel_update
                 msg.timestamp = original_timestamp
                 
-                # Convert flow_id to UUID if it's a string
-                if msg.flow_id and isinstance(msg.flow_id, str):
-                    msg.flow_id = UUID(msg.flow_id)
+                # Convert agent_id to UUID if it's a string
+                if msg.agent_id and isinstance(msg.agent_id, str):
+                    msg.agent_id = UUID(msg.agent_id)
                 session.add(msg)
                 await session.commit()
                 await session.refresh(msg)
@@ -162,10 +162,10 @@ async def aupdate_messages(messages: Message | list[Message]) -> list[Message]:
                 error_message = f"Message with id {message.id} not found"
                 logger.warning(error_message)
                 raise ValueError(error_message)
-        return [MessageRead.model_validate(message, from_attributes=True) for message in updated_messages]
+        return [ConversationRead.model_validate(message, from_attributes=True) for message in updated_messages]
 
 
-async def aadd_messagetables(messages: list[MessageTable], session: AsyncSession):
+async def aadd_messagetables(messages: list[ConversationTable], session: AsyncSession):
     try:
         try:
             for message in messages:
@@ -191,7 +191,7 @@ async def aadd_messagetables(messages: list[MessageTable], session: AsyncSession
         msg.category = msg.category or ""
         new_messages.append(msg)
 
-    return [MessageRead.model_validate(message, from_attributes=True) for message in new_messages]
+    return [ConversationRead.model_validate(message, from_attributes=True) for message in new_messages]
 
 
 def delete_messages(session_id: str) -> None:
@@ -213,8 +213,8 @@ async def adelete_messages(session_id: str) -> None:
     """
     async with session_scope() as session:
         stmt = (
-            delete(MessageTable)
-            .where(col(MessageTable.session_id) == session_id)
+            delete(ConversationTable)
+            .where(col(ConversationTable.session_id) == session_id)
             .execution_options(synchronize_session="fetch")
         )
         await session.exec(stmt)
@@ -227,7 +227,7 @@ async def delete_message(id_: str) -> None:
         id_ (str): The ID of the message to delete.
     """
     async with session_scope() as session:
-        message = await session.get(MessageTable, id_)
+        message = await session.get(ConversationTable, id_)
         if message:
             await session.delete(message)
             await session.commit()
@@ -235,7 +235,7 @@ async def delete_message(id_: str) -> None:
 
 def store_message(
     message: Message,
-    flow_id: str | UUID | None = None,
+    agent_id: str | UUID | None = None,
 ) -> list[Message]:
     """DEPRECATED: Stores a message in the memory.
 
@@ -243,8 +243,8 @@ def store_message(
 
     Args:
         message (Message): The message to store.
-        flow_id (Optional[str | UUID]): The flow ID associated with the message.
-            When running from the CustomComponent you can access this using `self.graph.flow_id`.
+        agent_id (Optional[str | UUID]): The flow ID associated with the message.
+            When running from the CustomComponent you can access this using `self.graph.agent_id`.
 
     Returns:
         List[Message]: A list of data containing the stored message.
@@ -252,19 +252,19 @@ def store_message(
     Raises:
         ValueError: If any of the required parameters (session_id, sender, sender_name) is not provided.
     """
-    return run_until_complete(astore_message(message, flow_id=flow_id))
+    return run_until_complete(astore_message(message, agent_id=agent_id))
 
 
 async def astore_message(
     message: Message,
-    flow_id: str | UUID | None = None,
+    agent_id: str | UUID | None = None,
 ) -> list[Message]:
     """Stores a message in the memory.
 
     Args:
         message (Message): The message to store.
-        flow_id (Optional[str]): The flow ID associated with the message.
-            When running from the CustomComponent you can access this using `self.graph.flow_id`.
+        agent_id (Optional[str]): The flow ID associated with the message.
+            When running from the CustomComponent you can access this using `self.graph.agent_id`.
 
     Returns:
         List[Message]: A list of data containing the stored message.
@@ -290,9 +290,9 @@ async def astore_message(
             return await aupdate_messages([message])
         except ValueError as e:
             logger.error(e)
-    if flow_id and not isinstance(flow_id, UUID):
-        flow_id = UUID(flow_id)
-    return await aadd_messages([message], flow_id=flow_id)
+    if agent_id and not isinstance(agent_id, UUID):
+        agent_id = UUID(agent_id)
+    return await aadd_messages([message], agent_id=agent_id)
 
 
 class LCBuiltinChatMemory(BaseChatMessageHistory):
@@ -300,10 +300,10 @@ class LCBuiltinChatMemory(BaseChatMessageHistory):
 
     def __init__(
         self,
-        flow_id: str,
+        agent_id: str,
         session_id: str,
     ) -> None:
-        self.flow_id = flow_id
+        self.agent_id = agent_id
         self.session_id = session_id
 
     @property
@@ -323,13 +323,13 @@ class LCBuiltinChatMemory(BaseChatMessageHistory):
         for lc_message in messages:
             message = Message.from_lc_message(lc_message)
             message.session_id = self.session_id
-            store_message(message, flow_id=self.flow_id)
+            store_message(message, agent_id=self.agent_id)
 
     async def aadd_messages(self, messages: Sequence[BaseMessage]) -> None:
         for lc_message in messages:
             message = Message.from_lc_message(lc_message)
             message.session_id = self.session_id
-            await astore_message(message, flow_id=self.flow_id)
+            await astore_message(message, agent_id=self.agent_id)
 
     def clear(self) -> None:
         delete_messages(self.session_id)

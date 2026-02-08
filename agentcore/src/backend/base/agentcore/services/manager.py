@@ -120,6 +120,9 @@ class ServiceManager:
                         factories.append(obj())
                         break
 
+            except ModuleNotFoundError:
+                # Service has no factory module — it will be created on-demand via deps.py
+                logger.debug(f"No factory module found for {name}, skipping auto-registration.")
             except Exception as exc:
                 logger.exception(exc)
                 msg = f"Could not initialize services. Please check your settings. Error in {name}."

@@ -33,13 +33,13 @@ from agentcore.events.event_manager import create_stream_tokens_event_manager
 from agentcore.exceptions.api import APIException, InvalidChatInputError
 from agentcore.exceptions.serialization import SerializationError
 from agentcore.graph_langgraph import RunOutputs
-from agentcore.helpers.flow import get_flow_by_id_or_endpoint_name
-from agentcore.helpers.user import get_user_by_flow_id_or_endpoint_name
+from agentcore.helpers.agent import get_agent_by_id_or_endpoint_name
+from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
 from agentcore.interface.initialize.loading import update_params_with_load_from_db_fields
 from agentcore.processing.process import process_tweaks, run_graph_internal
 from agentcore.services.auth.utils import api_key_security, get_current_active_user
-from agentcore.services.database.models.flow.model import Flow, FlowRead
-from agentcore.services.database.models.flow.utils import get_all_webhook_components_in_flow
+from agentcore.services.database.models.agent.model import Agent, AgentRead
+from agentcore.services.database.models.agent.utils import get_all_webhook_components_in_agent
 from agentcore.services.database.models.user.model import User, UserRead
 from agentcore.services.deps import get_settings_service, get_telemetry_service
 from agentcore.services.telemetry.schema import RunPayload
@@ -102,8 +102,8 @@ def validate_input_and_tweaks(input_request: SimplifiedAPIRequest) -> None:
             raise InvalidChatInputError(msg)
 
 
-async def simple_run_flow(
-    flow: Flow,
+async def simple_run_agent(
+    flow: Agent,
     input_request: SimplifiedAPIRequest,
     *,
     stream: bool = False,
@@ -116,15 +116,15 @@ async def simple_run_flow(
 
         task_result: list[RunOutputs] = []
         user_id = api_key_user.id if api_key_user else None
-        flow_id_str = str(flow.id)
+        agent_id_str = str(flow.id)
         if flow.data is None:
-            msg = f"Flow {flow_id_str} has no data"
+            msg = f"Flow {agent_id_str} has no data"
             raise ValueError(msg)
         graph_data = flow.data.copy()
         graph_data = process_tweaks(graph_data, input_request.tweaks or {}, stream=stream)
         # Build graph using LangGraph
         graph = await build_graph_from_data(
-            flow_id=flow_id_str,
+            agent_id=agent_id_str,
             payload=graph_data,
             user_id=str(user_id) if user_id else None,
             flow_name=flow.name,
@@ -152,7 +152,7 @@ async def simple_run_flow(
             ]
         task_result, session_id = await run_graph_internal(
             graph=graph,
-            flow_id=flow_id_str,
+            agent_id=agent_id_str,
             session_id=input_request.session_id,
             inputs=inputs,
             outputs=outputs,
@@ -166,8 +166,8 @@ async def simple_run_flow(
         raise ValueError(str(exc)) from exc
 
 
-async def simple_run_flow_task(
-    flow: Flow,
+async def simple_run_agent_task(
+    flow: Agent,
     input_request: SimplifiedAPIRequest,
     *,
     stream: bool = False,
@@ -176,7 +176,7 @@ async def simple_run_flow_task(
 ):
     """Run a flow task as a BackgroundTask, therefore it should not throw exceptions."""
     try:
-        return await simple_run_flow(
+        return await simple_run_agent(
             flow=flow,
             input_request=input_request,
             stream=stream,
@@ -223,8 +223,8 @@ async def consume_and_yield(queue: asyncio.Queue, client_consumed_queue: asyncio
         )
 
 
-async def run_flow_generator(
-    flow: Flow,
+async def run_agent_generator(
+    flow: Agent,
     input_request: SimplifiedAPIRequest,
     api_key_user: User | None,
     event_manager: EventManager,
@@ -249,13 +249,13 @@ async def run_flow_generator(
         - "error": Sent if an error occurs during execution
 
     Notes:
-        - Runs the flow with streaming enabled via simple_run_flow()
+        - Runs the flow with streaming enabled via simple_run_agent()
         - On success, sends the final result via event_manager.on_end()
         - On error, logs the error and sends it via event_manager.on_error()
         - Always sends a final None event to signal completion
     """
     try:
-        result = await simple_run_flow(
+        result = await simple_run_agent(
             flow=flow,
             input_request=input_request,
             stream=True,
@@ -271,11 +271,11 @@ async def run_flow_generator(
         await event_manager.queue.put((None, None, time.time))
 
 
-@router.post("/run/{flow_id_or_name}", response_model=None, response_model_exclude_none=True)
-async def simplified_run_flow(
+@router.post("/run/{agent_id_or_name}", response_model=None, response_model_exclude_none=True)
+async def simplified_run_agent(
     *,
     background_tasks: BackgroundTasks,
-    flow: Annotated[FlowRead | None, Depends(get_flow_by_id_or_endpoint_name)],
+    flow: Annotated[AgentRead | None, Depends(get_agent_by_id_or_endpoint_name)],
     input_request: SimplifiedAPIRequest | None = None,
     stream: bool = False,
     api_key_user: Annotated[UserRead, Depends(api_key_security)],
@@ -287,7 +287,7 @@ async def simplified_run_flow(
 
     Args:
         background_tasks (BackgroundTasks): FastAPI background task manager
-        flow (FlowRead | None): The flow to execute, loaded via dependency
+        flow (AgentRead | None): The flow to execute, loaded via dependency
         input_request (SimplifiedAPIRequest | None): Input parameters for the flow
         stream (bool): Whether to stream the response
         api_key_user (UserRead): Authenticated user from API key
@@ -322,7 +322,7 @@ async def simplified_run_flow(
         asyncio_queue_client_consumed: asyncio.Queue = asyncio.Queue()
         event_manager = create_stream_tokens_event_manager(queue=asyncio_queue)
         main_task = asyncio.create_task(
-            run_flow_generator(
+            run_agent_generator(
                 flow=flow,
                 input_request=input_request,
                 api_key_user=api_key_user,
@@ -342,7 +342,7 @@ async def simplified_run_flow(
         )
 
     try:
-        result = await simple_run_flow(
+        result = await simple_run_agent(
             flow=flow,
             input_request=input_request,
             stream=stream,
@@ -392,10 +392,10 @@ async def simplified_run_flow(
     return result
 
 
-@router.post("/webhook/{flow_id_or_name}", response_model=dict, status_code=HTTPStatus.ACCEPTED)  # noqa: RUF100, FAST003
-async def webhook_run_flow(
-    flow: Annotated[Flow, Depends(get_flow_by_id_or_endpoint_name)],
-    user: Annotated[User, Depends(get_user_by_flow_id_or_endpoint_name)],
+@router.post("/webhook/{agent_id_or_name}", response_model=dict, status_code=HTTPStatus.ACCEPTED)  # noqa: RUF100, FAST003
+async def webhook_run_agent(
+    flow: Annotated[Agent, Depends(get_agent_by_id_or_endpoint_name)],
+    user: Annotated[User, Depends(get_user_by_agent_id_or_endpoint_name)],
     request: Request,
     background_tasks: BackgroundTasks,
 ):
@@ -430,7 +430,7 @@ async def webhook_run_flow(
 
         try:
             # get all webhook components in the flow
-            webhook_components = get_all_webhook_components_in_flow(flow.data)
+            webhook_components = get_all_webhook_components_in_agent(flow.data)
             tweaks = {}
 
             for component in webhook_components:
@@ -445,7 +445,7 @@ async def webhook_run_flow(
 
             logger.debug("Starting background task")
             background_tasks.add_task(
-                simple_run_flow_task,
+                simple_run_agent_task,
                 flow=flow,
                 input_request=input_request,
                 api_key_user=user,

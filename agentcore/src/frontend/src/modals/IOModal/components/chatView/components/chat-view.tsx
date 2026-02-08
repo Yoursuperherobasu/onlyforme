@@ -66,7 +66,7 @@ export default function ChatView({
     const messagesFromMessagesStore: ChatMessageType[] = messages
       .filter(
         (message) =>
-          message.flow_id === currentFlowId &&
+          message.agent_id === currentFlowId &&
           (visibleSession === message.session_id || visibleSession === null),
       )
       .map((message) => {

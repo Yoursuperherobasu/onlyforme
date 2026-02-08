@@ -15,15 +15,15 @@ class TransactionBase(SQLModel):
     outputs: dict | None = Field(default=None, sa_column=Column(JSON))
     status: str = Field(nullable=False)
     error: str | None = Field(default=None)
-    flow_id: UUID = Field()
+    agent_id: UUID = Field()
 
     # Needed for Column(JSON)
     class Config:
         arbitrary_types_allowed = True
 
-    @field_validator("flow_id", mode="before")
+    @field_validator("agent_id", mode="before")
     @classmethod
-    def validate_flow_id(cls, value):
+    def validate_agent_id(cls, value):
         if value is None:
             return value
         if isinstance(value, str):
@@ -62,4 +62,4 @@ class TransactionTable(TransactionBase, table=True):  # type: ignore[call-arg]
 
 class TransactionReadResponse(TransactionBase):
     id: UUID = Field(alias="transaction_id")
-    flow_id: UUID
+    agent_id: UUID

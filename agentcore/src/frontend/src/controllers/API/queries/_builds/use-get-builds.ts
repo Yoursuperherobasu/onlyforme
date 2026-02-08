@@ -25,7 +25,7 @@ export const useGetBuildsQuery: useQueryFunctionType<
   const responseFn = async () => {
     const config = {};
     config["params"] = {
-      flow_id:
+      agent_id:
         !params.flowId || params.flowId === "" ? routeFlowId : params.flowId,
     };
 

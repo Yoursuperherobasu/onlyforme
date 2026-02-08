@@ -17,7 +17,6 @@ class CalculatorTool(LCToolNode):
     description = "Perform basic arithmetic operations on a given expression."
     icon = "calculator"
     name = "CalculatorTool"
-    legacy = False
 
     inputs = [
         MessageTextInput(

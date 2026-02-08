@@ -30,8 +30,6 @@ class FrontendNode(BaseModel):
     """Display name of the frontend node."""
     priority: int | None = None
     """Priority of the frontend node."""
-    documentation: str = ""
-    """Documentation of the frontend node."""
     minimized: bool = False
     """Whether the frontend node is minimized."""
     custom_fields: dict | None = defaultdict(list)
@@ -52,9 +50,6 @@ class FrontendNode(BaseModel):
     field_order: list[str] = []
     """Order of the fields in the frontend node."""
     beta: bool = False
-    """Whether the frontend node is in beta."""
-    legacy: bool = False
-    """Whether the frontend node is legacy."""
     error: str | None = None
     """Error message for the frontend node."""
     edited: bool = False
@@ -63,10 +58,6 @@ class FrontendNode(BaseModel):
     """Metadata for the component node."""
     tool_mode: bool = False
     """Whether the frontend node is in tool mode."""
-
-    def set_documentation(self, documentation: str) -> None:
-        """Sets the documentation of the frontend node."""
-        self.documentation = documentation
 
     @field_serializer("base_classes")
     def process_base_classes(self, base_classes: list[str]) -> list[str]:
@@ -141,7 +132,7 @@ class FrontendNode(BaseModel):
 
     def validate_attributes(self) -> None:
         # None of inputs, outputs, _artifacts, _results, logs, status, vertex, graph, display_name, description,
-        # documentation, icon should be present in outputs or input names
+        # icon should be present in outputs or input names
         output_names = [output.name for output in self.outputs]
         input_names = [input_.name for input_ in self.template.fields]
         attributes = [
@@ -155,7 +146,6 @@ class FrontendNode(BaseModel):
             "graph",
             "display_name",
             "description",
-            "documentation",
             "icon",
         ]
         output_overlap = set(output_names).intersection(attributes)

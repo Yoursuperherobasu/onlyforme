@@ -21,30 +21,30 @@ class StorageService(Service):
         self.data_dir: anyio.Path = anyio.Path(settings_service.settings.config_dir)
         self.set_ready()
 
-    def build_full_path(self, flow_id: str, file_name: str) -> str:
+    def build_full_path(self, agent_id: str, file_name: str) -> str:
         raise NotImplementedError
 
     def set_ready(self) -> None:
         self.ready = True
 
     @abstractmethod
-    async def save_file(self, flow_id: str, file_name: str, data) -> None:
+    async def save_file(self, agent_id: str, file_name: str, data) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def get_file(self, flow_id: str, file_name: str) -> bytes:
+    async def get_file(self, agent_id: str, file_name: str) -> bytes:
         raise NotImplementedError
 
     @abstractmethod
-    async def list_files(self, flow_id: str) -> list[str]:
+    async def list_files(self, agent_id: str) -> list[str]:
         raise NotImplementedError
 
     @abstractmethod
-    async def get_file_size(self, flow_id: str, file_name: str):
+    async def get_file_size(self, agent_id: str, file_name: str):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_file(self, flow_id: str, file_name: str) -> None:
+    async def delete_file(self, agent_id: str, file_name: str) -> None:
         raise NotImplementedError
 
     async def teardown(self) -> None:

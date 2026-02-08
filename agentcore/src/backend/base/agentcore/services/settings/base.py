@@ -6,7 +6,6 @@ import contextlib
 import json
 import os
 from pathlib import Path
-from shutil import copy2
 from typing import Any, Literal
 
 import orjson
@@ -70,19 +69,13 @@ class MyCustomSource(EnvSettingsSource):
 class Settings(BaseSettings):
     # Define the default AGENTCORE_DIR
     config_dir: str | None = None
-    # Define if agentcore db should be saved in config dir or
-    # in the agentcore directory
-    save_db_in_config_dir: bool = False
-    """Define if agentcore database should be saved in AGENTCORE_CONFIG_DIR or in the agentcore directory
-    (i.e. in the package directory)."""
 
     dev: bool = False
     """If True, Agentcore will run in development mode."""
     database_url: str | None = None
-    """Database URL for Agentcore. If not provided, Agentcore will use a SQLite database.
-    The driver shall be an async one like `sqlite+aiosqlite` (`sqlite` and `postgresql`
-    will be automatically converted to the async drivers `sqlite+aiosqlite` and
-    `postgresql+psycopg` respectively)."""
+    """Database URL for Agentcore. Must be a PostgreSQL connection string.
+    The driver `postgresql` will be automatically converted to the async driver
+    `postgresql+psycopg`."""
     database_connection_retry: bool = False
     """If True, Agentcore will retry to connect to the database if it fails."""
     pool_size: int = 20
@@ -115,10 +108,6 @@ class Settings(BaseSettings):
     """Frequency (in seconds) at which the background cleanup task wakes up to
     reap idle sessions."""
 
-    # sqlite configuration
-    sqlite_pragmas: dict | None = {"synchronous": "NORMAL", "journal_mode": "WAL"}
-    """SQLite pragmas to use when connecting to the database."""
-
     db_driver_connection_settings: dict | None = None
     """Database driver connection settings."""
 
@@ -131,10 +120,6 @@ class Settings(BaseSettings):
         "echo": False,  # Set to True for debugging only
     }
     """Database connection settings optimized for high load scenarios.
-    Note: These settings are most effective with PostgreSQL. For SQLite:
-    - Reduce pool_size and max_overflow if experiencing lock contention
-    - SQLite has limited concurrent write capability even with WAL mode
-    - Best for read-heavy or moderate write workloads
 
     Settings:
     - pool_size: Number of connections to maintain (increase for higher concurrency)
@@ -150,7 +135,7 @@ class Settings(BaseSettings):
     Controlled by AGENTCORE_USE_NOOP_DATABASE env variable."""
 
     # cache configuration
-    cache_type: Literal["async", "redis", "memory", "disk"] = "async"
+    cache_type: Literal["async", "redis", "memory"] = "async"
     """The cache type can be 'async' or 'redis'."""
     redis_host: str = "rdatabase.redis.cache.windows.net"
     redis_port: int = 6380
@@ -163,31 +148,21 @@ class Settings(BaseSettings):
     """The cache expire in seconds."""
     # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault
 
-    prometheus_enabled: bool = False
-    """If set to True, Agentcore will expose Prometheus metrics."""
-    prometheus_port: int = 9090
-    """The port on which Agentcore will expose Prometheus metrics. 9090 is the default port."""
-
     disable_track_apikey_usage: bool = False
     remove_api_keys: bool = False
     components_path: list[str] = []
     langchain_cache: str = "InMemoryCache"
-    load_flows_path: str | None = None
+    load_agents_path: str | None = None
     bundle_urls: list[str] = []
 
-    # Redis
-    redis_host: str = "agentcoreredis.redis.cache.windows.net"
-    redis_port: int = 6380
-    redis_db: int = 0
-    redis_url: str | None = None
-    redis_password: str | None = "7iQsiMysElkfTwCNsyAuiQng3Eeeat6jFAzCaCPfsQw="
-    redis_cache_expire: int = 3600
+    # # Redis
+    # redis_host: str = "agentcoreredis.redis.cache.windows.net"
+    # redis_port: int = 6380
+    # redis_db: int = 0
+    # redis_url: str | None = None
+    # redis_password: str | None = "7iQsiMysElkfTwCNsyAuiQng3Eeeat6jFAzCaCPfsQw="
+    # redis_cache_expire: int = 3600
 
-
-    # Sentry
-    sentry_dsn: str | None = None
-    sentry_traces_sample_rate: float | None = 1.0
-    sentry_profiles_sample_rate: float | None = 1.0
 
     storage_type: str = "local"
 
@@ -272,10 +247,10 @@ class Settings(BaseSettings):
     """If set to False, Agentcore will not send progress notifications in the MCP server."""
 
     # Public Flow Settings
-    public_flow_cleanup_interval: int = Field(default=3600, gt=600)
+    public_agent_cleanup_interval: int = Field(default=3600, gt=600)
     """The interval in seconds at which public temporary flows will be cleaned up.
     Default is 1 hour (3600 seconds). Minimum is 600 seconds (10 minutes)."""
-    public_flow_expiration: int = Field(default=86400, gt=600)
+    public_agent_expiration: int = Field(default=86400, gt=600)
     """The time in seconds after which a public temporary flow will be considered expired and eligible for cleanup.
     Default is 24 hours (86400 seconds). Minimum is 600 seconds (10 minutes)."""
     event_delivery: Literal["polling", "streaming", "direct"] = "streaming"
@@ -374,65 +349,8 @@ class Settings(BaseSettings):
             value = agentcore_database_url
             logger.debug("Using AGENTCORE_DATABASE_URL env variable.")
         else:
-            logger.debug("No database_url env variable, using sqlite database")
-            # Originally, we used sqlite:///./agentcore.db
-            # so we need to migrate to the new format
-            # if there is a database in that location
-            if not info.data["config_dir"]:
-                msg = "config_dir not set, please set it or provide a database_url"
-                raise ValueError(msg)
-
-            from agentcore.utils.version import get_version_info
-            from agentcore.utils.version import is_pre_release as agentcore_is_pre_release
-
-            version = get_version_info()["version"]
-            is_pre_release = agentcore_is_pre_release(version)
-
-            if info.data["save_db_in_config_dir"]:
-                database_dir = info.data["config_dir"]
-                logger.debug(f"Saving database to config_dir: {database_dir}")
-            else:
-                database_dir = Path(__file__).parent.parent.parent.resolve()
-                logger.debug(f"Saving database to agentcore directory: {database_dir}")
-
-            pre_db_file_name = "agentcore-pre.db"
-            db_file_name = "agentcore.db"
-            new_pre_path = f"{database_dir}/{pre_db_file_name}"
-            new_path = f"{database_dir}/{db_file_name}"
-            final_path = None
-            if is_pre_release:
-                if Path(new_pre_path).exists():
-                    final_path = new_pre_path
-                elif Path(new_path).exists() and info.data["save_db_in_config_dir"]:
-                    # We need to copy the current db to the new location
-                    logger.debug("Copying existing database to new location")
-                    copy2(new_path, new_pre_path)
-                    logger.debug(f"Copied existing database to {new_pre_path}")
-                elif Path(f"./{db_file_name}").exists() and info.data["save_db_in_config_dir"]:
-                    logger.debug("Copying existing database to new location")
-                    copy2(f"./{db_file_name}", new_pre_path)
-                    logger.debug(f"Copied existing database to {new_pre_path}")
-                else:
-                    logger.debug(f"Creating new database at {new_pre_path}")
-                    final_path = new_pre_path
-            elif Path(new_path).exists():
-                logger.debug(f"Database already exists at {new_path}, using it")
-                final_path = new_path
-            elif Path(f"./{db_file_name}").exists():
-                try:
-                    logger.debug("Copying existing database to new location")
-                    copy2(f"./{db_file_name}", new_path)
-                    logger.debug(f"Copied existing database to {new_path}")
-                except Exception:  # noqa: BLE001
-                    logger.exception("Failed to copy database, using default path")
-                    new_path = f"./{db_file_name}"
-            else:
-                final_path = new_path
-
-            if final_path is None:
-                final_path = new_pre_path if is_pre_release else new_path
-
-            value = f"sqlite:///{final_path}"
+            msg = "No DATABASE_URL environment variable set. PostgreSQL is required."
+            raise ValueError(msg)
 
         return value
 

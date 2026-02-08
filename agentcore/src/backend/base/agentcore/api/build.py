@@ -22,7 +22,7 @@ from agentcore.api.utils import (
     parse_exception,
 )
 from agentcore.api.v1_schemas import (
-    FlowDataRequest,
+    AgentDataRequest,
     InputValueRequest,
     ResultDataResponse,
     VertexBuildResponse,
@@ -33,7 +33,7 @@ from agentcore.graph_langgraph import Graph, LangGraphAdapter, log_vertex_build
 from agentcore.graph_langgraph.executor import LangGraphExecutor
 from agentcore.schema.message import ErrorMessage
 from agentcore.schema.schema import OutputValue
-from agentcore.services.database.models.flow.model import Flow
+from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_chat_service, get_telemetry_service, session_scope
 from agentcore.services.job_queue.service import JobQueueNotFoundError, JobQueueService
 from agentcore.services.telemetry.schema import ComponentPayload, PlaygroundPayload
@@ -41,10 +41,10 @@ from agentcore.services.telemetry.schema import ComponentPayload, PlaygroundPayl
 
 async def start_flow_build(
     *,
-    flow_id: uuid.UUID,
+    agent_id: uuid.UUID,
     background_tasks: BackgroundTasks,
     inputs: InputValueRequest | None,
-    data: FlowDataRequest | None,
+    data: AgentDataRequest | None,
     files: list[str] | None,
     stop_component_id: str | None,
     start_component_id: str | None,
@@ -62,7 +62,7 @@ async def start_flow_build(
     try:
         _, event_manager = queue_service.create_queue(job_id)
         task_coro = generate_flow_events(
-            flow_id=flow_id,
+            agent_id=agent_id,
             background_tasks=background_tasks,
             event_manager=event_manager,
             inputs=inputs,
@@ -181,11 +181,11 @@ async def create_flow_response(
 
 async def generate_flow_events(
     *,
-    flow_id: uuid.UUID,
+    agent_id: uuid.UUID,
     background_tasks: BackgroundTasks,
     event_manager: EventManager,
     inputs: InputValueRequest | None,
-    data: FlowDataRequest | None,
+    data: AgentDataRequest | None,
     files: list[str] | None,
     stop_component_id: str | None,
     start_component_id: str | None,
@@ -201,22 +201,22 @@ async def generate_flow_events(
     - Handling errors and cleanup
     """
     import time as time_module
-    run_id = f"{flow_id}_{int(time_module.time() * 1000) % 100000}"
+    run_id = f"{agent_id}_{int(time_module.time() * 1000) % 100000}"
     chat_service = get_chat_service()
 
     telemetry_service = get_telemetry_service()
     if not inputs:
-        inputs = InputValueRequest(session=str(flow_id))
+        inputs = InputValueRequest(session=str(agent_id))
 
     async def build_graph_and_get_order() -> tuple[list[str], list[str], Graph | LangGraphAdapter]:
         start_time = time.perf_counter()
         components_count = 0
         graph = None
         try:
-            flow_id_str = str(flow_id)
+            agent_id_str = str(agent_id)
             # Create a fresh session for database operations
             async with session_scope() as fresh_session:
-                graph = await create_graph(fresh_session, flow_id_str, flow_name)
+                graph = await create_graph(fresh_session, agent_id_str, flow_name)
 
             first_layer = sort_vertices(graph)
 
@@ -230,7 +230,7 @@ async def generate_flow_events(
             components_count = len(graph.vertices)
             vertices_to_run = list(graph.vertices_to_run.union(get_top_level_vertices(graph, graph.vertices_to_run)))
 
-            await chat_service.set_cache(flow_id_str, graph)
+            await chat_service.set_cache(agent_id_str, graph)
             await log_telemetry(start_time, components_count, success=True)
 
         except Exception as exc:
@@ -255,15 +255,15 @@ async def generate_flow_events(
             ),
         )
 
-    async def create_graph(fresh_session, flow_id_str: str, flow_name: str | None) -> Graph | LangGraphAdapter:
+    async def create_graph(fresh_session, agent_id_str: str, flow_name: str | None) -> Graph | LangGraphAdapter:
         if inputs is not None and getattr(inputs, "session", None) is not None:
             effective_session_id = inputs.session
         else:
-            effective_session_id = flow_id_str
+            effective_session_id = agent_id_str
 
         if not data:
             return await build_graph_from_db(
-                flow_id=flow_id,
+                agent_id=agent_id,
                 session=fresh_session,
                 chat_service=chat_service,
                 user_id=str(current_user.id),
@@ -271,12 +271,12 @@ async def generate_flow_events(
             )
 
         if not flow_name:
-            result = await fresh_session.exec(select(Flow.name).where(Flow.id == flow_id))
+            result = await fresh_session.exec(select(Agent.name).where(Agent.id == agent_id))
             flow_name = result.first()
 
         # Build graph using LangGraph
         return await build_graph_from_data(
-            flow_id=flow_id_str,
+            agent_id=agent_id_str,
             payload=data.model_dump(),
             user_id=str(current_user.id),
             flow_name=flow_name,
@@ -304,7 +304,7 @@ async def generate_flow_events(
                 return graph.sort_vertices()
 
     async def _build_vertex(vertex_id: str, graph: Graph, event_manager: EventManager) -> VertexBuildResponse:
-        flow_id_str = str(flow_id)
+        agent_id_str = str(agent_id)
         next_runnable_vertices = []
         top_level_vertices = []
         start_time = time.perf_counter()
@@ -312,7 +312,7 @@ async def generate_flow_events(
         try:
             vertex = graph.get_vertex(vertex_id)
             try:
-                lock = chat_service.async_cache_locks[flow_id_str]
+                lock = chat_service.async_cache_locks[agent_id_str]
                 vertex_build_result = await graph.build_vertex(
                     vertex_id=vertex_id,
                     user_id=str(current_user.id),
@@ -353,7 +353,7 @@ async def generate_flow_events(
             if not vertex.will_stream and log_builds:
                 background_tasks.add_task(
                     log_vertex_build,
-                    flow_id=flow_id_str,
+                    agent_id=agent_id_str,
                     vertex_id=vertex_id,
                     valid=valid,
                     params=params,
@@ -361,7 +361,7 @@ async def generate_flow_events(
                     artifacts=artifacts,
                 )
             else:
-                await chat_service.set_cache(flow_id_str, graph)
+                await chat_service.set_cache(agent_id_str, graph)
 
             timedelta = time.perf_counter() - start_time
             duration = format_elapsed_time(timedelta)
@@ -476,7 +476,7 @@ async def generate_flow_events(
         ids, vertices_to_run, graph = await build_graph_and_get_order()
     except Exception as e:
         error_message = ErrorMessage(
-            flow_id=flow_id,
+            agent_id=agent_id,
             exception=e,
         )
         event_manager.on_error(data=error_message.data)
@@ -511,7 +511,7 @@ async def generate_flow_events(
             custom_component = graph.get_vertex(vertex_id).custom_component
             trace_name = getattr(custom_component, "trace_name", None)
             error_message = ErrorMessage(
-                flow_id=flow_id,
+                agent_id=agent_id,
                 exception=e,
                 session_id=graph.session_id,
                 trace_name=trace_name,

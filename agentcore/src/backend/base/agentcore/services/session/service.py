@@ -16,7 +16,7 @@ class SessionService(Service):
     def __init__(self, cache_service) -> None:
         self.cache_service: CacheService | AsyncBaseCacheService = cache_service
 
-    async def load_session(self, key, flow_id: str, data_graph: dict | None = None):
+    async def load_session(self, key, agent_id: str, data_graph: dict | None = None):
         # Check if the data is cached
         if isinstance(self.cache_service, AsyncBaseCacheService):
             value = await self.cache_service.get(key)
@@ -32,7 +32,7 @@ class SessionService(Service):
         # If not cached, build the graph and cache it
         from agentcore.graph_langgraph import LangGraphAdapter as Graph
 
-        graph = Graph.from_payload(data_graph, flow_id=flow_id)
+        graph = Graph.from_payload(data_graph, agent_id=agent_id)
         artifacts: dict = {}
         await self.cache_service.set(key, (graph, artifacts))
 

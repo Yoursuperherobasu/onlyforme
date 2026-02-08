@@ -22,23 +22,24 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agentcore.api.utils import (
     CurrentActiveUser,
     DbSession,
-    cascade_delete_flow,
+    cascade_delete_agent,
     remove_api_keys,
+    strip_sensitive_values_from_flow_data,
     validate_is_component,
 )
-from agentcore.api.v1_schemas import FlowListCreate
-from agentcore.helpers.user import get_user_by_flow_id_or_endpoint_name
+from agentcore.api.v1_schemas import AgentListCreate
+from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
 from agentcore.initial_setup.constants import STARTER_FOLDER_NAME
 from agentcore.logging import logger
-from agentcore.services.database.models.flow.model import (
+from agentcore.services.database.models.agent.model import (
     AccessTypeEnum,
-    Flow,
-    FlowCreate,
-    FlowHeader,
-    FlowRead,
-    FlowUpdate,
+    Agent,
+    AgentCreate,
+    AgentHeader,
+    AgentRead,
+    AgentUpdate,
 )
-from agentcore.services.database.models.flow.utils import get_webhook_component_in_flow
+from agentcore.services.database.models.agent.utils import get_webhook_component_in_agent
 from agentcore.services.database.models.folder.constants import DEFAULT_FOLDER_NAME
 from agentcore.services.database.models.folder.model import Folder
 from agentcore.services.deps import get_settings_service
@@ -55,7 +56,7 @@ async def _verify_fs_path(path: str | None) -> None:
             await path_.touch()
 
 
-async def _save_flow_to_fs(flow: Flow) -> None:
+async def _save_flow_to_fs(flow: Agent) -> None:
     if flow.fs_path:
         async with async_open(flow.fs_path, "w") as f:
             try:
@@ -67,7 +68,7 @@ async def _save_flow_to_fs(flow: Flow) -> None:
 async def _new_flow(
     *,
     session: AsyncSession,
-    flow: FlowCreate,
+    flow: AgentCreate,
     user_id: UUID,
 ):
     try:
@@ -82,10 +83,10 @@ async def _new_flow(
         # so we need to check if the name is unique with `like` operator
         # if we find a flow with the same name, we add a number to the end of the name
         # based on the highest number found
-        if (await session.exec(select(Flow).where(Flow.name == flow.name).where(Flow.user_id == user_id))).first():
+        if (await session.exec(select(Agent).where(Agent.name == flow.name).where(Agent.user_id == user_id))).first():
             flows = (
                 await session.exec(
-                    select(Flow).where(Flow.name.like(f"{flow.name} (%")).where(Flow.user_id == user_id)  # type: ignore[attr-defined]
+                    select(Agent).where(Agent.name.like(f"{flow.name} (%")).where(Agent.user_id == user_id)  # type: ignore[attr-defined]
                 )
             ).all()
             if flows:
@@ -114,15 +115,15 @@ async def _new_flow(
             flow.endpoint_name
             and (
                 await session.exec(
-                    select(Flow).where(Flow.endpoint_name == flow.endpoint_name).where(Flow.user_id == user_id)
+                    select(Agent).where(Agent.endpoint_name == flow.endpoint_name).where(Agent.user_id == user_id)
                 )
             ).first()
         ):
             flows = (
                 await session.exec(
-                    select(Flow)
-                    .where(Flow.endpoint_name.like(f"{flow.endpoint_name}-%"))  # type: ignore[union-attr]
-                    .where(Flow.user_id == user_id)
+                    select(Agent)
+                    .where(Agent.endpoint_name.like(f"{flow.endpoint_name}-%"))  # type: ignore[union-attr]
+                    .where(Agent.user_id == user_id)
                 )
             ).all()
             if flows:
@@ -134,8 +135,12 @@ async def _new_flow(
             else:
                 flow.endpoint_name = f"{flow.endpoint_name}-1"
 
-        db_flow = Flow.model_validate(flow, from_attributes=True)
+        db_flow = Agent.model_validate(flow, from_attributes=True)
         db_flow.updated_at = datetime.now(timezone.utc)
+
+        # Strip sensitive values (API keys, secrets) from flow data before saving to DB
+        if db_flow.data:
+            db_flow.data = strip_sensitive_values_from_flow_data(db_flow.data)
 
         if db_flow.folder_id is None:
             # Make sure flows always have a folder
@@ -157,11 +162,11 @@ async def _new_flow(
     return db_flow
 
 
-@router.post("/", response_model=FlowRead, status_code=201)
+@router.post("/", response_model=AgentRead, status_code=201)
 async def create_flow(
     *,
     session: DbSession,
-    flow: FlowCreate,
+    flow: AgentCreate,
     current_user: CurrentActiveUser,
 ):
     try:
@@ -189,7 +194,7 @@ async def create_flow(
     return db_flow
 
 
-@router.get("/", response_model=list[FlowRead] | Page[FlowRead] | list[FlowHeader], status_code=200)
+@router.get("/", response_model=list[AgentRead] | Page[AgentRead] | list[AgentHeader], status_code=200)
 async def read_flows(
     *,
     current_user: CurrentActiveUser,
@@ -218,7 +223,7 @@ async def read_flows(
         header_flows (bool, optional): Whether to return only specific headers of the flows. Defaults to False.
 
     Returns:
-        list[FlowRead] | Page[FlowRead] | list[FlowHeader]
+        list[AgentRead] | Page[AgentRead] | list[AgentHeader]
         A list of flows or a paginated response containing the list of flows or a list of flow headers.
     """
     try:
@@ -240,13 +245,13 @@ async def read_flows(
             folder_id = default_folder_id
 
         # Only show flows owned by the current user (SSO authentication)
-        stmt = select(Flow).where(Flow.user_id == current_user.id)
+        stmt = select(Agent).where(Agent.user_id == current_user.id)
 
         if remove_example_flows:
-            stmt = stmt.where(Flow.folder_id != starter_folder_id)
+            stmt = stmt.where(Agent.folder_id != starter_folder_id)
 
         if components_only:
-            stmt = stmt.where(Flow.is_component == True)  # noqa: E712
+            stmt = stmt.where(Agent.is_component == True)  # noqa: E712
 
         if get_all:
             flows = (await session.exec(stmt)).all()
@@ -256,14 +261,14 @@ async def read_flows(
             if remove_example_flows and starter_folder_id:
                 flows = [flow for flow in flows if flow.folder_id != starter_folder_id]
             if header_flows:
-                # Convert to FlowHeader objects and compress the response
-                flow_headers = [FlowHeader.model_validate(flow, from_attributes=True) for flow in flows]
+                # Convert to AgentHeader objects and compress the response
+                flow_headers = [AgentHeader.model_validate(flow, from_attributes=True) for flow in flows]
                 return compress_response(flow_headers)
 
             # Compress the full flows response
             return compress_response(flows)
 
-        stmt = stmt.where(Flow.folder_id == folder_id)
+        stmt = stmt.where(Agent.folder_id == folder_id)
 
         import warnings
 
@@ -279,49 +284,49 @@ async def read_flows(
 
 async def _read_flow(
     session: AsyncSession,
-    flow_id: UUID,
+    agent_id: UUID,
     user_id: UUID,
 ):
     """Read a flow."""
-    stmt = select(Flow).where(Flow.id == flow_id).where(Flow.user_id == user_id)
+    stmt = select(Agent).where(Agent.id == agent_id).where(Agent.user_id == user_id)
 
     return (await session.exec(stmt)).first()
 
 
-@router.get("/{flow_id}", response_model=FlowRead, status_code=200)
+@router.get("/{agent_id}", response_model=AgentRead, status_code=200)
 async def read_flow(
     *,
     session: DbSession,
-    flow_id: UUID,
+    agent_id: UUID,
     current_user: CurrentActiveUser,
 ):
     """Read a flow."""
-    if user_flow := await _read_flow(session, flow_id, current_user.id):
+    if user_flow := await _read_flow(session, agent_id, current_user.id):
         return user_flow
     raise HTTPException(status_code=404, detail="Flow not found")
 
 
-@router.get("/public_flow/{flow_id}", response_model=FlowRead, status_code=200)
+@router.get("/public_flow/{agent_id}", response_model=AgentRead, status_code=200)
 async def read_public_flow(
     *,
     session: DbSession,
-    flow_id: UUID,
+    agent_id: UUID,
 ):
     """Read a public flow."""
-    access_type = (await session.exec(select(Flow.access_type).where(Flow.id == flow_id))).first()
+    access_type = (await session.exec(select(Agent.access_type).where(Agent.id == agent_id))).first()
     if access_type is not AccessTypeEnum.PUBLIC:
         raise HTTPException(status_code=403, detail="Flow is not public")
 
-    current_user = await get_user_by_flow_id_or_endpoint_name(str(flow_id))
-    return await read_flow(session=session, flow_id=flow_id, current_user=current_user)
+    current_user = await get_user_by_agent_id_or_endpoint_name(str(agent_id))
+    return await read_flow(session=session, agent_id=agent_id, current_user=current_user)
 
 
-@router.patch("/{flow_id}", response_model=FlowRead, status_code=200)
+@router.patch("/{agent_id}", response_model=AgentRead, status_code=200)
 async def update_flow(
     *,
     session: DbSession,
-    flow_id: UUID,
-    flow: FlowUpdate,
+    agent_id: UUID,
+    flow: AgentUpdate,
     current_user: CurrentActiveUser,
 ):
     """Update a flow."""
@@ -329,7 +334,7 @@ async def update_flow(
     try:
         db_flow = await _read_flow(
             session=session,
-            flow_id=flow_id,
+            agent_id=agent_id,
             user_id=current_user.id,
         )
 
@@ -342,6 +347,10 @@ async def update_flow(
         if flow.endpoint_name is None or flow.endpoint_name == "":
             update_data["endpoint_name"] = None
 
+        # Always strip sensitive values (API keys, secrets) from flow data before saving to DB
+        if "data" in update_data and update_data["data"]:
+            update_data["data"] = strip_sensitive_values_from_flow_data(update_data["data"])
+
         if settings_service.settings.remove_api_keys:
             update_data = remove_api_keys(update_data)
 
@@ -350,7 +359,7 @@ async def update_flow(
 
         await _verify_fs_path(db_flow.fs_path)
 
-        webhook_component = get_webhook_component_in_flow(db_flow.data)
+        webhook_component = get_webhook_component_in_agent(db_flow.data)
         db_flow.webhook = webhook_component is not None
         db_flow.updated_at = datetime.now(timezone.utc)
 
@@ -384,38 +393,41 @@ async def update_flow(
     return db_flow
 
 
-@router.delete("/{flow_id}", status_code=200)
+@router.delete("/{agent_id}", status_code=200)
 async def delete_flow(
     *,
     session: DbSession,
-    flow_id: UUID,
+    agent_id: UUID,
     current_user: CurrentActiveUser,
 ):
     """Delete a flow."""
     flow = await _read_flow(
         session=session,
-        flow_id=flow_id,
+        agent_id=agent_id,
         user_id=current_user.id,
     )
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-    await cascade_delete_flow(session, flow.id)
+    await cascade_delete_agent(session, flow.id)
     await session.commit()
     return {"message": "Flow deleted successfully"}
 
 
-@router.post("/batch/", response_model=list[FlowRead], status_code=201)
+@router.post("/batch/", response_model=list[AgentRead], status_code=201)
 async def create_flows(
     *,
     session: DbSession,
-    flow_list: FlowListCreate,
+    agent_list: AgentListCreate,
     current_user: CurrentActiveUser,
 ):
     """Create multiple new flows."""
     db_flows = []
     for flow in flow_list.flows:
         flow.user_id = current_user.id
-        db_flow = Flow.model_validate(flow, from_attributes=True)
+        db_flow = Agent.model_validate(flow, from_attributes=True)
+        # Strip sensitive values (API keys, secrets) from flow data before saving to DB
+        if db_flow.data:
+            db_flow.data = strip_sensitive_values_from_flow_data(db_flow.data)
         session.add(db_flow)
         db_flows.append(db_flow)
     await session.commit()
@@ -424,7 +436,7 @@ async def create_flows(
     return db_flows
 
 
-@router.post("/upload/", response_model=list[FlowRead], status_code=201)
+@router.post("/upload/", response_model=list[AgentRead], status_code=201)
 async def upload_file(
     *,
     session: DbSession,
@@ -436,7 +448,7 @@ async def upload_file(
     contents = await file.read()
     data = orjson.loads(contents)
     response_list = []
-    flow_list = FlowListCreate(**data) if "flows" in data else FlowListCreate(flows=[FlowCreate(**data)])
+    flow_list = AgentListCreate(**data) if "flows" in data else AgentListCreate(flows=[AgentCreate(**data)])
     # Now we set the user_id for all flows
     for flow in flow_list.flows:
         flow.user_id = current_user.id
@@ -471,14 +483,14 @@ async def upload_file(
 
 @router.delete("/")
 async def delete_multiple_flows(
-    flow_ids: list[UUID],
+    agent_ids: list[UUID],
     user: CurrentActiveUser,
     db: DbSession,
 ):
     """Delete multiple flows by their IDs.
 
     Args:
-        flow_ids (List[str]): The list of flow IDs to delete.
+        agent_ids (List[str]): The list of flow IDs to delete.
         user (User, optional): The user making the request. Defaults to the current active user.
         db (Session, optional): The database session.
 
@@ -488,10 +500,10 @@ async def delete_multiple_flows(
     """
     try:
         flows_to_delete = (
-            await db.exec(select(Flow).where(col(Flow.id).in_(flow_ids)).where(Flow.user_id == user.id))
+            await db.exec(select(Agent).where(col(Agent.id).in_(agent_ids)).where(Agent.user_id == user.id))
         ).all()
         for flow in flows_to_delete:
-            await cascade_delete_flow(db, flow.id)
+            await cascade_delete_agent(db, flow.id)
 
         await db.commit()
         return {"deleted": len(flows_to_delete)}
@@ -501,12 +513,12 @@ async def delete_multiple_flows(
 
 @router.post("/download/", status_code=200)
 async def download_multiple_file(
-    flow_ids: list[UUID],
+    agent_ids: list[UUID],
     user: CurrentActiveUser,
     db: DbSession,
 ):
     """Download all flows as a zip file."""
-    flows = (await db.exec(select(Flow).where(and_(Flow.user_id == user.id, Flow.id.in_(flow_ids))))).all()  # type: ignore[attr-defined]
+    flows = (await db.exec(select(Agent).where(and_(Agent.user_id == user.id, Agent.id.in_(agent_ids))))).all()  # type: ignore[attr-defined]
 
     if not flows:
         raise HTTPException(status_code=404, detail="No flows found.")
@@ -544,7 +556,7 @@ async def download_multiple_file(
 all_starter_folder_flows_response: Response | None = None
 
 
-@router.get("/basic_examples/", response_model=list[FlowRead], status_code=200)
+@router.get("/basic_examples/", response_model=list[AgentRead], status_code=200)
 async def read_basic_examples(
     *,
     session: DbSession,
@@ -555,7 +567,7 @@ async def read_basic_examples(
         session (Session): The database session.
 
     Returns:
-        list[FlowRead]: A list of basic example flows.
+        list[AgentRead]: A list of basic example flows.
     """
     try:
         global all_starter_folder_flows_response  # noqa: PLW0603
@@ -569,9 +581,9 @@ async def read_basic_examples(
             return []
 
         # Get all flows in the starter folder
-        all_starter_folder_flows = (await session.exec(select(Flow).where(Flow.folder_id == starter_folder.id))).all()
+        all_starter_folder_flows = (await session.exec(select(Agent).where(Agent.folder_id == starter_folder.id))).all()
 
-        flow_reads = [FlowRead.model_validate(flow, from_attributes=True) for flow in all_starter_folder_flows]
+        flow_reads = [AgentRead.model_validate(flow, from_attributes=True) for flow in all_starter_folder_flows]
         all_starter_folder_flows_response = compress_response(flow_reads)
 
         # Return compressed response using our utility function

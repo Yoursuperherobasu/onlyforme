@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.api.v1_schemas import UploadFileResponse
-from agentcore.services.database.models.flow.model import Flow
+from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_settings_service, get_storage_service
 from agentcore.services.settings.service import SettingsService
 from agentcore.services.storage.service import StorageService
@@ -20,16 +20,16 @@ from agentcore.services.storage.utils import build_content_type_from_extension
 router = APIRouter(tags=["Files"], prefix="/files")
 
 
-# Create dep that gets the flow_id from the request
+# Create dep that gets the agent_id from the request
 # then finds it in the database and returns it while
 # using the current user as the owner
 async def get_flow(
-    flow_id: UUID,
+    agent_id: UUID,
     current_user: CurrentActiveUser,
     session: DbSession,
 ):
     # AttributeError: 'SelectOfScalar' object has no attribute 'first'
-    flow = await session.get(Flow, flow_id)
+    flow = await session.get(Agent, agent_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
     if flow.user_id != current_user.id:
@@ -37,11 +37,11 @@ async def get_flow(
     return flow
 
 
-@router.post("/upload/{flow_id}", status_code=HTTPStatus.CREATED)
+@router.post("/upload/{agent_id}", status_code=HTTPStatus.CREATED)
 async def upload_file(
     *,
     file: UploadFile,
-    flow: Annotated[Flow, Depends(get_flow)],
+    flow: Annotated[Agent, Depends(get_flow)],
     current_user: CurrentActiveUser,
     storage_service: Annotated[StorageService, Depends(get_storage_service)],
     settings_service: Annotated[SettingsService, Depends(get_settings_service)],
@@ -65,17 +65,17 @@ async def upload_file(
         file_name = file.filename or hashlib.sha256(file_content).hexdigest()
         full_file_name = f"{timestamp}_{file_name}"
         folder = str(flow.id)
-        await storage_service.save_file(flow_id=folder, file_name=full_file_name, data=file_content)
-        return UploadFileResponse(flow_id=str(flow.id), file_path=f"{folder}/{full_file_name}")
+        await storage_service.save_file(agent_id=folder, file_name=full_file_name, data=file_content)
+        return UploadFileResponse(agent_id=str(flow.id), file_path=f"{folder}/{full_file_name}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/download/{flow_id}/{file_name}")
+@router.get("/download/{agent_id}/{file_name}")
 async def download_file(
-    file_name: str, flow_id: UUID, storage_service: Annotated[StorageService, Depends(get_storage_service)]
+    file_name: str, agent_id: UUID, storage_service: Annotated[StorageService, Depends(get_storage_service)]
 ):
-    flow_id_str = str(flow_id)
+    agent_id_str = str(agent_id)
     extension = file_name.split(".")[-1]
 
     if not extension:
@@ -89,7 +89,7 @@ async def download_file(
         raise HTTPException(status_code=500, detail=f"Content type not found for extension {extension}")
 
     try:
-        file_content = await storage_service.get_file(flow_id=flow_id_str, file_name=file_name)
+        file_content = await storage_service.get_file(agent_id=agent_id_str, file_name=file_name)
         headers = {
             "Content-Disposition": f"attachment; filename={file_name} filename*=UTF-8''{file_name}",
             "Content-Type": "application/octet-stream",
@@ -100,11 +100,11 @@ async def download_file(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/images/{flow_id}/{file_name}")
-async def download_image(file_name: str, flow_id: UUID):
+@router.get("/images/{agent_id}/{file_name}")
+async def download_image(file_name: str, agent_id: UUID):
     storage_service = get_storage_service()
     extension = file_name.split(".")[-1]
-    flow_id_str = str(flow_id)
+    agent_id_str = str(agent_id)
 
     if not extension:
         raise HTTPException(status_code=500, detail=f"Extension not found for file {file_name}")
@@ -119,7 +119,7 @@ async def download_image(file_name: str, flow_id: UUID):
         raise HTTPException(status_code=500, detail=f"Content type {content_type} is not an image")
 
     try:
-        file_content = await storage_service.get_file(flow_id=flow_id_str, file_name=file_name)
+        file_content = await storage_service.get_file(agent_id=agent_id_str, file_name=file_name)
         return StreamingResponse(BytesIO(file_content), media_type=content_type)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -137,7 +137,7 @@ async def download_profile_picture(
         config_path = Path(config_dir)  # type: ignore[arg-type]
         folder_path = config_path / "profile_pictures" / folder_name
         content_type = build_content_type_from_extension(extension)
-        file_content = await storage_service.get_file(flow_id=folder_path, file_name=file_name)  # type: ignore[arg-type]
+        file_content = await storage_service.get_file(agent_id=folder_path, file_name=file_name)  # type: ignore[arg-type]
         return StreamingResponse(BytesIO(file_content), media_type=content_type)
 
     except Exception as e:
@@ -154,8 +154,8 @@ async def list_profile_pictures():
         people_path = config_path / "profile_pictures/People"
         space_path = config_path / "profile_pictures/Space"
 
-        people = await storage_service.list_files(flow_id=people_path)  # type: ignore[arg-type]
-        space = await storage_service.list_files(flow_id=space_path)  # type: ignore[arg-type]
+        people = await storage_service.list_files(agent_id=people_path)  # type: ignore[arg-type]
+        space = await storage_service.list_files(agent_id=space_path)  # type: ignore[arg-type]
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -166,27 +166,27 @@ async def list_profile_pictures():
     return {"files": files}
 
 
-@router.get("/list/{flow_id}")
+@router.get("/list/{agent_id}")
 async def list_files(
-    flow: Annotated[Flow, Depends(get_flow)],
+    flow: Annotated[Agent, Depends(get_flow)],
     storage_service: Annotated[StorageService, Depends(get_storage_service)],
 ):
     try:
-        files = await storage_service.list_files(flow_id=str(flow.id))
+        files = await storage_service.list_files(agent_id=str(flow.id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     return {"files": files}
 
 
-@router.delete("/delete/{flow_id}/{file_name}")
+@router.delete("/delete/{agent_id}/{file_name}")
 async def delete_file(
     file_name: str,
-    flow: Annotated[Flow, Depends(get_flow)],
+    flow: Annotated[Agent, Depends(get_flow)],
     storage_service: Annotated[StorageService, Depends(get_storage_service)],
 ):
     try:
-        await storage_service.delete_file(flow_id=str(flow.id), file_name=file_name)
+        await storage_service.delete_file(agent_id=str(flow.id), file_name=file_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

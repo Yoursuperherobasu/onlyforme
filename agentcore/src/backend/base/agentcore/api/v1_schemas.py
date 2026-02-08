@@ -20,7 +20,7 @@ from agentcore.schema.graph import Tweaks
 from agentcore.schema.schema import InputType, OutputType, OutputValue
 from agentcore.serialization.serialization import get_max_items_length, get_max_text_length, serialize
 from agentcore.services.database.models.base import orjson_dumps
-from agentcore.services.database.models.flow.model import FlowCreate, FlowRead
+from agentcore.services.database.models.agent.model import AgentCreate, AgentRead
 from agentcore.services.database.models.user.model import UserRead
 from agentcore.services.settings.base import Settings
 from agentcore.services.settings.feature_flags import FEATURE_FLAGS, FeatureFlags
@@ -148,26 +148,26 @@ class FileResponse(ChatMessage):
         return v
 
 
-class FlowListCreate(BaseModel):
-    flows: list[FlowCreate]
+class AgentListCreate(BaseModel):
+    agents: list[AgentCreate]
 
 
-class FlowListIds(BaseModel):
-    flow_ids: list[str]
+class AgentListIds(BaseModel):
+    agent_ids: list[str]
 
 
-class FlowListRead(BaseModel):
-    flows: list[FlowRead]
+class AgentListRead(BaseModel):
+    agents: list[AgentRead]
 
 
-class FlowListReadWithFolderName(BaseModel):
-    flows: list[FlowRead]
+class AgentListReadWithFolderName(BaseModel):
+    agents: list[AgentRead]
     folder_name: str
     description: str
 
 
 class InitResponse(BaseModel):
-    flow_id: str = Field(serialization_alias="flowId")
+    agent_id: str = Field(serialization_alias="agentId")
 
 
 class BuiltResponse(BaseModel):
@@ -177,7 +177,7 @@ class BuiltResponse(BaseModel):
 class UploadFileResponse(BaseModel):
     """Upload file response schema."""
 
-    flow_id: str = Field(serialization_alias="flowId")
+    agent_id: str = Field(serialization_alias="agentId")
     file_path: Path
 
 
@@ -216,11 +216,11 @@ class CustomComponentResponseError(BaseModel):
 
 
 class ComponentListCreate(BaseModel):
-    flows: list[FlowCreate]
+    agents: list[AgentCreate]
 
 
 class ComponentListRead(BaseModel):
-    flows: list[FlowRead]
+    agents: list[AgentRead]
 
 
 class UsersResponse(BaseModel):
@@ -388,7 +388,7 @@ class SimplifiedAPIRequest(BaseModel):
 #     viewport: Viewport;
 # }
 # import ReactFlowJsonObject
-class FlowDataRequest(BaseModel):
+class AgentDataRequest(BaseModel):
     nodes: list[dict]
     edges: list[dict]
     viewport: dict | None = None
@@ -404,8 +404,8 @@ class ConfigResponse(BaseModel):
     health_check_max_retries: int
     max_file_size_upload: int
     webhook_polling_interval: int
-    public_flow_cleanup_interval: int
-    public_flow_expiration: int
+    public_agent_cleanup_interval: int
+    public_agent_expiration: int
     event_delivery: Literal["polling", "streaming", "direct"]
 
     @classmethod
@@ -428,14 +428,14 @@ class ConfigResponse(BaseModel):
             health_check_max_retries=settings.health_check_max_retries,
             max_file_size_upload=settings.max_file_size_upload,
             webhook_polling_interval=settings.webhook_polling_interval,
-            public_flow_cleanup_interval=settings.public_flow_cleanup_interval,
-            public_flow_expiration=settings.public_flow_expiration,
+            public_agent_cleanup_interval=settings.public_agent_cleanup_interval,
+            public_agent_expiration=settings.public_agent_expiration,
             event_delivery=settings.event_delivery,
         )
 
 
-class CancelFlowResponse(BaseModel):
-    """Response model for flow build cancellation."""
+class CancelAgentResponse(BaseModel):
+    """Response model for agent build cancellation."""
 
     success: bool
     message: str

@@ -170,7 +170,7 @@ export default function PublishModal({
 
     publishMutation.mutate(
       {
-        flow_id: flowId,
+        agent_id: flowId,
         agentcore_url: agentcoreUrl,
         agentcore_api_key: apiKey,
         model_name: modelName.trim() || undefined,

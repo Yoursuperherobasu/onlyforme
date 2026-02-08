@@ -1,6 +1,4 @@
-# from agentcore.field_typing import Data
 
-# TODO: remove ignore once the google package is published with types
 from google.ai.generativelanguage_v1beta.types import BatchEmbedContentsRequest
 from langchain_core.embeddings import Embeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings

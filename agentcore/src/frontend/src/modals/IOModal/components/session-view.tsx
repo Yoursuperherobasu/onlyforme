@@ -84,7 +84,7 @@ export default function SessionView({
       ? messages.filter((message) => message.session_id === session)
       : messages;
     filteredMessages = id
-      ? filteredMessages.filter((message) => message.flow_id === id)
+      ? filteredMessages.filter((message) => message.agent_id === id)
       : filteredMessages;
     return filteredMessages;
   }, [session, id, messages]);

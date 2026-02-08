@@ -22,7 +22,6 @@ dependencies = [
     "sqlmodel==0.0.22",
     "pydantic~=2.10.1",
     "pydantic-settings>=2.2.0,<3.0.0",
-    "typer>=0.13.0,<1.0.0",
     "cachetools>=5.5.0,<6.0.0",
     "platformdirs>=4.2.0,<5.0.0",
     "python-multipart>=0.0.12,<1.0.0",
@@ -34,7 +33,6 @@ dependencies = [
     "docstring-parser>=0.16,<1.0.0",
     "python-jose>=3.3.0,<4.0.0",
     "pandas==2.2.3",
-    "multiprocess>=0.70.14,<1.0.0",
     "duckdb>=1.0.0,<2.0.0",
     "python-docx>=1.1.0,<2.0.0",
     "jq>=1.7.0,<2.0.0; sys_platform != 'win32'",
@@ -57,7 +55,6 @@ dependencies = [
     "filelock>=3.15.4,<4.0.0",
     "grandalf>=0.8.0,<1.0.0",
     "spider-client>=0.0.27,<1.0.0",
-    "diskcache>=5.6.3,<6.0.0",
     "clickhouse-connect==0.7.19",
     "fastapi-pagination>=0.13.1,<1.0.0",
     "defusedxml>=0.7.1,<1.0.0",
@@ -66,10 +63,9 @@ dependencies = [
     "networkx>=3.4.2",
     "json-repair>=0.30.3",
     "mcp~=1.10.1",
-    "aiosqlite>=0.20.0",
     "greenlet>=3.1.1",
     "jsonquerylang>=1.1.1",
-    "sqlalchemy[aiosqlite]>=2.0.38,<3.0.0",
+    "sqlalchemy>=2.0.38,<3.0.0",
     'elevenlabs==1.58.1; python_version == "3.12"',
     'elevenlabs>=1.52.0; python_version != "3.12"',
     "scipy>=1.15.2",
@@ -157,7 +153,6 @@ flake8-bugbear.extend-immutable-calls = [
     "fastapi.Depends",
     "fastapi.File",
     "fastapi.Query",
-    "typer.Option",
 ]
 flake8-type-checking.runtime-evaluated-base-classes = [
     "pydantic.BaseModel",
@@ -188,10 +183,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"agentcore/api/v1/*" = [
-    "TCH", # FastAPI needs to evaluate types at runtime
-]
-"agentcore/api/v2/*" = [
+"agentcore/api/*" = [
     "TCH", # FastAPI needs to evaluate types at runtime
 ]
 "agentcore/{components/tools/python_code_structured_tool.py,custom/code_parser/code_parser.py,utils/validate.py}" = [

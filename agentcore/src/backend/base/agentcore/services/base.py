@@ -6,7 +6,7 @@ class Service(ABC):
     ready: bool = False
 
     def get_schema(self):
-        """Build a dictionary listing all methods, their parameters, types, return types and documentation."""
+        """Build a dictionary listing all methods, their parameters, types, return types."""
         schema = {}
         ignore = ["teardown", "set_ready"]
         for method in dir(self):
@@ -17,7 +17,6 @@ class Service(ABC):
                 "name": method,
                 "parameters": func.__annotations__,
                 "return": func.__annotations__.get("return"),
-                "documentation": func.__doc__,
             }
         return schema
 

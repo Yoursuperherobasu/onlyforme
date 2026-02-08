@@ -23,8 +23,8 @@ def get_file_paths(files: list[str]):
     file_paths = []
     for file in files:
         file_path = Path(file.path) if hasattr(file, "path") and file.path else Path(file)
-        flow_id, file_name = str(file_path.parent), file_path.name
-        file_paths.append(storage_service.build_full_path(flow_id=flow_id, file_name=file_name))
+        agent_id, file_name = str(file_path.parent), file_path.name
+        file_paths.append(storage_service.build_full_path(agent_id=agent_id, file_name=file_name))
     return file_paths
 
 
@@ -37,8 +37,8 @@ async def get_files(
     file_objects: list[str | bytes] = []
     for file in file_paths:
         file_path = Path(file)
-        flow_id, file_name = str(file_path.parent), file_path.name
-        file_object = await storage_service.get_file(flow_id=flow_id, file_name=file_name)
+        agent_id, file_name = str(file_path.parent), file_path.name
+        file_object = await storage_service.get_file(agent_id=agent_id, file_name=file_name)
         if convert_to_base64:
             file_base64 = base64.b64encode(file_object).decode("utf-8")
             file_objects.append(file_base64)

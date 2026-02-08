@@ -14,8 +14,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agentcore.graph_langgraph import LangGraphAdapter
 from agentcore.services.auth.utils import get_current_active_user, get_current_active_user_mcp
-from agentcore.services.database.models.flow.model import Flow
-from agentcore.services.database.models.message.model import MessageTable
+from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.conversation.model import ConversationTable
 from agentcore.services.database.models.transactions.model import TransactionTable
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.vertex_builds.model import VertexBuildTable
@@ -57,6 +57,44 @@ def remove_api_keys(flow: dict):
     return flow
 
 
+def strip_sensitive_values_from_flow_data(flow_data: dict | None) -> dict | None:
+    """Strip all sensitive/secret values from flow data before saving to DB.
+
+    This removes the value of ANY template field that has `password: True`,
+    which covers api_key, secret tokens, credentials, and any other field
+    defined with SecretStrInput or marked as a password field.
+
+    Unlike `remove_api_keys` which only targets fields with 'api' + 'key'/'token'
+    in their name, this method catches ALL password-flagged fields regardless of name.
+
+    Args:
+        flow_data: The flow's `data` dict containing `nodes` and `edges`.
+
+    Returns:
+        The sanitized flow data dict with sensitive values set to None.
+    """
+    if not flow_data or not isinstance(flow_data, dict):
+        return flow_data
+
+    for node in flow_data.get("nodes", []):
+        node_inner = node.get("data", {})
+        node_obj = node_inner.get("node", {})
+        template = node_obj.get("template", {})
+        for field_name, field_def in template.items():
+            if not isinstance(field_def, dict):
+                continue
+            # Strip value from any field marked as a password/secret
+            if field_def.get("password") is True:
+                logger.debug(
+                    "Stripping sensitive field '%s' from node '%s' before DB save",
+                    field_name,
+                    node_obj.get("display_name", node.get("id", "unknown")),
+                )
+                field_def["value"] = None
+
+    return flow_data
+
+
 def build_input_keys_response(langchain_object, artifacts):
     """Build the input keys response."""
     input_keys_response = {
@@ -86,8 +124,8 @@ def build_input_keys_response(langchain_object, artifacts):
     return input_keys_response
 
 
-def validate_is_component(flows: list[Flow]):
-    for flow in flows:
+def validate_is_component(agents: list[Agent]):
+    for flow in agents:
         if not flow.data or flow.is_component is not None:
             continue
 
@@ -96,7 +134,7 @@ def validate_is_component(flows: list[Flow]):
             flow.is_component = is_component
         else:
             flow.is_component = len(flow.data.get("nodes", [])) == 1
-    return flows
+    return agents
 
 
 def get_is_component_from_data(data: dict):
@@ -128,20 +166,20 @@ def format_elapsed_time(elapsed_time: float) -> str:
     return f"{minutes} {minutes_unit}, {seconds} {seconds_unit}"
 
 
-async def _get_flow_name(flow_id: uuid.UUID) -> str:
+async def _get_flow_name(agent_id: uuid.UUID) -> str:
     async with session_scope() as session:
-        flow = await session.get(Flow, flow_id)
+        flow = await session.get(Agent, agent_id)
         if flow is None:
-            msg = f"Flow {flow_id} not found"
+            msg = f"Flow {agent_id} not found"
             raise ValueError(msg)
     return flow.name
 
 
-async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, **kwargs):
+async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwargs):
     """Build and cache the graph.
 
     Args:
-        flow_id: The flow ID
+        agent_id: The flow ID
         payload: The flow payload with nodes and edges
         **kwargs: Additional arguments including:
             - flow_name: Name of the flow
@@ -156,21 +194,21 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, **kwarg
     from loguru import logger
     # Get flow name
     if "flow_name" not in kwargs:
-        flow_name = await _get_flow_name(flow_id if isinstance(flow_id, uuid.UUID) else uuid.UUID(flow_id))
+        flow_name = await _get_flow_name(agent_id if isinstance(agent_id, uuid.UUID) else uuid.UUID(agent_id))
     else:
         flow_name = kwargs["flow_name"]
-    str_flow_id = str(flow_id)
-    session_id = kwargs.get("session_id") or str_flow_id
+    str_agent_id = str(agent_id)
+    session_id = kwargs.get("session_id") or str_agent_id
 
     # Extract observability parameters
     project_id = kwargs.get("project_id")
     project_name = kwargs.get("project_name")
 
-    logger.info(f"BUILD_GRAPH_FROM_DATA: Calling LangGraphAdapter.from_payload for flow_id={flow_id}")
+    logger.info(f"BUILD_GRAPH_FROM_DATA: Calling LangGraphAdapter.from_payload for agent_id={agent_id}")
     # Build graph using LangGraphAdapter
     graph = LangGraphAdapter.from_payload(
         payload,
-        str_flow_id,
+        str_agent_id,
         flow_name,
         kwargs.get("user_id"),
         project_id=project_id,
@@ -190,11 +228,11 @@ async def build_graph_from_data(flow_id: uuid.UUID | str, payload: dict, **kwarg
     return graph
 
 
-async def build_graph_from_db_no_cache(flow_id: uuid.UUID, session: AsyncSession, **kwargs):
+async def build_graph_from_db_no_cache(agent_id: uuid.UUID, session: AsyncSession, **kwargs):
     """Build and cache the graph."""
     from agentcore.services.database.models.folder.model import Folder
 
-    flow: Flow | None = await session.get(Flow, flow_id)
+    flow: Agent | None = await session.get(Agent, agent_id)
     if not flow or not flow.data:
         msg = "Invalid flow ID"
         raise ValueError(msg)
@@ -211,35 +249,35 @@ async def build_graph_from_db_no_cache(flow_id: uuid.UUID, session: AsyncSession
         except Exception:
             pass  # Folder name is optional
 
-    return await build_graph_from_data(flow_id, flow.data, flow_name=flow.name, **kwargs)
+    return await build_graph_from_data(agent_id, flow.data, flow_name=flow.name, **kwargs)
 
 
-async def build_graph_from_db(flow_id: uuid.UUID, session: AsyncSession, chat_service: ChatService, **kwargs):
-    graph = await build_graph_from_db_no_cache(flow_id=flow_id, session=session, **kwargs)
-    await chat_service.set_cache(str(flow_id), graph)
+async def build_graph_from_db(agent_id: uuid.UUID, session: AsyncSession, chat_service: ChatService, **kwargs):
+    graph = await build_graph_from_db_no_cache(agent_id=agent_id, session=session, **kwargs)
+    await chat_service.set_cache(str(agent_id), graph)
     return graph
 
 
 async def build_and_cache_graph_from_data(
-    flow_id: uuid.UUID | str,
+    agent_id: uuid.UUID | str,
     chat_service: ChatService,
     graph_data: dict,
 ):  # -> LangGraphAdapter | Any:
     """Build and cache the graph.
     
     Args:
-        flow_id: The flow ID
+        agent_id: The flow ID
         chat_service: Chat service for caching
         graph_data: The flow data
     
     Returns:
         LangGraphAdapter instance
     """
-    # Convert flow_id to str if it's UUID
-    str_flow_id = str(flow_id) if isinstance(flow_id, uuid.UUID) else flow_id
-    graph = LangGraphAdapter.from_payload(graph_data, str_flow_id)
+    # Convert agent_id to str if it's UUID
+    str_agent_id = str(agent_id) if isinstance(agent_id, uuid.UUID) else agent_id
+    graph = LangGraphAdapter.from_payload(graph_data, str_agent_id)
 
-    await chat_service.set_cache(str_flow_id, graph)
+    await chat_service.set_cache(str_agent_id, graph)
     return graph
 
 
@@ -329,18 +367,18 @@ def parse_value(value: Any, input_type: str) -> Any:
     return value
 
 
-async def cascade_delete_flow(session: AsyncSession, flow_id: uuid.UUID) -> None:
+async def cascade_delete_agent(session: AsyncSession, agent_id: uuid.UUID) -> None:
     try:
         # TODO: Verify if deleting messages is safe in terms of session id relevance
-        # If we delete messages directly, rather than setting flow_id to null,
+        # If we delete messages directly, rather than setting agent_id to null,
         # it might cause unexpected behaviors because the session id could still be
         # used elsewhere to search for these messages.
-        await session.exec(delete(MessageTable).where(MessageTable.flow_id == flow_id))
-        await session.exec(delete(TransactionTable).where(TransactionTable.flow_id == flow_id))
-        await session.exec(delete(VertexBuildTable).where(VertexBuildTable.flow_id == flow_id))
-        await session.exec(delete(Flow).where(Flow.id == flow_id))
+        await session.exec(delete(ConversationTable).where(ConversationTable.agent_id == agent_id))
+        await session.exec(delete(TransactionTable).where(TransactionTable.agent_id == agent_id))
+        await session.exec(delete(VertexBuildTable).where(VertexBuildTable.agent_id == agent_id))
+        await session.exec(delete(Agent).where(Agent.id == agent_id))
     except Exception as e:
-        msg = f"Unable to cascade delete flow: {flow_id}"
+        msg = f"Unable to cascade delete flow: {agent_id}"
         raise RuntimeError(msg, e) from e
 
 
@@ -353,20 +391,20 @@ def custom_params(
     return Params(page=page or MIN_PAGE_SIZE, size=size or MAX_PAGE_SIZE)
 
 
-async def verify_public_flow_and_get_user(flow_id: uuid.UUID, client_id: str | None) -> tuple[User, uuid.UUID]:
+async def verify_public_flow_and_get_user(agent_id: uuid.UUID, client_id: str | None) -> tuple[User, uuid.UUID]:
     """Verify a public flow request and generate a deterministic flow ID.
 
     This utility function:
     1. Checks that a client_id cookie is provided
     2. Verifies the flow exists and is marked as PUBLIC
-    3. Creates a deterministic UUID based on client_id and original flow_id
+    3. Creates a deterministic UUID based on client_id and original agent_id
     4. Retrieves the flow owner user for permission purposes
 
     This function is used to support public flow endpoints that don't require
     authentication but still need to operate within the permission model.
 
     Args:
-        flow_id: The original flow ID to verify
+        agent_id: The original flow ID to verify
         client_id: The client ID from the request cookie
 
     Returns:
@@ -386,28 +424,28 @@ async def verify_public_flow_and_get_user(flow_id: uuid.UUID, client_id: str | N
     async with session_scope() as session:
         from sqlmodel import select
 
-        from agentcore.services.database.models.flow.model import AccessTypeEnum, Flow
+        from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent
 
-        flow = (await session.exec(select(Flow).where(Flow.id == flow_id))).first()
+        flow = (await session.exec(select(Agent).where(Agent.id == agent_id))).first()
         if not flow or flow.access_type is not AccessTypeEnum.PUBLIC:
             raise HTTPException(status_code=403, detail="Flow is not public")
 
-    # Create a new flow ID using the client_id and flow_id
-    new_id = f"{client_id}_{flow_id}"
-    new_flow_id = uuid.uuid5(uuid.NAMESPACE_DNS, new_id)
+    # Create a new flow ID using the client_id and agent_id
+    new_id = f"{client_id}_{agent_id}"
+    new_agent_id = uuid.uuid5(uuid.NAMESPACE_DNS, new_id)
 
     # Get the user associated with the flow
     try:
-        from agentcore.helpers.user import get_user_by_flow_id_or_endpoint_name
+        from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
 
-        user = await get_user_by_flow_id_or_endpoint_name(str(flow_id))
+        user = await get_user_by_agent_id_or_endpoint_name(str(agent_id))
 
     except Exception as exc:
-        logger.exception(f"Error getting user for public flow {flow_id}")
+        logger.exception(f"Error getting user for public flow {agent_id}")
         raise HTTPException(status_code=403, detail="Flow is not accessible") from exc
 
     if not user:
-        msg = f"User not found for public flow {flow_id}"
+        msg = f"User not found for public flow {agent_id}"
         raise HTTPException(status_code=403, detail=msg)
 
-    return user, new_flow_id
+    return user, new_agent_id

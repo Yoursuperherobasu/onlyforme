@@ -77,14 +77,14 @@ class PlaceholderGraph(NamedTuple):
     allowing components to function in isolation or in simplified contexts.
 
     Attributes:
-        flow_id (str | None): Unique identifier for the flow, if applicable.
+        agent_id (str | None): Unique identifier for the flow, if applicable.
         user_id (str | None): Identifier of the user associated with the flow, if any.
         session_id (str | None): Identifier for the current session, if applicable.
         context (dict): Additional contextual information for the component's execution.
         flow_name (str | None): Name of the flow, if available.
     """
 
-    flow_id: str | None
+    agent_id: str | None
     user_id: str | None
     session_id: str | None
     context: dict
@@ -839,9 +839,9 @@ class Node(ExecutableNode):
             session_id = self._session_id if hasattr(self, "_session_id") else None
             user_id = self._user_id if hasattr(self, "_user_id") else None
             flow_name = self._flow_name if hasattr(self, "_flow_name") else None
-            flow_id = self._flow_id if hasattr(self, "_flow_id") else None
+            agent_id = self._agent_id if hasattr(self, "_agent_id") else None
             return PlaceholderGraph(
-                flow_id=flow_id, user_id=str(user_id), session_id=session_id, context={}, flow_name=flow_name
+                agent_id=agent_id, user_id=str(user_id), session_id=session_id, context={}, flow_name=flow_name
             )
         msg = f"Attribute {name} not found in {self.__class__.__name__}"
         raise AttributeError(msg)
@@ -1154,10 +1154,10 @@ class Node(ExecutableNode):
         if (
             self._vertex is not None
             and isinstance(result, Message)
-            and result.flow_id is None
-            and self._vertex.graph.flow_id is not None
+            and result.agent_id is None
+            and self._vertex.graph.agent_id is not None
         ):
-            result.set_flow_id(self._vertex.graph.flow_id)
+            result.set_agent_id(self._vertex.graph.agent_id)
         result = output.apply_options(result)
         output.value = result
 
@@ -1475,8 +1475,8 @@ class Node(ExecutableNode):
                 UUID(self.graph.session_id) if isinstance(self.graph.session_id, str) else self.graph.session_id
             )
             message.session_id = session_id
-        if hasattr(message, "flow_id") and isinstance(message.flow_id, str):
-            message.flow_id = UUID(message.flow_id)
+        if hasattr(message, "agent_id") and isinstance(message.agent_id, str):
+            message.agent_id = UUID(message.agent_id)
         
         # Check if this is a streaming message BEFORE storing to DB
         is_streaming = (
@@ -1519,12 +1519,12 @@ class Node(ExecutableNode):
         return stored_message
 
     async def _store_message(self, message: Message) -> Message:
-        flow_id: str | None = None
+        agent_id: str | None = None
         if hasattr(self, "graph"):
             # Convert UUID to str if needed
-            flow_id = str(self.graph.flow_id) if self.graph.flow_id else None
+            agent_id = str(self.graph.agent_id) if self.graph.agent_id else None
         
-        stored_messages = await astore_message(message, flow_id=flow_id)
+        stored_messages = await astore_message(message, agent_id=agent_id)
         if len(stored_messages) != 1:
             msg = "Only one message can be stored at a time."
             raise ValueError(msg)
@@ -1577,13 +1577,13 @@ class Node(ExecutableNode):
     async def _update_stored_message(self, message: Message) -> Message:
         """Update the stored message."""
         if hasattr(self, "_vertex") and self._vertex is not None and hasattr(self._vertex, "graph"):
-            flow_id = (
-                UUID(self._vertex.graph.flow_id)
-                if isinstance(self._vertex.graph.flow_id, str)
-                else self._vertex.graph.flow_id
+            agent_id = (
+                UUID(self._vertex.graph.agent_id)
+                if isinstance(self._vertex.graph.agent_id, str)
+                else self._vertex.graph.agent_id
             )
 
-            message.flow_id = flow_id
+            message.agent_id = agent_id
 
         message_tables = await aupdate_messages(message)
         if not message_tables:
@@ -1667,11 +1667,11 @@ class Node(ExecutableNode):
         source: Source,
     ) -> Message | None:
         """Send an error message to the frontend."""
-        flow_id = self.graph.flow_id if hasattr(self, "graph") else None
+        agent_id = self.graph.agent_id if hasattr(self, "graph") else None
         if not session_id:
             return None
         error_message = ErrorMessage(
-            flow_id=flow_id,
+            agent_id=agent_id,
             exception=exception,
             session_id=session_id,
             trace_name=trace_name,

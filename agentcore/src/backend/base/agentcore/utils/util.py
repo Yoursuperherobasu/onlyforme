@@ -379,13 +379,7 @@ def set_headers_value(value: dict[str, Any]) -> None:
 
 def add_options_to_field(value: dict[str, Any], class_name: str | None, key: str) -> None:
     """Adds options to the field based on the class name and key."""
-    options_map = {
-        "OpenAI": constants.OPENAI_MODELS,
-        "ChatOpenAI": constants.CHAT_OPENAI_MODELS,
-        "ReasoningOpenAI": constants.REASONING_OPENAI_MODELS,
-        "Anthropic": constants.ANTHROPIC_MODELS,
-        "ChatAnthropic": constants.ANTHROPIC_MODELS,
-    }
+    options_map = {}
 
     if class_name in options_map and key == "model_name":
         value["options"] = options_map[class_name]

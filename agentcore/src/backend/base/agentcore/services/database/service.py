@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import sqlite3
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -15,8 +14,6 @@ from alembic import command, util
 from alembic.config import Config
 from loguru import logger
 from sqlalchemy import event, exc, inspect
-from sqlalchemy.dialects import sqlite as dialect_sqlite
-from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel, select, text
@@ -39,7 +36,6 @@ class DatabaseService(Service):
     name = "database_service"
 
     def __init__(self, settings_service: SettingsService):
-        self._logged_pragma = False
         self.settings_service = settings_service
         if settings_service.settings.database_url is None:
             msg = "No database URL provided"
@@ -53,9 +49,6 @@ class DatabaseService(Service):
         self.script_location = agentcore_dir / "alembic"
         self.alembic_cfg_path = agentcore_dir / "alembic.ini"
 
-        # register the event listener for sqlite as part of this class.
-        # Using decorator will make the method not able to use self
-        event.listen(Engine, "connect", self.on_connection)
         if self.settings_service.settings.database_connection_retry:
             self.engine = self._create_engine_with_retry()
         else:
@@ -86,9 +79,7 @@ class DatabaseService(Service):
 
         driver = url_components[0]
 
-        if driver == "sqlite":
-            driver = "sqlite+aiosqlite"
-        elif driver in {"postgresql", "postgres"}:
+        if driver in {"postgresql", "postgres"}:
             if driver == "postgres":
                 logger.warning(
                     "The postgres dialect in the database URL is deprecated. "
@@ -150,35 +141,7 @@ class DatabaseService(Service):
         if settings.db_driver_connection_settings is not None:
             return settings.db_driver_connection_settings
 
-        if settings.database_url and settings.database_url.startswith("sqlite"):
-            return {
-                "check_same_thread": False,
-                "timeout": settings.db_connect_timeout,
-            }
-
         return {}
-
-    def on_connection(self, dbapi_connection, _connection_record) -> None:
-        if isinstance(dbapi_connection, sqlite3.Connection | dialect_sqlite.aiosqlite.AsyncAdapt_aiosqlite_connection):
-            pragmas: dict = self.settings_service.settings.sqlite_pragmas or {}
-            pragmas_list = []
-            for key, val in pragmas.items():
-                pragmas_list.append(f"PRAGMA {key} = {val}")
-            if not self._logged_pragma:
-                logger.debug(f"sqlite connection, setting pragmas: {pragmas_list}")
-                self._logged_pragma = True
-            if pragmas_list:
-                cursor = dbapi_connection.cursor()
-                try:
-                    for pragma in pragmas_list:
-                        try:
-                            cursor.execute(pragma)
-                        except OperationalError:
-                            logger.exception(f"Failed to set PRAGMA {pragma}")
-                        except GeneratorExit:
-                            logger.error(f"Failed to set PRAGMA {pragma}")
-                finally:
-                    cursor.close()
 
     @asynccontextmanager
     async def with_session(self):
@@ -195,7 +158,7 @@ class DatabaseService(Service):
                     raise
 
     @staticmethod
-    def _generate_unique_flow_name(original_name: str, existing_names: set[str]) -> str:
+    def _generate_unique_agent_name(original_name: str, existing_names: set[str]) -> str:
         """Generate a unique flow name by adding or incrementing a suffix."""
         if original_name not in existing_names:
             return original_name
@@ -225,13 +188,13 @@ class DatabaseService(Service):
         inspector = inspect(connection)
 
         model_mapping: dict[str, type[SQLModel]] = {
-            "flow": models.Flow,
+            "agent": models.Agent,
             "user": models.User,
             # Add other SQLModel classes here
         }
 
         # To account for tables that existed in older versions
-        legacy_tables = ["flowstyle"]
+        # legacy_tables = ["flowstyle"]
 
         for table, model in model_mapping.items():
             expected_columns = list(model.model_fields.keys())
@@ -247,9 +210,9 @@ class DatabaseService(Service):
                     logger.debug(f"Missing column: {column} in table {table}")
                     return False
 
-        for table in legacy_tables:
-            if table in inspector.get_table_names():
-                logger.warning(f"Legacy table exists: {table}")
+        # for table in legacy_tables:
+        #     if table in inspector.get_table_names():
+        #         logger.warning(f"Legacy table exists: {table}")
 
         return True
 
@@ -261,7 +224,6 @@ class DatabaseService(Service):
     def init_alembic(alembic_cfg) -> None:
         logger.info("Initializing alembic")
         command.ensure_version(alembic_cfg)
-        # alembic_cfg.attributes["connection"].commit()
         command.upgrade(alembic_cfg, "head")
 
     def _run_migrations(self, should_initialize_alembic, fix) -> None:
@@ -296,7 +258,15 @@ class DatabaseService(Service):
             except Exception as exc:  # noqa: BLE001
                 logger.debug(f"Error checking migrations: {exc}")
                 if isinstance(exc, util.exc.CommandError | util.exc.AutogenerateDiffsDetected):
-                    command.upgrade(alembic_cfg, "head")
+                    try:
+                        command.upgrade(alembic_cfg, "head")
+                    except Exception as upgrade_exc:  # noqa: BLE001
+                        # If upgrade fails (e.g. stale revision from squashed migrations),
+                        # stamp to head so alembic recognizes the current DB state.
+                        logger.warning(
+                            f"Upgrade failed ({upgrade_exc}), stamping to head as fallback"
+                        )
+                        command.stamp(alembic_cfg, "head")
                     time.sleep(3)
 
             try:
@@ -317,7 +287,24 @@ class DatabaseService(Service):
             # If the table does not exist it throws an error
             # so we need to catch it
             try:
-                await session.exec(text("SELECT * FROM alembic_version"))
+                result = await session.exec(text("SELECT version_num FROM alembic_version"))
+                row = result.first()
+                if row is None:
+                    logger.debug("alembic_version table is empty")
+                    should_initialize_alembic = True
+                else:
+                    # Check if the stored revision is in our current migration chain
+                    from alembic.script import ScriptDirectory
+
+                    agentcore_dir = Path(__file__).parent.parent.parent
+                    script_dir = ScriptDirectory(str(agentcore_dir / "alembic"))
+                    known_revisions = {r.revision for r in script_dir.walk_revisions()}
+                    current_rev = row[0]
+                    if current_rev not in known_revisions:
+                        logger.warning(
+                            f"Stale alembic revision '{current_rev}' not in current migration chain — will re-initialize"
+                        )
+                        should_initialize_alembic = True
             except Exception:  # noqa: BLE001
                 logger.debug("Alembic not initialized")
                 should_initialize_alembic = True
@@ -390,7 +377,7 @@ class DatabaseService(Service):
 
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
-        current_tables = ["flow", "user", "folder", "message", "transaction", "vertex_build"]
+        current_tables = ["agent", "user", "folder", "conversation", "transaction", "vertex_build"]
 
         if table_names and all(table in table_names for table in current_tables):
             logger.debug("Database and tables already exist")

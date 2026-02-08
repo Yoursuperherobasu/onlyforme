@@ -12,7 +12,6 @@ STREAM_INFO_TEXT = "Stream the response from the model. Streaming works only in 
 
 NODE_FORMAT_ATTRIBUTES = [
     "beta",
-    "legacy",
     "icon",
     "output_types",
     "edited",

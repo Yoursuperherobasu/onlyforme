@@ -24,7 +24,7 @@ class AuthSettings(BaseSettings):
 
     # API Key to execute /process endpoint
     API_KEY_ALGORITHM: str = "HS256"
-    API_V1_STR: str = "/api/v1"
+    API_V1_STR: str = "/api"
     AZURE_TENANT_ID: str = "69b98d34-6d85-4ddf-9d5f-6f8767b5f4b7"
     AZURE_CLIENT_ID: str ="d717db80-a34b-43c3-b78b-41322e2058cc"
     NEW_USER_IS_ACTIVE: bool = True

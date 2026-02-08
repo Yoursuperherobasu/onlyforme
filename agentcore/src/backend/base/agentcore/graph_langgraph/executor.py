@@ -59,7 +59,7 @@ class LangGraphExecutor:
         Returns:
             Final state after execution
         """
-        logger.info(f"Starting LangGraph execution for flow {self.adapter.flow_id}")
+        logger.info(f"Starting LangGraph execution for flow {self.adapter.agent_id}")
         
         # Update input vertices with the input data (like ChatInput's input_value)
         if inputs:
@@ -124,7 +124,7 @@ class LangGraphExecutor:
         Yields:
             State updates as execution progresses
         """
-        logger.info(f"Starting streaming LangGraph execution for flow {self.adapter.flow_id}")
+        logger.info(f"Starting streaming LangGraph execution for flow {self.adapter.agent_id}")
         
         # Update input vertices with the input data (like ChatInput's input_value)
         if inputs:
@@ -193,9 +193,9 @@ class LangGraphExecutor:
             events=[],
             
             # Flow metadata
-            flow_id=self.adapter.flow_id or "",
+            agent_id=self.adapter.agent_id or "",
             flow_name=self.adapter.flow_name,
-            session_id=inputs.get("session_id") or self.adapter.session_id or self.adapter.flow_id or "",
+            session_id=inputs.get("session_id") or self.adapter.session_id or self.adapter.agent_id or "",
             user_id=user_id,
             
             # Context

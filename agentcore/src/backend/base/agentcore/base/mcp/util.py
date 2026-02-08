@@ -21,7 +21,7 @@ from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 from sqlmodel import select
 
-from agentcore.services.database.models.flow.model import Flow
+from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_settings_service
 
 HTTP_ERROR_STATUS_CODE = httpx_codes.BAD_REQUEST  # HTTP status code for client errors
@@ -264,9 +264,9 @@ def get_unique_name(base_name, max_length, existing_names):
         i += 1
 
 
-async def get_flow_snake_case(flow_name: str, user_id: str, session, is_action: bool | None = None) -> Flow | None:
+async def get_flow_snake_case(flow_name: str, user_id: str, session, is_action: bool | None = None) -> Agent | None:
     uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
-    stmt = select(Flow).where(Flow.user_id == uuid_user_id).where(Flow.is_component == False)  # noqa: E712
+    stmt = select(Agent).where(Agent.user_id == uuid_user_id).where(Agent.is_component == False)  # noqa: E712
     flows = (await session.exec(stmt)).all()
 
     for flow in flows:
@@ -972,7 +972,7 @@ class MCPStdioClient:
         )
 
     def set_session_context(self, context_id: str):
-        """Set the session context (e.g., flow_id + user_id + session_id)."""
+        """Set the session context (e.g., agent_id + user_id + session_id)."""
         self._session_context = context_id
 
     def _get_session_manager(self) -> MCPSessionManager:
@@ -1266,7 +1266,7 @@ class MCPSseClient:
         )
 
     def set_session_context(self, context_id: str):
-        """Set the session context (e.g., flow_id + user_id + session_id)."""
+        """Set the session context (e.g., agent_id + user_id + session_id)."""
         self._session_context = context_id
 
     async def _get_or_create_session(self) -> ClientSession:

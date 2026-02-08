@@ -6,7 +6,7 @@ import { UseRequestProcessor } from "../../services/request-processor";
 
 export interface IPublishRecord {
   id: string;
-  flow_id: string;
+  agent_id: string;
   platform: string;
   platform_url: string;
   external_id: string;
@@ -22,7 +22,7 @@ export interface IPublishRecord {
 }
 
 export interface IGetPublishStatusParams {
-  flow_id: string;
+  agent_id: string;
 }
 
 export const useGetPublishStatus: useQueryFunctionType<
@@ -32,21 +32,21 @@ export const useGetPublishStatus: useQueryFunctionType<
   const { query } = UseRequestProcessor();
 
   const getPublishStatusFn = async (): Promise<IPublishRecord[]> => {
-    if (!params?.flow_id) {
+    if (!params?.agent_id) {
       return [];
     }
 
     const response = await api.get<IPublishRecord[]>(
-      `${getURL("PUBLISH")}/status/${params.flow_id}`,
+      `${getURL("PUBLISH")}/status/${params.agent_id}`,
     );
     return response.data;
   };
 
   const queryResult: UseQueryResult<IPublishRecord[]> = query(
-    ["useGetPublishStatus", params?.flow_id],
+    ["useGetPublishStatus", params?.agent_id],
     getPublishStatusFn,
     {
-      enabled: !!params?.flow_id,
+      enabled: !!params?.agent_id,
       ...options,
     },
   );

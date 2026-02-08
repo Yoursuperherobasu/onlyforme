@@ -6,6 +6,10 @@ from agentcore.field_typing.range_spec import RangeSpec
 from agentcore.inputs.inputs import MessageTextInput
 from agentcore.io import DropdownInput, IntInput, SecretStrInput, SliderInput
 
+AZURE_OPENAI_API_VERSIONS = [
+    "2025-10-01-preview",
+]
+
 
 class AzureChatOpenAIComponent(LCModelNode):
     display_name: str = "Azure OpenAI"
@@ -13,21 +17,6 @@ class AzureChatOpenAIComponent(LCModelNode):
     beta = False
     icon = "Azure"
     name = "AzureOpenAIModel"
-
-    AZURE_OPENAI_API_VERSIONS = [
-        "2024-06-01",
-        "2024-07-01-preview",
-        "2024-08-01-preview",
-        "2024-09-01-preview",
-        "2024-10-01-preview",
-        "2023-05-15",
-        "2023-12-01-preview",
-        "2024-02-15-preview",
-        "2024-03-01-preview",
-        "2024-12-01-preview",
-        "2025-01-01-preview",
-        "2025-02-01-preview",
-    ]
 
     inputs = [
         *LCModelNode._base_inputs,

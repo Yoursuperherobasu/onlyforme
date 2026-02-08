@@ -9,7 +9,7 @@ from typing_extensions import override
 from agentcore.base.flow_processing.utils import build_data_from_result_data, format_flow_output_data
 from agentcore.graph_langgraph import LangGraphAdapter as Graph  # cannot be a part of TYPE_CHECKING   # noqa: TC001
 from agentcore.graph_langgraph import LangGraphVertex as Vertex  # cannot be a part of TYPE_CHECKING  # noqa: TC001
-from agentcore.helpers.flow import build_schema_from_inputs, get_arg_names, get_flow_inputs, run_flow
+from agentcore.helpers.agent import build_schema_from_inputs, get_arg_names, get_agent_inputs, run_agent
 from agentcore.utils.async_helpers import run_until_complete
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ class FlowTool(BaseTool):
     name: str
     description: str
     graph: Graph | None = None
-    flow_id: str | None = None
+    agent_id: str | None = None
     user_id: str | None = None
     session_id: str | None = None
     inputs: list[Vertex] = []
@@ -40,7 +40,7 @@ class FlowTool(BaseTool):
         if self.args_schema is not None:
             return self.args_schema
         if self.graph is not None:
-            return build_schema_from_inputs(self.name, get_flow_inputs(self.graph))
+            return build_schema_from_inputs(self.name, get_agent_inputs(self.graph))
         msg = "No input schema available."
         raise ToolException(msg)
 
@@ -59,10 +59,10 @@ class FlowTool(BaseTool):
         tweaks = {arg["component_name"]: kwargs[arg["arg_name"]] for arg in args_names}
 
         run_outputs = run_until_complete(
-            run_flow(
+            run_agent(
                 graph=self.graph,
                 tweaks={key: {"input_value": value} for key, value in tweaks.items()},
-                flow_id=self.flow_id,
+                agent_id=self.agent_id,
                 user_id=self.user_id,
                 session_id=self.session_id,
             )
@@ -111,9 +111,9 @@ class FlowTool(BaseTool):
         except Exception:  # noqa: BLE001
             logger.opt(exception=True).warning("Failed to set run_id")
             run_id = None
-        run_outputs = await run_flow(
+        run_outputs = await run_agent(
             tweaks={key: {"input_value": value} for key, value in tweaks.items()},
-            flow_id=self.flow_id,
+            agent_id=self.agent_id,
             user_id=self.user_id,
             run_id=run_id,
             session_id=self.session_id,

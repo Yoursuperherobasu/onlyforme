@@ -63,7 +63,7 @@ async def handle_global_call_tool(name: str, arguments: dict) -> list[types.Text
     return await handle_call_tool(name, arguments, server)
 
 
-sse = SseServerTransport("/api/v1/mcp/")
+sse = SseServerTransport("/api/mcp/")
 
 
 def find_validation_error(exc):

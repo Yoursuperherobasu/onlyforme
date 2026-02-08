@@ -16,22 +16,22 @@ from sqlalchemy import or_, update
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
-from agentcore.api.utils import CurrentActiveUser, DbSession, cascade_delete_flow, custom_params, remove_api_keys
+from agentcore.api.utils import CurrentActiveUser, DbSession, cascade_delete_agent, custom_params, remove_api_keys
 from agentcore.api.flows import create_flows
-from agentcore.api.v1_schemas import FlowListCreate
-from agentcore.helpers.flow import generate_unique_flow_name
+from agentcore.api.v1_schemas import AgentListCreate
+from agentcore.helpers.agent import generate_unique_agent_name
 from agentcore.helpers.folders import generate_unique_folder_name
 from agentcore.initial_setup.constants import STARTER_FOLDER_NAME
-from agentcore.services.database.models.flow.model import Flow, FlowCreate, FlowRead
+from agentcore.services.database.models.agent.model import Agent, AgentCreate, AgentRead
 from agentcore.services.database.models.folder.constants import DEFAULT_FOLDER_NAME
 from agentcore.services.database.models.folder.model import (
     Folder,
     FolderCreate,
     FolderRead,
-    FolderReadWithFlows,
+    FolderReadWithAgents,
     FolderUpdate,
 )
-from agentcore.services.database.models.folder.pagination_model import FolderWithPaginatedFlows
+from agentcore.services.database.models.folder.pagination_model import FolderWithPaginatedAgents
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -76,14 +76,14 @@ async def create_project(
 
         if project.components_list:
             update_statement_components = (
-                update(Flow).where(Flow.id.in_(project.components_list)).values(folder_id=new_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(project.components_list)).values(folder_id=new_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_components)
             await session.commit()
 
-        if project.flows_list:
+        if project.agents_list:
             update_statement_flows = (
-                update(Flow).where(Flow.id.in_(project.flows_list)).values(folder_id=new_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(project.agents_list)).values(folder_id=new_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_flows)
             await session.commit()
@@ -114,7 +114,7 @@ async def read_projects(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/{project_id}", response_model=FolderWithPaginatedFlows | FolderReadWithFlows, status_code=200)
+@router.get("/{project_id}", response_model=FolderWithPaginatedAgents | FolderReadWithAgents, status_code=200)
 async def read_project(
     *,
     session: DbSession,
@@ -129,7 +129,7 @@ async def read_project(
         project = (
             await session.exec(
                 select(Folder)
-                .options(selectinload(Folder.flows))
+                .options(selectinload(Folder.agents))
                 .where(Folder.id == project_id, Folder.user_id == current_user.id)
             )
         ).first()
@@ -143,16 +143,16 @@ async def read_project(
 
     try:
         if params and params.page and params.size:
-            stmt = select(Flow).where(Flow.folder_id == project_id)
+            stmt = select(Agent).where(Agent.folder_id == project_id)
 
-            if Flow.updated_at is not None:
-                stmt = stmt.order_by(Flow.updated_at.desc())  # type: ignore[attr-defined]
+            if Agent.updated_at is not None:
+                stmt = stmt.order_by(Agent.updated_at.desc())  # type: ignore[attr-defined]
             if is_component:
-                stmt = stmt.where(Flow.is_component == True)  # noqa: E712
+                stmt = stmt.where(Agent.is_component == True)  # noqa: E712
             if is_flow:
-                stmt = stmt.where(Flow.is_component == False)  # noqa: E712
+                stmt = stmt.where(Agent.is_component == False)  # noqa: E712
             if search:
-                stmt = stmt.where(Flow.name.like(f"%{search}%"))  # type: ignore[attr-defined]
+                stmt = stmt.where(Agent.name.like(f"%{search}%"))  # type: ignore[attr-defined]
             import warnings
 
             with warnings.catch_warnings():
@@ -161,13 +161,13 @@ async def read_project(
                 )
                 paginated_flows = await apaginate(session, stmt, params=params)
 
-            return FolderWithPaginatedFlows(folder=FolderRead.model_validate(project), flows=paginated_flows)
+            return FolderWithPaginatedAgents(folder=FolderRead.model_validate(project), agents=paginated_flows)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    flows_from_current_user_in_project = [flow for flow in project.flows if flow.user_id == current_user.id]
-    project.flows = flows_from_current_user_in_project
+    flows_from_current_user_in_project = [flow for flow in project.agents if flow.user_id == current_user.id]
+    project.agents = flows_from_current_user_in_project
     return project
 
 
@@ -205,23 +205,23 @@ async def update_project(
         await session.commit()
         await session.refresh(existing_project)
 
-        concat_project_components = project.components + project.flows
+        concat_project_components = project.components + project.agents
 
-        flows_ids = (await session.exec(select(Flow.id).where(Flow.folder_id == existing_project.id))).all()
+        flows_ids = (await session.exec(select(Agent.id).where(Agent.folder_id == existing_project.id))).all()
 
         excluded_flows = list(set(flows_ids) - set(concat_project_components))
 
         my_collection_project = (await session.exec(select(Folder).where(Folder.name == DEFAULT_FOLDER_NAME))).first()
         if my_collection_project:
             update_statement_my_collection = (
-                update(Flow).where(Flow.id.in_(excluded_flows)).values(folder_id=my_collection_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(excluded_flows)).values(folder_id=my_collection_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_my_collection)
             await session.commit()
 
         if concat_project_components:
             update_statement_components = (
-                update(Flow).where(Flow.id.in_(concat_project_components)).values(folder_id=existing_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(concat_project_components)).values(folder_id=existing_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_components)
             await session.commit()
@@ -241,11 +241,11 @@ async def delete_project(
 ):
     try:
         flows = (
-            await session.exec(select(Flow).where(Flow.folder_id == project_id, Flow.user_id == current_user.id))
+            await session.exec(select(Agent).where(Agent.folder_id == project_id, Agent.user_id == current_user.id))
         ).all()
         if len(flows) > 0:
             for flow in flows:
-                await cascade_delete_flow(session, flow.id)
+                await cascade_delete_agent(session, flow.id)
 
         project = (
             await session.exec(select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id))
@@ -280,9 +280,9 @@ async def download_file(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        flows_query = select(Flow).where(Flow.folder_id == project_id)
+        flows_query = select(Agent).where(Agent.folder_id == project_id)
         flows_result = await session.exec(flows_query)
-        flows = [FlowRead.model_validate(flow, from_attributes=True) for flow in flows_result.all()]
+        flows = [AgentRead.model_validate(flow, from_attributes=True) for flow in flows_result.all()]
 
         if not flows:
             raise HTTPException(status_code=404, detail="No flows found in project")
@@ -315,7 +315,7 @@ async def download_file(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/upload/", response_model=list[FlowRead], status_code=201)
+@router.post("/upload/", response_model=list[AgentRead], status_code=201)
 async def upload_file(
     *,
     session: DbSession,
@@ -346,12 +346,12 @@ async def upload_file(
     del data["folder_description"]
 
     if "flows" in data:
-        flow_list = FlowListCreate(flows=[FlowCreate(**flow) for flow in data["flows"]])
+        flow_list = AgentListCreate(flows=[AgentCreate(**flow) for flow in data["flows"]])
     else:
         raise HTTPException(status_code=400, detail="No flows found in the data")
     # Now we set the user_id for all flows
     for flow in flow_list.flows:
-        flow_name = await generate_unique_flow_name(flow.name, current_user.id, session)
+        flow_name = await generate_unique_agent_name(flow.name, current_user.id, session)
         flow.name = flow_name
         flow.user_id = current_user.id
         flow.folder_id = new_project.id

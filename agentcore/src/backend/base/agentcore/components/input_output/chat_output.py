@@ -165,7 +165,7 @@ class ChatOutput(ChatNode):
         message.sender = self.sender
         message.sender_name = self.sender_name
         message.session_id = self.session_id
-        message.flow_id = self.graph.flow_id if hasattr(self, "graph") else None
+        message.agent_id = self.graph.agent_id if hasattr(self, "graph") else None
         message.properties.source = self._build_source(source_id, display_name, source)
         message.properties.icon = icon
         message.properties.background_color = background_color

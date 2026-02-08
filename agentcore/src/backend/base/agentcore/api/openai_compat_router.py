@@ -11,11 +11,11 @@ from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlmodel import select
 
-from agentcore.api.endpoints import simple_run_flow
+from agentcore.api.endpoints import simple_run_agent
 from agentcore.api.v1_schemas import SimplifiedAPIRequest
-from agentcore.helpers.flow import get_flow_by_id_or_endpoint_name
+from agentcore.helpers.agent import get_agent_by_id_or_endpoint_name
 from agentcore.services.auth.utils import api_key_header, api_key_query, api_key_security
-from agentcore.services.database.models.flow.model import AccessTypeEnum, Flow, FlowRead
+from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent, AgentRead
 from agentcore.services.deps import session_scope
 
 if TYPE_CHECKING:
@@ -128,28 +128,28 @@ async def _resolve_current_user(
     return await api_key_security(query_key or token, header_key or token)
 
 
-async def _fetch_accessible_flows(user: UserRead) -> list[Flow]:
+async def _fetch_accessible_flows(user: UserRead) -> list[Agent]:
     """Return flows that the caller can access via the OpenAI shim."""
     async with session_scope() as session:
         stmt = (
-            select(Flow)
-            .where(Flow.is_component == False)  # noqa: E712
+            select(Agent)
+            .where(Agent.is_component == False)  # noqa: E712
             .where(
                 or_(
-                    Flow.user_id == user.id,
-                    Flow.access_type == AccessTypeEnum.PUBLIC,
+                    Agent.user_id == user.id,
+                    Agent.access_type == AccessTypeEnum.PUBLIC,
                 )
             )
         )
         return list((await session.exec(stmt)).all())
 
 
-def _model_identifier(flow: Flow, *, include_prefix: bool = True) -> str:
+def _model_identifier(flow: Agent, *, include_prefix: bool = True) -> str:
     suffix = flow.endpoint_name or str(flow.id)
     return f"lb:{suffix}" if include_prefix else suffix
 
 
-def _flow_to_model_payload(flow: Flow) -> dict[str, Any]:
+def _flow_to_model_payload(flow: Agent) -> dict[str, Any]:
     updated = flow.updated_at
     if isinstance(updated, str):
         try:
@@ -172,16 +172,16 @@ def _flow_to_model_payload(flow: Flow) -> dict[str, Any]:
             "display_name": flow.name,
             "description": flow.description,
             "endpoint_name": flow.endpoint_name,
-            "flow_id": str(flow.id),
+            "agent_id": str(flow.id),
             "access": flow.access_type.value if flow.access_type else AccessTypeEnum.PRIVATE.value,
         },
     }
 
 
-def _build_flow_lookup(flows: list[Flow]) -> dict[str, FlowRead]:
-    lookup: dict[str, FlowRead] = {}
+def _build_flow_lookup(flows: list[Agent]) -> dict[str, AgentRead]:
+    lookup: dict[str, AgentRead] = {}
     for flow in flows:
-        flow_read = FlowRead.model_validate(flow, from_attributes=True)
+        flow_read = AgentRead.model_validate(flow, from_attributes=True)
         for key in {
             str(flow.id),
             _model_identifier(flow),
@@ -192,7 +192,7 @@ def _build_flow_lookup(flows: list[Flow]) -> dict[str, FlowRead]:
     return lookup
 
 
-def _ensure_flow_access(flow: FlowRead, user: UserRead) -> None:
+def _ensure_flow_access(flow: AgentRead, user: UserRead) -> None:
     if flow.access_type == AccessTypeEnum.PUBLIC:
         return
     if flow.user_id and flow.user_id == user.id:
@@ -226,7 +226,7 @@ async def chat(req: ChatRequest, current_user: Annotated[UserRead, Depends(_reso
     if flow_read is None:
         # attempt to resolve via helper that checks DB + permissions
         target_identifier = flow_key
-        flow_read = await get_flow_by_id_or_endpoint_name(target_identifier, user_id=str(current_user.id))
+        flow_read = await get_agent_by_id_or_endpoint_name(target_identifier, user_id=str(current_user.id))
         _ensure_flow_access(flow_read, current_user)
     else:
         _ensure_flow_access(flow_read, current_user)
@@ -237,7 +237,7 @@ async def chat(req: ChatRequest, current_user: Annotated[UserRead, Depends(_reso
         input_type="chat",
         output_type="chat",
     )
-    run_response = await simple_run_flow(flow=flow_read, input_request=simplified_request, api_key_user=current_user)
+    run_response = await simple_run_agent(flow=flow_read, input_request=simplified_request, api_key_user=current_user)
     lb_json = run_response.model_dump()
     text = _extract_text(lb_json)
 

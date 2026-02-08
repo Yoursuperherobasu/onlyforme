@@ -16,34 +16,31 @@ from agentcore.api.observability import router as observability_router
 from agentcore.api.projects import router as projects_router
 from agentcore.api.publish import router as publish_router
 from agentcore.api.starter_projects import router as starter_projects_router
+from agentcore.api.store import router as store_router
 from agentcore.api.users import router as users_router
 from agentcore.api.validate import router as validate_router
 from agentcore.api.variable import router as variables_router
 
-router_v1 = APIRouter(
-    prefix="/v1",
-)
-
-router_v1.include_router(chat_router)
-router_v1.include_router(endpoints_router)
-router_v1.include_router(validate_router)
-router_v1.include_router(flows_router)
-router_v1.include_router(users_router)
-router_v1.include_router(api_key_router)
-router_v1.include_router(login_router)
-router_v1.include_router(variables_router)
-router_v1.include_router(files_router)
-router_v1.include_router(monitor_router)
-router_v1.include_router(projects_router)
-router_v1.include_router(publish_router)
-router_v1.include_router(starter_projects_router)
-router_v1.include_router(mcp_router)
-router_v1.include_router(mcp_projects_router)
-router_v1.include_router(observability_router)
-router_v1.include_router(files_router_user)
-router_v1.include_router(mcp_router_config)
-
 router = APIRouter(
     prefix="/api",
 )
-router.include_router(router_v1)
+
+router.include_router(chat_router)
+router.include_router(endpoints_router)
+router.include_router(validate_router)
+router.include_router(flows_router)
+router.include_router(users_router)
+router.include_router(api_key_router)
+router.include_router(login_router)
+router.include_router(variables_router)
+router.include_router(files_router)
+router.include_router(monitor_router)
+router.include_router(projects_router)
+router.include_router(publish_router)
+router.include_router(starter_projects_router)
+router.include_router(store_router)
+router.include_router(mcp_router)
+router.include_router(mcp_projects_router)
+router.include_router(observability_router)
+router.include_router(files_router_user)
+router.include_router(mcp_router_config)

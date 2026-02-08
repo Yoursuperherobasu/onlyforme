@@ -10,12 +10,12 @@ from sqlmodel import col, select
 from agentcore.api.utils import DbSession, custom_params
 from agentcore.schema.message import MessageResponse
 from agentcore.services.auth.utils import get_current_active_user
-from agentcore.services.database.models.message.model import MessageRead, MessageTable, MessageUpdate
+from agentcore.services.database.models.conversation.model import ConversationRead, ConversationTable, ConversationUpdate
 from agentcore.services.database.models.transactions.crud import transform_transaction_table
 from agentcore.services.database.models.transactions.model import TransactionTable
 from agentcore.services.database.models.vertex_builds.crud import (
-    delete_vertex_builds_by_flow_id,
-    get_vertex_builds_by_flow_id,
+    delete_vertex_builds_by_agent_id,
+    get_vertex_builds_by_agent_id,
 )
 from agentcore.services.database.models.vertex_builds.model import VertexBuildMapModel
 
@@ -23,18 +23,18 @@ router = APIRouter(prefix="/monitor", tags=["Monitor"])
 
 
 @router.get("/builds")
-async def get_vertex_builds(flow_id: Annotated[UUID, Query()], session: DbSession) -> VertexBuildMapModel:
+async def get_vertex_builds(agent_id: Annotated[UUID, Query()], session: DbSession) -> VertexBuildMapModel:
     try:
-        vertex_builds = await get_vertex_builds_by_flow_id(session, flow_id)
+        vertex_builds = await get_vertex_builds_by_agent_id(session, agent_id)
         return VertexBuildMapModel.from_list_of_dicts(vertex_builds)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete("/builds", status_code=204)
-async def delete_vertex_builds(flow_id: Annotated[UUID, Query()], session: DbSession) -> None:
+async def delete_vertex_builds(agent_id: Annotated[UUID, Query()], session: DbSession) -> None:
     try:
-        await delete_vertex_builds_by_flow_id(session, flow_id)
+        await delete_vertex_builds_by_agent_id(session, agent_id)
         await session.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -43,14 +43,14 @@ async def delete_vertex_builds(flow_id: Annotated[UUID, Query()], session: DbSes
 @router.get("/messages/sessions", dependencies=[Depends(get_current_active_user)])
 async def get_message_sessions(
     session: DbSession,
-    flow_id: Annotated[UUID | None, Query()] = None,
+    agent_id: Annotated[UUID | None, Query()] = None,
 ) -> list[str]:
     try:
-        stmt = select(MessageTable.session_id).distinct()
-        stmt = stmt.where(col(MessageTable.session_id).isnot(None))
+        stmt = select(ConversationTable.session_id).distinct()
+        stmt = stmt.where(col(ConversationTable.session_id).isnot(None))
 
-        if flow_id:
-            stmt = stmt.where(MessageTable.flow_id == flow_id)
+        if agent_id:
+            stmt = stmt.where(ConversationTable.agent_id == agent_id)
 
         session_ids = await session.exec(stmt)
         return list(session_ids)
@@ -61,27 +61,27 @@ async def get_message_sessions(
 @router.get("/messages")
 async def get_messages(
     session: DbSession,
-    flow_id: Annotated[UUID | None, Query()] = None,
+    agent_id: Annotated[UUID | None, Query()] = None,
     session_id: Annotated[str | None, Query()] = None,
     sender: Annotated[str | None, Query()] = None,
     sender_name: Annotated[str | None, Query()] = None,
     order_by: Annotated[str | None, Query()] = "timestamp",
 ) -> list[MessageResponse]:
     try:
-        stmt = select(MessageTable)
-        if flow_id:
-            stmt = stmt.where(MessageTable.flow_id == flow_id)
+        stmt = select(ConversationTable)
+        if agent_id:
+            stmt = stmt.where(ConversationTable.agent_id == agent_id)
         if session_id:
             from urllib.parse import unquote
 
             decoded_session_id = unquote(session_id)
-            stmt = stmt.where(MessageTable.session_id == decoded_session_id)
+            stmt = stmt.where(ConversationTable.session_id == decoded_session_id)
         if sender:
-            stmt = stmt.where(MessageTable.sender == sender)
+            stmt = stmt.where(ConversationTable.sender == sender)
         if sender_name:
-            stmt = stmt.where(MessageTable.sender_name == sender_name)
+            stmt = stmt.where(ConversationTable.sender_name == sender_name)
         if order_by:
-            col = getattr(MessageTable, order_by).asc()
+            col = getattr(ConversationTable, order_by).asc()
             stmt = stmt.order_by(col)
         messages = await session.exec(stmt)
         return [MessageResponse.model_validate(d, from_attributes=True) for d in messages]
@@ -92,20 +92,20 @@ async def get_messages(
 @router.delete("/messages", status_code=204, dependencies=[Depends(get_current_active_user)])
 async def delete_messages(message_ids: list[UUID], session: DbSession) -> None:
     try:
-        await session.exec(delete(MessageTable).where(MessageTable.id.in_(message_ids)))  # type: ignore[attr-defined]
+        await session.exec(delete(ConversationTable).where(ConversationTable.id.in_(message_ids)))  # type: ignore[attr-defined]
         await session.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.put("/messages/{message_id}", dependencies=[Depends(get_current_active_user)], response_model=MessageRead)
+@router.put("/messages/{message_id}", dependencies=[Depends(get_current_active_user)], response_model=ConversationRead)
 async def update_message(
     message_id: UUID,
-    message: MessageUpdate,
+    message: ConversationUpdate,
     session: DbSession,
 ):
     try:
-        db_message = await session.get(MessageTable, message_id)
+        db_message = await session.get(ConversationTable, message_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -136,7 +136,7 @@ async def update_session_id(
 ) -> list[MessageResponse]:
     try:
         # Get all messages with the old session ID
-        stmt = select(MessageTable).where(MessageTable.session_id == old_session_id)
+        stmt = select(ConversationTable).where(ConversationTable.session_id == old_session_id)
         messages = (await session.exec(stmt)).all()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -169,8 +169,8 @@ async def delete_messages_session(
 ):
     try:
         await session.exec(
-            delete(MessageTable)
-            .where(col(MessageTable.session_id) == session_id)
+            delete(ConversationTable)
+            .where(col(ConversationTable.session_id) == session_id)
             .execution_options(synchronize_session="fetch")
         )
         await session.commit()
@@ -182,14 +182,14 @@ async def delete_messages_session(
 
 @router.get("/transactions")
 async def get_transactions(
-    flow_id: Annotated[UUID, Query()],
+    agent_id: Annotated[UUID, Query()],
     session: DbSession,
     params: Annotated[Params | None, Depends(custom_params)],
 ) -> Page[TransactionTable]:
     try:
         stmt = (
             select(TransactionTable)
-            .where(TransactionTable.flow_id == flow_id)
+            .where(TransactionTable.agent_id == agent_id)
             .order_by(col(TransactionTable.timestamp))
         )
         import warnings

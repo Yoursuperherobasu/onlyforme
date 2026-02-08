@@ -1,33 +1,22 @@
-"""Module for package versioning."""
 
 import contextlib
 from importlib import metadata
 
 
 def get_version() -> str:
-    """Retrieves the version of the package from a possible list of package names.
-
-    This accounts for after package names are updated for -nightly builds.
-
-    Returns:
-        str: The version of the package
-
-    Raises:
-        ValueError: If the package is not found from the list of package names.
+    """Retrieves the version of the from a possible list of names.
     """
-    pkg_names = [
+    names = [
         "agentcore",
-        "agentcore-base",
-        "agentcore-nightly",
-        "agentcore-base-nightly",
+        "agentcore-base"
     ]
     version = None
-    for pkg_name in pkg_names:
+    for pkg_name in names:
         with contextlib.suppress(ImportError, metadata.PackageNotFoundError):
             version = metadata.version(pkg_name)
 
     if version is None:
-        msg = f"Package not found from options {pkg_names}"
+        msg = f"Package not found from options {names}"
         raise ValueError(msg)
 
     return version

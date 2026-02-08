@@ -26,7 +26,7 @@ class AgentCoreState(TypedDict):
     events: Annotated[list[dict[str, Any]], add]
     
     # Flow metadata
-    flow_id: str
+    agent_id: str
     flow_name: str | None
     session_id: str
     user_id: str | None

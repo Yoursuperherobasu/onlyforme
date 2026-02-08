@@ -129,14 +129,14 @@ class OpenTelemetry(metaclass=ThreadSafeSingletonMetaUsingWeakref):
             description="The uploaded file size in bytes",
             unit="bytes",
             metric_type=MetricType.OBSERVABLE_GAUGE,
-            labels={"flow_id": mandatory_label},
+            labels={"agent_id": mandatory_label},
         )
         self._add_metric(
             name="num_files_uploaded",
             description="The number of file uploaded",
             unit="",
             metric_type=MetricType.COUNTER,
-            labels={"flow_id": mandatory_label},
+            labels={"agent_id": mandatory_label},
         )
 
     def __init__(self):

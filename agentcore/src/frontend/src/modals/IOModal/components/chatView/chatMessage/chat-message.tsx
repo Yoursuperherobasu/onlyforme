@@ -32,7 +32,7 @@ export default function ChatMessage({
   const convert = new Convert({ newline: true });
   const [hidden, setHidden] = useState(true);
   const [streamUrl, setStreamUrl] = useState(chat.stream_url);
-  const flow_id = useFlowsManagerStore((state) => state.currentFlowId);
+  const agent_id = useFlowsManagerStore((state) => state.currentFlowId);
   const fitViewNode = useFlowStore((state) => state.fitViewNode);
   // We need to check if message is not undefined because
   // we need to run .toString() on it
@@ -137,7 +137,7 @@ export default function ChatMessage({
           sender_name: chat.sender_name ?? "AI",
           text: message,
           sender: chat.isSend ? "User" : "Machine",
-          flow_id,
+          agent_id,
           session_id: chat.session ?? "",
         },
         refetch: true,
@@ -165,7 +165,7 @@ export default function ChatMessage({
           sender_name: chat.sender_name ?? "AI",
           text: chat.message.toString(),
           sender: chat.isSend ? "User" : "Machine",
-          flow_id,
+          agent_id,
           session_id: chat.session ?? "",
           properties: {
             ...chat.properties,

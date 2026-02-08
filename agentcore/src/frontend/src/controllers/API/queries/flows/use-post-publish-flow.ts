@@ -5,7 +5,7 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 export interface IPublishFlowRequest {
-  flow_id: string;
+  agent_id: string;
   agentcore_url: string;
   agentcore_api_key: string;
   model_name?: string;
@@ -32,7 +32,7 @@ export const usePostPublishFlow: useMutationFunctionType<
     const response = await api.post<IPublishFlowResponse>(
       `${getURL("PUBLISH")}/agentcore`,
       {
-        flow_id: payload.flow_id,
+        agent_id: payload.agent_id,
         agentcore_url: payload.agentcore_url,
         agentcore_api_key: payload.agentcore_api_key,
         ...(payload.model_name && { model_name: payload.model_name }),
@@ -48,10 +48,10 @@ export const usePostPublishFlow: useMutationFunctionType<
   > = mutate(["usePostPublishFlow"], publishFlowFn, {
     ...options,
     onSettled: (response) => {
-      if (response?.flow_id) {
+      if (response?.agent_id) {
         // Refetch publish status for this flow
         queryClient.invalidateQueries({
-          queryKey: ["useGetPublishStatus", response.flow_id],
+          queryKey: ["useGetPublishStatus", response.agent_id],
         });
       }
     },

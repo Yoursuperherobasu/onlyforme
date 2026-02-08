@@ -45,13 +45,13 @@ class MessageEvent(PlaygroundEvent):
     session_id: str | None = Field(default=None)
     error: bool = Field(default=False)
     edit: bool = Field(default=False)
-    flow_id: UUID | str | None = Field(default=None)
+    agent_id: UUID | str | None = Field(default=None)
     sender: str = Field(default=MESSAGE_SENDER_USER)
     sender_name: str = Field(default="User")
 
-    @field_validator("flow_id")
+    @field_validator("agent_id")
     @classmethod
-    def validate_flow_id(cls, v: UUID | str | None) -> str | None:
+    def validate_agent_id(cls, v: UUID | str | None) -> str | None:
         if isinstance(v, UUID):
             return str(v)
         return v
@@ -98,7 +98,7 @@ def create_message(
     sender: str | None = None,
     session_id: str | None = None,
     id: UUID | str | None = None,  # noqa: A002
-    flow_id: UUID | str | None = None,
+    agent_id: UUID | str | None = None,
     *,
     error: bool = False,
     edit: bool = False,
@@ -117,7 +117,7 @@ def create_message(
         session_id=session_id,
         error=error,
         edit=edit,
-        flow_id=flow_id,
+        agent_id=agent_id,
     )
 
 
@@ -128,7 +128,7 @@ def create_error(
     title: str = "Error",
     timestamp: str | None = None,
     id: UUID | str | None = None,  # noqa: A002
-    flow_id: UUID | str | None = None,
+    agent_id: UUID | str | None = None,
     session_id: str | None = None,
     content_blocks: list[ContentBlock] | None = None,
 ) -> ErrorEvent:
@@ -141,7 +141,7 @@ def create_error(
         content_blocks=content_blocks,
         timestamp=timestamp,
         id=id,
-        flow_id=flow_id,
+        agent_id=agent_id,
         session_id=session_id,
     )
 

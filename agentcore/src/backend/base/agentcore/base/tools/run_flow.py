@@ -8,7 +8,7 @@ from agentcore.src.backend.base.agentcore.custom.custom_node.node import Node, _
 from agentcore.field_typing import Tool
 from agentcore.graph_langgraph import LangGraphAdapter as Graph
 from agentcore.graph_langgraph import LangGraphVertex as Vertex
-from agentcore.helpers.flow import get_flow_inputs
+from agentcore.helpers.agent import get_agent_inputs
 from agentcore.inputs.inputs import (
     DropdownInput,
     InputTypes,
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentcore.base.tools.component_tool import ComponentToolkit
 
 
-class RunFlowBaseNode(Node):
+class RunAgentBaseNode(Node):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_tool_output = True
@@ -72,12 +72,12 @@ class RunFlowBaseNode(Node):
     flow_tweak_data: dict = {}
 
     @abstractmethod
-    async def run_flow_with_tweaks(self) -> list[Data]:
+    async def run_agent_with_tweaks(self) -> list[Data]:
         """Run the flow with tweaks."""
 
     async def data_output(self) -> Data:
         """Return the data output."""
-        run_outputs = await self.run_flow_with_tweaks()
+        run_outputs = await self.run_agent_with_tweaks()
         first_output = run_outputs[0]
 
         if isinstance(first_output, Data):
@@ -90,7 +90,7 @@ class RunFlowBaseNode(Node):
 
     async def dataframe_output(self) -> DataFrame:
         """Return the dataframe output."""
-        run_outputs = await self.run_flow_with_tweaks()
+        run_outputs = await self.run_agent_with_tweaks()
         first_output = run_outputs[0]
 
         if isinstance(first_output, DataFrame):
@@ -103,7 +103,7 @@ class RunFlowBaseNode(Node):
 
     async def message_output(self) -> Message:
         """Return the message output."""
-        run_outputs = await self.run_flow_with_tweaks()
+        run_outputs = await self.run_agent_with_tweaks()
         _, message_result = next(iter(run_outputs[0].outputs[0].results.items()))
         if isinstance(message_result, Message):
             return message_result
@@ -113,12 +113,12 @@ class RunFlowBaseNode(Node):
 
     async def get_flow_names(self) -> list[str]:
         # TODO: get flfow ID with flow name
-        flow_data = await self.alist_flows()
+        flow_data = await self.alist_agents()
         return [flow_data.data["name"] for flow_data in flow_data]
 
     async def get_flow(self, flow_name_selected: str) -> Data | None:
         # get flow from flow id
-        flow_datas = await self.alist_flows()
+        flow_datas = await self.alist_agents()
         for flow_data in flow_datas:
             if flow_data.data["name"] == flow_name_selected:
                 return flow_data
@@ -136,7 +136,7 @@ class RunFlowBaseNode(Node):
         raise ValueError(msg)
 
     def get_new_fields_from_graph(self, graph: Graph) -> list[dotdict]:
-        inputs = get_flow_inputs(graph)
+        inputs = get_agent_inputs(graph)
         return self.get_new_fields(inputs)
 
     def update_build_config_from_graph(self, build_config: dotdict, graph: Graph):
@@ -196,7 +196,7 @@ class RunFlowBaseNode(Node):
         ]
 
     async def get_required_data(self, flow_name_selected):
-        self.flow_data = await self.alist_flows()
+        self.flow_data = await self.alist_agents()
         for flow_data in self.flow_data:
             if flow_data.data["name"] == flow_name_selected:
                 graph = Graph.from_payload(flow_data.data["data"])

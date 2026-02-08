@@ -76,7 +76,7 @@ async def save_file_routine(file, storage_service, current_user: CurrentActiveUs
         file_name = file.filename
 
     # Save the file using the storage service.
-    await storage_service.save_file(flow_id=str(current_user.id), file_name=file_name, data=file_content)
+    await storage_service.save_file(agent_id=str(current_user.id), file_name=file_name, data=file_content)
 
     return file_id, file_name
 
@@ -156,7 +156,7 @@ async def upload_user_file(
 
         # Compute the file size based on the path
         file_size = await storage_service.get_file_size(
-            flow_id=str(current_user.id),
+            agent_id=str(current_user.id),
             file_name=stored_file_name,
         )
 
@@ -220,7 +220,7 @@ async def load_sample_files(current_user: CurrentActiveUser, session: DbSession,
             file_name=sample_file_name,
         )
         file_size = await storage_service.get_file_size(
-            flow_id=str(current_user.id),
+            agent_id=str(current_user.id),
             file_name=sample_file_name,
         )
         # Create a UserFile object for the sample file
@@ -281,7 +281,7 @@ async def delete_files_batch(
 
         # Delete all files from the storage service
         for file in files:
-            await storage_service.delete_file(flow_id=str(current_user.id), file_name=file.path)
+            await storage_service.delete_file(agent_id=str(current_user.id), file_name=file.path)
             await session.delete(file)
 
         # Delete all files from the database
@@ -319,7 +319,7 @@ async def download_files_batch(
             for file in files:
                 # Get the file content from storage
                 file_content = await storage_service.get_file(
-                    flow_id=str(current_user.id), file_name=file.path.split("/")[-1]
+                    agent_id=str(current_user.id), file_name=file.path.split("/")[-1]
                 )
 
                 # Get the file extension from the original filename
@@ -414,7 +414,7 @@ async def download_file(
         file_name = file.path.split("/")[-1]
 
         # Get file stream
-        file_stream = await storage_service.get_file(flow_id=str(current_user.id), file_name=file_name)
+        file_stream = await storage_service.get_file(agent_id=str(current_user.id), file_name=file_name)
 
         if file_stream is None:
             raise HTTPException(status_code=404, detail="File stream not available")
@@ -479,7 +479,7 @@ async def delete_file(
             raise HTTPException(status_code=404, detail="File not found")
 
         # Delete the file from the storage service
-        await storage_service.delete_file(flow_id=str(current_user.id), file_name=file_to_delete.path)
+        await storage_service.delete_file(agent_id=str(current_user.id), file_name=file_to_delete.path)
 
         # Delete from the database
         await session.delete(file_to_delete)
@@ -511,7 +511,7 @@ async def delete_all_files(
 
         # Delete all files from the storage service
         for file in files:
-            await storage_service.delete_file(flow_id=str(current_user.id), file_name=file.path)
+            await storage_service.delete_file(agent_id=str(current_user.id), file_name=file.path)
             await session.delete(file)
 
         # Delete all files from the database

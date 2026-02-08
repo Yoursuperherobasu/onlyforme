@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from agentcore.services.auth.utils import get_current_active_user
 from agentcore.services.database.models.user.model import User
-from agentcore.services.database.models.flow.model import Flow
+from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.database.models.folder.model import Folder
 from agentcore.services.deps import get_session
 from sqlmodel import select
@@ -1589,7 +1589,7 @@ async def get_user_metrics(
 
 class AgentListItem(BaseModel):
     """Agent/Flow item for list views."""
-    flow_id: str
+    agent_id: str
     flow_name: str | None = None
     project_id: str | None = None  # Folder ID
     project_name: str | None = None  # Folder name
@@ -1611,7 +1611,7 @@ class AgentListResponse(BaseModel):
 
 class AgentDetailResponse(BaseModel):
     """Detailed agent/flow information."""
-    flow_id: str
+    agent_id: str
     flow_name: str | None = None
     trace_count: int = 0
     session_count: int = 0
@@ -1676,25 +1676,25 @@ class ProjectDetailResponse(BaseModel):
 
 def extract_flow_project_info(trace) -> tuple[str | None, str | None, str | None, str | None]:
     """
-    Extract flow_id, flow_name, project_id, project_name from trace metadata/tags.
+    Extract agent_id, flow_name, project_id, project_name from trace metadata/tags.
 
-    Returns: (flow_id, flow_name, project_id, project_name)
+    Returns: (agent_id, flow_name, project_id, project_name)
     """
     metadata = get_attr(trace, 'metadata', default={}) or {}
     tags = get_attr(trace, 'tags', default=[]) or []
 
     # Try to get from metadata first (more reliable)
-    flow_id = metadata.get('flow_id')
+    agent_id = metadata.get('agent_id')
     flow_name = metadata.get('flow_name')
     project_id = metadata.get('project_id')
     project_name = metadata.get('project_name')
 
     # Fallback: parse from tags
-    if not flow_id or not project_id:
+    if not agent_id or not project_id:
         for tag in tags:
             if isinstance(tag, str):
-                if tag.startswith('flow_id:') and not flow_id:
-                    flow_id = tag.split(':', 1)[1]
+                if tag.startswith('agent_id:') and not agent_id:
+                    agent_id = tag.split(':', 1)[1]
                 elif tag.startswith('flow_name:') and not flow_name:
                     flow_name = tag.split(':', 1)[1]
                 elif tag.startswith('project_id:') and not project_id:
@@ -1702,11 +1702,11 @@ def extract_flow_project_info(trace) -> tuple[str | None, str | None, str | None
                 elif tag.startswith('project_name:') and not project_name:
                     project_name = tag.split(':', 1)[1]
 
-    # Fallback: use trace name as flow_id if not found
-    if not flow_id:
-        flow_id = get_attr(trace, 'name')
+    # Fallback: use trace name as agent_id if not found
+    if not agent_id:
+        agent_id = get_attr(trace, 'name')
 
-    return flow_id, flow_name, project_id, project_name
+    return agent_id, flow_name, project_id, project_name
 
 
 # =============================================================================
@@ -1738,7 +1738,7 @@ def _match_trace_to_flow(trace, flows_by_id: dict, flows_by_name: dict) -> tuple
     """
     Match a trace to a flow using metadata or name matching.
 
-    Returns: (flow_id, flow_name) or (None, None) if no match
+    Returns: (agent_id, flow_name) or (None, None) if no match
     """
     trace_name = get_attr(trace, 'name')
     metadata = get_attr(trace, 'metadata', default={}) or {}
@@ -1748,15 +1748,15 @@ def _match_trace_to_flow(trace, flows_by_id: dict, flows_by_name: dict) -> tuple
     if _is_vertex_trace(trace_name):
         return None, None
 
-    # Method 1: Check metadata for flow_id (most reliable)
-    flow_id_from_meta = metadata.get('flow_id')
-    if flow_id_from_meta and flow_id_from_meta in flows_by_id:
-        flow = flows_by_id[flow_id_from_meta]
+    # Method 1: Check metadata for agent_id (most reliable)
+    agent_id_from_meta = metadata.get('agent_id')
+    if agent_id_from_meta and agent_id_from_meta in flows_by_id:
+        flow = flows_by_id[agent_id_from_meta]
         return str(flow.id), flow.name
 
-    # Method 2: Check tags for flow_id
+    # Method 2: Check tags for agent_id
     for tag in tags:
-        if isinstance(tag, str) and tag.startswith('flow_id:'):
+        if isinstance(tag, str) and tag.startswith('agent_id:'):
             fid = tag.split(':', 1)[1]
             if fid in flows_by_id:
                 flow = flows_by_id[fid]
@@ -1807,7 +1807,7 @@ async def get_user_agents(
 
         # Get all user flows from database (source of truth)
         flows_result = await session.exec(
-            select(Flow).where(Flow.user_id == current_user.id, Flow.is_component == False)
+            select(Agent).where(Agent.user_id == current_user.id, Agent.is_component == False)
         )
         user_flows = flows_result.all()
 
@@ -1824,7 +1824,7 @@ async def get_user_agents(
             )
             folders_by_id = {str(f.id): f for f in folders_result.all()}
 
-        # Build flow_id to folder mapping
+        # Build agent_id to folder mapping
         flow_to_folder: dict[str, tuple[str | None, str | None]] = {}
         for flow in user_flows:
             folder_id = str(flow.folder_id) if flow.folder_id else None
@@ -1867,14 +1867,14 @@ async def get_user_agents(
         agent_flow_traces: dict[str, list] = {}
 
         for trace in raw_traces:
-            flow_id, flow_name = _match_trace_to_flow(trace, flows_by_id, flows_by_name)
-            if flow_id:
+            agent_id, flow_name = _match_trace_to_flow(trace, flows_by_id, flows_by_name)
+            if agent_id:
                 session_id = get_attr(trace, 'session_id', 'sessionId')
                 if session_id:
-                    session_to_agent[session_id] = (flow_id, flow_name)
-                if flow_id not in agent_flow_traces:
-                    agent_flow_traces[flow_id] = []
-                agent_flow_traces[flow_id].append(trace)
+                    session_to_agent[session_id] = (agent_id, flow_name)
+                if agent_id not in agent_flow_traces:
+                    agent_flow_traces[agent_id] = []
+                agent_flow_traces[agent_id].append(trace)
 
         logger.info(f"Found {len(session_to_agent)} sessions mapped to agents")
 
@@ -1892,18 +1892,18 @@ async def get_user_agents(
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
 
             # Determine which agent this trace belongs to
-            flow_id = None
+            agent_id = None
             flow_name = None
 
             # First check if this trace directly matches an agent
-            matched_flow_id, matched_flow_name = _match_trace_to_flow(trace, flows_by_id, flows_by_name)
-            if matched_flow_id:
-                flow_id, flow_name = matched_flow_id, matched_flow_name
+            matched_agent_id, matched_flow_name = _match_trace_to_flow(trace, flows_by_id, flows_by_name)
+            if matched_agent_id:
+                agent_id, flow_name = matched_agent_id, matched_flow_name
             # Otherwise, check if it's part of an agent's session (vertex traces)
             elif session_id and session_id in session_to_agent:
-                flow_id, flow_name = session_to_agent[session_id]
+                agent_id, flow_name = session_to_agent[session_id]
 
-            if not flow_id:
+            if not agent_id:
                 continue  # Skip traces not associated with any agent
 
             # Fetch observations for this trace
@@ -1919,9 +1919,9 @@ async def get_user_agents(
             latencies = [o.latency_ms for o in parsed_obs if o.latency_ms]
             error_count = sum(1 for o in parsed_obs if o.level in ("ERROR", "WARNING"))
 
-            if flow_id not in agents_data:
-                agents_data[flow_id] = {
-                    "flow_id": flow_id,
+            if agent_id not in agents_data:
+                agents_data[agent_id] = {
+                    "agent_id": agent_id,
                     "flow_name": flow_name,
                     "trace_count": 0,
                     "sessions": set(),
@@ -1934,19 +1934,19 @@ async def get_user_agents(
                 }
 
             # Only count flow-level traces in trace_count (not vertex traces)
-            if matched_flow_id:
-                agents_data[flow_id]["trace_count"] += 1
+            if matched_agent_id:
+                agents_data[agent_id]["trace_count"] += 1
 
             # But aggregate tokens/cost from ALL traces (including vertex)
-            agents_data[flow_id]["total_tokens"] += trace_tokens
-            agents_data[flow_id]["total_cost"] += trace_cost
-            agents_data[flow_id]["models"].update(models)
-            agents_data[flow_id]["latencies"].extend(latencies)
-            agents_data[flow_id]["error_count"] += error_count
+            agents_data[agent_id]["total_tokens"] += trace_tokens
+            agents_data[agent_id]["total_cost"] += trace_cost
+            agents_data[agent_id]["models"].update(models)
+            agents_data[agent_id]["latencies"].extend(latencies)
+            agents_data[agent_id]["error_count"] += error_count
             if session_id:
-                agents_data[flow_id]["sessions"].add(session_id)
+                agents_data[agent_id]["sessions"].add(session_id)
             if timestamp:
-                agents_data[flow_id]["timestamps"].append(timestamp)
+                agents_data[agent_id]["timestamps"].append(timestamp)
 
         # Build response
         agents = []
@@ -1959,7 +1959,7 @@ async def get_user_agents(
             project_id, project_name = flow_to_folder.get(fid, (None, None))
 
             agents.append(AgentListItem(
-                flow_id=fid,
+                agent_id=fid,
                 flow_name=data["flow_name"],
                 project_id=project_id,
                 project_name=project_name,
@@ -1989,9 +1989,9 @@ async def get_user_agents(
         raise HTTPException(status_code=500, detail=f"Failed to fetch agents: {str(e)}")
 
 
-@router.get("/agents/{flow_id}")
+@router.get("/agents/{agent_id}")
 async def get_agent_detail(
-    flow_id: str,
+    agent_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
@@ -2011,9 +2011,9 @@ async def get_agent_detail(
         # Get flow from database to verify it exists and get its name
         from uuid import UUID as PyUUID
         try:
-            flow_uuid = PyUUID(flow_id)
+            flow_uuid = PyUUID(agent_id)
             flow_result = await session.exec(
-                select(Flow).where(Flow.id == flow_uuid, Flow.user_id == current_user.id)
+                select(Agent).where(Agent.id == flow_uuid, Agent.user_id == current_user.id)
             )
             flow = flow_result.first()
         except ValueError:
@@ -2057,7 +2057,7 @@ async def get_agent_detail(
         flow_trace_count = 0
         for trace in raw_traces:
             matched_fid, _ = _match_trace_to_flow(trace, flows_by_id, flows_by_name)
-            if matched_fid == flow_id:
+            if matched_fid == agent_id:
                 flow_trace_count += 1
                 session_id = get_attr(trace, 'session_id', 'sessionId')
                 if session_id:
@@ -2065,7 +2065,7 @@ async def get_agent_detail(
 
         if flow_trace_count == 0:
             return AgentDetailResponse(
-                flow_id=flow_id,
+                agent_id=agent_id,
                 flow_name=flow_name,
                 trace_count=0,
                 session_count=0,
@@ -2108,7 +2108,7 @@ async def get_agent_detail(
             # Check if this trace belongs to this agent
             is_flow_trace = False
             matched_fid, _ = _match_trace_to_flow(trace, flows_by_id, flows_by_name)
-            if matched_fid == flow_id:
+            if matched_fid == agent_id:
                 is_flow_trace = True
             elif session_id and session_id in agent_sessions:
                 # Vertex trace in this agent's session
@@ -2214,7 +2214,7 @@ async def get_agent_detail(
         avg_latency = sum(latencies) / len(latencies) if latencies else None
 
         return AgentDetailResponse(
-            flow_id=flow_id,
+            agent_id=agent_id,
             flow_name=flow_name,
             trace_count=flow_trace_count,
             session_count=len(agent_sessions),
@@ -2269,7 +2269,7 @@ async def get_user_projects(
 
         # Get all user flows
         flows_result = await session.exec(
-            select(Flow).where(Flow.user_id == current_user.id, Flow.is_component == False)
+            select(Agent).where(Agent.user_id == current_user.id, Agent.is_component == False)
         )
         user_flows = flows_result.all()
 
@@ -2401,10 +2401,10 @@ async def get_project_detail(
 
         # Get flows in this folder
         flows_result = await session.exec(
-            select(Flow).where(
-                Flow.user_id == current_user.id,
-                Flow.folder_id == folder.id,
-                Flow.is_component == False
+            select(Agent).where(
+                Agent.user_id == current_user.id,
+                Agent.folder_id == folder.id,
+                Agent.is_component == False
             )
         )
         folder_flows = flows_result.all()
@@ -2499,7 +2499,7 @@ async def get_project_detail(
             # Per-agent aggregation
             if matched_fid not in agents_data:
                 agents_data[matched_fid] = {
-                    "flow_id": matched_fid,
+                    "agent_id": matched_fid,
                     "flow_name": matched_fname,
                     "trace_count": 0,
                     "sessions": set(),
@@ -2537,7 +2537,7 @@ async def get_project_detail(
             lats = data["latencies"]
             avg_lat = sum(lats) / len(lats) if lats else None
             agents.append(AgentListItem(
-                flow_id=fid,
+                agent_id=fid,
                 flow_name=data["flow_name"],
                 trace_count=data["trace_count"],
                 session_count=len(data["sessions"]),

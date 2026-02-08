@@ -11,7 +11,7 @@ from langchain_core.documents import Document
 from pydantic import BaseModel
 
 from agentcore.custom.custom_node.base_node import NodeBase
-from agentcore.helpers.flow import list_flows, load_flow, run_flow
+from agentcore.helpers.agent import list_agents, load_agent, run_agent
 from agentcore.schema.data import Data
 from agentcore.services.deps import get_storage_service, session_scope
 from agentcore.services.storage.service import StorageService
@@ -162,8 +162,8 @@ class ExecutableNode(NodeBase):
     def get_full_path(self, path: str) -> str:
         storage_svc: StorageService = get_storage_service()
 
-        flow_id, file_name = path.split("/", 1)
-        return storage_svc.build_full_path(flow_id, file_name)
+        agent_id, file_name = path.split("/", 1)
+        return storage_svc.build_full_path(agent_id, file_name)
 
     @property
     def graph(self):
@@ -176,8 +176,8 @@ class ExecutableNode(NodeBase):
         return self.graph.user_id
 
     @property
-    def flow_id(self):
-        return self.graph.flow_id
+    def agent_id(self):
+        return self.graph.agent_id
 
     @property
     def flow_name(self):
@@ -457,40 +457,40 @@ class ExecutableNode(NodeBase):
         """
         return validate.create_function(self._code, self._function_entrypoint_name)
 
-    async def load_flow(self, flow_id: str, tweaks: dict | None = None) -> Graph:
+    async def load_agent(self, agent_id: str, tweaks: dict | None = None) -> Graph:
         if not self.user_id:
             msg = "Session is invalid"
             raise ValueError(msg)
-        return await load_flow(user_id=str(self.user_id), flow_id=flow_id, tweaks=tweaks)
+        return await load_agent(user_id=str(self.user_id), agent_id=agent_id, tweaks=tweaks)
 
-    async def run_flow(
+    async def run_agent(
         self,
         inputs: dict | list[dict] | None = None,
-        flow_id: str | None = None,
+        agent_id: str | None = None,
         flow_name: str | None = None,
         output_type: str | None = "chat",
         tweaks: dict | None = None,
     ) -> Any:
-        return await run_flow(
+        return await run_agent(
             inputs=inputs,
             output_type=output_type,
-            flow_id=flow_id,
+            agent_id=agent_id,
             flow_name=flow_name,
             tweaks=tweaks,
             user_id=str(self.user_id),
             run_id=self.graph.run_id,
         )
 
-    def list_flows(self) -> list[Data]:
-        """DEPRECATED - This is kept for backward compatibility. Using alist_flows instead is recommended."""
-        return run_until_complete(self.alist_flows())
+    def list_agents(self) -> list[Data]:
+        """DEPRECATED - This is kept for backward compatibility. Using alist_agents instead is recommended."""
+        return run_until_complete(self.alist_agents())
 
-    async def alist_flows(self) -> list[Data]:
+    async def alist_agents(self) -> list[Data]:
         if not self.user_id:
             msg = "Session is invalid"
             raise ValueError(msg)
         try:
-            return await list_flows(user_id=str(self.user_id))
+            return await list_agents(user_id=str(self.user_id))
         except Exception as e:
             msg = f"Error listing flows: {e}"
             raise ValueError(msg) from e

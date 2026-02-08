@@ -8,7 +8,7 @@ from pydantic import Field, field_validator, model_validator
 from agentcore.inputs.validators import CoalesceBool
 from agentcore.schema.data import Data
 from agentcore.schema.message import Message
-from agentcore.services.database.models.message.model import MessageBase
+from agentcore.services.database.models.conversation.model import ConversationBase
 from agentcore.template.field.base import Input
 
 from .input_mixin import (
@@ -196,7 +196,7 @@ class MessageInput(StrInput, InputTraceMixin):
             return v
         if isinstance(v, str | AsyncIterator | Iterator):
             return Message(text=v)
-        if isinstance(v, MessageBase):
+        if isinstance(v, ConversationBase):
             return Message(**v.model_dump())
         msg = f"Invalid value type {type(v)}"
         raise ValueError(msg)

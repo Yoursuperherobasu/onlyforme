@@ -5,7 +5,7 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 export interface IUnpublishFlowRequest {
-  flow_id: string;
+  agent_id: string;
   agentcore_url: string;
   agentcore_api_key: string;
 }
@@ -13,7 +13,7 @@ export interface IUnpublishFlowRequest {
 export interface IUnpublishFlowResponse {
   success: boolean;
   message: string;
-  flow_id: string;
+  agent_id: string;
   platform_url: string;
 }
 
@@ -30,7 +30,7 @@ export const useDeleteUnpublishFlow: useMutationFunctionType<
       `${getURL("PUBLISH")}/agentcore`,
       {
         data: {
-          flow_id: payload.flow_id,
+          agent_id: payload.agent_id,
           agentcore_url: payload.agentcore_url,
           agentcore_api_key: payload.agentcore_api_key,
         },
@@ -46,10 +46,10 @@ export const useDeleteUnpublishFlow: useMutationFunctionType<
   > = mutate(["useDeleteUnpublishFlow"], unpublishFlowFn, {
     ...options,
     onSettled: (response) => {
-      if (response?.flow_id) {
+      if (response?.agent_id) {
         // Refetch publish status for this flow
         queryClient.invalidateQueries({
-          queryKey: ["useGetPublishStatus", response.flow_id],
+          queryKey: ["useGetPublishStatus", response.agent_id],
         });
       }
     },

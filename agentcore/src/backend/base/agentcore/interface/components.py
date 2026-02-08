@@ -105,7 +105,6 @@ def _process_single_module(modname: str) -> tuple[str, dict] | None:
         logger.error(f"Error importing module {modname}: {e}", exc_info=True)
         return None
     # Extract the top-level subpackage name after "agentcore.components."
-    # e.g., "agentcore.components.Notion.add_content_to_page" -> "Notion"
     mod_parts = modname.split(".")
     if len(mod_parts) <= MIN_MODULE_PARTS:
         return None
@@ -329,7 +328,6 @@ async def get_component_minimal_metadata(component_type: str, component_name: st
             "inputs": {},
             "outputs": {},
             "output_types": [],
-            "documentation": f"A {component_type} component",
             "display_name": component_name.replace("_", " ").title(),
             "base_classes": [component_type],
         },

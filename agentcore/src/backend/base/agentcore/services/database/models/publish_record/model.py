@@ -10,12 +10,12 @@ from sqlalchemy import JSON, Column, Enum as SQLEnum, Text, UniqueConstraint, te
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
-    from agentcore.services.database.models.flow.model import Flow
+    from agentcore.services.database.models.agent.model import Agent
     from agentcore.services.database.models.user.model import User
 
 
 class PublishStatusEnum(str, Enum):
-    """Status of a published flow."""
+    """Status of a published agent."""
 
     ACTIVE = "ACTIVE"
     UNPUBLISHED = "UNPUBLISHED"
@@ -24,12 +24,12 @@ class PublishStatusEnum(str, Enum):
 
 
 class PublishRecordBase(SQLModel):
-    """Base model for tracking flow publications to external platforms."""
+    """Base model for tracking agent publications to external platforms."""
 
     # Suppresses warnings during migrations
     __mapper_args__ = {"confirm_deleted_rows": False}
 
-    flow_id: UUID = Field(foreign_key="flow.id", index=True, nullable=False)
+    agent_id: UUID = Field(foreign_key="agent.id", index=True, nullable=False)
     platform: str = Field(index=True, nullable=False, description="Target platform (e.g., 'openwebui', 'mcp')")
     platform_url: str = Field(nullable=False, description="Base URL of the target platform")
     external_id: str = Field(
@@ -73,13 +73,13 @@ class PublishRecord(PublishRecordBase, table=True):  # type: ignore[call-arg]
     # id: UUID = Field(default_factory=uuid4, primary_key=True, unique=True)
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     # Relationships
-    flow: Optional["Flow"] = Relationship(back_populates="publish_records")
+    agent: Optional["Agent"] = Relationship(back_populates="publish_records")
     user: Optional["User"] = Relationship()
 
     __table_args__ = (
-        # Ensure one active publication per flow per platform per URL
+        # Ensure one active publication per agent per platform per URL
         UniqueConstraint(
-            "flow_id",
+            "agent_id",
             "platform",
             "platform_url",
             "status",
@@ -98,7 +98,7 @@ class PublishRecordRead(BaseModel):
     """Model for reading publish record data."""
 
     id: UUID
-    flow_id: UUID
+    agent_id: UUID
     platform: str
     platform_url: str
     external_id: str

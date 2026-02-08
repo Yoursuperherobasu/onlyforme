@@ -12,12 +12,12 @@ from agentcore.services.database.models.transactions.model import (
 from agentcore.services.deps import get_settings_service
 
 
-async def get_transactions_by_flow_id(
-    db: AsyncSession, flow_id: UUID, limit: int | None = 1000
+async def get_transactions_by_agent_id(
+    db: AsyncSession, agent_id: UUID, limit: int | None = 1000
 ) -> list[TransactionTable]:
     stmt = (
         select(TransactionTable)
-        .where(TransactionTable.flow_id == flow_id)
+        .where(TransactionTable.agent_id == agent_id)
         .order_by(col(TransactionTable.timestamp))
         .limit(limit)
     )
@@ -43,8 +43,8 @@ async def log_transaction(db: AsyncSession, transaction: TransactionBase) -> Tra
     Raises:
         IntegrityError: If there is a database integrity error
     """
-    if not transaction.flow_id:
-        logger.debug("Transaction flow_id is None")
+    if not transaction.agent_id:
+        logger.debug("Transaction agent_id is None")
         return None
     table = TransactionTable(**transaction.model_dump())
 
@@ -54,10 +54,10 @@ async def log_transaction(db: AsyncSession, transaction: TransactionBase) -> Tra
 
         # Delete older entries in a single transaction
         delete_older = delete(TransactionTable).where(
-            TransactionTable.flow_id == transaction.flow_id,
+            TransactionTable.agent_id == transaction.agent_id,
             col(TransactionTable.id).in_(
                 select(TransactionTable.id)
-                .where(TransactionTable.flow_id == transaction.flow_id)
+                .where(TransactionTable.agent_id == transaction.agent_id)
                 .order_by(col(TransactionTable.timestamp).desc())
                 .offset(max_entries - 1)  # Keep newest max_entries-1 plus the one we're adding
             ),

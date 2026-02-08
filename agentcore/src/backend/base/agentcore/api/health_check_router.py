@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from agentcore.api.utils import DbSession
-from agentcore.services.database.models.flow.model import Flow
+from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_chat_service
 
 health_check_router = APIRouter(tags=["Health Check"])
@@ -42,7 +42,7 @@ async def health_check(
     user_id = "da93c2bd-c857-4b10-8c8c-60988103320f"
     try:
         # Check database to query a bogus flow
-        stmt = select(Flow).where(Flow.id == uuid.uuid4())
+        stmt = select(Agent).where(Agent.id == uuid.uuid4())
         (await session.exec(stmt)).first()
         response.db = "ok"
     except Exception:  # noqa: BLE001

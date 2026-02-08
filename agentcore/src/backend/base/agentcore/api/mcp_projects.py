@@ -37,7 +37,7 @@ from agentcore.api.v1_schemas import (
 )
 from agentcore.base.mcp.constants import MAX_MCP_SERVER_NAME_LENGTH
 from agentcore.base.mcp.util import sanitize_mcp_name
-from agentcore.services.database.models import Flow, Folder
+from agentcore.services.database.models import Agent, Folder
 from agentcore.services.deps import get_settings_service, session_scope
 from agentcore.services.settings.feature_flags import FEATURE_FLAGS
 
@@ -56,7 +56,7 @@ def get_project_sse(project_id: UUID) -> SseServerTransport:
     """Get or create an SSE transport for a specific project."""
     project_id_str = str(project_id)
     if project_id_str not in project_sse_transports:
-        project_sse_transports[project_id_str] = SseServerTransport(f"/api/v1/mcp/project/{project_id_str}/")
+        project_sse_transports[project_id_str] = SseServerTransport(f"/api/mcp/project/{project_id_str}/")
     return project_sse_transports[project_id_str]
 
 
@@ -75,7 +75,7 @@ async def list_project_tools(
             project = (
                 await session.exec(
                     select(Folder)
-                    .options(selectinload(Folder.flows))
+                    .options(selectinload(Folder.agents))
                     .where(Folder.id == project_id, Folder.user_id == current_user.id)
                 )
             ).first()
@@ -84,11 +84,11 @@ async def list_project_tools(
                 raise HTTPException(status_code=404, detail="Project not found")
 
             # Query flows in the project
-            flows_query = select(Flow).where(Flow.folder_id == project_id, Flow.is_component == False)  # noqa: E712
+            flows_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
 
             # Optionally filter for MCP-enabled flows only
             if mcp_enabled:
-                flows_query = flows_query.where(Flow.mcp_enabled == True)  # noqa: E712
+                flows_query = flows_query.where(Agent.mcp_enabled == True)  # noqa: E712
 
             flows = (await session.exec(flows_query)).all()
 
@@ -110,7 +110,7 @@ async def list_project_tools(
                         action_name=name,
                         action_description=description,
                         mcp_enabled=flow.mcp_enabled,
-                        # inputSchema=json_schema_from_flow(flow),
+                        # inputSchema=json_schema_from_agent(flow),
                         name=flow.name,
                         description=flow.description,
                     )
@@ -241,7 +241,7 @@ async def update_project_mcp_settings(
             project = (
                 await session.exec(
                     select(Folder)
-                    .options(selectinload(Folder.flows))
+                    .options(selectinload(Folder.agents))
                     .where(Folder.id == project_id, Folder.user_id == current_user.id)
                 )
             ).first()
@@ -257,7 +257,7 @@ async def update_project_mcp_settings(
             session.add(project)
 
             # Query flows in the project
-            flows = (await session.exec(select(Flow).where(Flow.folder_id == project_id))).all()
+            flows = (await session.exec(select(Agent).where(Agent.folder_id == project_id))).all()
             flows_to_update = {x.id: x for x in request.settings}
 
             updated_flows = []
@@ -363,7 +363,7 @@ async def install_mcp_config(
         host = getattr(settings_service.settings, "host", "localhost")
         port = getattr(settings_service.settings, "port", 3000)
         base_url = f"http://{host}:{port}".rstrip("/")
-        sse_url = f"{base_url}/api/v1/mcp/project/{project_id}/sse"
+        sse_url = f"{base_url}/api/mcp/project/{project_id}/sse"
 
         # Determine command and args based on operating system
         os_type = platform.system()

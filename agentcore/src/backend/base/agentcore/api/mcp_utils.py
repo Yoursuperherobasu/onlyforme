@@ -16,13 +16,13 @@ from loguru import logger
 from mcp import types
 from sqlmodel import select
 
-from agentcore.api.endpoints import simple_run_flow
+from agentcore.api.endpoints import simple_run_agent
 from agentcore.api.v1_schemas import SimplifiedAPIRequest
 from agentcore.base.mcp.constants import MAX_MCP_TOOL_NAME_LENGTH
 from agentcore.base.mcp.util import get_flow_snake_case, get_unique_name, sanitize_mcp_name
-from agentcore.helpers.flow import json_schema_from_flow
+from agentcore.helpers.agent import json_schema_from_agent
 from agentcore.schema.message import Message
-from agentcore.services.database.models import Flow
+from agentcore.services.database.models import Agent
 from agentcore.services.database.models.user.model import User
 from agentcore.services.deps import get_settings_service, get_storage_service, session_scope
 from agentcore.services.storage.utils import build_content_type_from_extension
@@ -88,19 +88,19 @@ async def handle_list_resources(project_id=None):
 
         async with session_scope() as session:
             # Build query based on whether project_id is provided
-            flows_query = select(Flow).where(Flow.folder_id == project_id) if project_id else select(Flow)
+            flows_query = select(Agent).where(Agent.folder_id == project_id) if project_id else select(Agent)
 
             flows = (await session.exec(flows_query)).all()
 
             for flow in flows:
                 if flow.id:
                     try:
-                        files = await storage_service.list_files(flow_id=str(flow.id))
+                        files = await storage_service.list_files(agent_id=str(flow.id))
                         for file_name in files:
                             # URL encode the filename
                             safe_filename = quote(file_name)
                             resource = types.Resource(
-                                uri=f"{base_url}/api/v1/files/{flow.id}/{safe_filename}",
+                                uri=f"{base_url}/api/files/{flow.id}/{safe_filename}",
                                 name=file_name,
                                 description=f"File in flow: {flow.name}",
                                 mimeType=build_content_type_from_extension(file_name),
@@ -122,26 +122,26 @@ async def handle_read_resource(uri: str) -> bytes:
     try:
         # Parse the URI properly
         parsed_uri = urlparse(str(uri))
-        # Path will be like /api/v1/files/{flow_id}/{filename}
+        # Path will be like /api/files/{agent_id}/{filename}
         path_parts = parsed_uri.path.split("/")
         # Remove empty strings from split
         path_parts = [p for p in path_parts if p]
 
-        # The flow_id and filename should be the last two parts
+        # The agent_id and filename should be the last two parts
         two = 2
         if len(path_parts) < two:
             msg = f"Invalid URI format: {uri}"
             raise ValueError(msg)
 
-        flow_id = path_parts[-2]
+        agent_id = path_parts[-2]
         filename = unquote(path_parts[-1])  # URL decode the filename
 
         storage_service = get_storage_service()
 
         # Read the file content
-        content = await storage_service.get_file(flow_id=flow_id, file_name=filename)
+        content = await storage_service.get_file(agent_id=agent_id, file_name=filename)
         if not content:
-            msg = f"File {filename} not found in flow {flow_id}"
+            msg = f"File {filename} not found in flow {agent_id}"
             raise ValueError(msg)
 
         # Ensure content is base64 encoded
@@ -223,7 +223,7 @@ async def handle_call_tool(
 
             try:
                 try:
-                    result = await simple_run_flow(
+                    result = await simple_run_agent(
                         flow=flow,
                         input_request=input_request,
                         stream=False,
@@ -288,12 +288,12 @@ async def handle_list_tools(project_id=None, *, mcp_enabled_only=False):
             # Build query based on parameters
             if project_id:
                 # Filter flows by project and optionally by MCP enabled status
-                flows_query = select(Flow).where(Flow.folder_id == project_id, Flow.is_component == False)  # noqa: E712
+                flows_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
                 if mcp_enabled_only:
-                    flows_query = flows_query.where(Flow.mcp_enabled == True)  # noqa: E712
+                    flows_query = flows_query.where(Agent.mcp_enabled == True)  # noqa: E712
             else:
                 # Get all flows
-                flows_query = select(Flow)
+                flows_query = select(Agent)
 
             flows = (await session.exec(flows_query)).all()
 
@@ -333,7 +333,7 @@ async def handle_list_tools(project_id=None, *, mcp_enabled_only=False):
                     tool = types.Tool(
                         name=name,
                         description=description,
-                        inputSchema=json_schema_from_flow(flow),
+                        inputSchema=json_schema_from_agent(flow),
                     )
                     tools.append(tool)
                     existing_names.add(name)

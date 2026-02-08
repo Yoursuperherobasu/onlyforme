@@ -282,7 +282,6 @@ class BaseFileNode(Node, ABC):
             ".csv": pd.read_csv,
             ".xlsx": pd.read_excel,
             ".parquet": pd.read_parquet,
-            # TODO: sqlite and json support?
         }
 
         # Get file extension in lowercase

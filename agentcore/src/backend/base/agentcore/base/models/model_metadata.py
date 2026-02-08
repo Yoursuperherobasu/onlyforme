@@ -4,7 +4,7 @@ from typing import TypedDict
 class ModelMetadata(TypedDict, total=False):
     """Simple model metadata structure."""
 
-    provider: str  # Provider name (e.g., "anthropic", "groq", "openai")
+    provider: str  # Provider name
     name: str  # Model name/ID
     icon: str  # Icon name for UI
     tool_calling: bool  # Whether model supports tool calling (defaults to False)

@@ -24,7 +24,7 @@ class Result(BaseModel):
 
 async def run_graph_internal(
     graph: Graph,
-    flow_id: str,
+    agent_id: str,
     *,
     stream: bool = False,
     session_id: str | None = None,
@@ -34,7 +34,7 @@ async def run_graph_internal(
 ) -> tuple[list[RunOutputs], str]:
     """Run the graph and generate the result."""
     inputs = inputs or []
-    effective_session_id = session_id or flow_id
+    effective_session_id = session_id or agent_id
     components = []
     inputs_list = []
     types = []

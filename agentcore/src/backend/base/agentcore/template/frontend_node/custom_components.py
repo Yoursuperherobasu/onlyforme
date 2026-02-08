@@ -47,7 +47,6 @@ class ExecutableNodeFrontendNode(FrontendNode):
     name: str = "ExecutableNode"
     display_name: str | None = "ExecutableNode"
     beta: bool = False
-    legacy: bool = False
     minimized: bool = False
     template: Template = Template(
         type_name="ExecutableNode",
@@ -76,7 +75,6 @@ class NodeFrontendNode(FrontendNode):
     display_name: str | None = "Node"
     beta: bool = False
     minimized: bool = False
-    legacy: bool = False
     template: Template = Template(
         type_name="Node",
         fields=[

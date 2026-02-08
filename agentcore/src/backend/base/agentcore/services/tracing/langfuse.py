@@ -108,7 +108,7 @@ class LangFuseTracer(BaseTracer):
         trace_id: UUID,
         user_id: str | None = None,
         session_id: str | None = None,
-        flow_id: str | None = None,
+        agent_id: str | None = None,
         flow_name: str | None = None,
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
@@ -119,7 +119,7 @@ class LangFuseTracer(BaseTracer):
         self.trace_id = trace_id
         self.user_id = user_id
         self.session_id = session_id
-        self.flow_id = flow_id or trace_name
+        self.agent_id = agent_id or trace_name
         self.flow_name = flow_name
         self.observability_project_id = observability_project_id
         self.observability_project_name = observability_project_name
@@ -155,7 +155,7 @@ class LangFuseTracer(BaseTracer):
             # Block POST/HTTP spans from OTEL auto-instrumentation
             # These come from FastAPI, HTTP clients, etc.
             blocked_scopes = [
-                # FastAPI/ASGI instrumentation (causes POST /api/v1/build/... spans)
+                # FastAPI/ASGI instrumentation (causes POST /api/build/... spans)
                 "fastapi",
                 "starlette",
                 "asgi",
@@ -189,7 +189,7 @@ class LangFuseTracer(BaseTracer):
 
             # Build trace metadata
             trace_metadata = {
-                "flow_id": self.flow_id,
+                "agent_id": self.agent_id,
                 "flow_name": self.flow_name,
             }
             if self.observability_project_id:
@@ -201,7 +201,7 @@ class LangFuseTracer(BaseTracer):
             # The root span becomes the trace, input/output derive from it
             self._root_context = self._client.start_as_current_observation(
                 as_type="span",
-                name=self.flow_name or self.flow_id,
+                name=self.flow_name or self.agent_id,
                 metadata=trace_metadata,
             )
             self._root_span = self._root_context.__enter__()

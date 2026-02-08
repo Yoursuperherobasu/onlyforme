@@ -6,6 +6,7 @@ import warnings
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
+from multiprocess import cpu_count
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 import builtins
@@ -74,8 +75,6 @@ warnings.filterwarnings("ignore", category=PydanticDeprecatedSince20)
 
 _tasks: list[asyncio.Task] = []
 
-MAX_PORT = 65535
-
 
 class RequestCancelledMiddleware(BaseHTTPMiddleware):
     def __init__(self, app) -> None:
@@ -101,28 +100,6 @@ class RequestCancelledMiddleware(BaseHTTPMiddleware):
         if cancel_task in done:
             return Response("Request was cancelled", status_code=499)
         return await handler_task
-
-
-class JavaScriptMIMETypeMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        try:
-            response = await call_next(request)
-        except Exception as exc:
-            if isinstance(exc, PydanticSerializationError):
-                message = (
-                    "Something went wrong while serializing the response. "
-                    "Please share this error on our GitHub repository."
-                )
-                error_messages = json.dumps([message, str(exc)])
-                raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=error_messages) from exc
-            raise
-        if (
-            "files/" not in request.url.path
-            and request.url.path.endswith(".js")
-            and response.status_code == HTTPStatus.OK
-        ):
-            response.headers["Content-Type"] = "text/javascript"
-        return response
 
 
 def get_lifespan(*, fix_migration=True, version=None):
@@ -225,11 +202,6 @@ def create_app():
     """Create the FastAPI app and include the router."""
     from agentcore.utils.version import get_version_info
    
-    
-    
-    DB_URL = os.getenv("DATABASE_URL")
-    print("Database URL:", DB_URL)  # For debugging purposes only; remove in production
-
     __version__ = get_version_info()["version"]
     configure()
     lifespan = get_lifespan(version=__version__)
@@ -242,8 +214,7 @@ def create_app():
         ContentSizeLimitMiddleware,
     )
 
-    setup_sentry(app)
-    origins = ["http://localhost:3000","http://localhost:8767"]
+    origins = ["http://localhost:3000"]
     # origins = os.getenv("CORS_ALLOWED_ORIGINS".split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else [["http://localhost:3000","http://localhost:8767"]])
 
     app.add_middleware(
@@ -253,11 +224,10 @@ def create_app():
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(JavaScriptMIMETypeMiddleware)
 
     @app.middleware("http")
     async def check_boundary(request: Request, call_next):
-        if "/api/v1/files/upload" in request.url.path:
+        if "/api/files/upload" in request.url.path:
             content_type = request.headers.get("Content-Type")
 
             if not content_type or "multipart/form-data" not in content_type or "boundary=" not in content_type:
@@ -301,16 +271,6 @@ def create_app():
         return await call_next(request)
 
     settings = get_settings_service().settings
-    if prome_port_str := os.environ.get("PROMETHEUS_PORT"):
-        # set here for create_app() entry point
-        prome_port = int(prome_port_str)
-        if prome_port > 0 or prome_port < MAX_PORT:
-            logger.debug(f"Starting Prometheus server on port {prome_port}...")
-            settings.prometheus_enabled = True
-            settings.prometheus_port = prome_port
-        else:
-            msg = f"Invalid port number {prome_port_str}"
-            raise ValueError(msg)
 
     if settings.mcp_server_enabled:
         from agentcore.api import mcp_router
@@ -337,7 +297,7 @@ def create_app():
         )
 
     # Exclude API routes from OTEL instrumentation to prevent HTTP traces
-    # from polluting Langfuse with "POST /api/v1/..." instead of actual flow names.
+    # from polluting Langfuse with "POST /api/..." instead of actual flow names.
     # Flow tracing is handled separately by the TracingService with proper names.
     FastAPIInstrumentor.instrument_app(
         app,
@@ -349,69 +309,58 @@ def create_app():
     return app
 
 
-def setup_sentry(app: FastAPI) -> None:
-    settings = get_settings_service().settings
-    if settings.sentry_dsn:
-        import sentry_sdk
-        from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
+# def setup_static_files(app: FastAPI, static_files_dir: Path) -> None:
+#     """Setup the static files directory.
 
-        sentry_sdk.init(
-            dsn=settings.sentry_dsn,
-            traces_sample_rate=settings.sentry_traces_sample_rate,
-            profiles_sample_rate=settings.sentry_profiles_sample_rate,
-        )
-        app.add_middleware(SentryAsgiMiddleware)
+#     Args:
+#         app (FastAPI): FastAPI app.
+#         static_files_dir (str): Path to the static files directory.
+#     """
+#     app.mount(
+#         "/",
+#         StaticFiles(directory=static_files_dir, html=True),
+#         name="static",
+#     )
 
+    # @app.exception_handler(404)
+    # async def custom_404_handler(_request, _exc):
+    #     path = anyio.Path(static_files_dir) / "index.html"
 
-def setup_static_files(app: FastAPI, static_files_dir: Path) -> None:
-    """Setup the static files directory.
-
-    Args:
-        app (FastAPI): FastAPI app.
-        static_files_dir (str): Path to the static files directory.
-    """
-    app.mount(
-        "/",
-        StaticFiles(directory=static_files_dir, html=True),
-        name="static",
-    )
-
-    @app.exception_handler(404)
-    async def custom_404_handler(_request, _exc):
-        path = anyio.Path(static_files_dir) / "index.html"
-
-        if not await path.exists():
-            msg = f"File at path {path} does not exist."
-            raise RuntimeError(msg)
-        return FileResponse(path)
+    #     if not await path.exists():
+    #         msg = f"File at path {path} does not exist."
+    #         raise RuntimeError(msg)
+    #     return FileResponse(path)
 
 
-def get_static_files_dir():
-    """Get the static files directory relative to Agentcore's main.py file."""
-    frontend_path = Path(__file__).parent
-    return frontend_path / "frontend"
+# def get_static_files_dir():
+#     """Get the static files directory relative to Agentcore's main.py file."""
+#     frontend_path = Path(__file__).parent
+#     return frontend_path / "frontend"
 
 
-def setup_app(static_files_dir: Path | None = None, *, backend_only: bool = False) -> FastAPI:
-    """Setup the FastAPI app."""
-    # get the directory of the current file
-    if not static_files_dir:
-        static_files_dir = get_static_files_dir()
+# def setup_app(static_files_dir: Path | None = None, *, backend_only: bool = False) -> FastAPI:
+#     """Setup the FastAPI app."""
+#     # get the directory of the current file
+#     if not static_files_dir:
+#         static_files_dir = get_static_files_dir()
 
-    if not backend_only and (not static_files_dir or not static_files_dir.exists()):
-        msg = f"Static files directory {static_files_dir} does not exist."
-        raise RuntimeError(msg)
-    app = create_app()
+#     if not backend_only and (not static_files_dir or not static_files_dir.exists()):
+#         msg = f"Static files directory {static_files_dir} does not exist."
+#         raise RuntimeError(msg)
+#     app = create_app()
 
-    if not backend_only and static_files_dir is not None:
-        setup_static_files(app, static_files_dir)
-    return app
+#     if not backend_only and static_files_dir is not None:
+#         setup_static_files(app, static_files_dir)
+#     return app
 
+def get_number_of_workers(workers=None):
+    if workers == -1 or workers is None:
+        workers = (cpu_count() * 2) + 1
+    logger.debug(f"Number of workers: {workers}")
+    return workers
 
 if __name__ == "__main__":
     import uvicorn
-
-    from agentcore.__main__ import get_number_of_workers
 
     configure()
     uvicorn.run(

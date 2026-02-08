@@ -39,7 +39,7 @@ class LangGraphAdapter:
     
     def __init__(
         self,
-        flow_id: str | UUID | None = None,
+        agent_id: str | UUID | None = None,
         flow_name: str | None = None,
         user_id: str | None = None,
         project_id: str | None = None,
@@ -48,13 +48,13 @@ class LangGraphAdapter:
         """Initialize the LangGraph adapter.
 
         Args:
-            flow_id: The ID of the flow
+            agent_id: The ID of the flow
             flow_name: The name of the flow
             user_id: The user ID
             project_id: The project/folder ID for observability grouping
             project_name: The project/folder name for observability display
         """
-        self.flow_id = str(flow_id) if flow_id else None
+        self.agent_id = str(agent_id) if agent_id else None
         self.flow_name = flow_name
         self.user_id = user_id
         self.project_id = project_id
@@ -118,7 +118,7 @@ class LangGraphAdapter:
     def from_payload(
         cls,
         payload: dict,
-        flow_id: str | None = None,
+        agent_id: str | None = None,
         flow_name: str | None = None,
         user_id: str | None = None,
         project_id: str | None = None,
@@ -128,7 +128,7 @@ class LangGraphAdapter:
 
         Args:
             payload: The JSON payload with nodes and edges
-            flow_id: The flow ID
+            agent_id: The flow ID
             flow_name: The flow name
             user_id: The user ID
             project_id: The project/folder ID for observability grouping
@@ -145,7 +145,7 @@ class LangGraphAdapter:
             edges_data = payload["edges"]
 
             adapter = cls(
-                flow_id=flow_id,
+                agent_id=agent_id,
                 flow_name=flow_name,
                 user_id=user_id,
                 project_id=project_id,
@@ -326,20 +326,7 @@ class LangGraphAdapter:
             
             # Get graph object for inspection
             graph_obj = self.compiled_app.get_graph()
-            
-            # 1. ASCII Visualization (always works)
-            try:
-                ascii_graph = graph_obj.draw_ascii()
-                logger.info(f"ASCII Graph Structure:\n{ascii_graph}")
-            except Exception as e:
-                logger.debug(f"Could not draw ASCII graph: {e}")
-            
-            # 2. Mermaid Diagram (always works, good for documentation)
-            try:
-                mermaid_code = graph_obj.draw_mermaid()
-                logger.info(f"Mermaid Diagram:\n{mermaid_code}")
-            except Exception as e:
-                logger.debug(f"Could not generate Mermaid diagram: {e}")
+        
             
         except Exception as e:
             logger.error(f"Failed to compile LangGraph workflow: {e}")
@@ -504,7 +491,7 @@ class LangGraphAdapter:
         self.tracing_service = get_tracing_service()
         if self.tracing_service and not self.tracing_service.deactivated:
             from uuid import UUID
-            run_name = f"{self.flow_name} - {self.flow_id}"
+            run_name = f"{self.flow_name} - {self.agent_id}"
             # Use the run_id we just set (converted to UUID)
             run_id = UUID(self._run_id) if self._run_id else uuid4()
             await self.tracing_service.start_tracers(
@@ -512,7 +499,7 @@ class LangGraphAdapter:
                 run_name=run_name,
                 user_id=self.user_id,
                 session_id=self._session_id,
-                flow_id=self.flow_id,
+                agent_id=self.agent_id,
                 flow_name=self.flow_name,
                 observability_project_id=self.project_id,
                 observability_project_name=self.project_name,
@@ -562,8 +549,8 @@ class LangGraphAdapter:
         if self.tracing_service and not self.tracing_service.deactivated:
             from datetime import datetime, timezone
             outputs = {}
-            if self.flow_id:
-                outputs["flow_id"] = self.flow_id
+            if self.agent_id:
+                outputs["agent_id"] = self.agent_id
             if self.flow_name:
                 outputs["flow_name"] = self.flow_name
             outputs["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -753,7 +740,7 @@ class LangGraphAdapter:
                 )
                 
                 # Log transaction to database (for Logs UI)
-                if self.flow_id:
+                if self.agent_id:
                     try:
                         from agentcore.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
                         
@@ -794,7 +781,7 @@ class LangGraphAdapter:
                         if target_ids:
                             for target_id in target_ids:
                                 await log_transaction(
-                                    flow_id=self.flow_id,
+                                    agent_id=self.agent_id,
                                     vertex_id=vertex.id,
                                     status="success",
                                     inputs=inputs_for_log,
@@ -805,7 +792,7 @@ class LangGraphAdapter:
                         else:
                             # No targets, log single transaction
                             await log_transaction(
-                                flow_id=self.flow_id,
+                                agent_id=self.agent_id,
                                 vertex_id=vertex.id,
                                 status="success",
                                 inputs=inputs_for_log,
@@ -817,7 +804,7 @@ class LangGraphAdapter:
                         logger.warning(f"Failed to log transaction for {vertex.id}: {log_error}")
                 
                 # Log successful vertex build to database
-                if self.flow_id:
+                if self.agent_id:
                     try:
                         from uuid import UUID
                         from agentcore.graph_langgraph.logging import log_vertex_build
@@ -828,7 +815,7 @@ class LangGraphAdapter:
                             data_dict = {"result": str(vertex.built_result)}
                         
                         await log_vertex_build(
-                            flow_id=self.flow_id if isinstance(self.flow_id, UUID) else UUID(self.flow_id),
+                            agent_id=self.agent_id if isinstance(self.agent_id, UUID) else UUID(self.agent_id),
                             vertex_id=vertex.id,
                             valid=vertex.built,
                             params=vertex.raw_params,
@@ -853,14 +840,14 @@ class LangGraphAdapter:
             
             except Exception as build_error:
                 # Log failed transaction to database
-                if self.flow_id:
+                if self.agent_id:
                     try:
                         from agentcore.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
                         
                         inputs_for_log = _vertex_to_primitive_dict(vertex.raw_params)
                         
                         await log_transaction(
-                            flow_id=self.flow_id,
+                            agent_id=self.agent_id,
                             vertex_id=vertex.id,
                             status="error",
                             inputs=inputs_for_log,
@@ -872,13 +859,13 @@ class LangGraphAdapter:
                         logger.warning(f"Failed to log transaction error for {vertex.id}: {log_error}")
                 
                 # Log failed vertex build to database
-                if self.flow_id:
+                if self.agent_id:
                     try:
                         from uuid import UUID
                         from agentcore.graph_langgraph.logging import log_vertex_build
                         
                         await log_vertex_build(
-                            flow_id=self.flow_id if isinstance(self.flow_id, UUID) else UUID(self.flow_id),
+                            agent_id=self.agent_id if isinstance(self.agent_id, UUID) else UUID(self.agent_id),
                             vertex_id=vertex.id,
                             valid=False,
                             params=vertex.raw_params,
@@ -972,7 +959,7 @@ class LangGraphAdapter:
             return memo[id(self)]
         
         new_adapter = type(self)(
-            flow_id=copy.deepcopy(self.flow_id, memo),
+            agent_id=copy.deepcopy(self.agent_id, memo),
             flow_name=copy.deepcopy(self.flow_name, memo),
             user_id=copy.deepcopy(self.user_id, memo),
         )
@@ -1081,7 +1068,7 @@ class LangGraphAdapter:
             return Finish()
         
         # Import here to avoid circular dependency
-        from agentcore.services.chat.service import get_chat_service
+        from agentcore.services.deps import get_chat_service
         chat_service = get_chat_service()
         
         # Build the vertex
@@ -1108,7 +1095,7 @@ class LangGraphAdapter:
         self.reset_activated_vertices()
         
         # Cache the graph state
-        await chat_service.set_cache(str(self.flow_id or self._run_id), self)
+        await chat_service.set_cache(str(self.agent_id or self._run_id), self)
         self._record_snapshot(vertex_id)
         
         return vertex_build_result
@@ -1653,7 +1640,7 @@ class LangGraphAdapter:
             return memo[id(self)]
         
         new_adapter = type(self)(
-            flow_id=copy.deepcopy(self.flow_id, memo),
+            agent_id=copy.deepcopy(self.agent_id, memo),
             flow_name=copy.deepcopy(self.flow_name, memo),
             user_id=copy.deepcopy(self.user_id, memo),
         )

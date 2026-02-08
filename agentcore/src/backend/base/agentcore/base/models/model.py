@@ -319,7 +319,7 @@ class LCModelNode(Node):
         """Get LLM model based on provider name and inputs.
 
         Args:
-            provider_name: Name of the model provider (e.g., "OpenAI", "Azure OpenAI")
+            provider_name: Name of the model provider (e.g."Azure OpenAI")
             inputs: Dictionary of input parameters for the model
             model_info: Dictionary of model information
 

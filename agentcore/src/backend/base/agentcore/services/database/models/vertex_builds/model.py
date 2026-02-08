@@ -15,15 +15,15 @@ class VertexBuildBase(SQLModel):
     artifacts: dict | None = Field(default=None, sa_column=Column(JSON))
     params: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     valid: bool = Field(nullable=False)
-    flow_id: UUID = Field()
+    agent_id: UUID = Field()
 
     # Needed for Column(JSON)
     class Config:
         arbitrary_types_allowed = True
 
-    @field_validator("flow_id", mode="before")
+    @field_validator("agent_id", mode="before")
     @classmethod
-    def validate_flow_id(cls, value):
+    def validate_agent_id(cls, value):
         if value is None:
             return value
         if isinstance(value, str):

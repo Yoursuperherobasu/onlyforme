@@ -11,7 +11,6 @@ class DataConditionalRouterComponent(Node):
     description = "Route Data object(s) based on a condition applied to a specified key, including boolean validation."
     icon = "split"
     name = "DataConditionalRouter"
-    legacy = True
 
     inputs = [
         DataInput(

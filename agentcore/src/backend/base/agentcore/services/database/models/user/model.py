@@ -9,7 +9,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from agentcore.schema.serialize import UUIDstr
 
 if TYPE_CHECKING:
-    from agentcore.services.database.models.flow.model import Flow
+    from agentcore.services.database.models.agent.model import Agent
     from agentcore.services.database.models.folder.model import Folder
 
 
@@ -21,7 +21,7 @@ class UserOptin(BaseModel):
 
 
 class User(SQLModel, table=True):  # type: ignore[call-arg]
-    id: UUIDstr = Field(default_factory=uuid4, primary_key=True, unique=True)
+    id: UUIDstr = Field(default_factory=uuid4, primary_key=True)
     username: str = Field(index=True, unique=True)
     password: str = Field()
     profile_image: str | None = Field(default=None, nullable=True)
@@ -31,9 +31,8 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
     create_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_login_at: datetime | None = Field(default=None, nullable=True)
-    # TODO: api_keys relationship removed - migrating to Azure Key Vault
     store_api_key: str | None = Field(default=None, nullable=True)
-    flows: list["Flow"] = Relationship(back_populates="user")
+    agents: list["Agent"] = Relationship(back_populates="user")
     # [VARIABLE REMOVED] variables relationship removed — migrating to Azure Key Vault
     folders: list["Folder"] = Relationship(
         back_populates="user",
@@ -48,9 +47,7 @@ class UserCreate(SQLModel):
     username: str = Field()
     password: str = Field()
     role: str = Field(default="developer", max_length=50)
-    optins: dict[str, Any] | None = Field(
-        default={"github_starred": False, "dialog_dismissed": False, "discord_clicked": False}
-    )
+    optins: dict[str, Any] | None = Field()
 
 
 class UserRead(SQLModel):

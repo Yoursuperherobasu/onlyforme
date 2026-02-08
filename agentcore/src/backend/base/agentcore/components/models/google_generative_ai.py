@@ -3,8 +3,6 @@ from typing import Any
 import requests
 from loguru import logger
 from pydantic.v1 import SecretStr
-
-from agentcore.base.models.google_generative_ai_constants import GOOGLE_GENERATIVE_AI_MODELS
 from agentcore.base.models.model import LCModelNode
 from agentcore.field_typing import LanguageModel
 from agentcore.field_typing.range_spec import RangeSpec
@@ -34,7 +32,7 @@ class GoogleGenerativeAI(LCModelNode):
             name="model_name",
             display_name="Model",
             info="The name of the model to use.",
-            options=GOOGLE_GENERATIVE_AI_MODELS,
+            options="",
             value="gemini-1.5-pro",
             refresh_button=True,
             combobox=True,
@@ -118,7 +116,6 @@ class GoogleGenerativeAI(LCModelNode):
             model_ids.sort(reverse=True)
         except (ImportError, ValueError) as e:
             logger.exception(f"Error getting model names: {e}")
-            model_ids = GOOGLE_GENERATIVE_AI_MODELS
         if tool_model_enabled:
             try:
                 from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
@@ -138,13 +135,13 @@ class GoogleGenerativeAI(LCModelNode):
         if field_name in {"base_url", "model_name", "tool_model_enabled", "api_key"} and field_value:
             try:
                 if len(self.api_key) == 0:
-                    ids = GOOGLE_GENERATIVE_AI_MODELS
+                    ids = []
                 else:
                     try:
                         ids = self.get_models(tool_model_enabled=self.tool_model_enabled)
                     except (ImportError, ValueError, requests.exceptions.RequestException) as e:
                         logger.exception(f"Error getting model names: {e}")
-                        ids = GOOGLE_GENERATIVE_AI_MODELS
+                        ids = []
                 build_config["model_name"]["options"] = ids
                 build_config["model_name"]["value"] = ids[0]
             except Exception as e:

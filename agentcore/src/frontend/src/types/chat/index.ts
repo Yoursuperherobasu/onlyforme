@@ -147,7 +147,7 @@ export interface PlaygroundEvent {
   timestamp?: string;
   token?: string;
   id?: string;
-  flow_id?: string;
+  agent_id?: string;
   sender?: string;
   session_id?: string;
   edit?: boolean;

@@ -48,7 +48,7 @@ class Message(Data):
     timestamp: Annotated[str, timestamp_to_str_validator] = Field(
         default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
     )
-    flow_id: str | UUID | None = None
+    agent_id: str | UUID | None = None
     error: bool = Field(default=False)
     edit: bool = Field(default=False)
 
@@ -57,9 +57,9 @@ class Message(Data):
     content_blocks: list[ContentBlock] = Field(default_factory=list)
     duration: int | None = None
 
-    @field_validator("flow_id", mode="before")
+    @field_validator("agent_id", mode="before")
     @classmethod
-    def validate_flow_id(cls, value):
+    def validate_agent_id(cls, value):
         if isinstance(value, UUID):
             value = str(value)
         return value
@@ -86,8 +86,8 @@ class Message(Data):
             value = Properties.model_validate(value)
         return value
 
-    @field_serializer("flow_id")
-    def serialize_flow_id(self, value):
+    @field_serializer("agent_id")
+    def serialize_agent_id(self, value):
         if isinstance(value, UUID):
             return str(value)
         return value
@@ -121,8 +121,8 @@ class Message(Data):
         if "timestamp" not in self.data:
             self.data["timestamp"] = self.timestamp
 
-    def set_flow_id(self, flow_id: str) -> None:
-        self.flow_id = flow_id
+    def set_agent_id(self, agent_id: str) -> None:
+        self.agent_id = agent_id
 
     def to_lc_message(
         self,
@@ -186,7 +186,7 @@ class Message(Data):
             files=data.files,
             session_id=data.session_id,
             timestamp=data.timestamp,
-            flow_id=data.flow_id,
+            agent_id=data.agent_id,
             error=data.error,
             edit=data.edit,
         )
@@ -312,7 +312,7 @@ class DefaultModel(BaseModel):
 
 class MessageResponse(DefaultModel):
     id: str | UUID | None = Field(default=None)
-    flow_id: UUID | None = Field(default=None)
+    agent_id: UUID | None = Field(default=None)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     sender: str
     sender_name: str
@@ -364,7 +364,7 @@ class MessageResponse(DefaultModel):
         return v
 
     @classmethod
-    def from_message(cls, message: Message, flow_id: str | None = None):
+    def from_message(cls, message: Message, agent_id: str | None = None):
         # first check if the record has all the required fields
         if message.text is None or not message.sender or not message.sender_name:
             msg = "The message does not have the required fields (text, sender, sender_name)."
@@ -376,7 +376,7 @@ class MessageResponse(DefaultModel):
             session_id=message.session_id,
             files=message.files or [],
             timestamp=message.timestamp,
-            flow_id=flow_id,
+            agent_id=agent_id,
         )
 
 
@@ -426,7 +426,7 @@ class ErrorMessage(Message):
         session_id: str | None = None,
         source: Source | None = None,
         trace_name: str | None = None,
-        flow_id: UUID | str | None = None,
+        agent_id: UUID | str | None = None,
     ) -> None:
         # This is done to avoid circular imports
         if exception.__class__.__name__ == "ExceptionWithMessageError" and exception.__cause__ is not None:
@@ -471,5 +471,5 @@ class ErrorMessage(Message):
                     ],
                 )
             ],
-            flow_id=flow_id,
+            agent_id=agent_id,
         )

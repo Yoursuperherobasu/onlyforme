@@ -1,59 +1,5 @@
 from typing import Any
 
-OPENAI_MODELS = [
-    "text-davinci-003",
-    "text-davinci-002",
-    "text-curie-001",
-    "text-babbage-001",
-    "text-ada-001",
-]
-CHAT_OPENAI_MODELS = [
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo-preview",
-    "gpt-4-0125-preview",
-    "gpt-4-1106-preview",
-    "gpt-4-vision-preview",
-    "gpt-3.5-turbo-0125",
-    "gpt-3.5-turbo-1106",
-]
-
-REASONING_OPENAI_MODELS = [
-    "o1",
-    "o1-mini",
-    "o1-pro",
-    "o3-mini",
-    "o3",
-    "o3-pro",
-    "o4-mini",
-    "o4-mini-high",
-]
-
-ANTHROPIC_MODELS = [
-    # largest model, ideal for a wide range of more complex tasks.
-    "claude-v1",
-    # An enhanced version of claude-v1 with a 100,000 token (roughly 75,000 word) context window.
-    "claude-v1-100k",
-    # A smaller model with far lower latency, sampling at roughly 40 words/sec!
-    "claude-instant-v1",
-    # Like claude-instant-v1 with a 100,000 token context window but retains its performance.
-    "claude-instant-v1-100k",
-    # Specific sub-versions of the above models:
-    # Vs claude-v1.2: better instruction-following, code, and non-English dialogue and writing.
-    "claude-v1.3",
-    # An enhanced version of claude-v1.3 with a 100,000 token (roughly 75,000 word) context window.
-    "claude-v1.3-100k",
-    # Vs claude-v1.1: small adv in general helpfulness, instruction following, coding, and other tasks.
-    "claude-v1.2",
-    # An earlier version of claude-v1.
-    "claude-v1.0",
-    # Latest version of claude-instant-v1. Better than claude-instant-v1.0 at most tasks.
-    "claude-instant-v1.1",
-    # Version of claude-instant-v1.1 with a 100K token context window.
-    "claude-instant-v1.1-100k",
-    # An earlier version of claude-instant-v1.
-    "claude-instant-v1.0",
-]
 
 DEFAULT_PYTHON_FUNCTION = """
 def python_function(text: str) -> str:

@@ -2,8 +2,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from agentcore.api.utils import get_suggestion_message
-from agentcore.services.database.models.flow.model import Flow
-from agentcore.services.database.models.flow.utils import get_outdated_components
+from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.agent.utils import get_outdated_components
 
 
 class InvalidChatInputError(Exception):
@@ -20,12 +20,12 @@ class ExceptionBody(BaseModel):
 
 
 class APIException(HTTPException):
-    def __init__(self, exception: Exception, flow: Flow | None = None, status_code: int = 500):
+    def __init__(self, exception: Exception, flow: Agent | None = None, status_code: int = 500):
         body = self.build_exception_body(exception, flow)
         super().__init__(status_code=status_code, detail=body.model_dump_json())
 
     @staticmethod
-    def build_exception_body(exc: str | list[str] | Exception, flow: Flow | None) -> ExceptionBody:
+    def build_exception_body(exc: str | list[str] | Exception, flow: Agent | None) -> ExceptionBody:
         body = {"message": str(exc)}
         if flow:
             outdated_components = get_outdated_components(flow)
