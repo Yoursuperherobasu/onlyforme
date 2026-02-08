@@ -1,60 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AgentCard } from "./components/AgentCard";
 import { Button } from "@/components/ui/button";
 import { Search, Users } from "lucide-react";
 import ActionModal from "./components/ActionModal";
 
+import { useGetApprovals, type ApprovalAgent } from "@/controllers/API/queries/approvals";
+import { useApprovalActionModal, useApprovalActions } from "./hooks";
+import CustomLoader from "@/customization/components/custom-loader";
+
 type FilterType = "all" | "pending" | "approved" | "rejected";
 
-interface Agent {
-  id: string;
-  title: string;
-  status: "pending" | "approved" | "rejected";
-  description: string;
-  submittedBy: {
-    name: string;
-    avatar?: string;
-  };
-  project: string;
-  submitted: string;
-  version: string;
-  recentChanges: string;
-}
-
-const agents: Agent[] = [
-  {
-    id: "1",
-    title: "Customer Support Agent",
-    status: "pending",
-    description:
-      "Handles customer inquiries with context-aware responses and sentiment analysis.",
-    submittedBy: { name: "Max Leiter" },
-    project: "E-Commerce Platform",
-    submitted: "2h ago",
-    version: "v2.1.0",
-    recentChanges: "Updated NLP model, improved response accuracy",
-  },
-  {
-    id: "2",
-    title: "Data Analysis Pipeline",
-    status: "pending",
-    description:
-      "Processes large datasets with anomaly detection and insight generation.",
-    submittedBy: { name: "Arya Manisha" },
-    project: "Analytics Dashboard",
-    submitted: "5h ago",
-    version: "v1.8.2",
-    recentChanges: "Added real-time processing",
-  },
-];
-
 export default function ApprovalPage() {
+  /* ================= STATE ================= */
   const [filter, setFilter] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalAction, setModalAction] = useState<"approve" | "reject">("approve");
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
 
+  /* ================= MODAL & ACTIONS MANAGEMENT ================= */
+  const { isOpen, selectedAgent, action, openModal, closeModal } =
+    useApprovalActionModal();
+  const { handleApprove, handleReject, isLoading } = useApprovalActions();
+
+  /* ================= API QUERIES ================= */
+  // Fetch all approvals from backend
+  const { data: agents = [], isLoading: isLoadingAgents } = useGetApprovals();
+
+  /* ================= FILTERING & CALCULATIONS ================= */
   const filteredAgents = agents.filter((agent) => {
     const matchesFilter = filter === "all" ? true : agent.status === filter;
     const matchesSearch =
@@ -72,23 +42,33 @@ export default function ApprovalPage() {
     rejected: agents.filter((a) => a.status === "rejected").length,
   };
 
-  const handleApprove = (agent: Agent) => {
-    setSelectedAgent(agent);
-    setModalAction("approve");
-    setModalOpen(true);
+  /* ================= EVENT HANDLERS ================= */
+  const handleApproveClick = (agent: ApprovalAgent) => {
+    openModal(agent, "approve");
   };
 
-  const handleReject = (agent: Agent) => {
-    setSelectedAgent(agent);
-    setModalAction("reject");
-    setModalOpen(true);
+  const handleRejectClick = (agent: ApprovalAgent) => {
+    openModal(agent, "reject");
   };
 
-  const handleSubmitAction = (data: { comments: string; attachments: File[] }) => {
-    console.log(`${modalAction} agent:`, selectedAgent?.id);
-    console.log("Comments:", data.comments);
-    console.log("Attachments:", data.attachments);
-    // TODO: Add API call here to upload files and save comments
+  /**
+   * Handle the final action submission from the modal
+   * Calls either handleApprove or handleReject based on the action type
+   */
+  const handleSubmitAction = async (data: {
+    comments: string;
+    attachments: File[];
+  }) => {
+    if (!selectedAgent) return;
+
+    if (action === "approve") {
+      await handleApprove(selectedAgent, data.comments, data.attachments);
+    } else {
+      await handleReject(selectedAgent, data.comments, data.attachments);
+    }
+
+    // Close modal after action completes
+    closeModal();
   };
 
   return (
@@ -97,7 +77,6 @@ export default function ApprovalPage() {
       <div className="flex items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            
             <h1 className="text-2xl font-semibold">Review & Approval</h1>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -125,55 +104,57 @@ export default function ApprovalPage() {
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-3 border-b border-border px-8 py-4">
-          {(["all", "pending", "approved", "rejected"] as FilterType[]).map(
-            (type) => (
-              <Button
-                key={type}
-                variant={filter === type ? "default" : "outline"}
-                onClick={() => setFilter(type)}
-                className="gap-2"
+        {(["all", "pending", "approved", "rejected"] as FilterType[]).map(
+          (type) => (
+            <Button
+              key={type}
+              variant={filter === type ? "default" : "outline"}
+              onClick={() => setFilter(type)}
+              className="gap-2"
+            >
+              <span>{type.charAt(0).toUpperCase() + type.slice(1)}</span>
+              <span
+                className={
+                  filter === type ? "opacity-80" : "text-muted-foreground"
+                }
               >
-                <span>{type.charAt(0).toUpperCase() + type.slice(1)}</span>
-                <span
-                  className={
-                    filter === type
-                      ? "opacity-80"
-                      : "text-muted-foreground"
-                  }
-                >
-                  {counts[type]}
-                </span>
-              </Button>
-            ),
-          )}
+                {counts[type]}
+              </span>
+            </Button>
+          ),
+        )}
       </div>
 
       {/* Agent Cards */}
       <div className="flex-1 overflow-auto p-8">
-        <div className="space-y-6">
-          {filteredAgents.length === 0 ? (
-            <div className="rounded-lg border border-border bg-card p-12 text-center">
-              <p className="text-muted-foreground">
-                {searchQuery
-                  ? "No agents found matching your search"
-                  : `No ${filter !== "all" ? filter : ""} agents found`}
-              </p>
-            </div>
-          ) : (
-            filteredAgents.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                {...agent}
-                onReject={() => handleReject(agent)}
-                onApprove={() => handleApprove(agent)}
-                onReviewDetails={() =>
-                  console.log("Review Details", agent.id)
-                }
-                onRunTest={() => console.log("Run Test", agent.id)}
-              />
-            ))
-          )}
-        </div>
+        {isLoadingAgents ? (
+          <div className="flex h-full items-center justify-center">
+            <CustomLoader />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {filteredAgents.length === 0 ? (
+              <div className="rounded-lg border border-border bg-card p-12 text-center">
+                <p className="text-muted-foreground">
+                  {searchQuery
+                    ? "No agents found matching your search"
+                    : `No ${filter !== "all" ? filter : ""} agents found`}
+                </p>
+              </div>
+            ) : (
+              filteredAgents.map((agent) => (
+                <AgentCard
+                  key={agent.id}
+                  {...agent}
+                  onReject={() => handleRejectClick(agent)}
+                  onApprove={() => handleApproveClick(agent)}
+                  onReviewDetails={() => console.log("Review Details", agent.id)}
+                  onRunTest={() => console.log("Run Test", agent.id)}
+                />
+              ))
+            )}
+          </div>
+        )}
 
         {/* Footer Stats */}
         {filteredAgents.length > 0 && (
@@ -185,11 +166,12 @@ export default function ApprovalPage() {
 
       {/* Action Modal */}
       <ActionModal
-        open={modalOpen}
-        setOpen={setModalOpen}
-        action={modalAction}
+        open={isOpen}
+        setOpen={closeModal}
+        action={action}
         agentTitle={selectedAgent?.title || ""}
         onSubmit={handleSubmitAction}
+        isLoading={isLoading}
       />
     </div>
   );

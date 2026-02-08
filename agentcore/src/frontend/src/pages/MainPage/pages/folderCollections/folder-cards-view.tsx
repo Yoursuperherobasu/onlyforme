@@ -58,9 +58,15 @@ export default function FolderCardsView({
     folder.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
   
+  // Sort by updated_at descending (most recently updated first)
+  const sortedFolders = [...filteredFolders].sort((a, b) => {
+    if (!a.updated_at || !b.updated_at) return 0;
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  });
+  
   // Split folders into recent (top 4) and older
-  const recentFolders = filteredFolders.slice(0, 4);
-  const olderFolders = filteredFolders.slice(4);
+  const recentFolders = sortedFolders.slice(0, 4);
+  const olderFolders = sortedFolders.slice(4);
 
   // Count flows per folder
   const getFlowCount = (folderId: string) => {

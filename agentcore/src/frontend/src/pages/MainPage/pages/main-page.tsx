@@ -164,9 +164,9 @@ export default function CollectionPage(): JSX.Element {
                   setFolderToEdit(folder);
                   setOpenDeleteFolderModal(true);
                 }}
-                onFilesClick={() => {
-                  navigate("/assets/files");
-                }}
+                // onFilesClick={() => {
+                //   navigate("/assets/files");
+                // }}
               />
             )}
           </div>

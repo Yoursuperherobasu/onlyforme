@@ -6,8 +6,8 @@ import { UseRequestProcessor } from "../../services/request-processor";
 
 export interface IUnpublishFlowRequest {
   flow_id: string;
-  openwebui_url: string;
-  openwebui_api_key: string;
+  agentcore_url: string;
+  agentcore_api_key: string;
 }
 
 export interface IUnpublishFlowResponse {
@@ -27,12 +27,12 @@ export const useDeleteUnpublishFlow: useMutationFunctionType<
     payload: IUnpublishFlowRequest,
   ): Promise<IUnpublishFlowResponse> => {
     const response = await api.delete<IUnpublishFlowResponse>(
-      `${getURL("PUBLISH")}/openwebui`,
+      `${getURL("PUBLISH")}/agentcore`,
       {
         data: {
           flow_id: payload.flow_id,
-          openwebui_url: payload.openwebui_url,
-          openwebui_api_key: payload.openwebui_api_key,
+          agentcore_url: payload.agentcore_url,
+          agentcore_api_key: payload.agentcore_api_key,
         },
       },
     );

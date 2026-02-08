@@ -18,8 +18,8 @@ import {
   ENABLE_FILE_MANAGEMENT,
   ENABLE_KNOWLEDGE_BASES,
 } from "./customization/feature-flags";
-// [STORE REMOVED] import { CustomRoutesStore } from "./customization/utils/custom-routes-store";
-// [STORE REMOVED] import { CustomRoutesStorePages } from "./customization/utils/custom-routes-store-pages";
+import { CustomRoutesStore } from "./customization/utils/custom-routes-store";
+import { CustomRoutesStorePages } from "./customization/utils/custom-routes-store-pages";
 import { AppAuthenticatedPage } from "./pages/AppAuthenticatedPage";
 import { AppInitPage } from "./pages/AppInitPage";
 import { AppWrapperPage } from "./pages/AppWrapperPage";
@@ -198,9 +198,9 @@ const router = createBrowserRouter(
                  
                   <Route path="shortcuts" element={<ShortcutsPage />} />
                   <Route path="messages" element={<MessagesPage />} />
-                  {/* [STORE REMOVED] {CustomRoutesStore()} */}
+                  {CustomRoutesStore()}
                 </Route>
-                {/* [STORE REMOVED] {CustomRoutesStorePages()} */}
+                {CustomRoutesStorePages()}
                 <Route path="account">
                   <Route path="delete" element={<DeleteAccountPage />}></Route>
                 </Route>

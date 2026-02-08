@@ -1,6 +1,6 @@
 {
-  "name": "langbuilder",
-  "version": "1.6.5",
+  "name": "agentcore",
+  "version": "1.0.0",
   "private": true,
   "dependencies": {
     "@azure/msal-browser": "^4.27.0",

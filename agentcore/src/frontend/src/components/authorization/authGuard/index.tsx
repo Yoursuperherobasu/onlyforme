@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import {
-  LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS,
-  LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS_ENV,
+  AGENTCORE_ACCESS_TOKEN_EXPIRE_SECONDS,
+  AGENTCORE_ACCESS_TOKEN_EXPIRE_SECONDS_ENV,
 } from "@/constants/constants";
 import { useRefreshAccessToken } from "@/controllers/API/queries/auth";
 import { CustomNavigate } from "@/customization/components/custom-navigate";
@@ -18,8 +18,8 @@ export const ProtectedRoute = ({ children }) => {
     !isAuthenticated
 
   useEffect(() => {
-    const envRefreshTime = LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS_ENV;
-    const automaticRefreshTime = LANGBUILDER_ACCESS_TOKEN_EXPIRE_SECONDS;
+    const envRefreshTime = AGENTCORE_ACCESS_TOKEN_EXPIRE_SECONDS_ENV;
+    const automaticRefreshTime = AGENTCORE_ACCESS_TOKEN_EXPIRE_SECONDS;
 
     const accessTokenTimer = isNaN(envRefreshTime)
       ? automaticRefreshTime

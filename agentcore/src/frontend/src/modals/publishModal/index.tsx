@@ -24,7 +24,7 @@ interface SavedConnection {
   lastUsed: number;
 }
 
-const STORAGE_KEY = "openwebui_connections";
+const STORAGE_KEY = "agentcore_connections";
 
 // Helper functions for localStorage
 const loadConnections = (): SavedConnection[] => {
@@ -101,7 +101,7 @@ export default function PublishModal({
   setOpen,
   onSuccess,
 }: PublishModalProps) {
-  const [openwebuiUrl, setOpenwebuiUrl] = useState("http://localhost:5839");
+  const [agentcoreUrl, setAgentcoreUrl] = useState("http://localhost:5839");
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState(flowName);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +121,7 @@ export default function PublishModal({
       if (connections.length > 0) {
         const mostRecent = connections[0];
         setSelectedConnection(mostRecent.id);
-        setOpenwebuiUrl(mostRecent.url);
+        setAgentcoreUrl(mostRecent.url);
         setApiKey(mostRecent.apiKey);
       }
     } else {
@@ -140,13 +140,13 @@ export default function PublishModal({
 
     if (value === "new") {
       // Clear fields for new connection
-      setOpenwebuiUrl("http://localhost:5839");
+      setAgentcoreUrl("http://localhost:5839");
       setApiKey("");
     } else {
       // Load selected connection
       const connection = savedConnections.find((c) => c.id === value);
       if (connection) {
-        setOpenwebuiUrl(connection.url);
+        setAgentcoreUrl(connection.url);
         setApiKey(connection.apiKey);
       }
     }
@@ -159,27 +159,27 @@ export default function PublishModal({
     }
 
     if (!apiKey.trim()) {
-      setError("Please enter your OpenWebUI API key");
+      setError("Please enter your AgentCore API key");
       return;
     }
 
-    if (!openwebuiUrl.trim()) {
-      setError("Please enter your OpenWebUI URL");
+    if (!agentcoreUrl.trim()) {
+      setError("Please enter your AgentCore URL");
       return;
     }
 
     publishMutation.mutate(
       {
         flow_id: flowId,
-        openwebui_url: openwebuiUrl,
-        openwebui_api_key: apiKey,
+        agentcore_url: agentcoreUrl,
+        agentcore_api_key: apiKey,
         model_name: modelName.trim() || undefined,
       },
       {
         onSuccess: (data) => {
           setError(null);
           // Save connection on successful publish
-          saveConnection(openwebuiUrl, apiKey);
+          saveConnection(agentcoreUrl, apiKey);
           onSuccess?.(data);
           setOpen(false);
           // Reset form
@@ -196,8 +196,8 @@ export default function PublishModal({
 
   return (
     <BaseModal open={open} setOpen={setOpen} size="medium">
-      <BaseModal.Header description="Deploy your flow to OpenWebUI as a selectable model">
-        <span className="pr-2">Publish to OpenWebUI</span>
+      <BaseModal.Header description="Deploy your flow to AgentCore as a selectable model">
+        <span className="pr-2">Publish to AgentCore</span>
         <IconComponent
           name="Globe"
           className="h-6 w-6 pl-1 text-foreground"
@@ -216,7 +216,7 @@ export default function PublishModal({
           {/* Saved Connections Selector */}
           {savedConnections.length > 0 && (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="connection-select">OpenWebUI Connection</Label>
+              <Label htmlFor="connection-select">AgentCore Connection</Label>
               <Select
                 value={selectedConnection}
                 onValueChange={handleConnectionChange}
@@ -246,7 +246,7 @@ export default function PublishModal({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Select a previously used OpenWebUI instance or add a new one
+                Select a previously used AgentCore instance or add a new one
               </p>
             </div>
           )}
@@ -254,7 +254,7 @@ export default function PublishModal({
           {/* Model Name */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="model-name">
-              Model Name in OpenWebUI
+              Model Name in AgentCore
               <span className="ml-1 text-destructive">*</span>
             </Label>
             <Input
@@ -266,33 +266,33 @@ export default function PublishModal({
               disabled={publishMutation.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              The name that will appear in OpenWebUI's model selector
+              The name that will appear in AgentCore's model selector
             </p>
           </div>
 
-          {/* OpenWebUI URL */}
+          {/* AgentCore URL */}
           <div className="flex flex-col gap-2">
-            <Label htmlFor="openwebui-url">
-              OpenWebUI URL
+            <Label htmlFor="agentcore-url">
+              AgentCore URL
               <span className="ml-1 text-destructive">*</span>
             </Label>
             <Input
-              id="openwebui-url"
+              id="agentcore-url"
               type="url"
               placeholder="http://localhost:5839"
-              value={openwebuiUrl}
-              onChange={(e) => setOpenwebuiUrl(e.target.value)}
+              value={agentcoreUrl}
+              onChange={(e) => setAgentcoreUrl(e.target.value)}
               disabled={publishMutation.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              The base URL of your OpenWebUI instance
+              The base URL of your AgentCore instance
             </p>
           </div>
 
           {/* API Key */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="api-key">
-              OpenWebUI API Key
+              AgentCore API Key
               <span className="ml-1 text-destructive">*</span>
             </Label>
             <div className="relative">
@@ -319,7 +319,7 @@ export default function PublishModal({
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Get your API key from OpenWebUI Settings → Account → API Keys
+              Get your API key from AgentCore Settings → Account → API Keys
             </p>
           </div>
 

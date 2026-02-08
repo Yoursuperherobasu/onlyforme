@@ -56,15 +56,7 @@ export function SaveChangesModal({
               Last saved: {lastSaved ?? "Never"}
             </div>
             Unsaved changes will be permanently lost.{" "}
-            <a
-              target="_blank"
-              className="text-secondary underline"
-              href="https://docs.langbuilder.org/configuration-auto-save"
-              rel="noopener"
-            >
-              Enable auto-saving
-            </a>{" "}
-            to avoid losing progress.
+            
           </>
         )}
       </ConfirmationModal.Content>

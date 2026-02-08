@@ -293,6 +293,8 @@ function formatLocalDate(date: Date): string {
 }
 
 function getDateRangeParams(preset: DateRangePreset): { from_date?: string; to_date?: string } {
+  if (preset === "all") return {};
+
   const now = new Date();
   // Use local date instead of UTC to match user's timezone
   const to_date = formatLocalDate(now);
@@ -311,13 +313,8 @@ function getDateRangeParams(preset: DateRangePreset): { from_date?: string; to_d
     case "90d":
       from_date = formatLocalDate(new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000));
       break;
-    case "all":
-      // For "all", use 1 year ago to fetch all historical data
-      from_date = formatLocalDate(new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000));
-      break;
     default:
-      // Default to 7 days
-      from_date = formatLocalDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+      return {};
   }
 
   return { from_date, to_date };
@@ -738,9 +735,9 @@ export default function ObservabilityPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState("overview");
   const [expandedObservation, setExpandedObservation] = useState<string | null>(null);
 
-  // Filter state - Default to "today" for fast initial load
+  // Filter state
   const [filters, setFilters] = useState<Filters>({
-    dateRange: "today",
+    dateRange: "30d",
     search: "",
     models: [],
   });
@@ -760,11 +757,9 @@ export default function ObservabilityPage(): JSX.Element {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ["langfuse-status"],
     queryFn: fetchStatus,
-    staleTime: 60000, // Status stays fresh for 1 minute
     refetchInterval: 60000,
   });
 
-  // Metrics - fetch for overview, models, and usage tabs
   const { data: metrics, isLoading: metricsLoading } = useQuery({
     queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(",")],
     queryFn: () => fetchMetrics({
@@ -772,39 +767,32 @@ export default function ObservabilityPage(): JSX.Element {
       search: filters.search || undefined,
       models: filters.models.length > 0 ? filters.models.join(",") : undefined,
     }),
-    enabled: status?.connected && (activeTab === "overview" || activeTab === "models" || activeTab === "usage"),
-    staleTime: 30000,
-    refetchInterval: (activeTab === "overview" || activeTab === "models" || activeTab === "usage") ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
-  // Sessions - only fetch when sessions tab is active
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
     queryKey: ["observability-sessions", filters.dateRange],
     queryFn: () => fetchSessions(dateParams),
-    enabled: status?.connected && activeTab === "sessions",
-    staleTime: 30000, // Data stays fresh for 30s
-    refetchInterval: activeTab === "sessions" ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
-  // Agents - fetch for overview (recent activity) and agents tab
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
     queryKey: ["observability-agents", filters.dateRange, filters.search],
     queryFn: () => fetchAgents({
       ...dateParams,
       search: filters.search || undefined,
     }),
-    enabled: status?.connected && (activeTab === "overview" || activeTab === "agents"),
-    staleTime: 30000,
-    refetchInterval: (activeTab === "overview" || activeTab === "agents") ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
-  // Projects - only fetch when projects tab is active
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["observability-projects", filters.dateRange],
     queryFn: () => fetchProjects(dateParams),
-    enabled: status?.connected && activeTab === "projects",
-    staleTime: 30000,
-    refetchInterval: activeTab === "projects" ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
   const { data: sessionDetail } = useQuery({
@@ -930,7 +918,7 @@ export default function ObservabilityPage(): JSX.Element {
       {/* Header */}
       <div className="border-b bg-white px-8 py-6 shadow-sm">
         <div className="flex items-center gap-3">
-          <BarChart3 className="h-7 w-7" style={{ color: THEME.primary }} />
+          
           <div>
             <h1 className="text-2xl font-semibold" style={{ color: THEME.textMain }}>
               Observability
@@ -1016,12 +1004,12 @@ export default function ObservabilityPage(): JSX.Element {
           )}
 
           {/* Clear Filters */}
-          {(filters.search || filters.models.length > 0 || filters.dateRange !== "today") && (
+          {(filters.search || filters.models.length > 0 || filters.dateRange !== "30d") && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => {
-                setFilters({ dateRange: "today", search: "", models: [] });
+                setFilters({ dateRange: "30d", search: "", models: [] });
                 setSearchInput("");
               }}
               className="h-9"

@@ -6,7 +6,7 @@ import {
 } from "@/constants/constants";
 import { useLogout } from "@/controllers/API/queries/auth";
 import { CustomProfileIcon } from "@/customization/components/custom-profile-icon";
-import { ENABLE_DATASTAX_LANGBUILDER } from "@/customization/feature-flags";
+import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useAuthStore from "@/stores/authStore";
 import { useDarkStore } from "@/stores/darkStore";
@@ -19,6 +19,7 @@ import {
   HeaderMenuToggle,
 } from "../HeaderMenu";
 import ThemeButtons from "../ThemeButtons";
+import { hasPermission } from "@/contexts/hasPermission";
 
 export const AccountMenu = () => {
   const version = useDarkStore((state) => state.version);
@@ -26,9 +27,6 @@ export const AccountMenu = () => {
   const navigate = useCustomNavigate();
   const { mutate: mutationLogout } = useLogout();
 
-  const { isAdmin } = useAuthStore((state) => ({
-    isAdmin: state.isAdmin,
-  }));
 
   const handleLogout = () => {
     mutationLogout();
@@ -69,7 +67,7 @@ export const AccountMenu = () => {
               </span>
             </HeaderMenuItemButton>
 
-            {isAdmin && (
+            {hasPermission("view_admin_page") && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {
@@ -87,7 +85,7 @@ export const AccountMenu = () => {
             )}
             <HeaderMenuItemLink
               newPage
-              href={ENABLE_DATASTAX_LANGBUILDER ? DATASTAX_DOCS_URL : DOCS_URL}
+              href={ENABLE_DATASTAX_AGENTCORE ? DATASTAX_DOCS_URL : DOCS_URL}
             >
               <span data-testid="menu_docs_button" id="menu_docs_button">
                 Docs

@@ -1,3 +1,3 @@
-export const LangBuilderButtonRedirectTarget = () => {
-  return "https://langbuilder.org";
+export const AgentCoreButtonRedirectTarget = () => {
+  return "https://www.motherson.com/";
 };

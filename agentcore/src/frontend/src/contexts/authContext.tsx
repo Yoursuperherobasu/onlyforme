@@ -1,16 +1,16 @@
 import { createContext, useEffect, useState } from "react";
 import { Cookies } from "react-cookie";
 import {
-  LANGBUILDER_ACCESS_TOKEN,
-  LANGBUILDER_API_TOKEN,
-  LANGBUILDER_REFRESH_TOKEN,
+  AGENTCORE_ACCESS_TOKEN,
+  AGENTCORE_API_TOKEN,
+  AGENTCORE_REFRESH_TOKEN,
 } from "@/constants/constants";
 import { useGetUserData } from "@/controllers/API/queries/auth";
 import { useGetGlobalVariablesMutation } from "@/controllers/API/queries/variables/use-get-mutation-global-variables";
 import useAuthStore from "@/stores/authStore";
 import { setLocalStorage } from "@/utils/local-storage-util";
 import { getAuthCookie, setAuthCookie } from "@/utils/utils";
-// [STORE REMOVED] import { useStoreStore } from "../stores/storeStore";
+import { useStoreStore } from "../stores/storeStore";
 import type { Users } from "../types/api";
 import type { AuthContextType } from "../types/contexts/auth";
 
@@ -33,7 +33,7 @@ export const AuthContext = createContext<AuthContextType>(initialValue);
 export function AuthProvider({ children }): React.ReactElement {
   const cookies = new Cookies();
   const [accessToken, setAccessToken] = useState<string | null>(
-    getAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN) ?? null,
+    getAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN) ?? null,
   );
   // --- ADD THESE STATES FOR RBAC ---
   const [role, setRole] = useState<string | null>(localStorage.getItem("user_role"));
@@ -43,29 +43,36 @@ export function AuthProvider({ children }): React.ReactElement {
   // ---------------------------------
   const [userData, setUserData] = useState<Users | null>(null);
   const [apiKey, setApiKey] = useState<string | null>(
-    getAuthCookie(cookies, LANGBUILDER_API_TOKEN),
+    getAuthCookie(cookies, AGENTCORE_API_TOKEN),
   );
 
-  // [STORE REMOVED] const checkHasStore = useStoreStore((state) => state.checkHasStore);
-  // [STORE REMOVED] const fetchApiData = useStoreStore((state) => state.fetchApiData);
+  const checkHasStore = useStoreStore((state) => state.checkHasStore);
+  const fetchApiData = useStoreStore((state) => state.fetchApiData);
   const setIsAuthenticated = useAuthStore((state) => state.setIsAuthenticated);
 
   const { mutate: mutateLoggedUser } = useGetUserData();
   const { mutate: mutateGetGlobalVariables } = useGetGlobalVariablesMutation();
 
   useEffect(() => {
-    const storedAccessToken = getAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN);
+    const storedAccessToken = getAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN);
     if (storedAccessToken) {
       setAccessToken(storedAccessToken);
     }
   }, []);
 
   useEffect(() => {
-    const apiKey = getAuthCookie(cookies, LANGBUILDER_API_TOKEN);
+    const apiKey = getAuthCookie(cookies, AGENTCORE_API_TOKEN);
     if (apiKey) {
       setApiKey(apiKey);
     }
   }, []);
+
+  useEffect(() => {
+  if (cookies.get(AGENTCORE_ACCESS_TOKEN)) {
+    getUser(); // 🔥 triggers /whoami on refresh
+    console.log("REFRTESH TRIFGERR")
+  }
+}, []);
 
   function getUser() {
     mutateLoggedUser(
@@ -73,10 +80,15 @@ export function AuthProvider({ children }): React.ReactElement {
       {
         onSuccess: async (user) => {
           setUserData(user);
-          const isSuperUser = user!.is_superuser;
-          useAuthStore.getState().setIsAdmin(isSuperUser);
-          // [STORE REMOVED] checkHasStore();
-          // [STORE REMOVED] fetchApiData();
+          const store = useAuthStore.getState();
+          store.setAuthContext({
+            role: user.role,
+            permissions: user.permissions,
+          });
+
+          
+          checkHasStore();
+          fetchApiData();
         },
         onError: () => {
           setUserData(null);
@@ -92,21 +104,23 @@ export function AuthProvider({ children }): React.ReactElement {
     refreshToken?: string,
     
   ) {
-    setAuthCookie(cookies, LANGBUILDER_ACCESS_TOKEN, newAccessToken);
-    setLocalStorage(LANGBUILDER_ACCESS_TOKEN, newAccessToken);
+    setAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN, newAccessToken);
+    setLocalStorage(AGENTCORE_ACCESS_TOKEN, newAccessToken);
 
     if (refreshToken) {
-      setAuthCookie(cookies, LANGBUILDER_REFRESH_TOKEN, refreshToken);
+      setAuthCookie(cookies, AGENTCORE_REFRESH_TOKEN, refreshToken);
     }
 
-    setLocalStorage("user_role", userRole);
-    setLocalStorage("user_permissions", JSON.stringify(userPermissions));
+    const store = useAuthStore.getState();
 
-    setRole(userRole);
-    setPermissions(userPermissions);
+    store.setAuthContext({
+      role: userRole,
+      permissions: userPermissions,
+    });
+
 
     setAccessToken(newAccessToken);
-    setIsAuthenticated(true);
+    store.setIsAuthenticated(true);
     getUser();
     getGlobalVariables();
   }

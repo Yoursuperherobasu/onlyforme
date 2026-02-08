@@ -8,10 +8,10 @@ import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import CustomAccountMenu from "@/customization/components/custom-AccountMenu";
-import CustomLangBuilderCounts from "@/customization/components/custom-langbuilder-counts";
+import CustomAgentCoreCounts from "@/customization/components/custom-agentcore-counts";
 import { CustomOrgSelector } from "@/customization/components/custom-org-selector";
 import { CustomProductSelector } from "@/customization/components/custom-product-selector";
-import { ENABLE_DATASTAX_LANGBUILDER } from "@/customization/feature-flags";
+import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useTheme from "@/customization/hooks/use-custom-theme";
 import useAlertStore from "@/stores/alertStore";
@@ -100,7 +100,7 @@ export default function AppHeader(): JSX.Element {
           className="mr-1 flex h-8 w-8 items-center"
           data-testid="icon-ChevronLeft"
         >
-          {ENABLE_DATASTAX_LANGBUILDER ? (
+          {ENABLE_DATASTAX_AGENTCORE ? (
             <DataStaxLogo className="fill-black dark:fill-[white]" />
           ) : (
             <div className="flex items-center px-3 h-12">
@@ -112,7 +112,7 @@ export default function AppHeader(): JSX.Element {
             </div>
           )}
         </Button>
-        {ENABLE_DATASTAX_LANGBUILDER && (
+        {ENABLE_DATASTAX_AGENTCORE && (
           <>
             <CustomOrgSelector />
             <CustomProductSelector />
@@ -135,7 +135,7 @@ export default function AppHeader(): JSX.Element {
             unstyled
             className="hidden items-center whitespace-nowrap pr-2 lg:inline"
           >
-            <CustomLangBuilderCounts />
+            <CustomAgentCoreCounts />
           </Button>
         </>
         <AlertDropdown

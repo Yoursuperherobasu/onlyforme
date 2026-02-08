@@ -10,11 +10,11 @@ export default function ErrorComponent(): JSX.Element {
       <div className="chat-alert-box">
         <span className="flex gap-2">
           <IconComponent name="FileX2" />
-          <span className="langbuilder-chat-span">{PDFLoadErrorTitle}</span>
+          <span className="agentcore-chat-span">{PDFLoadErrorTitle}</span>
         </span>
         <br />
-        <div className="langbuilder-chat-desc">
-          <span className="langbuilder-chat-desc-span">{PDFCheckFlow} </span>
+        <div className="agentcore-chat-desc">
+          <span className="agentcore-chat-desc-span">{PDFCheckFlow} </span>
         </div>
       </div>
     </div>

@@ -14,19 +14,19 @@ import {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
-  const envLangbuilderResult = dotenv.config({
+  const envAgentCoreResult = dotenv.config({
     path: path.resolve(__dirname, "../../.env"),
   });
-  console.log(path.resolve(__dirname, "../../.env"),"manasssssssssssssssss")
-
-  const envLangbuilder = envLangbuilderResult.parsed || {};
-
-  const apiRoutes = API_ROUTES || ["^/api/v1/", "^/api/v2/", "/health"];
-
-  const target = envLangbuilder.VITE_PROXY_TARGET || env.VITE_PROXY_TARGET || PROXY_TARGET || "http://localhost:7860";
-
   
-  const port = Number(envLangbuilder.VITE_PORT || env.VITE_PORT) || PORT || 3000;
+
+  const envAgentCore = envAgentCoreResult.parsed || {};
+
+  const apiRoutes = API_ROUTES || ["^/api/", "/health"];
+
+  const target =
+    envAgentCore.VITE_PROXY_TARGET || env.VITE_PROXY_TARGET || PROXY_TARGET || "http://localhost:7860";
+  
+  const port = Number(envAgentCore.VITE_PORT || env.VITE_PORT) || PORT || 3000;
 
   const proxyTargets = apiRoutes.reduce((proxyObj, route) => {
     proxyObj[route] = {
@@ -45,14 +45,14 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       "process.env.BACKEND_URL": JSON.stringify(
-        envLangbuilder.BACKEND_URL ?? "http://localhost:7860",
+        envAgentCore.BACKEND_URL ?? "http://localhost:7860",
       ),
       "process.env.ACCESS_TOKEN_EXPIRE_SECONDS": JSON.stringify(
-        envLangbuilder.ACCESS_TOKEN_EXPIRE_SECONDS ?? 60,
+        envAgentCore.ACCESS_TOKEN_EXPIRE_SECONDS ?? 60,
       ),
-      "process.env.CI": JSON.stringify(envLangbuilder.CI ?? false),
-      "process.env.LANGBUILDER_MCP_COMPOSER_ENABLED": JSON.stringify(
-        envLangbuilder.LANGBUILDER_MCP_COMPOSER_ENABLED ?? "true",
+      "process.env.CI": JSON.stringify(envAgentCore.CI ?? false),
+      "process.env.AGENTCORE_MCP_COMPOSER_ENABLED": JSON.stringify(
+        envAgentCore.AGENTCORE_MCP_COMPOSER_ENABLED ?? "true",
       ),
     },
     plugins: [react(), svgr(), tsconfigPaths()],

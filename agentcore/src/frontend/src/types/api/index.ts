@@ -179,6 +179,8 @@ export type Users = {
   username: string;
   is_active: boolean;
   is_superuser: boolean;
+  role: string;
+  permissions: string[];
   profile_image: string;
   create_at: Date;
   updated_at: Date;

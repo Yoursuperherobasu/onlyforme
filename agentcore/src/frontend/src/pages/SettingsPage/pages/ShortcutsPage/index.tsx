@@ -52,7 +52,7 @@ export default function ShortcutsPage() {
       const fixedName = toCamelCase(name);
       updateUniqueShortcut(fixedName, shortcut);
     });
-    localStorage.removeItem("langbuilder-shortcuts");
+    localStorage.removeItem("agentcore-shortcuts");
   }
 
   return (

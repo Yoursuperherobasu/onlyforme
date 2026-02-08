@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ENABLE_DATASTAX_LANGBUILDER } from "@/customization/feature-flags";
+import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
 import { useGenerateToken } from "@/customization/hooks/use-custom-generate-token";
 import { COPIED_NOTICE_ALERT } from "../../constants/alerts_constants";
 import { createApiKey } from "../../controllers/API";
@@ -83,7 +83,7 @@ export default function SecretKeyModal({
 
   async function handleSubmitForm() {
     if (apiKeyValue) setOpen(false);
-    if (ENABLE_DATASTAX_LANGBUILDER) {
+    if (ENABLE_DATASTAX_AGENTCORE) {
       handleDataStaxKey();
     } else {
       handleOSSKey();
@@ -142,7 +142,7 @@ export default function SecretKeyModal({
             textCopied={textCopied}
             renderKey={renderKey}
           />
-        ) : ENABLE_DATASTAX_LANGBUILDER ? (
+        ) : ENABLE_DATASTAX_AGENTCORE ? (
           <></>
         ) : (
           <FormKeyRender

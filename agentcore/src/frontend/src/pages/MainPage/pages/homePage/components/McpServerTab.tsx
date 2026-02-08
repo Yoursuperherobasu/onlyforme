@@ -353,12 +353,6 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
   }
 }`;
 
-  const MCP_SERVER_TUTORIAL_LINK =
-    "https://docs.langbuilder.org/mcp-server#connect-clients-to-use-the-servers-actions";
-
-  const MCP_SERVER_DEPLOY_TUTORIAL_LINK =
-    "https://docs.langbuilder.org/mcp-server";
-
   const copyToClipboard = useCallback(() => {
     navigator.clipboard
       .writeText(MCP_SERVER_JSON)
@@ -397,19 +391,6 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
         <div>
           <div className="pb-2 font-medium" data-testid="mcp-server-title">
             MCP Server
-          </div>
-          <div className="pb-4 text-mmd text-muted-foreground">
-            Access your Project's flows as Tools within a MCP Server. Learn more
-            in our
-            <a
-              className="text-accent-pink-foreground"
-              href={MCP_SERVER_DEPLOY_TUTORIAL_LINK}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {" "}
-              Projects as MCP Servers guide.
-            </a>
           </div>
         </div>
       </div>
@@ -594,18 +575,6 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
                   )}
                 </div>
               </div>
-              <div className="px-2 text-mmd text-muted-foreground">
-                Add this config to your client of choice. Need help? See the{" "}
-                <a
-                  href={MCP_SERVER_TUTORIAL_LINK}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-accent-pink-foreground"
-                >
-                  setup guide
-                </a>
-                .
-              </div>
             </>
           )}
           {selectedMode === "Auto install" && (
@@ -618,7 +587,7 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
                       className="h-4 w-4 shrink-0"
                     />
                     <span>
-                      One-click install is disabled because the LangBuilder server
+                      One-click install is disabled because the AgentCore server
                       is not running on your local machine. Use the JSON tab to
                       configure your client manually.
                     </span>

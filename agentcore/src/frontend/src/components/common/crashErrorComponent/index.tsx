@@ -23,38 +23,10 @@ export default function CrashErrorComponent({
               </div>
             </CardHeader>
 
-            <CardContent className="grid">
-              <div>
-                <p>
-                  Please report errors with detailed tracebacks on the{" "}
-                  <a
-                    href="https://github.com/CloudGeometry/langbuilder/issues"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium hover:underline"
-                  >
-                    GitHub Issues
-                  </a>{" "}
-                  page.
-                  <br></br>
-                  Thank you!
-                </p>
-              </div>
-            </CardContent>
 
             <CardFooter>
               <div className="m-auto mt-4 flex justify-center">
-                <Button onClick={resetErrorBoundary}>Restart LangBuilder</Button>
-
-                <a
-                  href="https://github.com/CloudGeometry/langbuilder/issues/new"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Button className="ml-3" ignoreTitleCase variant={"outline"}>
-                    Report on GitHub
-                  </Button>
-                </a>
+                <Button onClick={() => window.location.reload()}>Refresh App</Button>
               </div>
             </CardFooter>
           </Card>

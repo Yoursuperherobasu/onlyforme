@@ -1,5 +1,3 @@
-import type { Users } from "@/types/api";
-
 export interface AuthStoreType {
   // 🔐 Auth
   isAuthenticated: boolean;
@@ -7,14 +5,14 @@ export interface AuthStoreType {
   apiKey: string | null;
   authenticationErrorCount: number;
 
-  // 🧑‍💻 Authorization (SCALABLE)
+  // 🧑‍💻 Authorization
   role: string | null;
   permissions: string[];
 
   userData: Users | null;
 
-
-
+  // 🧠 hydration flag (NEW)
+  isAuthHydrated: boolean;
 
   // setters
   setAuthContext: (payload: {
@@ -27,6 +25,7 @@ export interface AuthStoreType {
   setUserData: (userData: Users | null) => void;
   setApiKey: (apiKey: string | null) => void;
   setAuthenticationErrorCount: (authenticationErrorCount: number) => void;
+  setAuthHydrated: (value: boolean) => void;
 
   logout: () => Promise<void>;
 }

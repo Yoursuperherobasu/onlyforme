@@ -30,6 +30,7 @@ export const URLs = {
   MCP_SERVERS: `mcp/servers`,
   KNOWLEDGE_BASES: `knowledge_bases`,
   MODELS: `models`,
+  APPROVALS: `approvals`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility
