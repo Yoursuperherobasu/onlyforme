@@ -1,5 +1,4 @@
 from typing import List, Dict, Optional
-import redis.asyncio as redis
 from agentcore.services.settings.service import SettingsService
 from agentcore.services.cache.redis_client import get_redis_client
 from loguru import logger

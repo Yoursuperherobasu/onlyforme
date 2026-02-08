@@ -133,10 +133,6 @@ class NodeDirectoryScanner:
         file_list = []
         safe_path_obj = Path(safe_path)
         for file_path in safe_path_obj.rglob("*.py"):
-            # Check if the file is in the folder `deactivated` and if so, skip it
-            if "deactivated" in file_path.parent.name:
-                continue
-
             # Calculate the depth of the file relative to the safe path
             relative_depth = len(file_path.relative_to(safe_path_obj).parts)
 

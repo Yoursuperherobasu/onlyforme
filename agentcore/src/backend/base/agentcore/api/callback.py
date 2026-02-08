@@ -15,8 +15,6 @@ from agentcore.utils.util import remove_ansi_escape_codes
 if TYPE_CHECKING:
     from agentcore.services.socket.service import SocketIOService
 
-
-# https://github.com/hwchase17/chat-langchain/blob/master/callback.py
 class AsyncStreamingLLMCallbackHandleSIO(AsyncCallbackHandler):
     """Callback handler for streaming LLM responses."""
 
@@ -77,7 +75,7 @@ class AsyncStreamingLLMCallbackHandleSIO(AsyncCallbackHandler):
             # This is to emulate the stream of tokens
             for resp in resps:
                 await self.socketio_service.emit_token(to=self.sid, data=resp.model_dump())
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("Error sending response")
 
     async def on_tool_error(

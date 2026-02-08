@@ -59,7 +59,7 @@ class LCAgentNode(Node):
         ),
         MultilineInput(
             name="agent_description",
-            display_name="Agent Description [Deprecated]",
+            display_name="Agent Description",
             info=(
                 "The description of the agent. This is only used when in Tool Mode. "
                 f"Defaults to '{DEFAULT_TOOLS_DESCRIPTION}' and tools are added dynamically. "
