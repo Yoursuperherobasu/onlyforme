@@ -25,7 +25,6 @@ from agentcore.base.tools.constants import (
 from agentcore.custom.tree_visitor import FieldRequirementChecker
 from agentcore.exceptions.component import StreamingError
 from agentcore.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
-from agentcore.utils.debug_logger import debug_log
 
 from agentcore.helpers.custom import format_type
 from agentcore.memory import astore_message, aupdate_messages, delete_message
@@ -984,10 +983,6 @@ class Node(ExecutableNode):
             ValueError: If a parameter name matches a reserved attribute not managed in _attributes and its
             value differs from the current attribute value.
         """
-        # Debug: Log what params we receive
-        if 'tools' in params:
-            debug_log(f"🔍 SET_ATTRIBUTES: component={self.__class__.__name__}, tools in params={type(params.get('tools'))}, value={params.get('tools')}")
-        
         self._validate_inputs(params)
         attributes = {}
         for key, value in params.items():
@@ -1003,10 +998,6 @@ class Node(ExecutableNode):
                 attributes[key] = input_obj.value or None
 
         self._attributes.update(attributes)
-        
-        # Debug: Log final attributes for tools
-        if 'tools' in self._attributes:
-            debug_log(f"🔍 SET_ATTRIBUTES DONE: tools in _attributes={type(self._attributes.get('tools'))}, value={self._attributes.get('tools')}")
 
     def _set_outputs(self, outputs: list[dict]) -> None:
         self.outputs = [Output(**output) for output in outputs]
@@ -1104,13 +1095,9 @@ class Node(ExecutableNode):
         Returns True if the component has no vertex or outgoing edges, or if the output's name is among
         the vertex's source edge names.
         """
-        from loguru import logger
         if not self._vertex or not self._vertex.outgoing_edges:
-            logger.info(f"🔍 _should_process_output: component={self.display_name}, output={output.name}, no_vertex_or_edges=True, RESULT=True")
             return True
-        result = output.name in self._vertex.edges_source_names
-        logger.info(f"🔍 _should_process_output: component={self.display_name}, output={output.name}, edges_source_names={self._vertex.edges_source_names}, RESULT={result}")
-        return result
+        return output.name in self._vertex.edges_source_names
 
     def _get_outputs_to_process(self):
         """Returns a list of outputs to process, ordered according to self.outputs.

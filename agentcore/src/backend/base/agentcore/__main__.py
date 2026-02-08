@@ -16,6 +16,7 @@ import httpx
 import typer
 from dotenv import load_dotenv
 from httpx import HTTPError
+from loguru import logger
 from multiprocess import cpu_count
 from multiprocess.context import Process
 from packaging import version as pkg_version
@@ -49,7 +50,7 @@ class ProcessManager:
         if platform.system() == "Windows":
             self._farewell_emoji = ":)"  # ASCII smiley
         else:
-            self._farewell_emoji = "👋"  # Unicode wave
+            self._farewell_emoji = "Goodbye"  # Unicode not needed
 
     # params are required for signal handlers, even if they are not used
     def handle_sigterm(self, _signum: int, _frame) -> None:
@@ -138,7 +139,6 @@ def set_var_for_macos_issue() -> None:
         import os
 
         os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
-        # https://stackoverflow.com/questions/75747888/uwsgi-segmentation-fault-with-flask-python-app-behind-nginx-after-running-for-2 # noqa: E501
         os.environ["no_proxy"] = "*"  # to avoid error with gunicorn
         logger.debug("Set OBJC_DISABLE_INITIALIZE_FORK_SAFETY to YES to avoid error")
 
@@ -549,19 +549,13 @@ def print_banner(host: str, port: int, protocol: str) -> None:
     import platform
 
     if platform.system() == "Windows":
-        github_icon = "*"
-        discord_icon = "#"
         arrow = "->"
         status_icon = "[OK]"
     else:
-        github_icon = ":star2:"
-        discord_icon = ":speech_balloon:"
         arrow = "→"
-        status_icon = "🟢"
+        status_icon = "[OK]"
 
-    info_text = (
-        f"{github_icon} GitHub: Star for updates {arrow} https://github.com/cloudgeometry/agentcore"
-    )
+    info_text = "AgentCore - AI Agent Builder"
     telemetry_text = (
         (
             "We collect anonymous usage data to improve Agentcore.\n"
@@ -586,8 +580,6 @@ def print_banner(host: str, port: int, protocol: str) -> None:
         # Fallback to a simpler banner without emojis for Windows systems with encoding issues
         fallback_message = (
             f"Welcome to {package_name}\n\n"
-            "* GitHub: https://github.com/cloudgeometry/agentcore\n"
-            "# Discord: https://discord.com/invite/EqksyE2EX9\n\n"
             f"{telemetry_text}\n\n"
             f"[OK] Open Agentcore -> {protocol}://{access_host}:{port}"
         )
@@ -597,8 +589,6 @@ def print_banner(host: str, port: int, protocol: str) -> None:
         except UnicodeEncodeError:
             # Last resort: use logger instead of print
             logger.info(f"Welcome to {package_name}")
-            logger.info("GitHub: https://github.com/cloudgeometry/agentcore")
-            logger.info("Discord: https://discord.com/invite/EqksyE2EX9")
             logger.info(f"Open Agentcore: {protocol}://{access_host}:{port}")
 
 

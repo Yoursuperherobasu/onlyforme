@@ -15,12 +15,6 @@ from typing_extensions import NotRequired, override
 
 from agentcore.settings import DEV
 
-# Try to import Loki handler for Grafana Cloud integration
-try:
-    from logging_loki import LokiHandler
-    LOKI_AVAILABLE = True
-except ImportError:
-    LOKI_AVAILABLE = False
 
 VALID_LOG_LEVELS = ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 # Human-readable
@@ -247,7 +241,7 @@ def configure(
         try:
             logger.add(
                 sink=log_file,
-                level=log_level.upper(),
+                level="DEBUG",
                 format=log_format,
                 serialize=True,
                 enqueue=async_file,
@@ -255,55 +249,6 @@ def configure(
             )
         except Exception:  # noqa: BLE001
             logger.exception("Error setting up log file")
-
-        # Add custom info log file for debugging
-        try:
-            from agentcore.utils.debug_logger import INFO_LOG_FILE
-            logger.add(
-                sink=INFO_LOG_FILE,
-                level="INFO",
-                format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}",
-                rotation="10 MB",
-                retention="7 days",
-                enqueue=async_file,
-            )
-            logger.info(f"Added custom info log file: {INFO_LOG_FILE}")
-        except Exception as e:
-            logger.warning(f"Could not set up custom info log file: {e}")
-
-        # Add Grafana Loki handler if configured
-        # DISABLED: Grafana Loki integration causing 530 authentication errors
-        # The HTTP 530 error typically indicates:
-        # - Invalid API credentials
-        # - Incorrect authentication format
-        # - Expired or revoked API key
-        # - Network/firewall restrictions
-        # To fix: Verify credentials in Grafana Cloud settings and ensure API key has write permissions
-        if False and os.getenv("GRAFANA_LOKI_ENABLED", "false").lower() == "true" and LOKI_AVAILABLE:
-            loki_url = os.getenv("GRAFANA_LOKI_URL")
-            loki_username = os.getenv("GRAFANA_LOKI_USERNAME")
-            loki_api_key = os.getenv("GRAFANA_LOKI_API_KEY")
-            
-            if loki_url and loki_username and loki_api_key:
-                try:
-                    logger.add(
-                        LokiHandler(
-                            url=loki_url,
-                            tags={"application": "agentcore", "env": log_env or "dev", "host": os.getenv("HOSTNAME", "local")},
-                            auth=(loki_username, loki_api_key),
-                            version="1",
-                        ),
-                        format="{message}",
-                        level=log_level.upper(),
-                        serialize=True,
-                    )
-                    logger.info("✅ Grafana Loki handler configured successfully - logs streaming to Grafana Cloud")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to configure Grafana Loki handler: {e}")
-            else:
-                logger.warning("⚠️ Grafana Loki enabled but missing credentials (URL, USERNAME, or API_KEY)")
-        elif os.getenv("GRAFANA_LOKI_ENABLED", "false").lower() == "true" and not LOKI_AVAILABLE:
-            logger.warning("⚠️ Grafana Loki enabled but python-logging-loki not installed. Run: pip install python-logging-loki")
 
     if log_buffer.enabled():
         logger.add(sink=log_buffer.write, format="{time} {level} {message}", serialize=True)
@@ -338,10 +283,7 @@ def setup_gunicorn_logger() -> None:
 
 
 class InterceptHandler(logging.Handler):
-    """Default handler from examples in loguru documentation.
-
-    See https://loguru.readthedocs.io/en/stable/overview.html#entirely-compatible-with-standard-logging.
-    """
+    """Intercept standard logging and route to loguru."""
 
     @override
     def emit(self, record) -> None:

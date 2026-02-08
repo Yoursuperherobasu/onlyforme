@@ -13,7 +13,6 @@ from agentcore.custom.eval import eval_custom_component_code
 from agentcore.schema.artifact import get_artifact_type, post_process_raw
 from agentcore.schema.data import Data
 from agentcore.services.deps import get_tracing_service, session_scope
-from agentcore.utils.debug_logger import debug_log
 
 if TYPE_CHECKING:
     from agentcore.custom.custom_node.node import Node
@@ -31,19 +30,13 @@ def instantiate_class(
     vertex_type = vertex.vertex_type
     base_type = vertex.base_type
     logger.debug(f"Instantiating {vertex_type} of type {base_type}")
-    
-    # Debug: Log vertex params before get_params
-    debug_log(f"🔍 INSTANTIATE_CLASS: vertex={vertex.id}, vertex.params.tools={vertex.params.get('tools', 'NOT_SET')}")
 
     if not base_type:
         msg = "No base type provided for vertex"
         raise ValueError(msg)
 
     custom_params = get_params(vertex.params)
-    
-    # Debug: Log after get_params
-    debug_log(f"🔍 INSTANTIATE_CLASS: after get_params, custom_params.tools={custom_params.get('tools', 'NOT_SET')}")
-    
+
     code = custom_params.pop("code")
     class_object: type[ExecutableNode | Node] = eval_custom_component_code(code)
     custom_component: ExecutableNode | Node = class_object(
@@ -84,15 +77,9 @@ async def get_instance_results(
 
 def get_params(vertex_params):
     params = vertex_params
-    # Debug: Log tools parameter
-    if 'tools' in params:
-        debug_log(f"🔍 GET_PARAMS: tools in vertex_params={type(params.get('tools'))}, value={params.get('tools')}")
     params = convert_params_to_sets(params)
     params = convert_kwargs(params)
-    result = params.copy()
-    if 'tools' in result:
-        debug_log(f"🔍 GET_PARAMS RESULT: tools={type(result.get('tools'))}, value={result.get('tools')}")
-    return result
+    return params.copy()
 
 
 def convert_params_to_sets(params):

@@ -63,7 +63,7 @@ def _to_list_of_dicts(raw):
 
 
 def post_process_raw(raw, artifact_type: str):
-    default_message = "Built Successfully ✨"
+    default_message = "Built Successfully"
 
     if artifact_type == ArtifactType.STREAM.value:
         raw = ""

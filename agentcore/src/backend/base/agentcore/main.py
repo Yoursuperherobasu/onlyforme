@@ -131,11 +131,6 @@ def get_lifespan(*, fix_migration=True, version=None):
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         configure(async_file=True)
-        
-        # Clear debug log file on startup
-        from agentcore.utils.debug_logger import clear_debug_log, get_log_path
-        clear_debug_log()
-        logger.info(f"Debug log cleared. Logging to: {get_log_path()}")
 
         # Startup message
         if version:

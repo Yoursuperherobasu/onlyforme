@@ -50,11 +50,9 @@ async def log_transaction(
         error: Error message if status is "error" (optional)
     """
     try:
-        print(f"🔍 LOG_TRANSACTION called: vertex_id={vertex_id}, flow_id={flow_id}, status={status}")
-        logger.info(f"LOG_TRANSACTION called: vertex_id={vertex_id}, flow_id={flow_id}, status={status}")
+        logger.debug(f"LOG_TRANSACTION called: vertex_id={vertex_id}, flow_id={flow_id}, status={status}")
         
         if not get_settings_service().settings.transactions_storage_enabled:
-            print(f"⚠️ LOG_TRANSACTION: Storage disabled by settings")
             logger.warning("Transaction storage is disabled in settings")
             return
         
@@ -80,10 +78,8 @@ async def log_transaction(
             with session.no_autoflush:
                 inserted = await crud_log_transaction(session, transaction)
                 if inserted:
-                    print(f"✅ LOG_TRANSACTION: Successfully logged transaction_id={inserted.id}")
                     logger.debug(f"Logged transaction: {inserted.id}")
     except Exception as exc:
-        print(f"❌ LOG_TRANSACTION ERROR: {exc}")
         logger.error(f"Error logging transaction: {exc!s}")
 
 
@@ -110,11 +106,9 @@ async def log_vertex_build(
         artifacts: The generated artifacts (optional)
     """
     try:
-        print(f"🔍 LOG_VERTEX_BUILD called: vertex_id={vertex_id}, flow_id={flow_id}, valid={valid}")
-        logger.info(f"LOG_VERTEX_BUILD called: vertex_id={vertex_id}, flow_id={flow_id}, valid={valid}")
+        logger.debug(f"LOG_VERTEX_BUILD called: vertex_id={vertex_id}, flow_id={flow_id}, valid={valid}")
         
         if not get_settings_service().settings.vertex_builds_storage_enabled:
-            print(f"⚠️ LOG_VERTEX_BUILD: Storage disabled by settings")
             logger.warning("Vertex builds storage is disabled in settings")
             return
         
@@ -136,8 +130,6 @@ async def log_vertex_build(
         
         async with session_getter(get_db_service()) as session:
             inserted = await crud_log_vertex_build(session, vertex_build)
-            print(f"✅ LOG_VERTEX_BUILD: Successfully logged build_id={inserted.build_id}")
             logger.debug(f"Logged vertex build: {inserted.build_id}")
     except Exception as e:
-        print(f"❌ LOG_VERTEX_BUILD ERROR: {e}")
         logger.exception("Error logging vertex build")

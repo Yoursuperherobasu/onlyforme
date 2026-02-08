@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agentcore.utils.debug_logger import debug_log
-
 if TYPE_CHECKING:
     from agentcore.events.event_manager import EventManager
 
@@ -252,14 +250,10 @@ class LangGraphVertex:
             fallback_to_env_vars: Whether to fallback to env vars
         """
         from agentcore.interface.initialize import loading
-        
-        debug_log(f"🔧 BUILD START: vertex={self.id}, params.tools={self.params.get('tools', 'NOT_SET')}")
-        
+
         # Resolve parameters that reference other vertices
         await self._resolve_params()
-        
-        debug_log(f"🔧 BUILD AFTER _resolve_params: vertex={self.id}, params.tools={self.params.get('tools', 'NOT_SET')}")
-        
+
         # Instantiate component if not already done
         if not self.custom_component:
             self.custom_component, custom_params = loading.instantiate_class(
@@ -333,62 +327,48 @@ class LangGraphVertex:
         This method looks at incoming edges to this vertex and populates
         parameter values from the built results of predecessor vertices.
         """
-        print(f"🔍 _RESOLVE_PARAMS ENTRY: vertex={self.id}, has_graph={hasattr(self, 'graph')}, graph={self.graph is not None if hasattr(self, 'graph') else 'N/A'}")
-        
         if not hasattr(self, 'graph') or not self.graph:
-            print(f"🔍 _RESOLVE_PARAMS: vertex={self.id} - no graph, skipping")
-            logger.debug(f"🔍 _RESOLVE_PARAMS: vertex={self.id} - no graph, skipping")
             return
-        
-        debug_log(f"🔍 _RESOLVE_PARAMS START: vertex={self.id}, edges_count={len(self.graph.edges)}")
-        
+
         # Create a copy of params to modify
         resolved_params = self.params.copy()
-        
+
         # Look at incoming edges to find what parameters need to be resolved
         for edge_data in self.graph.edges:
             # Only process edges targeting this vertex
             if edge_data.get('target') != self.id:
                 continue
-            
+
             source_id = edge_data.get('source')
             target_handle = edge_data.get('data', {}).get('targetHandle', {})
             source_handle = edge_data.get('data', {}).get('sourceHandle', {})
-            
+
             # Get the field name this edge connects to
             field_name = target_handle.get('fieldName') if isinstance(target_handle, dict) else None
             source_output = source_handle.get('name') if isinstance(source_handle, dict) else None
-            
+
             if not field_name or not source_id:
                 continue
-            
-            debug_log(f"🔍 _RESOLVE_PARAMS: Processing edge {source_id} -> {self.id}, field={field_name}, output={source_output}")
-            
+
             # Get the source vertex
             source_vertex = self.graph.get_vertex(source_id) if hasattr(self.graph, 'get_vertex') else None
-            
+
             if not source_vertex:
-                debug_log(f"🔍 _RESOLVE_PARAMS: Source vertex {source_id} not found")
                 continue
-            
-            debug_log(f"🔍 _RESOLVE_PARAMS: Source vertex {source_id} built={source_vertex.built}, built_result={type(source_vertex.built_result)}, built_object={type(source_vertex.built_object)}")
-            
+
             if not source_vertex.built:
-                debug_log(f"🔍 _RESOLVE_PARAMS: Source vertex {source_id} not built yet")
                 continue
-            
+
             # Get the result value from the source vertex
             result_value = None
-            
+
             # First try built_result (which contains output method results as dict)
             if source_vertex.built_result is not None:
                 if isinstance(source_vertex.built_result, dict) and source_output:
                     result_value = source_vertex.built_result.get(source_output)
-                    debug_log(f"🔍 _RESOLVE_PARAMS: Got result from built_result[{source_output}]: {type(result_value)}, value={result_value}")
                 elif not isinstance(source_vertex.built_result, dict):
                     result_value = source_vertex.built_result
-                    debug_log(f"🔍 _RESOLVE_PARAMS: Got result from built_result (non-dict): {type(result_value)}")
-            
+
             # Fall back to built_object
             if result_value is None and source_vertex.built_object is not None:
                 if isinstance(source_vertex.built_object, dict) and source_output:
@@ -397,45 +377,38 @@ class LangGraphVertex:
                     result_value = list(source_vertex.built_object.values())[0]
                 else:
                     result_value = source_vertex.built_object
-                debug_log(f"🔍 _RESOLVE_PARAMS: Got result from built_object: {type(result_value)}")
-            
+
             if result_value is None:
-                debug_log(f"🔍 _RESOLVE_PARAMS: No result found from {source_id}")
                 continue
-            
+
             # Check if this is a list parameter (like tools) - need to append/extend
             current_value = resolved_params.get(field_name)
-            debug_log(f"🔍 _RESOLVE_PARAMS: field_name={field_name}, current_value={type(current_value)}, result_value={type(result_value)}")
-            
+
             # Check if input definition expects a list
             is_list_input = False
             for input_def in self.template.get('inputs', []) if isinstance(self.template, dict) else []:
                 if isinstance(input_def, dict) and input_def.get('name') == field_name:
                     is_list_input = input_def.get('list', False) or input_def.get('is_list', False)
                     break
-            
+
             # Also check the template field definition itself
             if not is_list_input and field_name in self.template:
                 field_def = self.template.get(field_name, {})
                 if isinstance(field_def, dict):
                     is_list_input = field_def.get('list', False) or field_def.get('is_list', False)
-            
-            debug_log(f"🔍 _RESOLVE_PARAMS: field_name={field_name}, is_list_input={is_list_input}")
-            
+
             if isinstance(current_value, list):
                 # Append to existing list
                 if isinstance(result_value, list):
                     resolved_params[field_name] = current_value + result_value
                 else:
                     resolved_params[field_name] = current_value + [result_value]
-                debug_log(f"🔍 _RESOLVE_PARAMS: Appended to list param {field_name}, new length={len(resolved_params[field_name])}")
             elif current_value is None or current_value == "" or current_value == []:
                 # Set value (wrap in list if the field expects a list)
                 if is_list_input and not isinstance(result_value, list):
                     resolved_params[field_name] = [result_value]
                 else:
                     resolved_params[field_name] = result_value
-                debug_log(f"🔍 _RESOLVE_PARAMS: Set param {field_name} = {type(resolved_params[field_name])}")
             else:
                 # Current value is a string reference or other non-list value
                 # Replace with proper value, wrapping in list if field expects a list
@@ -444,18 +417,15 @@ class LangGraphVertex:
                         resolved_params[field_name] = result_value
                     else:
                         resolved_params[field_name] = [result_value]
-                    debug_log(f"🔍 _RESOLVE_PARAMS: Replaced string ref with list for {field_name}, length={len(resolved_params[field_name])}")
                 else:
                     resolved_params[field_name] = result_value
-                    debug_log(f"🔍 _RESOLVE_PARAMS: Replaced param {field_name} = {type(result_value)}")
-        
+
         # Update params with resolved values
-        debug_log(f"🔍 _RESOLVE_PARAMS COMPLETE: vertex={self.id}, tools in params={resolved_params.get('tools')}")
         self.params = resolved_params
-    
+
     def built_object_repr(self) -> str:
         """Get string representation of build status."""
-        return "Built successfully ✨" if self.built_object is not None else "Failed to build 😵‍💫"
+        return "Built successfully" if self.built_object is not None else "Failed to build"
     
     def add_build_time(self, time: float) -> None:
         """Add a build time to the tracking list.
@@ -542,19 +512,16 @@ class LangGraphVertex:
     @property
     def edges_source_names(self) -> set[str | None]:
         """Get set of source handle names from outgoing edges."""
-        from loguru import logger
         names = set()
         # Check outgoing edges from graph (edges where this vertex is the source)
         if hasattr(self.graph, 'edges'):
             for edge in self.graph.edges:
                 if edge.get('source') == self.id:
                     source_handle = edge.get('data', {}).get('sourceHandle', {})
-                    logger.info(f"🔍 EDGES_SOURCE_NAMES: vertex={self.id}, edge_target={edge.get('target')}, source_handle={source_handle}")
                     if isinstance(source_handle, dict):
                         names.add(source_handle.get('name'))
                     else:
                         names.add(None)
-        logger.info(f"🔍 EDGES_SOURCE_NAMES RESULT: vertex={self.id}, names={names}")
         return names
     
     @property

@@ -202,7 +202,6 @@ async def generate_flow_events(
     """
     import time as time_module
     run_id = f"{flow_id}_{int(time_module.time() * 1000) % 100000}"
-    logger.info(f"🚀 FLOW_RUN_START: flow_id={flow_id}, run_id={run_id}, inputs={inputs}, data={'has_data' if data else 'no_data'}")
     chat_service = get_chat_service()
 
     telemetry_service = get_telemetry_service()
@@ -210,29 +209,20 @@ async def generate_flow_events(
         inputs = InputValueRequest(session=str(flow_id))
 
     async def build_graph_and_get_order() -> tuple[list[str], list[str], Graph | LangGraphAdapter]:
-        logger.info(f"📊 BUILD_GRAPH_START: flow_id={flow_id}")
         start_time = time.perf_counter()
         components_count = 0
         graph = None
         try:
             flow_id_str = str(flow_id)
-            logger.info(f"📊 BUILD_GRAPH: Getting session_scope for flow_id={flow_id_str}")
             # Create a fresh session for database operations
             async with session_scope() as fresh_session:
                 graph = await create_graph(fresh_session, flow_id_str, flow_name)
 
             first_layer = sort_vertices(graph)
-            logger.info(f"📊 GRAPH_STATE AFTER CREATE: first_layer={first_layer}")
-            logger.info(f"📊 GRAPH_STATE: vertices_to_run={graph.vertices_to_run}")
-            logger.info(f"📊 GRAPH_STATE: run_manager.vertices_being_run={graph.run_manager.vertices_being_run}")
-            logger.info(f"📊 GRAPH_STATE: run_manager.vertices_to_run={graph.run_manager.vertices_to_run}")
-            logger.info(f"📊 GRAPH_STATE: run_manager.run_predecessors={dict(graph.run_manager.run_predecessors)}")
 
 
             for vertex_id in first_layer:
                 graph.run_manager.add_to_vertices_being_run(vertex_id)
-                
-            logger.info(f"📊 GRAPH_STATE AFTER ADD FIRST LAYER: run_manager.vertices_being_run={graph.run_manager.vertices_being_run}")
 
             # Now vertices is a list of lists
             # We need to get the id of each vertex
@@ -266,14 +256,12 @@ async def generate_flow_events(
         )
 
     async def create_graph(fresh_session, flow_id_str: str, flow_name: str | None) -> Graph | LangGraphAdapter:
-        logger.info(f"📊 CREATE_GRAPH: flow_id={flow_id_str}, flow_name={flow_name}, has_data={data is not None}")
         if inputs is not None and getattr(inputs, "session", None) is not None:
             effective_session_id = inputs.session
         else:
             effective_session_id = flow_id_str
 
         if not data:
-            logger.info(f"📊 CREATE_GRAPH: Calling build_graph_from_db for flow_id={flow_id_str}")
             return await build_graph_from_db(
                 flow_id=flow_id,
                 session=fresh_session,
@@ -287,7 +275,6 @@ async def generate_flow_events(
             flow_name = result.first()
 
         # Build graph using LangGraph
-        logger.info(f"📊 CREATE_GRAPH: Calling build_graph_from_data for flow_id={flow_id_str}")
         return await build_graph_from_data(
             flow_id=flow_id_str,
             payload=data.model_dump(),
@@ -306,10 +293,6 @@ async def generate_flow_events(
                     stop_component_id=stop_component_id,
                     start_component_id=start_component_id,
                 )
-                logger.info(f"🔍 SORT_VERTICES (LangGraph): stop_component_id={stop_component_id}, start_component_id={start_component_id}")
-                logger.info(f"🔍 SORT_VERTICES (LangGraph): in_degree_map={graph.in_degree_map}")
-                logger.info(f"🔍 SORT_VERTICES (LangGraph): first_layer={first_layer}")
-                logger.info(f"🔍 SORT_VERTICES (LangGraph): vertices_to_run={graph.vertices_to_run}")
                 return first_layer
             else:
                 return graph.sort_vertices(stop_component_id, start_component_id)
@@ -449,21 +432,15 @@ async def generate_flow_events(
             graph: The graph instance
             event_manager: Manager for handling events
         """
-        logger.info(f"🔨 BUILD_VERTICES START: {vertex_id}")
-
-        
         try:
             vertex_build_response: VertexBuildResponse = await _build_vertex(vertex_id, graph, event_manager)
         except asyncio.CancelledError as exc:
             logger.error(f"Build cancelled: {exc}")
             raise
 
-        logger.info(f"🔨 BUILD_VERTICES DONE: {vertex_id}")
-
         # Mark this vertex as completed
         async with completed_lock:
             completed_vertices.add(vertex_id)
-            logger.info(f"🔨 BUILD_VERTICES COMPLETED: {vertex_id}")
 
         # send built event or error event
         try:
@@ -474,7 +451,6 @@ async def generate_flow_events(
             raise ValueError(msg) from exc
 
         event_manager.on_end_vertex(data={"build_data": build_data})
-        logger.info(f"🔨 BUILD_VERTICES CHECK NEXT: vertex={vertex_id}, valid={vertex_build_response.valid}, next_vertices_ids={vertex_build_response.next_vertices_ids}")
 
         if vertex_build_response.valid and vertex_build_response.next_vertices_ids:
             tasks = []
@@ -483,10 +459,8 @@ async def generate_flow_events(
                 async with completed_lock:
                     predecessors = graph.predecessor_map.get(next_vertex_id, [])
                     all_predecessors_complete = all(pred in completed_vertices for pred in predecessors)
-                    logger.info(f"🔨 BUILD_VERTICES PREDECESSOR CHECK: next_vertex={next_vertex_id}, predecessors={predecessors}, completed_vertices={completed_vertices}, all_complete={all_predecessors_complete}")
 
                 if all_predecessors_complete:
-                    logger.info(f"🔨 BUILD_VERTICES STARTING NEXT: {next_vertex_id}")
                     task = asyncio.create_task(
                         build_vertices(
                             next_vertex_id,
@@ -495,15 +469,8 @@ async def generate_flow_events(
                         )
                     )
                     tasks.append(task)
-                else:
-                    logger.info(f"🔨 BUILD_VERTICES SKIPPING: {next_vertex_id} - waiting for predecessors")
             if tasks:
-                logger.info(f"🔨 BUILD_VERTICES GATHER: waiting for {len(tasks)} tasks")
                 await asyncio.gather(*tasks)
-                logger.info(f"🔨 BUILD_VERTICES GATHER DONE: all {len(tasks)} tasks completed")
-
-        logger.info(f"🔨 BUILD_VERTICES COMPLETE: {vertex_id}")
-                
 
     try:
         ids, vertices_to_run, graph = await build_graph_and_get_order()
@@ -523,20 +490,11 @@ async def generate_flow_events(
     input_ids = [vid for vid in ids if graph.get_vertex(vid) and graph.get_vertex(vid).is_input]
     non_input_ids = [vid for vid in ids if vid not in input_ids]
 
-    logger.info(f"🔄 BUILD ORDER: first_layer (ids)={ids}")
-    logger.info(f"🔄 BUILD ORDER: input_ids={input_ids}")
-    logger.info(f"🔄 BUILD ORDER: non_input_ids={non_input_ids}")
-    logger.info(f"🔄 BUILD ORDER: total_vertices={len(graph.vertices)}")
-    logger.info(f"🔄 BUILD ORDER: vertices_to_run={vertices_to_run}")
-
     # First, build input vertices SEQUENTIALLY (ensures user message is stored first)
     # Using sequential instead of parallel to guarantee event ordering
     for vertex_id in input_ids:
-        logger.info(f"🔄 BUILD INPUT START: {vertex_id}")
         await build_vertices(vertex_id, graph, event_manager)
-        logger.info(f"🔄 BUILD INPUT DONE: {vertex_id}")
 
-    logger.info(f"🔄 BUILD NON-INPUT: non_input_ids={non_input_ids}")
     # Then, build non-input vertices in parallel
     if non_input_ids:
         tasks = []
@@ -544,9 +502,7 @@ async def generate_flow_events(
             task = asyncio.create_task(build_vertices(vertex_id, graph, event_manager))
             tasks.append(task)
         try:
-            logger.info(f"🔄 BUILD NON-INPUT: Waiting for {len(tasks)} tasks")
             await asyncio.gather(*tasks)
-            logger.info(f"🔄 BUILD NON-INPUT: All tasks completed")
         except asyncio.CancelledError:
             background_tasks.add_task(graph.end_all_traces_in_context())
             raise
@@ -562,14 +518,10 @@ async def generate_flow_events(
             )
             event_manager.on_error(data=error_message.data)
             raise
-      
-    logger.info("🏁 FLOW_COMPLETE: Calling event_manager.on_end()")   
+
     event_manager.on_end(data={})
-    logger.info("🏁 FLOW_COMPLETE: Calling graph.end_all_traces()")
     await graph.end_all_traces()
-    logger.info("🏁 FLOW_COMPLETE: Putting None in event queue")
     await event_manager.queue.put((None, None, time.time()))
-    logger.info("🏁 FLOW_COMPLETE: Done!")
 
 
 async def cancel_flow_build(

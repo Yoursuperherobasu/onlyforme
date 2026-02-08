@@ -9,7 +9,6 @@ class MaxFileSizeException(HTTPException):
         super().__init__(status_code=413, detail=detail)
 
 
-# Adapted from https://github.com/steinnes/content-size-limit-asgi/blob/master/content_size_limit_asgi/middleware.py#L26
 class ContentSizeLimitMiddleware:
     """Content size limiting middleware for ASGI applications.
 

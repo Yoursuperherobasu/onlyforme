@@ -25,7 +25,7 @@ from agentcore.services.deps import get_db_service, get_session, get_settings_se
 from agentcore.services.settings.service import SettingsService
 from agentcore.services.auth.permissions import ROLE_PERMISSIONS
 
-# TODO: API key authentication removed - migrating to Azure Key Vault
+# API key to Azure Key Vault
 
 oauth2_login = OAuth2PasswordBearer(tokenUrl="api/v1/login", auto_error=False)
 
@@ -47,13 +47,12 @@ def require_permission(action: str):
         return current_user
     return permission_dependency
 
-# Source: https://github.com/mrtolkien/fastapi_simple_security/blob/master/fastapi_simple_security/security_api_key.py
 async def api_key_security(
     query_param: Annotated[str, Security(api_key_query)],
     header_param: Annotated[str, Security(api_key_header)],
 ) -> UserRead | None:
-    """API key security - currently disabled, migrating to Azure Key Vault."""
-    # TODO: API key authentication disabled - migrating to Azure Key Vault
+    """API key security - currently disabled, use Azure Key Vault."""
+    # API key authentication disabled Azure Key Vault
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="API key authentication is currently disabled. Will be migrated to Azure Key Vault.",

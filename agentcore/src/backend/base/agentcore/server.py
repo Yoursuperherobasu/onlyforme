@@ -14,11 +14,7 @@ class AgentcoreUvicornWorker(UvicornWorker):
     _has_exited = False
 
     def _install_sigint_handler(self) -> None:
-        """Install a SIGQUIT handler on workers.
-
-        - https://github.com/encode/uvicorn/issues/1116
-        - https://github.com/benoitc/gunicorn/issues/2604
-        """
+        """Install a SIGQUIT handler on workers."""
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGINT, self.handle_exit, signal.SIGINT, None)
         loop.add_signal_handler(signal.SIGTERM, self.handle_exit, signal.SIGTERM, None)

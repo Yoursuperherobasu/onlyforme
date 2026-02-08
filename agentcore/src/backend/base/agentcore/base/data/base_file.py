@@ -503,27 +503,12 @@ class BaseFileNode(Node, ABC):
         Raises:
             ValueError: If any path does not exist.
         """
-        # DEBUG LOG: Initial state
-        logger.info(f"🔍 DEBUG _validate_and_resolve_paths - self.path type: {type(self.path)}, value: {self.path}")
-        logger.info(f"🔍 DEBUG _validate_and_resolve_paths - self.file_path exists: {hasattr(self, 'file_path')}")
-        if hasattr(self, 'file_path'):
-            logger.info(f"🔍 DEBUG _validate_and_resolve_paths - self.file_path type: {type(self.file_path)}, value: {self.file_path}")
-
         resolved_files = []
 
         def add_file(data: Data, path: str | Path, *, delete_after_processing: bool):
-            logger.info(f"🔍 DEBUG add_file called - path type: {type(path)}, value: {path}")
-            logger.info(f"🔍 DEBUG add_file - data: {data.data if isinstance(data, Data) else data}")
-
             path_str = str(path)
-            logger.info(f"🔍 DEBUG add_file - path_str: {path_str}")
-
             resolved_path_str = self.resolve_path(path_str)
-            logger.info(f"🔍 DEBUG add_file - after resolve_path: {resolved_path_str}")
-
             resolved_path = Path(resolved_path_str)
-            logger.info(f"🔍 DEBUG add_file - Path object: {resolved_path}")
-            logger.info(f"🔍 DEBUG add_file - resolved_path.exists(): {resolved_path.exists()}")
 
             if not resolved_path.exists():
                 msg = f"File or directory not found: {path}"
@@ -535,25 +520,18 @@ class BaseFileNode(Node, ABC):
             )
 
         file_path = self._file_path_as_list()
-        logger.info(f"🔍 DEBUG _validate_and_resolve_paths - file_path result: {file_path}")
         if self.path and not file_path:
             # Wrap self.path into a Data object
             if isinstance(self.path, list):
-                logger.info(f"🔍 DEBUG self.path is list with {len(self.path)} items: {self.path}")
-                for i, path in enumerate(self.path):
-                    logger.info(f"🔍 DEBUG Processing path[{i}]: type={type(path)}, value={path}")
+                for path in self.path:
                     data_obj = Data(data={self.SERVER_FILE_PATH_FIELDNAME: path})
                     add_file(data=data_obj, path=path, delete_after_processing=False)
             else:
-                logger.info(f"🔍 DEBUG self.path is not list: type={type(self.path)}, value={self.path}")
                 data_obj = Data(data={self.SERVER_FILE_PATH_FIELDNAME: self.path})
                 add_file(data=data_obj, path=self.path, delete_after_processing=False)
         elif file_path:
-             logger.info(f"🔍 DEBUG Branch: file_path exists with {len(file_path)} items")
-             for i, obj in enumerate(file_path):
-                logger.info(f"🔍 DEBUG Processing file_path[{i}]: {obj}")
+             for obj in file_path:
                 server_file_path = obj.data.get(self.SERVER_FILE_PATH_FIELDNAME)
-                logger.info(f"🔍 DEBUG server_file_path extracted: {server_file_path}")
                 if server_file_path:
                     add_file(
                         data=obj,

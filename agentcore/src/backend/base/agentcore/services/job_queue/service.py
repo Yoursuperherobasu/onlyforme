@@ -187,7 +187,7 @@ class JobQueueService(Service):
                 logger.debug(f"Task for job_id {job_id} was cancelled")
                 raise
             except Exception:
-                logger.exception(f"❌ TASK EXCEPTION in job_id {job_id}")
+                logger.exception(f"Task exception in job_id {job_id}")
                 raise
 
         # Initiate the new asynchronous task.

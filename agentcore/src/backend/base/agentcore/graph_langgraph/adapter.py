@@ -287,7 +287,6 @@ class LangGraphAdapter:
         for vertex in self.vertices:
             node_func = create_node_function(vertex)
             self.workflow.add_node(vertex.id, node_func)
-            logger.info(f"📦 Added node: {vertex.id} ({vertex.display_name})")
         
         # Add edges to workflow
         for edge_data in self.edges:
@@ -297,7 +296,6 @@ class LangGraphAdapter:
             if source_id and target_id and source_id in self.vertex_map and target_id in self.vertex_map:
                 try:
                     self.workflow.add_edge(source_id, target_id)
-                    logger.info(f"🔗 Added edge: {source_id} -> {target_id}")
                 except Exception as e:
                     logger.warning(f"Failed to add edge {source_id} -> {target_id}: {e}")
         
@@ -332,14 +330,14 @@ class LangGraphAdapter:
             # 1. ASCII Visualization (always works)
             try:
                 ascii_graph = graph_obj.draw_ascii()
-                logger.info(f"📊 ASCII Graph Structure:\n{ascii_graph}")
+                logger.info(f"ASCII Graph Structure:\n{ascii_graph}")
             except Exception as e:
                 logger.debug(f"Could not draw ASCII graph: {e}")
             
             # 2. Mermaid Diagram (always works, good for documentation)
             try:
                 mermaid_code = graph_obj.draw_mermaid()
-                logger.info(f"🧜 Mermaid Diagram:\n{mermaid_code}")
+                logger.info(f"Mermaid Diagram:\n{mermaid_code}")
             except Exception as e:
                 logger.debug(f"Could not generate Mermaid diagram: {e}")
             
@@ -397,15 +395,9 @@ class LangGraphAdapter:
         # Get all vertex IDs
         all_vertex_ids = list(self.vertex_map.keys())
         
-        logger.info(f"🎯 SORT_VERTICES: stop_component_id={stop_component_id}, start_component_id={start_component_id}")
-        logger.info(f"🎯 SORT_VERTICES: all_vertex_ids={all_vertex_ids}")
-        logger.info(f"🎯 SORT_VERTICES: predecessor_map={self.predecessor_map}")
-        logger.info(f"🎯 SORT_VERTICES: successor_map={self.successor_map}")
-        
         # Handle the case where stop_component_id is in a cycle
         # In cycles, we convert stop to start to avoid infinite loops
         if stop_component_id and stop_component_id in self.cycle_vertices:
-            logger.info(f"🎯 SORT_VERTICES: stop_component_id {stop_component_id} is in cycle, converting to start")
             start_component_id = stop_component_id
             stop_component_id = None
         
@@ -435,10 +427,6 @@ class LangGraphAdapter:
             predecessor_map={k: v for k, v in self.predecessor_map.items() if k in filtered_vertices},
             vertices_to_run=self.vertices_to_run,
         )
-        
-        logger.info(f"🎯 SORT_VERTICES: filtered vertices_to_run={self.vertices_to_run}")
-        logger.info(f"🎯 SORT_VERTICES: first_layer={first_layer}")
-        logger.info(f"🎯 SORT_VERTICES: stop_vertex={self.stop_vertex}")
         
         return first_layer if first_layer else list(self.vertex_map.keys())[:1]
     
@@ -507,11 +495,6 @@ class LangGraphAdapter:
             predecessor_map=self.predecessor_map,
             vertices_to_run=self.vertices_to_run
         )
-        
-        logger.info(f"🚀 INITIALIZE_RUN: Reset complete - all vertices set to ACTIVE")
-        logger.info(f"🚀 INITIALIZE_RUN: vertices_to_run={self.vertices_to_run}")
-        logger.info(f"🚀 INITIALIZE_RUN: inactivated_vertices={self.inactivated_vertices}")
-        logger.info(f"🚀 INITIALIZE_RUN: run_manager.ran_at_least_once={self.run_manager.ran_at_least_once}")
         
         # Always generate a new run ID for each run
         self.set_run_id()
@@ -716,12 +699,10 @@ class LangGraphAdapter:
                     logger.debug(f"Skipping input vertex {vertex_id} - not in components filter: {input_components}")
             
             if should_update:
-                print(f"🔧 ADAPTER: Updating input vertex {vertex_id} with inputs: {inputs_dict}")
                 logger.debug(f"Updating input vertex {vertex_id} with inputs: {inputs_dict}")
                 
                 if INPUT_FIELD_NAME in inputs_dict:
                     vertex.update_raw_params({INPUT_FIELD_NAME: inputs_dict[INPUT_FIELD_NAME]}, overwrite=True)
-                    print(f"✅ ADAPTER: Input vertex {vertex_id} updated with {INPUT_FIELD_NAME}: {inputs_dict[INPUT_FIELD_NAME]}")
                     logger.debug(f"Input vertex {vertex_id} updated with input_value: {inputs_dict[INPUT_FIELD_NAME]}")
         
         # Check if we should build or use cached result (frozen vertex optimization)
@@ -770,8 +751,6 @@ class LangGraphAdapter:
                     event_manager=kwargs.get("event_manager"),
                     fallback_to_env_vars=kwargs.get("fallback_to_env_vars", False),
                 )
-                
-                print(f"✅ ADAPTER: Vertex {vertex.id} built successfully, flow_id={self.flow_id}")
                 
                 # Log transaction to database (for Logs UI)
                 if self.flow_id:
@@ -952,8 +931,6 @@ class LangGraphAdapter:
             # Use find_next_runnable_vertices to filter out inactive vertices
             next_runnable_vertices = self.find_next_runnable_vertices(v_successors_ids)
             
-            logger.info(f"🔍 GET_NEXT_RUNNABLE: vertex={v_id}, successors={v_successors_ids}, next_runnable={next_runnable_vertices}, inactivated={self.inactivated_vertices}, vertices_to_run={len(self.vertices_to_run)}")
-            
             for next_v_id in set(next_runnable_vertices):  # Use set to avoid duplicates
                 if next_v_id == v_id:
                     next_runnable_vertices.remove(v_id)
@@ -1093,11 +1070,8 @@ class LangGraphAdapter:
             msg = "Graph not prepared. Call prepare() first."
             raise ValueError(msg)
         
-        logger.info(f"🔍 ASTEP: run_queue={list(self._run_queue)}")
-        
         if not self._run_queue:
             # No more vertices to run - end traces and return Finish
-            logger.info("🔍 ASTEP: run_queue empty, returning Finish")
             await self.end_all_traces_in_context()
             return Finish()
         
@@ -1129,9 +1103,7 @@ class LangGraphAdapter:
         if self.stop_vertex and self.stop_vertex in next_runnable_vertices:
             next_runnable_vertices = [self.stop_vertex]
         
-        logger.info(f"🔍 ASTEP: next_runnable_vertices={next_runnable_vertices}")
         self.extend_run_queue(next_runnable_vertices)
-        logger.info(f"🔍 ASTEP: run_queue after extend={list(self._run_queue)}")
         self.reset_inactivated_vertices()
         self.reset_activated_vertices()
         
@@ -1365,18 +1337,15 @@ class LangGraphAdapter:
         
         # Don't mark the starting vertex itself, only its children
         if not is_first_call:
-            logger.info(f"🔀 _MARK_BRANCH: Marking vertex {vertex_id} as {state}")
             self.mark_vertex(vertex_id, state)
 
         # Get children from parent_child_map or successor_map
         children = self.parent_child_map.get(vertex_id, []) or self.successor_map.get(vertex_id, [])
-        logger.info(f"🔀 _MARK_BRANCH: vertex={vertex_id}, children={children}, output_name={output_name}")
         
         for child_id in children:
             # Only mark children that have an edge through the specified output_name
             if output_name:
                 edge = self.get_edge(vertex_id, child_id)
-                logger.info(f"🔀 _MARK_BRANCH: Checking edge {vertex_id} -> {child_id}, edge={edge}")
                 if edge:
                     # Check if edge's source handle matches output_name
                     source_handle = edge.get("data", {}).get("sourceHandle", {})
@@ -1384,11 +1353,9 @@ class LangGraphAdapter:
                         handle_name = source_handle.get("name", "")
                     else:
                         handle_name = str(source_handle) if source_handle else ""
-                    logger.info(f"🔀 _MARK_BRANCH: handle_name={handle_name}, output_name={output_name}, match={handle_name == output_name}")
                     if handle_name != output_name:
                         continue
                 else:
-                    logger.info(f"🔀 _MARK_BRANCH: No edge found for {vertex_id} -> {child_id}")
                     continue
             self._mark_branch(child_id, state, visited)
         return visited
@@ -1406,12 +1373,7 @@ class LangGraphAdapter:
         """
         from agentcore.graph_langgraph.utils import build_adjacency_maps
         
-        logger.info(f"🔀 MARK_BRANCH: vertex_id={vertex_id}, state={state}, output_name={output_name}")
-        
         visited = self._mark_branch(vertex_id=vertex_id, state=state, output_name=output_name)
-        
-        logger.info(f"🔀 MARK_BRANCH visited vertices: {visited}")
-        logger.info(f"🔀 MARK_BRANCH inactivated_vertices: {self.inactivated_vertices}")
         
         # Update predecessor map for visited vertices
         new_predecessor_map = {k: list(v) for k, v in self.predecessor_map.items() if k in visited}
@@ -1591,19 +1553,10 @@ class LangGraphAdapter:
         """
         vertex = self.get_vertex(vertex_id)
         if not vertex:
-            logger.info(f"🔍 IS_VERTEX_RUNNABLE: {vertex_id} -> False (vertex not found)")
             return False
         is_active = vertex.is_active()
         is_loop = getattr(vertex, 'is_loop', False)
-        
-        # Debug: Check each condition
-        in_being_run = vertex_id in self.run_manager.vertices_being_run
-        in_vertices_to_run = vertex_id in self.run_manager.vertices_to_run
-        predecessors = self.run_manager.run_predecessors.get(vertex_id, [])
-        
-        result = self.run_manager.is_vertex_runnable(vertex_id, is_active=is_active, is_loop=is_loop)
-        logger.info(f"🔍 IS_VERTEX_RUNNABLE: {vertex_id} -> {result} (is_active={is_active}, in_being_run={in_being_run}, in_vertices_to_run={in_vertices_to_run}, predecessors={predecessors})")
-        return result
+        return self.run_manager.is_vertex_runnable(vertex_id, is_active=is_active, is_loop=is_loop)
     
     def find_next_runnable_vertices(self, vertex_successors_ids: list[str]) -> list[str]:
         """Determines the next set of runnable vertices from a list of successor vertex IDs.

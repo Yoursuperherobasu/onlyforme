@@ -16,7 +16,6 @@ from agentcore.logging import logger
 from agentcore.schema.data import Data
 from agentcore.schema.dotdict import dotdict
 from agentcore.schema.message import Message
-from agentcore.utils.debug_logger import debug_log
 
 
 def set_advanced_true(component_input):
@@ -87,27 +86,20 @@ class AgentNode(ToolCallingAgentNode):
             if isinstance(self.chat_history, Message):
                 self.chat_history = [self.chat_history]
 
-            # Debug: Check tools before processing
-            debug_log(f"🔍 AGENT TOOLS DEBUG: self.tools type={type(self.tools)}, value={self.tools}")
-            
             # Normalize self.tools to a list
             # Handle various edge cases: None, empty string, single tool, or list
             if self.tools is None or self.tools == "" or (isinstance(self.tools, str) and not self.tools.strip()):
-                debug_log(f"🔍 AGENT: self.tools was None/empty string, initializing to []")
                 self.tools = []
             elif isinstance(self.tools, list):
                 # Filter out any empty strings or None values from the list
                 self.tools = [t for t in self.tools if t is not None and t != ""]
-                debug_log(f"🔍 AGENT: self.tools is list, filtered to {len(self.tools)} tools")
             elif hasattr(self.tools, 'name'):
                 # It's a single tool object, wrap it in a list
-                debug_log(f"🔍 AGENT: self.tools was single tool {type(self.tools)}, wrapping in list")
                 self.tools = [self.tools]
             else:
-                # Unknown type - log and reset to empty list
-                debug_log(f"🔍 AGENT: self.tools was unexpected type {type(self.tools)}, resetting to []")
+                # Unknown type - reset to empty list
                 self.tools = []
-            
+
             # Add current date tool if enabled
             if self.add_current_date_tool:
                 current_date_tool = (await CurrentDateNode(**self.get_base_args()).to_toolkit()).pop(0)
@@ -115,10 +107,7 @@ class AgentNode(ToolCallingAgentNode):
                     msg = "CurrentDateNode must be converted to a StructuredTool"
                     raise TypeError(msg)
                 self.tools.append(current_date_tool)
-            
-            # Debug: Check tools after processing
-            debug_log(f"🔍 AGENT TOOLS FINAL: self.tools={[t.name for t in self.tools] if self.tools else []}, count={len(self.tools) if self.tools else 0}")
-            
+
             # note the tools are not required to run the agent, hence the validation removed.
 
             # Set up and run agent

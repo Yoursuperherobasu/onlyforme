@@ -176,20 +176,9 @@ async def build_flow(
     Returns:
         Dict with job_id that can be used to poll for build status
     """
-    print(f"🚀 BUILD_FLOW API CALLED - flow_id: {flow_id}, inputs: {inputs}")
-    # Log the incoming JSON payloads
-    logger.info(f"📥 INCOMING REQUEST - flow_id: {flow_id}")
-    if inputs:
-        pass
-        # logger.info(f"📥 INPUTS JSON: {inputs.model_dump_json(indent=2)}")
-    if data:
-        pass
-       # logger.info(f"FLOW data: {data}")
-       # logger.info(f"FLOW data Json: {data.model_dump_json(indent=2)}")
-       # logger.info(f"📥 FLOW DATA JSON (nodes count: {len(data.nodes)}, edges count: {len(data.edges)})")
-       # logger.debug(f"📥 FULL FLOW DATA: {data.model_dump_json(indent=2)}")
+    logger.debug(f"build_flow called: flow_id={flow_id}")
     if files:
-        logger.info(f"📥 FILES: {files}")
+        logger.debug(f"Files: {files}")
     # First verify the flow exists
     async with session_scope() as session:
         flow = await session.get(Flow, flow_id)

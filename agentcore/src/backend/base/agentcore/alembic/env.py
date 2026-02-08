@@ -111,7 +111,6 @@ async def _run_async_migrations() -> None:
     connectable = create_async_engine(url, poolclass=pool.NullPool)
  
     if connectable.dialect.name == "sqlite":
-        # See https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#serializable-isolation-savepoints-transactional-ddl
         listen(connectable.sync_engine, "connect", _sqlite_do_connect)
         listen(connectable.sync_engine, "begin", _sqlite_do_begin)
  
