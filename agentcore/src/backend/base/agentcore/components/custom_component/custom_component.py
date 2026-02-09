@@ -8,7 +8,7 @@ class CodeEditorNode(Node):
     display_name = "Custom Code"
     description = "Use as a template to create your own component."
     icon = "Pythoncode"
-    name = "Code Editor"
+    name = "CustomComponent"
 
     inputs = [
         MessageTextInput(
