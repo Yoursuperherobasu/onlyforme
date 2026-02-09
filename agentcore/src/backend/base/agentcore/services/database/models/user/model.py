@@ -47,7 +47,7 @@ class UserCreate(SQLModel):
     username: str = Field()
     password: str = Field()
     role: str = Field(default="developer", max_length=50)
-    optins: dict[str, Any] | None = Field()
+    optins: dict[str, Any] | None = None
 
 
 class UserRead(SQLModel):
