@@ -30,6 +30,7 @@ from agentcore.api.utils import (
 from agentcore.api.v1_schemas import AgentListCreate
 from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
 from agentcore.initial_setup.constants import STARTER_FOLDER_NAME
+from agentcore.initial_setup.setup import get_or_create_default_folder
 from agentcore.logging import logger
 from agentcore.services.database.models.agent.model import (
     AccessTypeEnum,
@@ -230,16 +231,15 @@ async def read_flows(
         auth_settings = get_settings_service().auth_settings
 
         default_folder = (await session.exec(select(Folder).where(Folder.name == DEFAULT_FOLDER_NAME))).first()
-        default_folder_id = default_folder.id if default_folder else None
 
         starter_folder = (await session.exec(select(Folder).where(Folder.name == STARTER_FOLDER_NAME))).first()
         starter_folder_id = starter_folder.id if starter_folder else None
 
-        if not starter_folder and not default_folder:
-            raise HTTPException(
-                status_code=404,
-                detail="Starter project and default project not found. Please create a project and add flows to it.",
-            )
+        if not default_folder:
+            # Auto-create the default folder if it doesn't exist
+            default_folder = await get_or_create_default_folder(session, current_user.id)
+
+        default_folder_id = default_folder.id
 
         if not folder_id:
             folder_id = default_folder_id
@@ -422,7 +422,7 @@ async def create_flows(
 ):
     """Create multiple new flows."""
     db_flows = []
-    for flow in flow_list.flows:
+    for flow in agent_list.flows:
         flow.user_id = current_user.id
         db_flow = Agent.model_validate(flow, from_attributes=True)
         # Strip sensitive values (API keys, secrets) from flow data before saving to DB
