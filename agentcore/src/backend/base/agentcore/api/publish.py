@@ -1,7 +1,5 @@
-"""AgentCore Publish API.
-
-[PUBLISH STUBBED] All OpenWebUI integration removed.
-These are dummy endpoints — will be replaced with internal portal publish.
+""" AgentCore Publish API.
+These are dummy endpoints.
 """
 
 from __future__ import annotations
