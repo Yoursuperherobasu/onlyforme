@@ -14,7 +14,7 @@ from agentcore.services.base import Service
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from langchain.callbacks.base import BaseCallbackHandler
+    from langchain_core.callbacks import BaseCallbackHandler
 
     from agentcore.custom.custom_node.node import Node
     from agentcore.graph_langgraph import LangGraphVertex as Vertex

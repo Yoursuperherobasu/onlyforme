@@ -6,7 +6,7 @@ from uuid import UUID
 
 from loguru import logger
 from typing_extensions import override
-from langchain.callbacks.base import BaseCallbackHandler
+from langchain_core.callbacks import BaseCallbackHandler
 
 from agentcore.serialization.serialization import serialize
 from agentcore.services.tracing.base import BaseTracer

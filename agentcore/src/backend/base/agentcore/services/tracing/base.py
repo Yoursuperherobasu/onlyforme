@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
 
-    from langchain.callbacks.base import BaseCallbackHandler
+    from langchain_core.callbacks import BaseCallbackHandler
 
     from agentcore.graph_langgraph import LangGraphVertex as Vertex
     from agentcore.services.tracing.schema import Log

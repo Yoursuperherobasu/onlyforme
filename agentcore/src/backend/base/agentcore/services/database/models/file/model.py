@@ -1,13 +1,10 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
-
+from agentcore.schema.serialize import UUIDstr
 from sqlmodel import Field, SQLModel
 
-from agentcore.schema.serialize import UUIDstr
-
-
 class File(SQLModel, table=True):  # type: ignore[call-arg]
-    id: UUIDstr = Field(default_factory=uuid4, primary_key=True)
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID = Field(foreign_key="user.id")
     name: str = Field(unique=True, nullable=False)
     path: str = Field(nullable=False)

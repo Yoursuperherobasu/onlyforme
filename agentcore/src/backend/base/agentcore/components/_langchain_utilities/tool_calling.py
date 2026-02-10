@@ -1,4 +1,4 @@
-from langchain.agents import create_tool_calling_agent
+from langchain_classic.agents import create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 
@@ -66,7 +66,7 @@ class ToolCallingAgentNode(LCToolsAgentNode):
         else:
             # No tools - create a simple chain that doesn't bind tools to the LLM
             # This prevents the "Tool choice is none, but model called a tool" error
-            from langchain.agents.output_parsers.tools import ToolsAgentOutputParser
+            from langchain_classic.agents.output_parsers.tools import ToolsAgentOutputParser
             from langchain_core.agents import AgentFinish
             from langchain_core.runnables import RunnableLambda
             

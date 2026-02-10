@@ -21,7 +21,7 @@ from agentcore.utils import validate
 from agentcore.utils.async_helpers import run_until_complete
 
 if TYPE_CHECKING:
-    from langchain.callbacks.base import BaseCallbackHandler
+    from langchain_core.callbacks import BaseCallbackHandler
 
     from agentcore.graph_langgraph import LangGraphAdapter as Graph
     from agentcore.graph_langgraph import LangGraphVertex as Vertex

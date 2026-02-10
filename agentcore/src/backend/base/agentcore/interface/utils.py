@@ -95,7 +95,7 @@ def setup_llm_caching() -> None:
 
 
 def set_langchain_cache(settings) -> None:
-    from langchain.globals import set_llm_cache
+    from langchain_core.globals import set_llm_cache
 
     from agentcore.interface.importing.utils import import_class
 

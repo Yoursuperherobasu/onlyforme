@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from langchain.callbacks.base import AsyncCallbackHandler
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.agents import AgentAction, AgentFinish
 
 from agentcore.schema.log import LogFunctionType

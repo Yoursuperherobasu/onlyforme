@@ -1,7 +1,7 @@
 import ast
 import operator
 
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool
 from langchain_core.tools import ToolException
 from loguru import logger
 from pydantic import BaseModel, Field
