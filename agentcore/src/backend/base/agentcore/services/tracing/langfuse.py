@@ -6,7 +6,10 @@ from uuid import UUID
 
 from loguru import logger
 from typing_extensions import override
-from langchain_core.callbacks import BaseCallbackHandler
+try:
+    from langchain_core.callbacks.base import BaseCallbackHandler
+except ImportError:
+    from langchain.callbacks.base import BaseCallbackHandler
 
 from agentcore.serialization.serialization import serialize
 from agentcore.services.tracing.base import BaseTracer
@@ -182,15 +185,29 @@ class LangFuseTracer(BaseTracer):
                 from langfuse import get_client
                 self._client = get_client()
 
-            # Health check
+            # Health check - log but continue if it fails
+            # The auth_check can fail for various reasons (network, wrong credentials, etc.)
+            # but we want to attempt tracing anyway since the client might still work
             if hasattr(self._client, 'auth_check'):
-                if not self._client.auth_check():
-                    return
+                try:
+                    if not self._client.auth_check():
+                        logger.warning(
+                            f"Langfuse auth_check failed for flow={self.flow_name}. "
+                            f"Check LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_BASE_URL. "
+                            f"Will attempt to continue anyway."
+                        )
+                    else:
+                        logger.debug(f"Langfuse auth_check passed for flow={self.flow_name}")
+                except Exception as e:
+                    logger.warning(f"Langfuse auth_check error (continuing anyway): {e}")
 
             # Build trace metadata
             trace_metadata = {
                 "agent_id": self.agent_id,
                 "flow_name": self.flow_name,
+                "run_id": str(self.trace_id),
+                "user_id": self.user_id,
+                "session_id": self.session_id,
             }
             if self.observability_project_id:
                 trace_metadata["project_id"] = self.observability_project_id
@@ -214,12 +231,12 @@ class LangFuseTracer(BaseTracer):
             self._propagate_context.__enter__()
 
             self._ready = True
-            logger.info(f"Langfuse v3 tracer ready: flow={self.flow_name}, user={self.user_id}")
+            logger.info(f"Langfuse v3 tracer ready: flow={self.flow_name}, user={self.user_id}, session={self.session_id}")
 
         except ImportError:
-            logger.warning("langfuse not installed")
+            logger.warning("langfuse not installed - tracing disabled")
         except Exception as e:
-            logger.warning(f"Error setting up Langfuse: {e}")
+            logger.error(f"Error setting up Langfuse tracer for flow={self.flow_name}: {e}", exc_info=True)
 
     # ======================================================
     # Span lifecycle
@@ -240,6 +257,11 @@ class LangFuseTracer(BaseTracer):
             return
 
         name = trace_name.removesuffix(f" ({trace_id})")
+
+        # Prevent duplicate root span if the component name matches the flow name
+        root_name = self.flow_name or self.agent_id
+        if root_name and name == root_name:
+            return
 
         span_metadata = {
             "from_agentcore_component": True,
@@ -321,9 +343,9 @@ class LangFuseTracer(BaseTracer):
             return
 
         try:
-            # v3: Use update_trace on root span to set trace-level input/output
-            if self._root_span and hasattr(self._root_span, 'update_trace'):
-                self._root_span.update_trace(
+            # v3: Use update on root span (which is now a trace) to set trace-level input/output
+            if self._root_span and hasattr(self._root_span, 'update'):
+                self._root_span.update(
                     input=serialize(inputs),
                     output=serialize(outputs),
                     metadata=metadata,

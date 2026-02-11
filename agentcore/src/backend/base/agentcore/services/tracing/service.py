@@ -5,6 +5,7 @@ import os
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -105,6 +106,7 @@ class TracingService(Service):
     def __init__(self, settings_service: SettingsService):
         self.settings_service = settings_service
         self.deactivated = self.settings_service.settings.deactivate_tracing
+        logger.info(f"🔧 TracingService initialized: deactivated={self.deactivated}")
 
     async def _trace_worker(self, trace_context: TraceContext) -> None:
         while trace_context.running or not trace_context.traces_queue.empty():
@@ -127,9 +129,11 @@ class TracingService(Service):
 
     def _initialize_langfuse_tracer(self, trace_context: TraceContext) -> None:
         if self.deactivated:
+            logger.warning("🚫 Langfuse tracer init skipped - tracing deactivated")
             return
+        logger.info(f"🎯 Creating LangFuseTracer instance for flow={trace_context.flow_name}")
         langfuse_tracer = _get_langfuse_tracer()
-        trace_context.tracers["langfuse"] = langfuse_tracer(
+        tracer_instance = langfuse_tracer(
             trace_name=trace_context.run_name,
             trace_type="chain",
             project_name=trace_context.project_name,
@@ -141,6 +145,8 @@ class TracingService(Service):
             observability_project_id=trace_context.observability_project_id,
             observability_project_name=trace_context.observability_project_name,
         )
+        trace_context.tracers["langfuse"] = tracer_instance
+        logger.info(f"✅ LangFuseTracer created: ready={tracer_instance.ready}, flow={trace_context.flow_name}")
 
     async def start_tracers(
         self,
@@ -172,9 +178,11 @@ class TracingService(Service):
             observability_project_name: Folder name for project display
         """
         if self.deactivated:
+            logger.warning(f"🚫 TRACING DEACTIVATED - skipping tracer start for flow={flow_name}")
             return
         try:
             project_name = project_name or os.getenv("LANGCHAIN_PROJECT", "Agentcore")
+            logger.info(f"📝 Creating trace context: flow={flow_name}, user={user_id}, session={session_id}")
             trace_context = TraceContext(
                 run_id=run_id,
                 run_name=run_name,
@@ -187,11 +195,14 @@ class TracingService(Service):
                 observability_project_name=observability_project_name,
             )
             trace_context_var.set(trace_context)
-            await self._start(trace_context)
+            
+            logger.info(f"🔧 Initializing Langfuse tracer for flow={flow_name}")
             self._initialize_langfuse_tracer(trace_context)
+            logger.info(f"▶️ Starting trace worker for flow={flow_name}")
             await self._start(trace_context)
+            logger.info(f"✅ Trace context ready for flow={flow_name}")
         except Exception as e:  # noqa: BLE001
-            logger.debug(f"Error initializing tracers: {e}")
+            logger.error(f"❌ Error initializing tracers for flow={flow_name}: {e}", exc_info=True)
 
     async def _stop(self, trace_context: TraceContext) -> None:
         try:
@@ -219,6 +230,37 @@ class TracingService(Service):
                     )
                 except Exception as e:  # noqa: BLE001
                     logger.error(f"Error ending tracer '{name}': {e}")
+
+    def _schedule_new_trace_evaluations(self, trace_context: TraceContext) -> None:
+        """Trigger evaluators configured for 'new' traces (fire-and-forget)."""
+        if not trace_context.user_id or not trace_context.run_id:
+            logger.info("⏭️ Skipping evaluator scheduling: missing user_id or run_id")
+            return
+
+        logger.info(
+            f"🎯 SCHEDULING EVALUATORS: trace={trace_context.run_id}, "
+            f"flow={trace_context.flow_name}, agent_id={trace_context.agent_id}, "
+            f"user={trace_context.user_id}, session={trace_context.session_id}"
+        )
+
+        try:
+            from agentcore.api.evaluation import run_saved_evaluators_for_new_trace
+
+            asyncio.create_task(
+                run_saved_evaluators_for_new_trace(
+                    trace_id=str(trace_context.run_id),
+                    user_id=str(trace_context.user_id),
+                    agent_id=trace_context.agent_id,
+                    flow_name=trace_context.flow_name,
+                    session_id=trace_context.session_id,
+                    project_name=trace_context.observability_project_name or trace_context.project_name,
+                    timestamp=datetime.now(timezone.utc),
+                )
+            )
+            logger.info("✅ Evaluator task scheduled successfully")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"❌ Failed to schedule new-trace evaluators: {e}")
+
     async def end_tracers(self, outputs: dict, error: Exception | None = None) -> None:
         """End the trace for a graph run.
 
@@ -233,6 +275,7 @@ class TracingService(Service):
             raise RuntimeError(msg)
         await self._stop(trace_context)
         self._end_all_tracers(trace_context, outputs, error)
+        self._schedule_new_trace_evaluations(trace_context)
 
     @staticmethod
     def _cleanup_inputs(inputs: dict[str, Any]):

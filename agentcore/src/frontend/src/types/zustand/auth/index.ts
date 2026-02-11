@@ -4,6 +4,7 @@ export interface AuthStoreType {
   accessToken: string | null;
   apiKey: string | null;
   authenticationErrorCount: number;
+  autoLogin: boolean | undefined;
 
   // 🧑‍💻 Authorization
   role: string | null;
@@ -26,6 +27,7 @@ export interface AuthStoreType {
   setApiKey: (apiKey: string | null) => void;
   setAuthenticationErrorCount: (authenticationErrorCount: number) => void;
   setAuthHydrated: (value: boolean) => void;
+  setAutoLogin: (autoLogin: boolean) => void;
 
   logout: () => Promise<void>;
 }

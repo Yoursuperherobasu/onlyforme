@@ -49,6 +49,7 @@ import Dashboard from "./pages/DashboardPage";
 import DashboardAdmin from "./pages/DashboardPage";
 import TimeoutSettings from "./pages/TimeoutSettings";
 import ObservabilityDashboard from "./pages/ObservabilityPage";
+import EvaluationPage from "./pages/EvaluationPage";
 import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
 
@@ -128,9 +129,15 @@ const router = createBrowserRouter(
                     path="agent-catalogue"
                     element={<AgentCatalogueView />}
                   />
+                  
                   <Route
                     path="observability-dashboard"
                     element={<ObservabilityDashboard />}
+                  />
+
+                  <Route
+                    path="evaluation"
+                    element={<EvaluationPage />}
                   />
 
                   <Route path="workflows" element={<WorkflowsView />} />

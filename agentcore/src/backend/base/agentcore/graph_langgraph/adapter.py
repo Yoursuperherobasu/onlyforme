@@ -489,11 +489,13 @@ class LangGraphAdapter:
         # Initialize tracing service - this creates the FLOW-LEVEL trace
         # Each vertex build will create child spans under this trace via trace_component()
         self.tracing_service = get_tracing_service()
+        logger.info(f"🔍 TRACING INIT: service={self.tracing_service}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
         if self.tracing_service and not self.tracing_service.deactivated:
             from uuid import UUID
             run_name = f"{self.flow_name} - {self.agent_id}"
             # Use the run_id we just set (converted to UUID)
             run_id = UUID(self._run_id) if self._run_id else uuid4()
+            logger.info(f"🚀 STARTING TRACERS: flow={self.flow_name}, user={self.user_id}, session={self._session_id}, run_id={run_id}")
             await self.tracing_service.start_tracers(
                 run_id=run_id,
                 run_name=run_name,
@@ -504,6 +506,9 @@ class LangGraphAdapter:
                 observability_project_id=self.project_id,
                 observability_project_name=self.project_name,
             )
+            logger.info(f"✅ TRACERS STARTED: flow={self.flow_name}")
+        else:
+            logger.warning(f"⚠️ TRACING DISABLED: service_exists={self.tracing_service is not None}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
     
     def set_run_id(self, run_id: str | None = None) -> None:
         """Set the run ID for this graph execution.

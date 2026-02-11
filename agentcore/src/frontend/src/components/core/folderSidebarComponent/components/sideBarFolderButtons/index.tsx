@@ -537,6 +537,22 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuButton>
         </SidebarMenuItem>
 
+        {/* Evaluation */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/evaluation")}
+            onClick={() => _navigate("/evaluation")}
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+          >
+            <ForwardedIconComponent
+              name="Scale"
+              className="h-4 w-4"
+            />
+            Evaluation
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
         <SidebarMenuItem>
           <SidebarMenuButton
             size="md"

@@ -1,0 +1,55 @@
+from datetime import datetime, timezone
+from typing import List, Optional
+from uuid import UUID, uuid4
+
+from sqlalchemy import Text
+from sqlmodel import Field, SQLModel, Column, JSON
+
+
+class EvaluatorBase(SQLModel):
+    name: str
+    criteria: str = Field(sa_column=Column(Text, nullable=False))
+    model: str | None = "gpt-4o"
+    preset_id: Optional[str] = None
+    ground_truth: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    target: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    trace_id: Optional[str] = None
+    flow_id: Optional[str] = None
+    flow_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    agent_id: Optional[str] = None  # Alias for flow_id (agents are flows)
+    agent_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))  # Alias for flow_ids
+    flow_name: Optional[str] = None
+    session_id: Optional[str] = None
+    project_name: Optional[str] = None
+    ts_from: Optional[datetime] = None
+    ts_to: Optional[datetime] = None
+    model_api_key: Optional[str] = None
+
+
+class Evaluator(EvaluatorBase, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID | None = Field(default=None, index=True, nullable=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def to_response(self) -> dict:
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "criteria": self.criteria,
+            "model": self.model,
+            "user_id": str(self.user_id) if self.user_id else None,
+            "preset_id": self.preset_id,
+            "flow_ids": self.flow_ids,
+            "agent_id": self.agent_id,
+            "agent_ids": self.agent_ids,
+            "target": self.target,
+            "ground_truth": self.ground_truth,
+            "trace_id": self.trace_id,
+            "flow_id": self.flow_id,
+            "flow_name": self.flow_name,
+            "session_id": self.session_id,
+            "project_name": self.project_name,
+            "ts_from": self.ts_from.isoformat() if self.ts_from else None,
+            "ts_to": self.ts_to.isoformat() if self.ts_to else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

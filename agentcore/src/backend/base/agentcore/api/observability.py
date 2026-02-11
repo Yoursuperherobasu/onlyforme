@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from agentcore.services.auth.utils import get_current_active_user
 from agentcore.services.database.models.user.model import User
-from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.agent.model import Agent as Flow
 from agentcore.services.database.models.folder.model import Folder
 from agentcore.services.deps import get_session
 from sqlmodel import select
@@ -74,6 +74,16 @@ class ObservationResponse(BaseModel):
     parent_observation_id: str | None = None
 
 
+class ScoreItem(BaseModel):
+    """Evaluation score for a trace."""
+    id: str
+    name: str
+    value: float
+    source: str | None = None
+    comment: str | None = None
+    created_at: datetime | None = None
+
+
 class TraceDetailResponse(BaseModel):
     """
     Detailed trace information with all observations.
@@ -93,6 +103,8 @@ class TraceDetailResponse(BaseModel):
     models_used: list[str] = []
     # Observations (spans) within this trace
     observations: list[ObservationResponse] = []
+    # Evaluation scores
+    scores: list[ScoreItem] = []
     # Metadata
     input: Any | None = None
     output: Any | None = None
@@ -262,7 +274,7 @@ def get_langfuse_client():
             host=base_url
         )
 
-        # Detect v3 by checking SDK version
+        # Detect v3 by checking SDK version + client capabilities.
         is_v3 = False
         sdk_version = "unknown"
         try:
@@ -271,12 +283,31 @@ def get_langfuse_client():
             # v3.x starts with 3.
             if sdk_version.startswith('3.'):
                 is_v3 = True
-            elif hasattr(client, 'auth_check'):
-                # Fallback: auth_check method is more prominent in v3
+            # Capability-based fallback (some builds may not expose __version__)
+            if hasattr(client, 'api'):
+                api_obj = getattr(client, 'api', None)
+                if api_obj and (
+                    hasattr(api_obj, 'trace')
+                    or hasattr(api_obj, 'traces')
+                    or hasattr(api_obj, 'observations')
+                    or hasattr(api_obj, 'scores')
+                ):
+                    is_v3 = True
+            if hasattr(client, 'auth_check'):
+                # Keep this as secondary hint.
                 is_v3 = True
         except Exception:
-            # If version check fails, use auth_check as fallback
-            is_v3 = hasattr(client, 'auth_check')
+            # If version check fails, infer from capabilities.
+            is_v3 = bool(
+                hasattr(client, 'auth_check')
+                or (
+                    hasattr(client, 'api')
+                    and (
+                        hasattr(getattr(client, 'api', None), 'trace')
+                        or hasattr(getattr(client, 'api', None), 'traces')
+                    )
+                )
+            )
 
         client._is_v3 = is_v3
         client._sdk_version = sdk_version
@@ -305,7 +336,43 @@ def get_langfuse_client():
 
 def is_v3_client(client) -> bool:
     """Check if the client is a Langfuse v3 client."""
-    return getattr(client, '_is_v3', False)
+    if getattr(client, '_is_v3', False):
+        return True
+    api_obj = getattr(client, 'api', None)
+    return bool(
+        hasattr(client, 'auth_check')
+        or (
+            api_obj
+            and (
+                hasattr(api_obj, 'trace')
+                or hasattr(api_obj, 'traces')
+                or hasattr(api_obj, 'observations')
+                or hasattr(api_obj, 'scores')
+            )
+        )
+    )
+
+
+def _extract_trace_user_id(trace_obj: Any) -> str | None:
+    """Extract user id from top-level fields or metadata/tags."""
+    user_id = get_attr(trace_obj, 'user_id', 'userId', 'sender', 'user')
+    if user_id:
+        return str(user_id)
+
+    metadata = get_attr(trace_obj, 'metadata', 'meta')
+    if isinstance(metadata, dict):
+        meta_user = metadata.get('user_id') or metadata.get('userId')
+        if meta_user:
+            return str(meta_user)
+
+    tags = get_attr(trace_obj, 'tags', 'labels') or []
+    if isinstance(tags, list):
+        for tag in tags:
+            if isinstance(tag, str) and tag.startswith("user_id:"):
+                value = tag.split(":", 1)[1].strip()
+                if value:
+                    return value
+    return None
 
 
 def get_attr(obj, *attrs, default=None):
@@ -441,37 +508,78 @@ def fetch_traces_from_langfuse(
             logger.debug(traceback.format_exc())
 
     # ==========================================================================
-    # Fallback for v3: Try api.trace.list if available
+    # Fallback for v3: Try api.trace.list/api.traces.list variants
     # ==========================================================================
-    if is_v3_client(client) and hasattr(client, 'api') and hasattr(client.api, 'trace'):
-        try:
-            logger.info("Trying v3 fallback: client.api.trace.list")
-            all_traces = []
-            page = 1
+    if hasattr(client, 'api'):
+        api_obj = getattr(client, 'api')
+        trace_api = None
+        if hasattr(api_obj, 'trace'):
+            trace_api = getattr(api_obj, 'trace')
+        elif hasattr(api_obj, 'traces'):
+            trace_api = getattr(api_obj, 'traces')
 
-            while len(all_traces) < limit:
-                list_kwargs = {"user_id": user_id, "limit": page_size, "page": page}
-                if from_timestamp:
-                    list_kwargs["from_timestamp"] = from_timestamp
-                if to_timestamp:
-                    list_kwargs["to_timestamp"] = to_timestamp
+        if trace_api and hasattr(trace_api, 'list'):
+            try:
+                logger.info("Trying v3 fallback: client.api.trace(s).list")
+                all_traces = []
+                page = 1
 
-                response = client.api.trace.list(**list_kwargs)
-                page_traces = response.data if hasattr(response, 'data') else (response if isinstance(response, list) else [])
+                # Try both snake_case and camelCase filters for compatibility.
+                filter_variants = [
+                    {"user_id": user_id},
+                    {"userId": user_id},
+                    {},
+                ]
 
-                if not page_traces:
-                    break
-                all_traces.extend(page_traces)
-                if len(page_traces) < page_size:
-                    break
-                page += 1
+                for variant in filter_variants:
+                    all_traces = []
+                    page = 1
+                    while len(all_traces) < limit:
+                        list_kwargs = {"limit": page_size, "page": page}
+                        list_kwargs.update(variant)
+                        if from_timestamp:
+                            list_kwargs["from_timestamp"] = from_timestamp
+                        if to_timestamp:
+                            list_kwargs["to_timestamp"] = to_timestamp
+                        if name:
+                            list_kwargs["name"] = name
+                        if tags:
+                            list_kwargs["tags"] = tags
+                        try:
+                            response = trace_api.list(**list_kwargs)
+                        except TypeError as e:
+                            # Some SDK versions reject unknown keyword variants (e.g. userId).
+                            logger.debug(f"trace_api.list rejected kwargs {list_kwargs.keys()}: {e}")
+                            all_traces = []
+                            break
+                        except Exception as e:
+                            logger.debug(f"trace_api.list failed for kwargs {list_kwargs.keys()}: {e}")
+                            all_traces = []
+                            break
+                        page_traces = response.data if hasattr(response, 'data') else (
+                            response if isinstance(response, list) else []
+                        )
+                        if not page_traces:
+                            break
+                        all_traces.extend(page_traces)
+                        if len(page_traces) < page_size:
+                            break
+                        page += 1
 
-            trace_data = all_traces[:limit]
-            logger.info(f"v3 api.trace.list returned {len(trace_data)} traces")
-            if trace_data:
-                return trace_data
-        except Exception as e:
-            logger.warning(f"v3 api.trace.list failed: {e}")
+                    if all_traces:
+                        break
+
+                # Apply client-side user filtering (handles traces where user_id is stored in metadata/tags).
+                if all_traces:
+                    trace_data = [t for t in all_traces if str(_extract_trace_user_id(t) or '') == str(user_id)]
+                else:
+                    trace_data = []
+
+                logger.info(f"v3 api.trace(s).list returned {len(trace_data)} traces for user_id={user_id}")
+                if trace_data:
+                    return trace_data
+            except Exception as e:
+                logger.warning(f"v3 api.trace(s).list failed: {e}")
 
 
     # ==========================================================================
@@ -513,7 +621,7 @@ def fetch_traces_from_langfuse(
             logger.info(f"Fallback got {len(all_traces)} total traces, filtering by user_id={user_id}")
 
             # Filter by user_id
-            trace_data = [t for t in all_traces if str(get_attr(t, 'user_id', 'userId') or '') == str(user_id)]
+            trace_data = [t for t in all_traces if str(_extract_trace_user_id(t) or '') == str(user_id)]
             logger.info(f"After user_id filter: {len(trace_data)} traces")
 
             # Apply client-side name filter if provided (partial match)
@@ -525,7 +633,11 @@ def fetch_traces_from_langfuse(
             if trace_data:
                 return trace_data
             elif all_traces:
-                sample_uids = set(str(get_attr(t, 'user_id', 'userId') or '') for t in all_traces[:20] if get_attr(t, 'user_id', 'userId'))
+                sample_uids = set(
+                    str(_extract_trace_user_id(t) or '')
+                    for t in all_traces[:20]
+                    if _extract_trace_user_id(t)
+                )
                 logger.warning(f"No traces for user_id={user_id}. Sample user_ids: {sample_uids}")
 
         except Exception as e:
@@ -630,6 +742,110 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
             logger.debug(f"client.client.observations.list failed for trace {trace_id}: {e}")
 
     return observations
+
+
+def fetch_scores_for_trace(client, trace_id: str, user_id: str | None = None, limit: int = 100) -> list[ScoreItem]:
+    """Fetch evaluation scores for a trace across Langfuse SDK variants."""
+    scores: list[ScoreItem] = []
+    seen_ids: set[str] = set()
+
+    def _append_scores(raw_payload: Any, *, already_filtered_by_trace: bool = False) -> int:
+        raw_scores = raw_payload
+        if hasattr(raw_payload, "data"):
+            raw_scores = raw_payload.data
+        elif isinstance(raw_payload, dict):
+            raw_scores = raw_payload.get("data", [])
+
+        if not raw_scores:
+            return 0
+
+        added = 0
+        for score in raw_scores:
+            score_trace_id = str(get_attr(score, "trace_id", "traceId", default="") or "")
+            if not already_filtered_by_trace and score_trace_id and score_trace_id != str(trace_id):
+                continue
+
+            score_id = str(get_attr(score, "id", default="") or "")
+            dedupe_key = score_id or f"{get_attr(score, 'name', default='score')}::{get_attr(score, 'timestamp', 'created_at', 'createdAt', default='')}"
+            if dedupe_key in seen_ids:
+                continue
+            seen_ids.add(dedupe_key)
+
+            source = get_attr(score, "source")
+            if hasattr(source, "value"):
+                source = source.value
+            scores.append(
+                ScoreItem(
+                    id=score_id or str(len(scores) + 1),
+                    name=str(get_attr(score, "name", default="Score") or "Score"),
+                    value=float(get_attr(score, "value", default=0.0) or 0.0),
+                    source=str(source) if source is not None else None,
+                    comment=get_attr(score, "comment"),
+                    created_at=parse_datetime(get_attr(score, "created_at", "createdAt", "timestamp")),
+                )
+            )
+            added += 1
+        return added
+
+    # Method 0: v3 API score_v_2.get (most reliable in Langfuse v3)
+    if hasattr(client, "api") and hasattr(client.api, "score_v_2"):
+        try:
+            kwargs: dict[str, Any] = {"trace_id": trace_id, "limit": limit}
+            if user_id:
+                kwargs["user_id"] = user_id
+            try:
+                kwargs["fields"] = "score,trace"
+                payload = client.api.score_v_2.get(**kwargs)
+            except TypeError:
+                kwargs.pop("fields", None)
+                payload = client.api.score_v_2.get(**kwargs)
+            _append_scores(payload, already_filtered_by_trace=True)
+        except Exception as e:
+            logger.debug(f"api.score_v_2.get failed for trace {trace_id}: {e}")
+
+    # Method 1: legacy SDK helper
+    if hasattr(client, "fetch_scores"):
+        try:
+            _append_scores(client.fetch_scores(trace_id=trace_id))
+        except Exception as e:
+            logger.debug(f"fetch_scores failed for trace {trace_id}: {e}")
+
+    # Method 2: direct client scores API (v2/v3 variants)
+    if hasattr(client, "client") and hasattr(client.client, "scores"):
+        try:
+            kwargs: dict[str, Any] = {"trace_id": trace_id, "limit": limit}
+            if user_id:
+                kwargs["user_id"] = user_id
+            try:
+                payload = client.client.scores.list(**kwargs)
+            except TypeError:
+                kwargs.pop("user_id", None)
+                payload = client.client.scores.list(**kwargs)
+            _append_scores(payload, already_filtered_by_trace=True)
+        except Exception as e:
+            logger.debug(f"client.scores.list failed for trace {trace_id}: {e}")
+
+    # Method 3: v3 REST resources under client.api.score(s).list where available.
+    if hasattr(client, "api"):
+        for attr in ("scores", "score"):
+            score_api = getattr(client.api, attr, None)
+            if not score_api or not hasattr(score_api, "list"):
+                continue
+            try:
+                kwargs = {"trace_id": trace_id, "limit": limit}
+                if user_id:
+                    kwargs["user_id"] = user_id
+                try:
+                    payload = score_api.list(**kwargs)
+                except TypeError:
+                    kwargs.pop("user_id", None)
+                    payload = score_api.list(**kwargs)
+                _append_scores(payload, already_filtered_by_trace=True)
+            except Exception as e:
+                logger.debug(f"api.{attr}.list failed for trace {trace_id}: {e}")
+
+    scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return scores
 
 
 def parse_observation(obs: Any) -> ObservationResponse:
@@ -1105,6 +1321,48 @@ async def get_trace_detail(
             if start_times and end_times:
                 latency_ms = (max(end_times) - min(start_times)).total_seconds() * 1000
 
+        # Fetch evaluation scores for this trace
+        scores: list[ScoreItem] = []
+        try:
+            # Some SDK variants include scores in the trace payload directly.
+            embedded_scores = get_attr(trace, "scores", default=[]) or []
+            if embedded_scores:
+                scores.extend([
+                    # Use embedded scores as immediate fallback; dedicated fetch below refines this.
+                    ScoreItem(
+                        id=str(get_attr(score, "id", default=str(idx + 1))),
+                        name=str(get_attr(score, "name", default="Score") or "Score"),
+                        value=float(get_attr(score, "value", default=0.0) or 0.0),
+                        source=(
+                            str(get_attr(score, "source").value)
+                            if hasattr(get_attr(score, "source"), "value")
+                            else (str(get_attr(score, "source")) if get_attr(score, "source") is not None else None)
+                        ),
+                        comment=get_attr(score, "comment"),
+                        created_at=parse_datetime(get_attr(score, "created_at", "createdAt", "timestamp")),
+                    )
+                    for idx, score in enumerate(embedded_scores)
+                ])
+
+            fetched_scores = fetch_scores_for_trace(
+                client,
+                trace_id=trace_id,
+                user_id=str(current_user.id),
+                limit=200,
+            )
+            # Merge and de-duplicate by id while preserving newest-first ordering.
+            merged = {s.id: s for s in scores if s.id}
+            for score in fetched_scores:
+                if score.id in merged:
+                    merged[score.id] = score
+                else:
+                    merged[score.id] = score
+            scores = list(merged.values())
+            scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+            logger.info(f"Trace detail {trace_id}: loaded {len(scores)} score(s)")
+        except Exception as e:
+            logger.warning(f"Error fetching scores for trace {trace_id}: {e}")
+
         return TraceDetailResponse(
             id=str(get_attr(trace, 'id')),
             name=get_attr(trace, 'name'),
@@ -1118,6 +1376,7 @@ async def get_trace_detail(
             latency_ms=latency_ms,
             models_used=models_used,
             observations=observations,
+            scores=scores,
             input=get_attr(trace, 'input'),
             output=get_attr(trace, 'output'),
             metadata=get_attr(trace, 'metadata'),
@@ -1807,7 +2066,10 @@ async def get_user_agents(
 
         # Get all user flows from database (source of truth)
         flows_result = await session.exec(
-            select(Agent).where(Agent.user_id == current_user.id, Agent.is_component == False)
+            select(Flow).where(
+                Flow.user_id == current_user.id,
+                (Flow.is_component == False) | (Flow.is_component.is_(None)),  # noqa: E712
+            )
         )
         user_flows = flows_result.all()
 
@@ -2013,7 +2275,7 @@ async def get_agent_detail(
         try:
             flow_uuid = PyUUID(agent_id)
             flow_result = await session.exec(
-                select(Agent).where(Agent.id == flow_uuid, Agent.user_id == current_user.id)
+                select(Flow).where(Flow.id == flow_uuid, Flow.user_id == current_user.id)
             )
             flow = flow_result.first()
         except ValueError:
@@ -2269,7 +2531,10 @@ async def get_user_projects(
 
         # Get all user flows
         flows_result = await session.exec(
-            select(Agent).where(Agent.user_id == current_user.id, Agent.is_component == False)
+            select(Flow).where(
+                Flow.user_id == current_user.id,
+                (Flow.is_component == False) | (Flow.is_component.is_(None)),  # noqa: E712
+            )
         )
         user_flows = flows_result.all()
 
@@ -2401,10 +2666,10 @@ async def get_project_detail(
 
         # Get flows in this folder
         flows_result = await session.exec(
-            select(Agent).where(
-                Agent.user_id == current_user.id,
-                Agent.folder_id == folder.id,
-                Agent.is_component == False
+            select(Flow).where(
+                Flow.user_id == current_user.id,
+                Flow.folder_id == folder.id,
+                (Flow.is_component == False) | (Flow.is_component.is_(None)),  # noqa: E712
             )
         )
         folder_flows = flows_result.all()

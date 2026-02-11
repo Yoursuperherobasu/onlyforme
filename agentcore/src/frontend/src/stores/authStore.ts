@@ -13,6 +13,7 @@ const useAuthStore = create<AuthStoreType>((set) => ({
   accessToken: cookies.get(AGENTCORE_ACCESS_TOKEN) ?? null,
   apiKey: cookies.get(AGENTCORE_API_TOKEN),
   authenticationErrorCount: 0,
+  autoLogin: undefined,
 
   // authz
   role: null,
@@ -42,6 +43,9 @@ const useAuthStore = create<AuthStoreType>((set) => ({
   setAuthenticationErrorCount: (authenticationErrorCount) =>
     set({ authenticationErrorCount }),
 
+  setAutoLogin: (autoLogin) =>
+    set({ autoLogin }),
+
   logout: async () => {
     set({
       isAuthenticated: false,
@@ -51,6 +55,7 @@ const useAuthStore = create<AuthStoreType>((set) => ({
       permissions: [],
       userData: null,
       isAuthHydrated: false,
+      autoLogin: undefined,
     });
   },
 }));

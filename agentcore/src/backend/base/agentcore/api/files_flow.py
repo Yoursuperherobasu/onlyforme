@@ -140,6 +140,8 @@ async def download_profile_picture(
         file_content = await storage_service.get_file(agent_id=folder_path, file_name=file_name)  # type: ignore[arg-type]
         return StreamingResponse(BytesIO(file_content), media_type=content_type)
 
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Profile picture not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

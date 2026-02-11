@@ -330,9 +330,11 @@ class DatabaseService(Service):
                     # Handle "Ambiguous walk" error from complex branch structures
                     if "Ambiguous walk" in str(ce):
                         logger.warning("Ambiguous walk detected in migrations, skipping downgrade/upgrade cycle")
-                        # Just try to upgrade directly instead
-                        command.upgrade(alembic_cfg, "head")
-                        break
+                        try:
+                            command.upgrade(alembic_cfg, "head")
+                        except Exception:
+                            logger.exception("Failed to upgrade to head after ambiguous walk fallback")
+                        return
                     raise
 
     async def run_migrations_test(self):

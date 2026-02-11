@@ -10,6 +10,7 @@ from agentcore.api.mcp_server import router as mcp_router
 from agentcore.api.mcp_projects import router as mcp_projects_router
 from agentcore.api.monitor import router as monitor_router
 from agentcore.api.observability import router as observability_router
+from agentcore.api.evaluation import router as evaluation_router
 from agentcore.api.projects import router as projects_router
 from agentcore.api.publish import router as publish_router
 from agentcore.api.router import router
@@ -35,6 +36,7 @@ __all__ = [
     "mcp_router_v2",
     "monitor_router",
     "observability_router",
+    "evaluation_router",
     "projects_router",
     "publish_router",
     "router",

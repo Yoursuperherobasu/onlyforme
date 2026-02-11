@@ -78,13 +78,21 @@ async def get_current_user(
 ) -> User:
     if token:
         return await get_current_user_by_jwt(token, db)
-    user = await api_key_security(query_param, header_param)
-    if user:
-        return user
-
+    
+    # API key authentication is disabled, so if no JWT token, return 401
+    # Don't call api_key_security as it raises 403 which is confusing
+    if query_param or header_param:
+        # User is trying to use API key - inform them it's disabled
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key authentication is currently disabled. Please use JWT token authentication (login required).",
+        )
+    
+    # No credentials provided at all
     raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Invalid or missing API key",
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated. Please login to access this resource.",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
