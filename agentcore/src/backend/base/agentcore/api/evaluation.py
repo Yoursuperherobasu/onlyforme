@@ -42,6 +42,14 @@ except ImportError:
     LITELLM_AVAILABLE = False
     logger.warning("LiteLLM not installed. LLM Judge features will be disabled.")
 
+# Try importing OpenAI as a fallback for the judge when LiteLLM isn't present
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except Exception:
+    openai = None
+    OPENAI_AVAILABLE = False
+
 router = APIRouter(prefix="/evaluation", tags=["Evaluation"])
 
 _LITELLM_STD_LOGGING_PATCHED = False
@@ -485,11 +493,11 @@ def _resolve_api_base_for_model(model: str) -> str | None:
     if provider == "openai":
         return os.getenv("OPENAI_API_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if provider == "groq":
-        return os.getenv("GROQ_API_BASE_URL") or os.getenv("GROQ_BASE_URL")
+        return os.getenv("GROQ_API_BASE_URL") or os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1"
     if provider == "anthropic":
         return os.getenv("ANTHROPIC_API_BASE_URL")
     if provider == "openrouter":
-        return os.getenv("OPENROUTER_API_BASE_URL")
+        return os.getenv("OPENROUTER_API_BASE_URL") or "https://openrouter.ai/api/v1"
     if provider in {"gemini", "google", "vertex_ai"}:
         return (
             os.getenv("GEMINI_API_BASE_URL")
@@ -497,6 +505,217 @@ def _resolve_api_base_for_model(model: str) -> str | None:
             or os.getenv("VERTEX_API_BASE_URL")
         )
     return None
+
+
+def _resolve_openai_fallback_api_key(model: str, explicit_api_key: str | None = None) -> str | None:
+    """Resolve API key for OpenAI SDK fallback based on model/provider."""
+    value = str(explicit_api_key or "").strip()
+    if value:
+        return value
+
+    provider = _infer_litellm_provider(model)
+    env_by_provider: dict[str, list[str]] = {
+        "openai": ["OPENAI_API_KEY"],
+        "groq": ["GROQ_API_KEY"],
+        "anthropic": ["ANTHROPIC_API_KEY"],
+        "openrouter": ["OPENROUTER_API_KEY"],
+        "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+        "vertex_ai": ["VERTEX_API_KEY", "GOOGLE_API_KEY"],
+        "mistral": ["MISTRAL_API_KEY"],
+        "cohere": ["COHERE_API_KEY"],
+        "togetherai": ["TOGETHERAI_API_KEY", "TOGETHER_API_KEY"],
+        "fireworks_ai": ["FIREWORKS_API_KEY"],
+        "xai": ["XAI_API_KEY"],
+        "deepseek": ["DEEPSEEK_API_KEY"],
+        "perplexity": ["PERPLEXITY_API_KEY"],
+        "sambanova": ["SAMBANOVA_API_KEY"],
+    }
+
+    env_names = env_by_provider.get(provider or "", [])
+    env_names = list(dict.fromkeys([*env_names, "OPENAI_API_KEY"]))
+    for env_name in env_names:
+        env_value = str(os.getenv(env_name) or "").strip()
+        if env_value:
+            return env_value
+    return None
+
+
+def _model_name_for_openai_fallback(model: str) -> str:
+    """Strip provider prefixes (e.g. 'groq/') for OpenAI-compatible SDK calls."""
+    _, tail = _split_known_provider_prefix(model)
+    value = tail.strip() if tail else str(model or "").strip()
+    return value or str(model or "").strip()
+
+
+def _is_openai_retryable_model_error(exc: Exception) -> bool:
+    """Return True when retrying with another model candidate may succeed."""
+    message = str(exc).lower()
+    return (
+        "model not found" in message
+        or "unknown model" in message
+        or "invalid model" in message
+        or "does not exist" in message
+        or "unexpected model name format" in message
+        or "llm provider not provided" in message
+        or "provider not found" in message
+        or "generatecontentrequest.model" in message
+    )
+
+
+def _is_openai_response_format_error(exc: Exception) -> bool:
+    """Return True when provider rejects JSON response_format."""
+    message = str(exc).lower()
+    return "response_format" in message or "json_object" in message
+
+
+def _extract_openai_chat_content(resp: Any) -> str:
+    """Extract message content from OpenAI chat completion response variants."""
+    choices = resp.get("choices", []) if isinstance(resp, dict) else getattr(resp, "choices", [])
+    if not choices:
+        raise RuntimeError("OpenAI judge returned no choices")
+
+    first_choice = choices[0]
+    if isinstance(first_choice, dict):
+        message = first_choice.get("message", {}) or {}
+        content = message.get("content")
+    else:
+        message = getattr(first_choice, "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+
+    if isinstance(content, list):
+        # Some OpenAI-compatible providers return structured content blocks.
+        text_parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                text = part.get("text")
+            else:
+                text = getattr(part, "text", None)
+            if text:
+                text_parts.append(str(text))
+        content = "".join(text_parts)
+
+    if content is None:
+        raise RuntimeError("OpenAI judge returned empty content")
+    return str(content)
+
+
+async def _call_openai_judge_completion(
+    *,
+    model_candidates: list[str],
+    model_api_key: str | None,
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[str, str]:
+    """Call OpenAI SDK (v1/v2 or legacy) with retries across model candidates."""
+    if openai is None:
+        raise RuntimeError("OpenAI SDK not available")
+
+    last_error: Exception | None = None
+    for candidate_model in model_candidates:
+        request_model = _model_name_for_openai_fallback(candidate_model)
+        api_base = _resolve_api_base_for_model(candidate_model)
+        api_key = _resolve_openai_fallback_api_key(candidate_model, explicit_api_key=model_api_key)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        try:
+            if hasattr(openai, "AsyncOpenAI"):
+                client_kwargs: dict[str, Any] = {}
+                if api_key:
+                    client_kwargs["api_key"] = api_key
+                if api_base:
+                    client_kwargs["base_url"] = api_base
+                async_client = openai.AsyncOpenAI(**client_kwargs)
+                try:
+                    resp = await async_client.chat.completions.create(
+                        model=request_model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                    )
+                except Exception as response_format_exc:
+                    if not _is_openai_response_format_error(response_format_exc):
+                        raise
+                    resp = await async_client.chat.completions.create(
+                        model=request_model,
+                        messages=messages,
+                    )
+                finally:
+                    close_func = getattr(async_client, "close", None)
+                    if callable(close_func):
+                        try:
+                            await close_func()
+                        except Exception:
+                            pass
+            elif hasattr(openai, "OpenAI"):
+                client_kwargs = {}
+                if api_key:
+                    client_kwargs["api_key"] = api_key
+                if api_base:
+                    client_kwargs["base_url"] = api_base
+
+                def _sync_call_v1():
+                    sync_client = openai.OpenAI(**client_kwargs)
+                    try:
+                        try:
+                            return sync_client.chat.completions.create(
+                                model=request_model,
+                                messages=messages,
+                                response_format={"type": "json_object"},
+                            )
+                        except Exception as response_format_exc:
+                            if not _is_openai_response_format_error(response_format_exc):
+                                raise
+                            return sync_client.chat.completions.create(
+                                model=request_model,
+                                messages=messages,
+                            )
+                    finally:
+                        close_func = getattr(sync_client, "close", None)
+                        if callable(close_func):
+                            try:
+                                close_func()
+                            except Exception:
+                                pass
+
+                resp = await asyncio.to_thread(_sync_call_v1)
+            else:
+                if api_key:
+                    openai.api_key = api_key
+                if api_base:
+                    openai.api_base = api_base
+
+                chat_completion = getattr(openai, "ChatCompletion", None)
+                if chat_completion and hasattr(chat_completion, "acreate"):
+                    resp = await chat_completion.acreate(
+                        model=request_model,
+                        messages=messages,
+                    )
+                elif chat_completion and hasattr(chat_completion, "create"):
+                    def _sync_call_legacy():
+                        return chat_completion.create(
+                            model=request_model,
+                            messages=messages,
+                        )
+
+                    resp = await asyncio.to_thread(_sync_call_legacy)
+                else:
+                    raise RuntimeError("OpenAI SDK does not expose a supported chat completion API")
+
+            content = _extract_openai_chat_content(resp)
+            return content, request_model
+        except Exception as e:
+            last_error = e
+            logger.warning("OpenAI judge call failed for model={}: {}", candidate_model, str(e))
+            if _is_openai_retryable_model_error(e):
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("OpenAI judge call failed without a response")
 
 
 def _submit_score_to_langfuse(
@@ -1033,8 +1252,8 @@ async def run_llm_judge_task(
     timestamp: datetime | None = None,
 ):
     """Background task to run LLM judge."""
-    if not LITELLM_AVAILABLE:
-        logger.error("LiteLLM not installed, cannot run judge")
+    if not LITELLM_AVAILABLE and not OPENAI_AVAILABLE:
+        logger.error("LiteLLM not installed and OpenAI SDK not available, cannot run judge")
         return
 
     try:
@@ -1131,58 +1350,68 @@ Respond ONLY with valid JSON, no markdown formatting."""
             logger.error(f"Judge failed: invalid empty model for trace_ref={trace_id}")
             return
 
-        _ensure_litellm_logging_compatibility_patch()
-
-        # Reduce noisy/proxy-related logger side effects in worker context.
-        try:
-            litellm.suppress_debug_info = True
-            litellm.turn_off_message_logging = True
-            litellm.logging = False
-        except Exception:
-            pass
-
         logger.info(f"Calling LLM judge with model candidates: {model_candidates}")
-        response = None
-        used_model = model_candidates[0]
-        last_error: Exception | None = None
 
-        for candidate_model in model_candidates:
-            acall_kwargs = dict(
-                model=candidate_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={"type": "json_object"},
-            )
-            acall_kwargs["no-log"] = True
-            if model_api_key:
-                acall_kwargs["api_key"] = model_api_key
+        # If LiteLLM is available, prefer it (supports provider/model resolution).
+        if LITELLM_AVAILABLE:
+            _ensure_litellm_logging_compatibility_patch()
 
-            api_base = _resolve_api_base_for_model(candidate_model)
-            if api_base:
-                acall_kwargs["api_base"] = api_base
-
+            # Reduce noisy/proxy-related logger side effects in worker context.
             try:
-                response = await litellm.acompletion(**acall_kwargs)
-                used_model = candidate_model
-                break
-            except Exception as e:
-                last_error = e
-                logger.warning("LLM judge call failed for model={}: {}", candidate_model, str(e))
-                # Retry alternate model candidates only for provider/model-resolution failures.
-                if _is_litellm_retryable_model_error(e):
-                    continue
-                # For non-provider errors (auth/rate/network), don't hide the root cause with extra retries.
-                raise
+                litellm.suppress_debug_info = True
+                litellm.turn_off_message_logging = True
+                litellm.logging = False
+            except Exception:
+                pass
 
-        if response is None:
-            if last_error:
-                raise last_error
-            raise RuntimeError("LLM judge call failed without a response")
+            response = None
+            used_model = model_candidates[0]
+            last_error: Exception | None = None
 
-        content = response.choices[0].message.content
-        
+            for candidate_model in model_candidates:
+                acall_kwargs = dict(
+                    model=candidate_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                )
+                acall_kwargs["no-log"] = True
+                if model_api_key:
+                    acall_kwargs["api_key"] = model_api_key
+
+                api_base = _resolve_api_base_for_model(candidate_model)
+                if api_base:
+                    acall_kwargs["api_base"] = api_base
+
+                try:
+                    response = await litellm.acompletion(**acall_kwargs)
+                    used_model = candidate_model
+                    break
+                except Exception as e:
+                    last_error = e
+                    logger.warning("LLM judge call failed for model={}: {}", candidate_model, str(e))
+                    if _is_litellm_retryable_model_error(e):
+                        continue
+                    raise
+
+            if response is None:
+                if last_error:
+                    raise last_error
+                raise RuntimeError("LLM judge call failed without a response")
+
+            content = response.choices[0].message.content
+
+        else:
+            # Fallback to OpenAI SDK if available.
+            content, used_model = await _call_openai_judge_completion(
+                model_candidates=model_candidates,
+                model_api_key=model_api_key,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+
         # Clean up markdown code blocks if present
         content = content.strip()
         if content.startswith("```json"):
@@ -1262,7 +1491,7 @@ async def get_status(
     
     return {
         "langfuse_available": client is not None,
-        "llm_judge_available": LITELLM_AVAILABLE,
+        "llm_judge_available": LITELLM_AVAILABLE or OPENAI_AVAILABLE,
         "user_id": str(current_user.id)
     }
 
@@ -1393,8 +1622,8 @@ async def run_judge(
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
     
-    if not LITELLM_AVAILABLE:
-        raise HTTPException(status_code=501, detail="LLM Judge not available (LiteLLM missing)")
+    if not (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
+        raise HTTPException(status_code=501, detail="LLM Judge not available (LiteLLM/OpenAI missing)")
 
     user_id = str(current_user.id)
     
@@ -1702,8 +1931,8 @@ async def run_saved_evaluators_for_new_trace(
         f"flow_id={flow_id}, agent_id={agent_id}, flow_name={flow_name}"
     )
     
-    if not LITELLM_AVAILABLE:
-        logger.warning("⚠️ LiteLLM not available, skipping evaluators")
+    if not (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
+        logger.warning("⚠️ LiteLLM/OpenAI not available, skipping evaluators")
         return 0
 
     try:

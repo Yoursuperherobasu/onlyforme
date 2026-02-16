@@ -844,6 +844,16 @@ def fetch_scores_for_trace(client, trace_id: str, user_id: str | None = None, li
             except Exception as e:
                 logger.debug(f"api.{attr}.list failed for trace {trace_id}: {e}")
 
+    # Some providers/SDK variants do not persist user_id on scores even when the trace
+    # belongs to the user. If the user-filtered fetch returns empty, retry by trace only.
+    if not scores and user_id:
+        logger.debug(
+            "No scores found for trace {} with user_id filter {}; retrying without user filter",
+            trace_id,
+            user_id,
+        )
+        return fetch_scores_for_trace(client, trace_id=trace_id, user_id=None, limit=limit)
+
     scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return scores
 
@@ -1299,8 +1309,19 @@ async def get_trace_detail(
         if trace_user_id and str(trace_user_id) != str(current_user.id):
             raise HTTPException(status_code=404, detail="Trace not found")
 
+        requested_trace_id = str(trace_id)
+        resolved_trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default=trace_id) or trace_id)
+        if resolved_trace_id != requested_trace_id:
+            logger.info(
+                "Trace detail requested with trace_id={} resolved to canonical trace_id={}",
+                requested_trace_id,
+                resolved_trace_id,
+            )
+
         # Fetch observations
-        raw_observations = fetch_observations_for_trace(client, trace_id)
+        raw_observations = fetch_observations_for_trace(client, resolved_trace_id)
+        if not raw_observations and resolved_trace_id != requested_trace_id:
+            raw_observations = fetch_observations_for_trace(client, requested_trace_id)
         observations = [parse_observation(obs) for obs in raw_observations]
 
         # Sort observations by start time
@@ -1346,10 +1367,17 @@ async def get_trace_detail(
 
             fetched_scores = fetch_scores_for_trace(
                 client,
-                trace_id=trace_id,
+                trace_id=resolved_trace_id,
                 user_id=str(current_user.id),
                 limit=200,
             )
+            if not fetched_scores and resolved_trace_id != requested_trace_id:
+                fetched_scores = fetch_scores_for_trace(
+                    client,
+                    trace_id=requested_trace_id,
+                    user_id=str(current_user.id),
+                    limit=200,
+                )
             # Merge and de-duplicate by id while preserving newest-first ordering.
             merged = {s.id: s for s in scores if s.id}
             for score in fetched_scores:
@@ -1364,7 +1392,7 @@ async def get_trace_detail(
             logger.warning(f"Error fetching scores for trace {trace_id}: {e}")
 
         return TraceDetailResponse(
-            id=str(get_attr(trace, 'id')),
+            id=resolved_trace_id,
             name=get_attr(trace, 'name'),
             user_id=trace_user_id,
             session_id=get_attr(trace, 'session_id', 'sessionId'),

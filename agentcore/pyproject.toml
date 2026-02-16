@@ -2,7 +2,7 @@
 name = "agentcore"
 version = "1.0.0"
 description = "web application"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10,<3.13"
 
 keywords = ["nlp", "langchain", "openai", "gpt", "gui"]
 # Define your main dependencies here
@@ -111,8 +111,8 @@ nv-ingest = [
     # due to incompatibility with <3.12 and how uv handles lockfile creation.
     # If upgrading, ensure `uv lock` and `uv sync` are run after upgrade with these,
     # and that afterward, the lockfile contains nv-ingest.
-    "nv-ingest-api==25.6.2,<26.0.0 ; python_version >= '3.12'",
-    "nv-ingest-client==25.6.3,<26.0.0 ; python_version >= '3.12'",
+    "nv-ingest-api==25.6.2,<26.0.0 ; python_version >= '3.13'",
+    "nv-ingest-client==25.6.3,<26.0.0 ; python_version >= '3.13'",
 ]
 
 postgresql = [
