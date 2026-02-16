@@ -1,4 +1,5 @@
 import ShadTooltip from "@/components/common/shadTooltipComponent";
+import { Button } from "@/components/ui/button";
 import useFlowStore from "@/stores/flowStore";
 import { useVoiceStore } from "@/stores/voiceStore";
 import IconComponent from "../../../components/common/genericIconComponent";
@@ -24,61 +25,76 @@ export const SidebarOpenView = ({
   );
 
   return (
-    <div className="flex flex-col gap-1">
-      {/* New chat button — Gemini style rounded pill */}
-      <button
-        data-testid="new-chat"
-        onClick={() => {
-          setvisibleSession(undefined);
-          setSelectedViewField(undefined);
-          setNewSessionCloseVoiceAssistant(true);
-          setNewChatOnPlayground(true);
-        }}
-        className="mb-3 flex items-center gap-3 rounded-full border border-[#dadce0] dark:border-[#3c4043] px-5 py-3 text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#e8eaed] dark:hover:bg-[#2c2d2e] transition-colors w-fit shadow-sm"
-      >
-        <IconComponent name="Plus" className="h-5 w-5" />
-        New chat
-      </button>
-
-      {/* Section label */}
-      <div className="px-3 py-2 text-xs font-medium text-[#70757a] dark:text-[#9aa0a6]">
-        Recent
+    <>
+      <div className="flex h-full w-full flex-col">
+        <div className="pb-2">
+          <div className="mb-2 flex items-center justify-between rounded-lg border border-border/60 bg-background/70 px-2.5 py-2">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <IconComponent
+                name="MessagesSquare"
+                className="h-[16px] w-[16px]"
+              />
+              <div className="text-xs font-semibold uppercase tracking-wide">
+                Sessions
+              </div>
+            </div>
+            <ShadTooltip styleClasses="z-50" content="New Chat">
+              <div>
+                <Button
+                  data-testid="new-chat"
+                  variant="primary"
+                  className="flex h-8 items-center justify-center gap-1.5 rounded-md px-2.5 text-xs"
+                  onClick={(_) => {
+                    setvisibleSession(undefined);
+                    setSelectedViewField(undefined);
+                    setNewSessionCloseVoiceAssistant(true);
+                    setNewChatOnPlayground(true);
+                  }}
+                >
+                  <IconComponent
+                    name="Plus"
+                    className="h-[14px] w-[14px]"
+                  />
+                  New
+                </Button>
+              </div>
+            </ShadTooltip>
+          </div>
+        </div>
+        <div className="flex w-full flex-col gap-1">
+          {sessions.map((session, index) => (
+            <SessionSelector
+              setSelectedView={setSelectedViewField}
+              selectedView={selectedViewField}
+              key={index}
+              session={session}
+              playgroundPage={playgroundPage}
+              deleteSession={(session) => {
+                handleDeleteSession(session);
+                if (selectedViewField?.id === session) {
+                  setSelectedViewField(undefined);
+                }
+              }}
+              updateVisibleSession={(session) => {
+                setvisibleSession(session);
+              }}
+              toggleVisibility={() => {
+                setvisibleSession(session);
+              }}
+              isVisible={visibleSession === session}
+              inspectSession={(session) => {
+                setSelectedViewField({
+                  id: session,
+                  type: "Session",
+                });
+              }}
+              setActiveSession={(session) => {
+                setActiveSession(session);
+              }}
+            />
+          ))}
+        </div>
       </div>
-
-      {/* Session list */}
-      <div className="flex flex-col">
-        {sessions.map((session, index) => (
-          <SessionSelector
-            setSelectedView={setSelectedViewField}
-            selectedView={selectedViewField}
-            key={index}
-            session={session}
-            playgroundPage={playgroundPage}
-            deleteSession={(session) => {
-              handleDeleteSession(session);
-              if (selectedViewField?.id === session) {
-                setSelectedViewField(undefined);
-              }
-            }}
-            updateVisibleSession={(session) => {
-              setvisibleSession(session);
-            }}
-            toggleVisibility={() => {
-              setvisibleSession(session);
-            }}
-            isVisible={visibleSession === session}
-            inspectSession={(session) => {
-              setSelectedViewField({
-                id: session,
-                type: "Session",
-              });
-            }}
-            setActiveSession={(session) => {
-              setActiveSession(session);
-            }}
-          />
-        ))}
-      </div>
-    </div>
+    </>
   );
 };

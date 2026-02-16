@@ -216,10 +216,19 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
             "RedisCache is an experimental feature and may not work as expected."
             " Please report any issues to our GitHub repository."
         )
+        # Use explicit socket timeouts so startup doesn't hang indefinitely when Redis is unreachable.
         if url:
-            self._client = StrictRedis.from_url(url)
+            self._client = StrictRedis.from_url(url, socket_connect_timeout=5, socket_timeout=5)
         else:
-            self._client = StrictRedis(host=host, port=port, db=db, password=password, ssl=ssl)
+            self._client = StrictRedis(
+                host=host,
+                port=port,
+                db=db,
+                password=password,
+                ssl=ssl,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+            )
         self.expiration_time = expiration_time
 
     async def is_connected(self) -> bool:

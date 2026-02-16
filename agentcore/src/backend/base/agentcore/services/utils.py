@@ -118,9 +118,7 @@ async def clean_vertex_builds(settings_service: SettingsService, session: AsyncS
 
 
 async def initialize_services(*, fix_migration: bool = False) -> None:
-    
     """Initialize all the services needed."""
-    print("Auth cache services initialized")
     cache_service = get_service(ServiceType.CACHE_SERVICE, default=CacheServiceFactory())
     # Test external cache connection
     if isinstance(cache_service, ExternalAsyncBaseCacheService) and not (await cache_service.is_connected()):
@@ -134,13 +132,12 @@ async def initialize_services(*, fix_migration: bool = False) -> None:
     async with db_service.with_session() as session:
         settings_service = get_service(ServiceType.SETTINGS_SERVICE)
         # SSO is enabled - users are managed via Azure AD, no superuser setup needed
-    await clean_transactions(settings_service, session)
-    await clean_vertex_builds(settings_service, session)
+        await clean_transactions(settings_service, session)
+        await clean_vertex_builds(settings_service, session)
     try:
         permissions.permission_cache = PermissionCacheService(settings_service)
-        user_cache_service = UserCacheService(settings_service)  # Can store globally if needed
-        print("Auth cache services initialized")
+        _user_cache_service = UserCacheService(settings_service)  # Can store globally if needed
     except Exception as e:
-        print(f"Failed to init auth cache: {e}")
+        logger.warning(f"Failed to init auth cache: {e}")
         permissions.permission_cache = None
     logger.info("Auth cache services initialized")

@@ -42,12 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
     label: "MCP",
     tooltip: "MCP",
   },
-  {
-    id: "add_note",
-    icon: "sticky-note",
-    label: "Sticky Notes",
-    tooltip: "Add Sticky Notes",
-  },
+
 ];
 
 const SidebarSegmentedNav = () => {

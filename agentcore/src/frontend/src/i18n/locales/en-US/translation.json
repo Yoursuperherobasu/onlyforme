@@ -746,7 +746,7 @@
   "Please enter your API Key": "Please enter your API Key",
   "AgentCore.store": "AgentCore.store"
   ,
-  "Flow saved successfully!": "Flow saved successfully!",
+  "Agent saved successfully!": "Agent saved successfully!",
   "Running flow": "Running flow",
   "Flow built successfully": "Flow built successfully",
   "Flow build failed": "Flow build failed",

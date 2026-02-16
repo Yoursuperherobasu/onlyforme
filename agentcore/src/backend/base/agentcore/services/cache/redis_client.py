@@ -13,6 +13,8 @@ def get_redis_client(settings_service: SettingsService) -> redis.StrictRedis:
             db=settings_service.settings.redis_db,
             password=settings_service.settings.redis_password,
             ssl=settings_service.settings.redis_ssl,
-            decode_responses=True
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
         )
     return _redis_client

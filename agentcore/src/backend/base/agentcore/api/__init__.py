@@ -13,7 +13,9 @@ from agentcore.api.observability import router as observability_router
 from agentcore.api.evaluation import router as evaluation_router
 from agentcore.api.projects import router as projects_router
 from agentcore.api.publish import router as publish_router
+from agentcore.api.approvals import router as approvals_router
 from agentcore.api.router import router
+from agentcore.api.roles import router as roles_router
 from agentcore.api.starter_projects import router as starter_projects_router
 from agentcore.api.users import router as users_router
 from agentcore.api.validate import router as validate_router
@@ -38,6 +40,8 @@ __all__ = [
     "observability_router",
     "evaluation_router",
     "projects_router",
+    "roles_router",
+    "approvals_router",
     "publish_router",
     "router",
     "starter_projects_router",

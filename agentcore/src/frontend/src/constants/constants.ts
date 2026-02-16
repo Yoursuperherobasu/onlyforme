@@ -578,7 +578,7 @@ export const ADMIN_HEADER_DESCRIPTION =
 
 export const BASE_URL_API = custom.BASE_URL_API || "/api/";
 
-export const BASE_URL_API_V2 = custom.BASE_URL_API_V2 || "/api/v2/";
+export const BASE_URL_API_V2 = custom.BASE_URL_API_V2 || "/api/";
 
 /**
  * URLs excluded from error retries.

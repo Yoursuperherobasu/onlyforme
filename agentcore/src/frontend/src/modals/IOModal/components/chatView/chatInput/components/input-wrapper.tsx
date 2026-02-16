@@ -77,10 +77,10 @@ const InputWrapper: React.FC<InputWrapperProps> = ({
   };
 
   return (
-    <div className="flex w-full flex-col-reverse">
+    <div className="flex w-full flex-col">
       <div
         data-testid="input-wrapper"
-        className="flex w-full flex-col rounded-md border cursor-text border-input p-4 hover:border-muted-foreground focus:border-[1.75px] has-[:focus]:border-primary"
+        className="flex w-full cursor-text flex-col rounded-2xl border border-input bg-background p-4 shadow-sm transition-colors hover:border-muted-foreground has-[:focus]:border-primary"
         onClick={onClick}
         onMouseDown={onMouseDown}
       >
@@ -110,7 +110,7 @@ const InputWrapper: React.FC<InputWrapperProps> = ({
             />
           ))}
         </div>
-        <div className="flex w-full items-end justify-between">
+        <div className="flex w-full items-center justify-between">
           <div className={isBuilding ? "cursor-not-allowed" : ""}>
             {(!playgroundPage ||
               (playgroundPage && ENABLE_IMAGE_ON_PLAYGROUND)) && (

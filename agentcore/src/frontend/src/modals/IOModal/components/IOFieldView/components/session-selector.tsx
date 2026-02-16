@@ -131,12 +131,20 @@ export default function SessionSelector({
         else toggleVisibility();
       }}
       className={cn(
-        "file-component-accordion-div group cursor-pointer rounded-md text-left text-mmd hover:bg-secondary-hover",
-        isVisible ? "bg-secondary-hover font-semibold" : "font-normal",
+        "group w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left text-mmd transition-all",
+        isVisible
+          ? "border-primary/25 bg-primary/10 font-semibold shadow-sm"
+          : "border-transparent bg-transparent font-normal hover:border-border/80 hover:bg-background/70",
       )}
     >
-      <div className="flex w-full items-center justify-between overflow-hidden px-2 py-1 align-middle">
-        <div className="flex w-full min-w-0 items-center">
+      <div className="flex w-full items-center justify-between overflow-hidden align-middle">
+        <div className="flex w-full min-w-0 items-center gap-2">
+          <div
+            className={cn(
+              "h-2 w-2 rounded-full",
+              isVisible ? "bg-primary" : "bg-muted-foreground/40",
+            )}
+          />
           {isEditing ? (
             <div className="flex items-center">
               <Input
@@ -165,8 +173,8 @@ export default function SessionSelector({
           ) : (
             <ShadTooltip styleClasses="z-50" content={session}>
               <div className="relative w-full overflow-hidden">
-                <span className="w-full truncate">
-                  {session === currentFlowId ? "New Conversation" : session}
+                <span className="w-full truncate text-sm">
+                  {session === currentFlowId ? "Default Session" : session}
                 </span>
                 <div
                   className={cn(
@@ -197,7 +205,7 @@ export default function SessionSelector({
               }}
               data-confirm="true"
               className={cn(
-                "h-8 w-fit border-none bg-transparent p-2 focus:ring-0",
+                "h-7 w-7 border-none bg-transparent p-1.5 text-muted-foreground hover:bg-muted focus:ring-0",
                 isVisible ? "visible" : "invisible group-hover:visible",
               )}
             >

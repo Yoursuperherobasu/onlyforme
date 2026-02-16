@@ -61,17 +61,19 @@ export default function ChatView({
   const setChatValueStore = useUtilityStore((state) => state.setChatValueStore);
   const isTabHidden = useTabVisibility();
 
+  //build chat history
   useEffect(() => {
     const messagesFromMessagesStore: ChatMessageType[] = messages
       .filter(
         (message) =>
-          message.flow_id === currentFlowId &&
+          message.agent_id === currentFlowId &&
           (visibleSession === message.session_id || visibleSession === null),
       )
       .map((message) => {
         let files = message.files;
+        // Handle the "[]" case, empty string, or already parsed array
         if (Array.isArray(files)) {
-          // already array
+          // files is already an array, no need to parse
         } else if (files === "[]" || files === "") {
           files = [];
         } else if (typeof files === "string") {
@@ -118,6 +120,7 @@ export default function ChatView({
     if (ref.current && focusChat) {
       ref.current.focus();
     }
+    // trigger focus on chat when new session is set
   }, [focusChat]);
 
   function updateChat(chat: ChatMessageType, message: string) {
@@ -160,7 +163,7 @@ export default function ChatView({
   return (
     <StickToBottom
       className={cn(
-        "flex h-full w-full flex-col",
+        "flex h-full min-h-0 w-full flex-col",
         sidebarOpen &&
           !isVoiceAssistantActive &&
           "pointer-events-none blur-sm lg:pointer-events-auto lg:blur-0",
@@ -173,9 +176,8 @@ export default function ChatView({
       initial="instant"
       mass={1}
     >
-      <StickToBottom.Content className="flex flex-col min-h-full">
-        {/* Chat messages — centered narrow column */}
-        <div className="flex flex-col flex-grow place-self-center w-full max-w-[720px] px-4 lg:px-0">
+      <StickToBottom.Content className="flex min-h-0 flex-1 flex-col">
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pt-4 md:px-6">
           {chatHistory &&
             (isBuilding || chatHistory?.length > 0 ? (
               chatHistory?.map((chat, index) => (
@@ -189,24 +191,25 @@ export default function ChatView({
                 />
               ))
             ) : (
-              /* ── Empty state — Gemini style ── */
-              <div className="flex flex-grow w-full flex-col items-center justify-center">
-                <div className="flex flex-col items-center justify-center gap-3 p-8">
-                  {/* Gradient icon circle */}
-                  <div className="flex h-16 w-16 items-center justify-center ">
-                    <MothersonLogo
-                      title="Motherson Logo"
-                      className="h-16 w-16 "
-                    />
+              <div className="flex w-full flex-grow flex-col items-center justify-center">
+                <div className="flex flex-col items-center justify-center gap-4 p-8">
+                  <MothersonLogo
+                    title="Motherson Logo"
+                    className="h-10 w-10 scale-[1.5]"
+                  />
+                  <div className="flex flex-col items-center justify-center">
+                    <h3 className="mt-2 pb-2 text-2xl font-semibold text-primary">
+                      New chat
+                    </h3>
+                    <p
+                      className="text-lg text-muted-foreground"
+                      data-testid="new-chat-text"
+                    >
+                      <TextEffectPerChar>
+                        Test your flow with a chat prompt
+                      </TextEffectPerChar>
+                    </p>
                   </div>
-                  <h3 className="mt-3 text-[28px] font-normal tracking-[-0.01em] text-[#1f1f1f] dark:text-[#e3e3e3]">
-                    How can I help you today?
-                  </h3>
-                  <p className="text-base text-[#70757a] dark:text-[#9aa0a6]">
-                    <TextEffectPerChar>
-                      Test your agent with a chat prompt
-                    </TextEffectPerChar>
-                  </p>
                 </div>
               </div>
             ))}
@@ -214,7 +217,7 @@ export default function ChatView({
         <div
           className={
             displayLoadingMessage
-              ? "mx-auto w-full max-w-[720px] py-4 word-break-break-word px-4 lg:px-0"
+              ? "mx-auto w-full max-w-3xl px-4 py-4 word-break-break-word md:px-6"
               : ""
           }
           ref={ref}
@@ -225,20 +228,21 @@ export default function ChatView({
         </div>
       </StickToBottom.Content>
 
-      {/* Input area — floating at bottom with padding */}
-      <div className="mx-auto w-full max-w-[720px] px-4 pb-6 pt-2 lg:px-0">
-        <CustomChatInput
-          playgroundPage={!!playgroundPage}
-          noInput={!inputTypes.includes("ChatInput")}
-          sendMessage={async ({ repeat, files }) => {
-            await sendMessage({ repeat, files });
-            track("Playground Message Sent");
-          }}
-          inputRef={ref}
-          files={files}
-          setFiles={setFiles}
-          isDragging={isDragging}
-        />
+      <div className="border-t border-border/60 bg-background/90 px-4 pb-4 pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 md:px-6">
+        <div className="mx-auto w-full max-w-3xl">
+          <CustomChatInput
+            playgroundPage={!!playgroundPage}
+            noInput={!inputTypes.includes("ChatInput")}
+            sendMessage={async ({ repeat, files }) => {
+              await sendMessage({ repeat, files });
+              track("Playground Message Sent");
+            }}
+            inputRef={ref}
+            files={files}
+            setFiles={setFiles}
+            isDragging={isDragging}
+          />
+        </div>
       </div>
     </StickToBottom>
   );

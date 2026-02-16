@@ -141,9 +141,13 @@ export function AgentCard({
               onClick={onApprove}
               className="
     gap-2
-    border-green-600 text-green-600
+    !border-green-700 text-green-600
+    hover:!border-green-700 focus-visible:!border-green-700
+    disabled:!border-green-700 disabled:!opacity-100
     hover:!bg-green-50 hover:!text-green-600
     dark:border-green-700 dark:text-green-400
+    dark:hover:!border-green-700 dark:focus-visible:!border-green-700
+    dark:disabled:!border-green-700
     dark:hover:!bg-green-950/30 dark:hover:!text-green-400
   "
   disabled={!can("approve_reject_page")}

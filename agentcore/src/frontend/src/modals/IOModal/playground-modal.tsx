@@ -12,7 +12,6 @@ import { useUtilityStore } from "@/stores/utilityStore";
 import { swatchColors } from "@/utils/styleUtils";
 import AgentCoreLogoColor from "../../assets/motherson_name.svg";
 import IconComponent from "../../components/common/genericIconComponent";
-import ShadTooltip from "../../components/common/shadTooltipComponent";
 import { Button } from "../../components/ui/button";
 import useAlertStore from "../../stores/alertStore";
 import useFlowStore from "../../stores/flowStore";
@@ -36,6 +35,7 @@ export default function IOModal({
   canvasOpen,
   playgroundPage,
 }: IOModalPropsType): JSX.Element {
+  // ─── All state & store hooks (UNCHANGED) ───────────────────────────
   const setIOModalOpen = useFlowsManagerStore((state) => state.setIOModalOpen);
   const inputs = useFlowStore((state) => state.inputs);
   const outputs = useFlowStore((state) => state.outputs);
@@ -74,7 +74,6 @@ export default function IOModal({
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const deleteSession = useMessagesStore((state) => state.deleteSession);
   const currentFlowId = useGetFlowId();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const { mutate: deleteSessionFunction } = useDeleteSession();
 
@@ -83,12 +82,15 @@ export default function IOModal({
   );
   const PlaygroundTitle = playgroundPage && flowName ? flowName : "Playground";
 
+  // ─── API queries (UNCHANGED) ───────────────────────────────────────
   const {
     data: sessionsFromDb,
     isLoading: sessionsLoading,
     refetch: refetchSessions,
   } = useGetSessionsFromFlowQuery(
-    { id: currentFlowId },
+    {
+      id: currentFlowId,
+    },
     { enabled: open },
   );
 
@@ -104,9 +106,12 @@ export default function IOModal({
 
   useEffect(() => {
     setIOModalOpen(open);
-    return () => setIOModalOpen(false);
+    return () => {
+      setIOModalOpen(false);
+    };
   }, [open]);
 
+  // ─── Session delete handler (UNCHANGED) ────────────────────────────
   function handleDeleteSession(session_id: string) {
     if (visibleSession === session_id) {
       const remainingSessions = sessions.filter((s) => s !== session_id);
@@ -116,30 +121,49 @@ export default function IOModal({
         setvisibleSession(currentFlowId);
       }
     }
+
     deleteSessionFunction(
       { sessionId: session_id },
       {
         onSuccess: () => {
           deleteSession(session_id);
+
           const messageIdsToRemove = messages
             .filter((msg) => msg.session_id === session_id)
             .map((msg) => msg.id);
-          if (messageIdsToRemove.length > 0) removeMessages(messageIdsToRemove);
-          setSuccessData({ title: "Session deleted successfully." });
+
+          if (messageIdsToRemove.length > 0) {
+            removeMessages(messageIdsToRemove);
+          }
+
+          setSuccessData({
+            title: "Session deleted successfully.",
+          });
         },
         onError: () => {
-          if (visibleSession !== session_id) setvisibleSession(session_id);
-          setErrorData({ title: "Error deleting session." });
+          if (visibleSession !== session_id) {
+            setvisibleSession(session_id);
+          }
+
+          setErrorData({
+            title: "Error deleting session.",
+          });
         },
       },
     );
   }
 
+  // ─── startView helper (UNCHANGED) ─────────────────────────────────
   function startView() {
     if (!chatInput && !chatOutput) {
-      return filteredInputs.length > 0 ? filteredInputs[0] : filteredOutputs[0];
+      if (filteredInputs.length > 0) {
+        return filteredInputs[0];
+      } else {
+        return filteredOutputs[0];
+      }
+    } else {
+      return undefined;
     }
-    return undefined;
   }
 
   const [selectedViewField, setSelectedViewField] = useState<
@@ -159,7 +183,9 @@ export default function IOModal({
       {
         mode: "union",
         id: currentFlowId,
-        params: { session_id: visibleSession },
+        params: {
+          session_id: visibleSession,
+        },
       },
       { enabled: open },
     );
@@ -168,6 +194,7 @@ export default function IOModal({
   const setChatValue = useUtilityStore((state) => state.setChatValueStore);
   const eventDeliveryConfig = useUtilityStore((state) => state.eventDelivery);
 
+  // ─── sendMessage (UNCHANGED) ──────────────────────────────────────
   const sendMessage = useCallback(
     async ({
       repeat = 1,
@@ -182,7 +209,7 @@ export default function IOModal({
         await buildFlow({
           input_value: chatValue,
           startNodeId: chatInput?.id,
-          files,
+          files: files,
           silent: true,
           session: sessionId,
           eventDelivery: eventDeliveryConfig,
@@ -195,6 +222,7 @@ export default function IOModal({
     [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildFlow],
   );
 
+  // ─── Effects (UNCHANGED) ──────────────────────────────────────────
   useEffect(() => {
     if (playgroundPage && messages.length > 0) {
       window.sessionStorage.setItem(currentFlowId, JSON.stringify(messages));
@@ -212,6 +240,7 @@ export default function IOModal({
           console.error("Error refetching sessions:", error);
         }
       };
+
       handleRefetchAndSetSession();
       setNewChatOnPlayground(false);
     }
@@ -221,11 +250,14 @@ export default function IOModal({
     if (!visibleSession) {
       setSessionId(createNewSessionName());
       setCurrentSessionId(currentFlowId);
-    } else {
+    } else if (visibleSession) {
       setSessionId(visibleSession);
       setCurrentSessionId(visibleSession);
       if (selectedViewField?.type === "Session") {
-        setSelectedViewField({ id: visibleSession, type: "Session" });
+        setSelectedViewField({
+          id: visibleSession,
+          type: "Session",
+        });
       }
     }
   }, [visibleSession]);
@@ -235,15 +267,10 @@ export default function IOModal({
   );
 
   useEffect(() => {
-    if (open) setPlaygroundScrollBehaves("instant");
+    if (open) {
+      setPlaygroundScrollBehaves("instant");
+    }
   }, [open]);
-
-  useEffect(() => {
-    const handleResize = () => setSidebarOpen(window.innerWidth >= 1024);
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
 
   const showPublishOptions = playgroundPage && ENABLE_PUBLISH;
 
@@ -259,7 +286,12 @@ export default function IOModal({
     swatchColors.length;
 
   const setActiveSession = (session: string) => {
-    setvisibleSession((prev) => (prev === session ? undefined : session));
+    setvisibleSession((prev) => {
+      if (prev === session) {
+        return undefined;
+      }
+      return session;
+    });
   };
 
   const [hasInitialized, setHasInitialized] = useState(false);
@@ -271,11 +303,142 @@ export default function IOModal({
       prevVisibleSessionRef.current = visibleSession;
       return;
     }
-    if (open && visibleSession && prevVisibleSessionRef.current !== visibleSession) {
+    if (
+      open &&
+      visibleSession &&
+      prevVisibleSessionRef.current !== visibleSession
+    ) {
       refetchMessages();
     }
+
     prevVisibleSessionRef.current = visibleSession;
   }, [visibleSession]);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ═══  REDESIGNED SIDEBAR (visual-only changes)  ═══════════════════
+  // ═══════════════════════════════════════════════════════════════════
+
+  const sidebarContent = (
+    <div
+      className={cn(
+        "relative flex h-full w-full flex-col overflow-y-auto custom-scroll",
+        "px-3.5 pb-4",
+        playgroundPage ? "pt-5" : "pt-4",
+      )}
+    >
+      {/* ── Decorative top accent line ──────────────────────────────── */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
+
+      {/* ── Header / Flow Identity Card ─────────────────────────────── */}
+      <div className="group relative mb-5 overflow-hidden rounded-2xl border border-border/40 bg-background/80 p-4 shadow-sm backdrop-blur-sm transition-all duration-200 hover:border-border/60 hover:shadow-md dark:bg-background/50">
+        {/* Subtle inner glow */}
+        <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-br from-primary/[0.04] via-transparent to-primary/[0.02] dark:from-primary/[0.06]" />
+
+        <div className="relative flex items-center gap-3.5">
+          {/* Icon container with layered depth */}
+          <div className="relative">
+            <div
+              className={cn(
+                "relative z-10 flex shrink-0 items-center justify-center rounded-xl p-2.5",
+                "shadow-sm ring-1 ring-black/[0.06] transition-transform duration-200 group-hover:scale-[1.03]",
+                "dark:ring-white/[0.08]",
+                swatchColors[swatchIndex],
+              )}
+            >
+              <IconComponent
+                name={flowIcon ?? "Workflow"}
+                className="h-5 w-5"
+              />
+            </div>
+            {/* Soft glow behind icon */}
+            <div
+              className={cn(
+                "absolute -inset-1 -z-0 rounded-xl opacity-20 blur-md",
+                swatchColors[swatchIndex],
+              )}
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold leading-snug tracking-[-0.01em] text-foreground">
+              {PlaygroundTitle}
+            </h2>
+            <div className="mt-1 flex items-center gap-1.5">
+              <div className="h-1.5 w-1.5 rounded-full bg-emerald-500/80 shadow-[0_0_4px] shadow-emerald-500/30" />
+              <span className="text-[11px] font-medium text-muted-foreground/70">
+                Chat Playground
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Sessions Section ─────────────────────────────────────────── */}
+      <div className="min-h-0 flex-1">
+        {/* Section header with decorative line */}
+        <div className="mb-3 flex items-center gap-2.5 px-1">
+          <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground/50">
+            Sessions
+          </span>
+          <div className="h-px flex-1 bg-gradient-to-r from-border/50 to-transparent" />
+          {sessions.length > 0 && (
+            <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-muted/80 px-1 text-[10px] font-semibold tabular-nums text-muted-foreground/60">
+              {sessions.length}
+            </span>
+          )}
+        </div>
+
+        {!sessionsLoading && (
+          <SidebarOpenView
+            sessions={sessions}
+            setSelectedViewField={setSelectedViewField}
+            setvisibleSession={setvisibleSession}
+            handleDeleteSession={handleDeleteSession}
+            visibleSession={visibleSession}
+            selectedViewField={selectedViewField}
+            playgroundPage={!!playgroundPage}
+            setActiveSession={setActiveSession}
+          />
+        )}
+      </div>
+
+      {/* ── Footer / Publish Options ────────────────────────────────── */}
+      {showPublishOptions && (
+        <div className="relative mt-5 space-y-3.5 pt-4">
+          {/* Gradient divider instead of plain border */}
+          <div className="absolute inset-x-2 top-0 h-px bg-gradient-to-r from-transparent via-border/60 to-transparent" />
+
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground/50">
+              Theme
+            </span>
+            <ThemeButtons />
+          </div>
+
+          <Button
+            onClick={AgentCoreButtonClick}
+            variant="primary"
+            className={cn(
+              "group/btn relative w-full overflow-hidden !rounded-xl py-2.5",
+              "shadow-md transition-all duration-200",
+              "hover:shadow-lg hover:brightness-105",
+            )}
+          >
+            {/* Shimmer effect on hover */}
+            <div className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent transition-transform duration-500 group-hover/btn:translate-x-full" />
+            <AgentCoreLogoColor />
+            <span className="relative ml-1.5 text-[13px] font-medium tracking-[-0.01em]">
+              Built with AgentCore
+            </span>
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ═══  RETURN (sidebar container restyled, rest UNCHANGED)  ════════
+  // ═══════════════════════════════════════════════════════════════════
 
   return (
     <BaseModal
@@ -285,179 +448,66 @@ export default function IOModal({
       type={isPlayground ? "full-screen" : undefined}
       onSubmit={async () => await sendMessage({ repeat: 1 })}
       size="x-large"
-      className="!rounded-none !border-0 p-0 overflow-hidden lg:!rounded-[24px]"
+      className="!rounded-[12px] p-0"
     >
       <BaseModal.Trigger>{children}</BaseModal.Trigger>
+      {/* TODO ADAPT TO ALL TYPES OF INPUTS AND OUTPUTS */}
       <BaseModal.Content overflowHidden className="h-full">
         {open && (
-          <div className="io-shell relative flex h-full w-full bg-white dark:bg-[#131314]">
-            {/* ── Scrim ── */}
+          <div className="relative flex h-full w-full bg-background">
+            {/* ── Sidebar Container ─────────────────────────────────── */}
             <div
               className={cn(
-                "fixed inset-0 z-[60] bg-black/20 backdrop-blur-[1px] transition-opacity duration-200 lg:hidden",
-                sidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none",
-              )}
-              onClick={() => setSidebarOpen(false)}
-            />
-
-            {/* ── Drawer ── */}
-            <aside
-              className={cn(
-                "fixed inset-y-0 left-0 z-[70] flex w-[300px] flex-col",
-                "bg-[#f8f9fa] dark:bg-[#1e1f20]",
-                "transition-transform duration-300 ease-[cubic-bezier(.4,0,.2,1)]",
-                "lg:static lg:z-auto",
-                sidebarOpen ? "translate-x-0" : "-translate-x-full lg:-translate-x-full",
+                "relative flex h-full w-[284px] shrink-0 flex-col",
+                "border-r border-border/50",
+                // Layered gradient background for depth
+                "bg-gradient-to-b from-muted/40 via-muted/20 to-muted/30",
+                "dark:from-card/50 dark:via-card/30 dark:to-card/40",
               )}
             >
-              {/* Drawer header */}
-              <div className="flex h-[60px] items-center justify-between px-4">
-                <button
-                  onClick={() => setSidebarOpen(false)}
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#e8eaed] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
-                >
-                  <IconComponent name="Menu" className="h-5 w-5" />
-                </button>
-                <ShadTooltip styleClasses="z-[80]" content="New chat">
-                  <button
-                    onClick={() => {
-                      setvisibleSession(undefined);
-                      setSelectedViewField(undefined);
-                    }}
-                    className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#e8eaed] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
-                  >
-                    <IconComponent name="SquarePen" className="h-5 w-5" />
-                  </button>
-                </ShadTooltip>
-              </div>
+              {/* Subtle noise texture overlay for richness */}
+              <div
+                className="pointer-events-none absolute inset-0 opacity-[0.015] dark:opacity-[0.03]"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+                }}
+              />
+              {sidebarContent}
+            </div>
 
-              {/* Sessions */}
-              <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-1 custom-scroll">
-                {!sessionsLoading && (
-                  <SidebarOpenView
-                    sessions={sessions}
-                    setSelectedViewField={setSelectedViewField}
-                    setvisibleSession={setvisibleSession}
-                    handleDeleteSession={handleDeleteSession}
-                    visibleSession={visibleSession}
-                    selectedViewField={selectedViewField}
-                    playgroundPage={!!playgroundPage}
-                    setActiveSession={setActiveSession}
-                  />
-                )}
-              </div>
-
-              {/* Drawer footer */}
-              <div className="px-4 py-3">
-                {showPublishOptions && (
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-[#70757a] dark:text-[#9aa0a6]">Theme</span>
-                      <ThemeButtons />
-                    </div>
-                    <button
-                      onClick={AgentCoreButtonClick}
-                      className="flex w-full items-center justify-center gap-2 rounded-full border border-[#dadce0] dark:border-[#3c4043] py-2.5 text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#f1f3f4] dark:hover:bg-[#2c2d2e] transition-colors"
-                    >
-                      <AgentCoreLogoColor className="h-4 w-4" />
-                      Built with AgentCore
-                    </button>
-                  </div>
-                )}
-              </div>
-            </aside>
-
-            {/* ── Main area ── */}
-            <div className="flex h-full min-w-0 flex-1 flex-col">
-              {/* Top bar */}
-              <header className="flex h-[60px] flex-shrink-0 items-center justify-between px-4 lg:px-6">
-                <div className="flex items-center gap-2">
-                  {!sidebarOpen && (
-                    <>
-                      <button
-                        onClick={() => setSidebarOpen(true)}
-                        className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#f1f3f4] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
-                      >
-                        <IconComponent name="Menu" className="h-5 w-5" />
-                      </button>
-                      <ShadTooltip styleClasses="z-50" content="New chat">
-                        <button
-                          onClick={() => {
-                            setvisibleSession(undefined);
-                            setSelectedViewField(undefined);
-                          }}
-                          className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#f1f3f4] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
-                        >
-                          <IconComponent name="SquarePen" className="h-5 w-5" />
-                        </button>
-                      </ShadTooltip>
-                    </>
-                  )}
-                  <div className="flex items-center gap-2 ml-1">
-                    <div
-                      className={cn(
-  "flex h-8 w-8 items-center justify-center rounded-full bg-[#DA2128]"
-)}
-                    >
-                      <IconComponent
-                        name={ "MessageCircle"}
-                        className="h-4 w-4 text-white"
-                      />
-                    </div>
-                    <span className="text-lg font-normal text-[#1f1f1f] dark:text-[#e3e3e3]">
-                      {PlaygroundTitle}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  {!showPublishOptions }
-                  {showPublishOptions && !sidebarOpen && (
-                    <button
-                      onClick={AgentCoreButtonClick}
-                      className="flex items-center gap-1.5 rounded-full border border-[#dadce0] dark:border-[#3c4043] px-4 py-2 text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#f1f3f4] dark:hover:bg-[#2c2d2e] transition-colors"
-                    >
-                      <AgentCoreLogoColor className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">AgentCore</span>
-                    </button>
-                  )}
-                </div>
-              </header>
-
-              {/* Content */}
-              <div className="flex h-full min-h-0 flex-1 overflow-hidden">
-                {selectedViewField && !sessionsLoading && (
-                  <SelectedViewField
-                    selectedViewField={selectedViewField}
-                    setSelectedViewField={setSelectedViewField}
-                    haveChat={haveChat}
-                    inputs={filteredInputs}
-                    outputs={filteredOutputs}
-                    sessions={sessions}
-                    currentFlowId={currentFlowId}
-                    nodes={filteredNodes}
-                  />
-                )}
-                <ChatViewWrapper
-                  playgroundPage={playgroundPage}
+            {/* ── Main Content (UNCHANGED) ──────────────────────────── */}
+            <div className="relative flex h-full min-w-0 flex-1 flex-col bg-background">
+              {selectedViewField && !sessionsLoading && (
+                <SelectedViewField
                   selectedViewField={selectedViewField}
-                  visibleSession={visibleSession}
-                  sessions={sessions}
-                  sidebarOpen={sidebarOpen}
-                  currentFlowId={currentFlowId}
-                  setSidebarOpen={setSidebarOpen}
-                  isPlayground={isPlayground}
-                  setvisibleSession={setvisibleSession}
                   setSelectedViewField={setSelectedViewField}
                   haveChat={haveChat}
-                  messagesFetched={messagesFetched}
-                  sessionId={sessionId}
-                  sendMessage={sendMessage}
-                  canvasOpen={canvasOpen}
-                  setOpen={setOpen}
-                  playgroundTitle={PlaygroundTitle}
+                  inputs={filteredInputs}
+                  outputs={filteredOutputs}
+                  sessions={sessions}
+                  currentFlowId={currentFlowId}
+                  nodes={filteredNodes}
                 />
-              </div>
+              )}
+              <ChatViewWrapper
+                playgroundPage={playgroundPage}
+                selectedViewField={selectedViewField}
+                visibleSession={visibleSession}
+                sessions={sessions}
+                sidebarOpen={true}
+                currentFlowId={currentFlowId}
+                setSidebarOpen={() => {}}
+                isPlayground={isPlayground}
+                setvisibleSession={setvisibleSession}
+                setSelectedViewField={setSelectedViewField}
+                haveChat={haveChat}
+                messagesFetched={messagesFetched}
+                sessionId={sessionId}
+                sendMessage={sendMessage}
+                canvasOpen={canvasOpen}
+                setOpen={setOpen}
+                playgroundTitle={PlaygroundTitle}
+              />
             </div>
           </div>
         )}

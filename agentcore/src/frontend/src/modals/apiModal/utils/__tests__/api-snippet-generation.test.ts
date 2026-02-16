@@ -156,7 +156,7 @@ describe("API Snippet Generation Utilities", () => {
 
         // Check for file upload steps
         expect(code).toContain("/api/files/upload/");
-        expect(code).toContain("/api/v2/files");
+        expect(code).toContain("/api/files");
         expect(code).toContain("with open");
         expect(code).toContain('files={"file": f}');
       });
@@ -180,7 +180,7 @@ describe("API Snippet Generation Utilities", () => {
 
         // Check for file upload steps
         expect(code).toContain("/api/files/upload/");
-        expect(code).toContain("/api/v2/files");
+        expect(code).toContain("/api/files");
         expect(code).toContain("with open");
         expect(code).toContain('files={"file": f}');
       });
@@ -245,7 +245,7 @@ describe("API Snippet Generation Utilities", () => {
 
         // Check for upload steps
         expect(code).toContain("/api/files/upload/");
-        expect(code).toContain("/api/v2/files");
+        expect(code).toContain("/api/files");
       });
 
       it("should generate multi-step code for file uploads without authentication", () => {
@@ -277,7 +277,7 @@ describe("API Snippet Generation Utilities", () => {
 
         // Check for upload steps
         expect(code).toContain("/api/files/upload/");
-        expect(code).toContain("/api/v2/files");
+        expect(code).toContain("/api/files");
       });
     });
 
@@ -364,7 +364,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(result.steps[0].title).toContain("Upload files");
         expect(result.steps[0]).toHaveProperty("code");
         expect(result.steps[0].code).toContain("/api/files/upload/");
-        expect(result.steps[0].code).toContain("/api/v2/files");
+        expect(result.steps[0].code).toContain("/api/files");
         expect(result.steps[0].code).toContain('--form "file=@');
         expect(result.steps[0].code).toContain("x-api-key: YOUR_API_KEY_HERE");
 
@@ -403,7 +403,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(result.steps[0].title).toContain("Upload files");
         expect(result.steps[0]).toHaveProperty("code");
         expect(result.steps[0].code).toContain("/api/files/upload/");
-        expect(result.steps[0].code).toContain("/api/v2/files");
+        expect(result.steps[0].code).toContain("/api/files");
         expect(result.steps[0].code).toContain('--form "file=@');
         expect(result.steps[0].code).not.toContain(
           "x-api-key: YOUR_API_KEY_HERE",

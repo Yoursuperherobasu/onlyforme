@@ -153,7 +153,7 @@ const authHeaders = { 'x-api-key': apiKey };`
         const fileUploadOptions${index + 1} = {
             hostname: '${hostname}',
             port: ${port},
-            path: '/api/v2/files',
+            path: '/api/files',
             method: 'POST',
             headers: {
                 'Content-Type': \`multipart/form-data; boundary=\${fileBoundary${

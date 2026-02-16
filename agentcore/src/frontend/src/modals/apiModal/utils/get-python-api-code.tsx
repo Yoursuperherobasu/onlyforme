@@ -125,7 +125,7 @@ except ValueError as e:
         uploadSteps.length + 1
       }: Upload file for File/VideoFile ${nodeId}\nwith open(\"your_file_${
         index + 1
-      }.pdf\", \"rb\") as f:\n    response = requests.post(\n        f\"{base_url}/api/v2/files\",\n        headers=headers,\n        files={\"file\": f}\n    )\n    response.raise_for_status()\n    file_path_${
+      }.pdf\", \"rb\") as f:\n    response = requests.post(\n        f\"{base_url}/api/files\",\n        headers=headers,\n        files={\"file\": f}\n    )\n    response.raise_for_status()\n    file_path_${
         index + 1
       } = response.json()[\"path\"]`,
     );

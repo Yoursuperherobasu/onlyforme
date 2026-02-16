@@ -170,14 +170,14 @@ curl.exe --request POST \`
     if (detectedPlatform === "powershell") {
       uploadCommands.push(
         `curl.exe --request POST \`
-     --url "${baseUrl}/api/v2/files" \`
+     --url "${baseUrl}/api/files" \`
      ${shouldDisplayApiKey ? '--header "x-api-key: YOUR_API_KEY_HERE" \\' : ""}
      --form "file=@your_file_${uploadCounter}.pdf"`,
       );
     } else {
       uploadCommands.push(
         `curl --request POST \\
-     --url "${baseUrl}/api/v2/files" \\
+     --url "${baseUrl}/api/files" \\
      ${shouldDisplayApiKey ? '--header "x-api-key: YOUR_API_KEY_HERE" \\' : ""}
      --form "file=@your_file_${uploadCounter}.pdf"`,
       );
