@@ -13,10 +13,12 @@ import json
 import asyncio
 import time
 import re
+from threading import Lock
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any, List, Optional, Dict, Union
 from collections import defaultdict
-from uuid import UUID
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from loguru import logger
@@ -53,6 +55,8 @@ except Exception:
 router = APIRouter(prefix="/evaluation", tags=["Evaluation"])
 
 _LITELLM_STD_LOGGING_PATCHED = False
+_DATASET_EXPERIMENT_JOBS: dict[str, dict[str, Any]] = {}
+_DATASET_EXPERIMENT_JOBS_LOCK = Lock()
 
 # Persistent evaluator configs stored in the database (see Evaluator model)
 from agentcore.services.database.models.evaluator.model import Evaluator  # noqa: E402
@@ -185,6 +189,128 @@ class TraceForReview(BaseModel):
     score_count: int = 0
 
 
+class DatasetResponse(BaseModel):
+    """Represents a Langfuse dataset."""
+    id: str
+    name: str
+    description: str | None = None
+    metadata: Any | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    item_count: int | None = None
+
+
+class CreateDatasetRequest(BaseModel):
+    """Request to create a dataset."""
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+    metadata: Any | None = None
+
+
+class DatasetItemResponse(BaseModel):
+    """Represents a single dataset item."""
+    id: str
+    dataset_name: str
+    status: str | None = None
+    input: Any | None = None
+    expected_output: Any | None = None
+    metadata: Any | None = None
+    source_trace_id: str | None = None
+    source_observation_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class CreateDatasetItemRequest(BaseModel):
+    """Request to create a dataset item."""
+    input: Any | None = None
+    expected_output: Any | None = None
+    metadata: Any | None = None
+    source_trace_id: str | None = None
+    source_observation_id: str | None = None
+    trace_id: str | None = None
+    use_trace_output_as_expected: bool = True
+
+
+class DatasetRunResponse(BaseModel):
+    """Represents a dataset experiment run."""
+    id: str
+    name: str
+    description: str | None = None
+    metadata: Any | None = None
+    dataset_id: str | None = None
+    dataset_name: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class DatasetRunItemScoreResponse(BaseModel):
+    """Score snapshot linked to a dataset run item trace."""
+    id: str
+    name: str
+    value: float
+    source: str
+    comment: str | None = None
+    created_at: datetime | None = None
+
+
+class DatasetRunItemDetailResponse(BaseModel):
+    """Detailed dataset run item response."""
+    id: str
+    dataset_item_id: str | None = None
+    trace_id: str | None = None
+    observation_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    trace_name: str | None = None
+    trace_input: Any | None = None
+    trace_output: Any | None = None
+    score_count: int = 0
+    scores: list[DatasetRunItemScoreResponse] = Field(default_factory=list)
+
+
+class DatasetRunDetailResponse(BaseModel):
+    """Detailed run payload including run items and associated traces/scores."""
+    run: DatasetRunResponse
+    item_count: int
+    items: list[DatasetRunItemDetailResponse]
+
+
+class RunDatasetExperimentRequest(BaseModel):
+    """Request to run a Langfuse dataset experiment."""
+    experiment_name: str = Field(..., min_length=1, max_length=200)
+    run_name: str | None = None
+    description: str | None = None
+    agent_id: str | None = None
+    evaluator_config_id: str | None = None
+    criteria: str | None = None
+    model: str | None = None
+    model_api_key: str | None = None
+    max_concurrency: int = Field(default=10, ge=1, le=50)
+
+
+class DatasetExperimentEnqueueResponse(BaseModel):
+    """Response when a dataset experiment is queued."""
+    job_id: str
+    dataset_name: str
+    experiment_name: str
+    run_name: str | None = None
+    status: str
+
+
+class DatasetExperimentJobResponse(BaseModel):
+    """Background dataset experiment job state."""
+    job_id: str
+    status: str
+    dataset_name: str
+    experiment_name: str
+    run_name: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    result: Dict[str, Any] | None = None
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -281,6 +407,551 @@ def parse_trace_data(trace) -> Dict[str, Any]:
         "tags": get_attr(trace, 'tags', 'labels'),
     }
 
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Convert object-like values into plain dictionaries."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        try:
+            dumped = value.model_dump()
+            return dumped if isinstance(dumped, dict) else {}
+        except Exception:
+            return {}
+    if hasattr(value, "__dict__"):
+        try:
+            raw = dict(vars(value))
+            return {k: v for k, v in raw.items() if not k.startswith("_")}
+        except Exception:
+            return {}
+    return {}
+
+
+def _parse_paginated_response(response: Any) -> tuple[list[Any], int | None]:
+    """Extract rows + total from Langfuse paginated payload variants."""
+    if response is None:
+        return [], None
+
+    rows: list[Any] = []
+    total: int | None = None
+
+    if isinstance(response, list):
+        return response, len(response)
+
+    if isinstance(response, dict):
+        rows = list(response.get("data") or response.get("items") or [])
+        meta = response.get("meta") or {}
+        if isinstance(meta, dict):
+            total = meta.get("total_items") or meta.get("total")
+        if total is None:
+            total = response.get("total")
+        return rows, int(total) if total is not None else None
+
+    if hasattr(response, "data"):
+        rows = list(getattr(response, "data", []) or [])
+        meta = getattr(response, "meta", None)
+        if isinstance(meta, dict):
+            total = meta.get("total_items") or meta.get("total")
+        elif meta is not None:
+            total = getattr(meta, "total_items", None) or getattr(meta, "total", None)
+        return rows, int(total) if total is not None else None
+
+    return [], None
+
+
+def _dataset_owned_by_user(dataset_obj: Any, user_id: str) -> bool:
+    """Best-effort user scoping for datasets via metadata."""
+    metadata = get_attr(dataset_obj, "metadata", default=None)
+    if not isinstance(metadata, dict):
+        # Keep backward compatibility with datasets created before ownership metadata.
+        return True
+
+    owner = (
+        metadata.get("app_user_id")
+        or metadata.get("user_id")
+        or metadata.get("owner_user_id")
+        or metadata.get("created_by_user_id")
+    )
+    if owner is None:
+        return True
+    return str(owner) == str(user_id)
+
+
+def _merge_dataset_metadata(metadata: Any, *, user_id: str) -> dict[str, Any]:
+    """Attach app metadata while preserving user-provided fields."""
+    base = _as_dict(metadata)
+    base.setdefault("app_user_id", str(user_id))
+    base.setdefault("created_by_user_id", str(user_id))
+    base.setdefault("created_via", "agentcore-evaluation")
+    return base
+
+
+def _dataset_to_response(dataset_obj: Any, *, item_count: int | None = None) -> DatasetResponse:
+    """Serialize Langfuse dataset object to API response."""
+    return DatasetResponse(
+        id=str(get_attr(dataset_obj, "id", default="") or ""),
+        name=str(get_attr(dataset_obj, "name", default="") or ""),
+        description=get_attr(dataset_obj, "description", default=None),
+        metadata=get_attr(dataset_obj, "metadata", default=None),
+        created_at=get_attr(dataset_obj, "created_at", "createdAt", default=None),
+        updated_at=get_attr(dataset_obj, "updated_at", "updatedAt", default=None),
+        item_count=item_count,
+    )
+
+
+def _dataset_item_to_response(item_obj: Any) -> DatasetItemResponse:
+    """Serialize Langfuse dataset item object to API response."""
+    status = get_attr(item_obj, "status", default=None)
+    if hasattr(status, "value"):
+        status = status.value
+
+    return DatasetItemResponse(
+        id=str(get_attr(item_obj, "id", default="") or ""),
+        dataset_name=str(get_attr(item_obj, "dataset_name", "datasetName", default="") or ""),
+        status=str(status) if status is not None else None,
+        input=get_attr(item_obj, "input", default=None),
+        expected_output=get_attr(item_obj, "expected_output", "expectedOutput", default=None),
+        metadata=get_attr(item_obj, "metadata", default=None),
+        source_trace_id=get_attr(item_obj, "source_trace_id", "sourceTraceId", default=None),
+        source_observation_id=get_attr(item_obj, "source_observation_id", "sourceObservationId", default=None),
+        created_at=get_attr(item_obj, "created_at", "createdAt", default=None),
+        updated_at=get_attr(item_obj, "updated_at", "updatedAt", default=None),
+    )
+
+
+def _dataset_run_to_response(run_obj: Any) -> DatasetRunResponse:
+    """Serialize Langfuse dataset run object to API response."""
+    return DatasetRunResponse(
+        id=str(get_attr(run_obj, "id", default="") or ""),
+        name=str(get_attr(run_obj, "name", default="") or ""),
+        description=get_attr(run_obj, "description", default=None),
+        metadata=get_attr(run_obj, "metadata", default=None),
+        dataset_id=get_attr(run_obj, "dataset_id", "datasetId", default=None),
+        dataset_name=get_attr(run_obj, "dataset_name", "datasetName", default=None),
+        created_at=get_attr(run_obj, "created_at", "createdAt", default=None),
+        updated_at=get_attr(run_obj, "updated_at", "updatedAt", default=None),
+    )
+
+
+def _dataset_run_item_to_detail_response(
+    item_obj: Any,
+    *,
+    trace_dict: dict[str, Any] | None = None,
+    scores: list[DatasetRunItemScoreResponse] | None = None,
+) -> DatasetRunItemDetailResponse:
+    """Serialize Langfuse dataset run item object to detailed response."""
+    trace_dict = trace_dict or {}
+    scores = scores or []
+    return DatasetRunItemDetailResponse(
+        id=str(get_attr(item_obj, "id", default="") or ""),
+        dataset_item_id=get_attr(item_obj, "dataset_item_id", "datasetItemId", default=None),
+        trace_id=get_attr(item_obj, "trace_id", "traceId", default=None),
+        observation_id=get_attr(item_obj, "observation_id", "observationId", default=None),
+        created_at=get_attr(item_obj, "created_at", "createdAt", default=None),
+        updated_at=get_attr(item_obj, "updated_at", "updatedAt", default=None),
+        trace_name=str(trace_dict.get("name")) if trace_dict.get("name") is not None else None,
+        trace_input=trace_dict.get("input"),
+        trace_output=trace_dict.get("output"),
+        score_count=len(scores),
+        scores=scores,
+    )
+
+
+def _set_dataset_experiment_job(job_id: str, **updates: Any) -> None:
+    """Upsert in-memory dataset experiment job state."""
+    with _DATASET_EXPERIMENT_JOBS_LOCK:
+        current = _DATASET_EXPERIMENT_JOBS.get(job_id, {}).copy()
+        current.update(updates)
+        _DATASET_EXPERIMENT_JOBS[job_id] = current
+
+
+def _get_dataset_experiment_job(job_id: str) -> dict[str, Any] | None:
+    """Return a copy of in-memory dataset experiment job state."""
+    with _DATASET_EXPERIMENT_JOBS_LOCK:
+        current = _DATASET_EXPERIMENT_JOBS.get(job_id)
+        return current.copy() if current else None
+
+
+def _dataset_job_response(job_id: str, payload: dict[str, Any]) -> DatasetExperimentJobResponse:
+    """Serialize internal dataset experiment job payload."""
+    return DatasetExperimentJobResponse(
+        job_id=job_id,
+        status=str(payload.get("status") or "unknown"),
+        dataset_name=str(payload.get("dataset_name") or ""),
+        experiment_name=str(payload.get("experiment_name") or ""),
+        run_name=payload.get("run_name"),
+        started_at=payload.get("started_at"),
+        finished_at=payload.get("finished_at"),
+        error=payload.get("error"),
+        result=payload.get("result"),
+    )
+
+
+def _to_text(value: Any) -> str:
+    """Convert arbitrary payloads into compact text for prompts/inputs."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return str(value)
+
+
+def _extract_agent_output_from_run_response(run_response: Any) -> Any:
+    """Best-effort extraction of final agent output from RunResponse variants."""
+    outputs = get_attr(run_response, "outputs", default=None)
+    if outputs is None and isinstance(run_response, dict):
+        outputs = run_response.get("outputs")
+    if not isinstance(outputs, list):
+        if hasattr(run_response, "model_dump"):
+            try:
+                return run_response.model_dump()
+            except Exception:
+                return run_response
+        return run_response
+
+    text_candidates: list[str] = []
+    value_candidates: list[Any] = []
+    for run_output in outputs:
+        result_entries = get_attr(run_output, "outputs", default=None)
+        if not isinstance(result_entries, list):
+            continue
+        for result_data in result_entries:
+            if result_data is None:
+                continue
+            messages = get_attr(result_data, "messages", default=None)
+            if isinstance(messages, list):
+                for msg in messages:
+                    msg_value = get_attr(msg, "message", default=None)
+                    if msg_value is not None:
+                        value_candidates.append(msg_value)
+                        if isinstance(msg_value, str) and msg_value.strip():
+                            text_candidates.append(msg_value)
+
+            output_map = get_attr(result_data, "outputs", default=None)
+            if isinstance(output_map, dict):
+                for output_entry in output_map.values():
+                    out_value = get_attr(output_entry, "message", default=None)
+                    if out_value is not None:
+                        value_candidates.append(out_value)
+                        if isinstance(out_value, str) and out_value.strip():
+                            text_candidates.append(out_value)
+
+            raw_result = get_attr(result_data, "results", default=None)
+            if raw_result not in (None, "", {}, []):
+                value_candidates.append(raw_result)
+
+    if text_candidates:
+        return text_candidates[-1]
+    if value_candidates:
+        return value_candidates[-1]
+    if hasattr(run_response, "model_dump"):
+        try:
+            return run_response.model_dump()
+        except Exception:
+            pass
+    return run_response
+
+
+def _normalize_for_exact_match(value: Any) -> str:
+    """Normalize values for exact-match evaluator comparison."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    try:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False).strip()
+    except Exception:
+        return str(value).strip()
+
+
+def _run_async(coro):
+    """Run coroutine in sync contexts, even if current thread already has a loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    if not loop.is_running():
+        return loop.run_until_complete(coro)
+
+    container: dict[str, Any] = {}
+    error_holder: dict[str, Exception] = {}
+
+    def _runner():
+        try:
+            container["value"] = asyncio.run(coro)
+        except Exception as exc:  # noqa: BLE001
+            error_holder["error"] = exc
+
+    import threading
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join()
+    if "error" in error_holder:
+        raise error_holder["error"]
+    return container.get("value")
+
+
+async def _run_dataset_item_with_flow(
+    *,
+    flow_payload: dict[str, Any],
+    user_id: str,
+    item_input: Any,
+    session_id: str,
+) -> Any:
+    """Execute one dataset item input against a flow and return parsed output."""
+    from agentcore.api.endpoints import simple_run_agent
+    from agentcore.api.v1_schemas import SimplifiedAPIRequest
+
+    flow_stub = SimpleNamespace(
+        id=flow_payload["id"],
+        name=flow_payload["name"],
+        data=flow_payload["data"],
+    )
+    api_user_stub = SimpleNamespace(id=user_id)
+    run_response = await simple_run_agent(
+        flow=flow_stub,
+        input_request=SimplifiedAPIRequest(
+            input_value=_to_text(item_input),
+            input_type="chat",
+            output_type="chat",
+            session_id=session_id,
+        ),
+        stream=False,
+        api_key_user=api_user_stub,
+    )
+    return _extract_agent_output_from_run_response(run_response)
+
+
+async def _dataset_llm_evaluate(
+    *,
+    criteria: str,
+    model: str,
+    model_api_key: str | None,
+    item_input: Any,
+    output: Any,
+    expected_output: Any,
+) -> tuple[float, str, str]:
+    """Run LLM-as-a-judge for one dataset item output and return normalized score."""
+    system_prompt = (
+        "You are an impartial AI judge evaluating an assistant output. "
+        "Given criteria, input, expected output, and actual output, assign a score between 0 and 5 inclusive. "
+        "Return JSON with keys score_0_5 and reason."
+    )
+    user_prompt = f"""### Criteria
+{criteria}
+
+### Input
+{_to_text(item_input)}
+
+### Expected Output
+{_to_text(expected_output)}
+
+### Actual Output
+{_to_text(output)}
+
+Respond ONLY with valid JSON:
+{{
+  "score_0_5": number,
+  "reason": "short explanation"
+}}
+"""
+
+    model_candidates = _build_litellm_model_candidates(model, model_api_key)
+    if not model_candidates:
+        raise RuntimeError("Invalid judge model configuration")
+
+    content: str | None = None
+    used_model = model_candidates[0]
+    if LITELLM_AVAILABLE:
+        _ensure_litellm_logging_compatibility_patch()
+        last_error: Exception | None = None
+        for candidate_model in model_candidates:
+            kwargs: Dict[str, Any] = {
+                "model": candidate_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "response_format": {"type": "json_object"},
+                "no-log": True,
+            }
+            if model_api_key:
+                kwargs["api_key"] = model_api_key
+            api_base = _resolve_api_base_for_model(candidate_model)
+            if api_base:
+                kwargs["api_base"] = api_base
+
+            try:
+                response = await litellm.acompletion(**kwargs)
+                content = response.choices[0].message.content
+                used_model = candidate_model
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if _is_litellm_retryable_model_error(exc):
+                    continue
+                raise
+
+        if content is None:
+            if last_error:
+                raise last_error
+            raise RuntimeError("LLM evaluator failed without response")
+    else:
+        content, used_model = await _call_openai_judge_completion(
+            model_candidates=model_candidates,
+            model_api_key=model_api_key,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+
+    payload = str(content or "").strip()
+    if payload.startswith("```json"):
+        payload = payload[7:]
+    if payload.startswith("```"):
+        payload = payload[3:]
+    if payload.endswith("```"):
+        payload = payload[:-3]
+    payload = payload.strip()
+    decoded = json.loads(payload)
+    raw_score = decoded.get("score_0_5", decoded.get("score", 0))
+    score_0_5 = max(0.0, min(5.0, float(raw_score)))
+    reason = str(decoded.get("reason") or "No reason provided")
+    return score_0_5 / 5.0, reason, used_model
+
+
+def _list_all_datasets_for_user(client: Any, user_id: str, *, max_rows: int = 500) -> list[Any]:
+    """Fetch datasets and apply best-effort user scoping."""
+    collected: list[Any] = []
+    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "list"):
+        page = 1
+        page_size = min(100, max_rows)
+        while len(collected) < max_rows:
+            try:
+                response = client.api.datasets.list(page=page, limit=page_size)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Dataset list via api.datasets.list failed at page {}: {}", page, str(exc))
+                break
+
+            rows, _ = _parse_paginated_response(response)
+            if not rows:
+                break
+            collected.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+
+    filtered = [dataset for dataset in collected if _dataset_owned_by_user(dataset, user_id)]
+    filtered.sort(
+        key=lambda dataset: _parse_trace_timestamp(get_attr(dataset, "created_at", "createdAt", default=None))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return filtered[:max_rows]
+
+
+def _fetch_dataset_items_page(client: Any, dataset_name: str, page: int, limit: int) -> tuple[list[Any], int]:
+    """Fetch one page of dataset items using SDK-compatible APIs."""
+    if hasattr(client, "api") and hasattr(client.api, "dataset_items") and hasattr(client.api.dataset_items, "list"):
+        response = client.api.dataset_items.list(dataset_name=dataset_name, page=page, limit=limit)
+        rows, total = _parse_paginated_response(response)
+        return rows, int(total) if total is not None else len(rows)
+
+    dataset = client.get_dataset(dataset_name)
+    rows = list(getattr(dataset, "items", []) or [])
+    total_rows = len(rows)
+    start = (page - 1) * limit
+    return rows[start:start + limit], total_rows
+
+
+def _fetch_dataset_runs_page(client: Any, dataset_name: str, page: int, limit: int) -> tuple[list[Any], int]:
+    """Fetch one page of dataset runs using SDK-compatible APIs."""
+    if hasattr(client, "get_dataset_runs"):
+        response = client.get_dataset_runs(dataset_name=dataset_name, page=page, limit=limit)
+        rows, total = _parse_paginated_response(response)
+        return rows, int(total) if total is not None else len(rows)
+
+    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "get_runs"):
+        response = client.api.datasets.get_runs(dataset_name=dataset_name, page=page, limit=limit)
+        rows, total = _parse_paginated_response(response)
+        return rows, int(total) if total is not None else len(rows)
+
+    return [], 0
+
+
+def _find_dataset_run_by_id(
+    client: Any,
+    *,
+    dataset_name: str,
+    run_id: str,
+    max_scan: int = 1000,
+) -> Any | None:
+    """Find dataset run object by id using paginated scans."""
+    page_size = min(100, max_scan)
+    scanned = 0
+    page = 1
+    while scanned < max_scan:
+        rows, _ = _fetch_dataset_runs_page(client, dataset_name, page, page_size)
+        if not rows:
+            break
+        for row in rows:
+            if str(get_attr(row, "id", default="") or "") == str(run_id):
+                return row
+        scanned += len(rows)
+        if len(rows) < page_size:
+            break
+        page += 1
+    return None
+
+
+def _fetch_dataset_run_items(
+    client: Any,
+    *,
+    dataset_name: str,
+    dataset_id: str | None,
+    run_name: str,
+    item_limit: int,
+) -> list[Any]:
+    """Fetch run items for a dataset run."""
+    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "get_run"):
+        try:
+            run_with_items = client.api.datasets.get_run(dataset_name=dataset_name, run_name=run_name)
+            run_items = get_attr(run_with_items, "dataset_run_items", "datasetRunItems", default=[]) or []
+            return list(run_items)[:item_limit]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("api.datasets.get_run failed for dataset={} run={}: {}", dataset_name, run_name, str(exc))
+
+    if (
+        dataset_id
+        and hasattr(client, "api")
+        and hasattr(client.api, "dataset_run_items")
+        and hasattr(client.api.dataset_run_items, "list")
+    ):
+        page = 1
+        page_size = min(100, item_limit)
+        collected: list[Any] = []
+        while len(collected) < item_limit:
+            response = client.api.dataset_run_items.list(
+                dataset_id=dataset_id,
+                run_name=run_name,
+                page=page,
+                limit=page_size,
+            )
+            rows, _ = _parse_paginated_response(response)
+            if not rows:
+                break
+            collected.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+        return collected[:item_limit]
+
+    return []
 
 _KNOWN_LITELLM_PROVIDERS = {
     "openai",
@@ -1479,6 +2150,290 @@ Respond ONLY with valid JSON, no markdown formatting."""
         logger.opt(exception=True).error("LLM Judge error for trace_ref={}: {}", trace_id, str(e))
 
 
+async def _resolve_flow_payload_for_experiment(
+    *,
+    agent_id: str | None,
+    current_user: User,
+) -> dict[str, Any] | None:
+    """Resolve flow payload for dataset experiment task execution."""
+    normalized_agent_id = _normalize_agent_id(agent_id)
+    if not normalized_agent_id:
+        return None
+    try:
+        flow_uuid = UUID(normalized_agent_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid agent_id for experiment run")
+
+    async with session_scope() as session:
+        flow = await session.get(Flow, flow_uuid)
+        if not flow:
+            raise HTTPException(status_code=404, detail=f"Flow {normalized_agent_id} not found")
+        if str(flow.user_id) != str(current_user.id) and flow.access_type != AccessTypeEnum.PUBLIC:
+            raise HTTPException(status_code=403, detail="You do not have access to this flow")
+        if flow.data is None:
+            raise HTTPException(status_code=400, detail="Selected flow has no data payload")
+
+        return {
+            "id": str(flow.id),
+            "name": flow.name or str(flow.id),
+            "data": flow.data,
+        }
+
+
+async def _resolve_experiment_judge_config(
+    *,
+    current_user: User,
+    evaluator_config_id: str | None,
+    criteria: str | None,
+    model: str | None,
+    model_api_key: str | None,
+) -> dict[str, Any]:
+    """Resolve dataset experiment judge settings from optional saved evaluator."""
+    judge_name = "Dataset LLM Judge"
+    resolved_criteria = (criteria or "").strip() or None
+    resolved_model = (model or "").strip() or None
+    resolved_api_key = (model_api_key or "").strip() or None
+
+    if evaluator_config_id:
+        try:
+            config_uuid = UUID(evaluator_config_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid evaluator_config_id")
+
+        async with session_scope() as session:
+            evaluator = await session.get(Evaluator, config_uuid)
+            if not evaluator or str(evaluator.user_id) != str(current_user.id):
+                raise HTTPException(status_code=404, detail="Evaluator config not found")
+
+        judge_name = evaluator.name or judge_name
+        if not resolved_criteria:
+            resolved_criteria = (evaluator.criteria or "").strip() or None
+        if not resolved_model:
+            resolved_model = (evaluator.model or "").strip() or None
+        if not resolved_api_key:
+            resolved_api_key = (evaluator.model_api_key or "").strip() or None
+
+    return {
+        "judge_name": judge_name,
+        "criteria": resolved_criteria,
+        "model": resolved_model,
+        "model_api_key": resolved_api_key,
+    }
+
+
+def _run_dataset_experiment_sync(
+    *,
+    client: Any,
+    dataset_name: str,
+    experiment_name: str,
+    run_name: str | None,
+    description: str | None,
+    user_id: str,
+    flow_payload: dict[str, Any] | None,
+    judge_name: str | None,
+    judge_criteria: str | None,
+    judge_model: str | None,
+    judge_model_api_key: str | None,
+    max_concurrency: int,
+) -> dict[str, Any]:
+    """Run dataset experiment synchronously (executed in a worker thread)."""
+    dataset = client.get_dataset(dataset_name)
+    data_items = list(getattr(dataset, "items", []) or [])
+    if not data_items:
+        raise RuntimeError(f"Dataset '{dataset_name}' has no items")
+
+    has_expected_outputs = any(get_attr(item, "expected_output", "expectedOutput", default=None) is not None for item in data_items)
+
+    def task(*, item, **kwargs):  # noqa: ARG001
+        item_input = get_attr(item, "input", default=None)
+        item_id = str(get_attr(item, "id", default="") or "")
+        if flow_payload:
+            session_id = f"dataset:{dataset_name}:{item_id or int(time.time() * 1000)}"
+            return _run_async(
+                _run_dataset_item_with_flow(
+                    flow_payload=flow_payload,
+                    user_id=str(user_id),
+                    item_input=item_input,
+                    session_id=session_id,
+                )
+            )
+
+        # Fallback mode (no flow selected): return input as output.
+        # This keeps behavior explicit and avoids accidentally inflating scores.
+        return item_input
+
+    evaluators: list[Any] = []
+    if has_expected_outputs:
+        def exact_match_evaluator(*, input, output, expected_output=None, **kwargs):  # noqa: ARG001
+            if expected_output is None:
+                return {
+                    "name": "exact_match",
+                    "value": 0.0,
+                    "comment": "No expected output configured for this dataset item.",
+                }
+            expected_norm = _normalize_for_exact_match(expected_output)
+            output_norm = _normalize_for_exact_match(output)
+            is_match = expected_norm == output_norm
+            return {
+                "name": "exact_match",
+                "value": 1.0 if is_match else 0.0,
+                "comment": "Exact match" if is_match else "Output differs from expected output",
+            }
+
+        evaluators.append(exact_match_evaluator)
+
+    if judge_criteria and judge_model and (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
+        llm_metric_name = f"llm_judge:{judge_name or 'judge'}"
+
+        def llm_judge_evaluator(*, input, output, expected_output=None, **kwargs):  # noqa: ARG001
+            try:
+                value, reason, used_model = _run_async(
+                    _dataset_llm_evaluate(
+                        criteria=judge_criteria,
+                        model=judge_model,
+                        model_api_key=judge_model_api_key,
+                        item_input=input,
+                        output=output,
+                        expected_output=expected_output,
+                    )
+                )
+                return {
+                    "name": llm_metric_name,
+                    "value": float(value),
+                    "comment": json.dumps(
+                        {
+                            "reason": reason,
+                            "model": used_model,
+                            "criteria": judge_criteria,
+                        }
+                    ),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Dataset LLM evaluator failed for run_name={}: {}", run_name, str(exc))
+                return {
+                    "name": llm_metric_name,
+                    "value": 0.0,
+                    "comment": f"LLM evaluator error: {exc}",
+                }
+
+        evaluators.append(llm_judge_evaluator)
+
+    experiment_metadata = {
+        "app_user_id": str(user_id),
+        "source": "agentcore-evaluation-datasets",
+    }
+    if flow_payload:
+        experiment_metadata["agent_id"] = str(flow_payload["id"])
+        experiment_metadata["agent_name"] = str(flow_payload["name"])
+    if judge_criteria:
+        experiment_metadata["judge_enabled"] = "true"
+    if judge_name:
+        experiment_metadata["judge_name"] = str(judge_name)
+
+    result = client.run_experiment(
+        name=experiment_name,
+        run_name=run_name,
+        description=description,
+        data=data_items,
+        task=task,
+        evaluators=evaluators,
+        max_concurrency=max_concurrency,
+        metadata=experiment_metadata,
+        _dataset_version=getattr(dataset, "version", None),
+    )
+
+    metric_buckets: dict[str, list[float]] = defaultdict(list)
+    for item_result in list(get_attr(result, "item_results", default=[]) or []):
+        evaluations = list(get_attr(item_result, "evaluations", default=[]) or [])
+        for ev in evaluations:
+            score_name = str(get_attr(ev, "name", default="") or "")
+            score_value = get_attr(ev, "value", default=None)
+            if not score_name:
+                continue
+            if isinstance(score_value, (int, float)):
+                metric_buckets[score_name].append(float(score_value))
+
+    metrics_summary: dict[str, dict[str, Any]] = {}
+    for metric_name, values in metric_buckets.items():
+        if not values:
+            continue
+        metrics_summary[metric_name] = {
+            "count": len(values),
+            "avg": sum(values) / len(values),
+            "min": min(values),
+            "max": max(values),
+        }
+
+    return {
+        "dataset_run_id": get_attr(result, "dataset_run_id", "datasetRunId", default=None),
+        "dataset_run_url": get_attr(result, "dataset_run_url", "datasetRunUrl", default=None),
+        "run_name": get_attr(result, "run_name", "runName", default=run_name),
+        "item_count": len(list(get_attr(result, "item_results", default=[]) or [])),
+        "metrics": metrics_summary,
+    }
+
+
+async def _run_dataset_experiment_job(
+    *,
+    job_id: str,
+    client: Any,
+    dataset_name: str,
+    experiment_name: str,
+    run_name: str | None,
+    description: str | None,
+    user_id: str,
+    flow_payload: dict[str, Any] | None,
+    judge_name: str | None,
+    judge_criteria: str | None,
+    judge_model: str | None,
+    judge_model_api_key: str | None,
+    max_concurrency: int,
+) -> None:
+    """Background task runner for dataset experiments."""
+    _set_dataset_experiment_job(
+        job_id,
+        status="running",
+        started_at=datetime.now(timezone.utc),
+    )
+    try:
+        result_payload = await asyncio.to_thread(
+            _run_dataset_experiment_sync,
+            client=client,
+            dataset_name=dataset_name,
+            experiment_name=experiment_name,
+            run_name=run_name,
+            description=description,
+            user_id=user_id,
+            flow_payload=flow_payload,
+            judge_name=judge_name,
+            judge_criteria=judge_criteria,
+            judge_model=judge_model,
+            judge_model_api_key=judge_model_api_key,
+            max_concurrency=max_concurrency,
+        )
+        _set_dataset_experiment_job(
+            job_id,
+            status="completed",
+            finished_at=datetime.now(timezone.utc),
+            run_name=result_payload.get("run_name") or run_name,
+            result=result_payload,
+            error=None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.opt(exception=True).error(
+            "Dataset experiment job failed: job_id={}, dataset={}, error={}",
+            job_id,
+            dataset_name,
+            str(exc),
+        )
+        _set_dataset_experiment_job(
+            job_id,
+            status="failed",
+            finished_at=datetime.now(timezone.utc),
+            error=str(exc),
+        )
+
+
 # =============================================================================
 # API Endpoints
 # =============================================================================
@@ -2290,6 +3245,411 @@ async def get_pending_reviews(
     except Exception as e:
         logger.opt(exception=True).error("Error fetching pending queue: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/datasets")
+async def list_datasets(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    page: Annotated[int, Query(ge=1)] = 1,
+    search: Annotated[str | None, Query()] = None,
+) -> Dict[str, Any]:
+    """List Langfuse datasets visible to the current user."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        user_id = str(current_user.id)
+        max_rows = max(page * limit, 200)
+        rows = _list_all_datasets_for_user(client, user_id=user_id, max_rows=max_rows)
+
+        if search:
+            normalized_search = search.lower().strip()
+            rows = [
+                dataset
+                for dataset in rows
+                if normalized_search in str(get_attr(dataset, "name", default="") or "").lower()
+            ]
+
+        total = len(rows)
+        start = (page - 1) * limit
+        page_rows = rows[start:start + limit]
+
+        items: list[DatasetResponse] = []
+        for dataset in page_rows:
+            item_count = None
+            dataset_name = str(get_attr(dataset, "name", default="") or "")
+            if dataset_name and hasattr(client, "api") and hasattr(client.api, "dataset_items"):
+                try:
+                    items_resp = client.api.dataset_items.list(dataset_name=dataset_name, page=1, limit=1)
+                    _, total_items = _parse_paginated_response(items_resp)
+                    item_count = int(total_items) if total_items is not None else None
+                except Exception:
+                    item_count = None
+
+            items.append(_dataset_to_response(dataset, item_count=item_count))
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.opt(exception=True).error("Error listing datasets: {}", str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/datasets")
+async def create_dataset(
+    payload: CreateDatasetRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> DatasetResponse:
+    """Create a Langfuse dataset."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    dataset_name = payload.name.strip()
+    if not dataset_name:
+        raise HTTPException(status_code=400, detail="Dataset name is required")
+
+    try:
+        dataset = client.create_dataset(
+            name=dataset_name,
+            description=payload.description,
+            metadata=_merge_dataset_metadata(payload.metadata, user_id=str(current_user.id)),
+        )
+        if hasattr(client, "flush"):
+            client.flush()
+        return _dataset_to_response(dataset, item_count=0)
+    except Exception as exc:  # noqa: BLE001
+        message = str(exc).lower()
+        if "already exists" in message or "duplicate" in message or "unique" in message:
+            raise HTTPException(status_code=409, detail=f"Dataset '{dataset_name}' already exists")
+        logger.opt(exception=True).error("Error creating dataset '{}': {}", dataset_name, str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/datasets/{dataset_name}/items")
+async def list_dataset_items(
+    dataset_name: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    page: Annotated[int, Query(ge=1)] = 1,
+    source_trace_id: Annotated[str | None, Query()] = None,
+) -> Dict[str, Any]:
+    """List items in a dataset."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    try:
+        rows, total = _fetch_dataset_items_page(client, dataset_name, page, limit)
+        if source_trace_id:
+            rows = [
+                row
+                for row in rows
+                if str(get_attr(row, "source_trace_id", "sourceTraceId", default="") or "") == str(source_trace_id)
+            ]
+        return {
+            "items": [_dataset_item_to_response(row) for row in rows],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+    except Exception as exc:
+        logger.opt(exception=True).error("Error listing dataset items for '{}': {}", dataset_name, str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/datasets/{dataset_name}/items")
+async def create_dataset_item(
+    dataset_name: str,
+    payload: CreateDatasetItemRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> DatasetItemResponse:
+    """Create one dataset item from manual input or a trace."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    item_input = payload.input
+    expected_output = payload.expected_output
+    source_trace_id = payload.source_trace_id
+
+    if payload.trace_id:
+        trace_raw = _fetch_trace_by_id(client, payload.trace_id)
+        if not trace_raw:
+            raise HTTPException(status_code=404, detail=f"Trace '{payload.trace_id}' not found")
+
+        trace_dict = parse_trace_data(trace_raw)
+        trace_user = _extract_trace_user_id(trace_dict)
+        if trace_user and trace_user != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Trace does not belong to current user")
+
+        if item_input is None:
+            item_input = trace_dict.get("input")
+        if expected_output is None and payload.use_trace_output_as_expected:
+            expected_output = trace_dict.get("output")
+        source_trace_id = source_trace_id or str(trace_dict.get("id") or payload.trace_id)
+
+    if item_input is None and expected_output is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide input/expected_output or a trace_id to create a dataset item",
+        )
+
+    metadata = _merge_dataset_metadata(payload.metadata, user_id=str(current_user.id))
+    if payload.trace_id:
+        metadata.setdefault("trace_id", str(payload.trace_id))
+
+    try:
+        item = client.create_dataset_item(
+            dataset_name=dataset_name,
+            input=item_input,
+            expected_output=expected_output,
+            metadata=metadata,
+            source_trace_id=source_trace_id,
+            source_observation_id=payload.source_observation_id,
+        )
+        if hasattr(client, "flush"):
+            client.flush()
+        return _dataset_item_to_response(item)
+    except Exception as exc:
+        logger.opt(exception=True).error("Error creating dataset item for '{}': {}", dataset_name, str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/datasets/{dataset_name}/runs")
+async def list_dataset_runs(
+    dataset_name: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    page: Annotated[int, Query(ge=1)] = 1,
+) -> Dict[str, Any]:
+    """List experiment runs for a dataset."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    try:
+        rows, total = _fetch_dataset_runs_page(client, dataset_name, page, limit)
+        return {
+            "items": [_dataset_run_to_response(row) for row in rows],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+    except Exception as exc:
+        logger.opt(exception=True).error("Error listing dataset runs for '{}': {}", dataset_name, str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/datasets/{dataset_name}/runs/{run_id}")
+async def get_dataset_run_detail(
+    dataset_name: str,
+    run_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    item_limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    score_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> DatasetRunDetailResponse:
+    """Return a dataset run with item-level trace and score details."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    run_obj = _find_dataset_run_by_id(client, dataset_name=dataset_name, run_id=run_id, max_scan=1000)
+    if not run_obj:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in dataset '{dataset_name}'")
+
+    run_name = str(get_attr(run_obj, "name", default="") or "")
+    if not run_name:
+        raise HTTPException(status_code=500, detail="Run name is missing for selected run")
+
+    dataset_id = str(get_attr(dataset, "id", default="") or "") or str(get_attr(run_obj, "dataset_id", "datasetId", default="") or "")
+    run_items = _fetch_dataset_run_items(
+        client,
+        dataset_name=dataset_name,
+        dataset_id=dataset_id or None,
+        run_name=run_name,
+        item_limit=item_limit,
+    )
+
+    detailed_items: list[DatasetRunItemDetailResponse] = []
+    user_id = str(current_user.id)
+    for run_item in run_items:
+        trace_id = str(get_attr(run_item, "trace_id", "traceId", default="") or "")
+        trace_dict: dict[str, Any] | None = None
+        score_rows: list[DatasetRunItemScoreResponse] = []
+
+        if trace_id:
+            try:
+                trace_raw = _fetch_trace_by_id(client, trace_id)
+                if trace_raw:
+                    trace_dict = parse_trace_data(trace_raw)
+            except Exception as trace_exc:
+                logger.debug("Failed loading trace {} for dataset run detail: {}", trace_id, str(trace_exc))
+
+            try:
+                score_payloads = fetch_scores_for_trace(
+                    client,
+                    trace_id=trace_id,
+                    user_id=user_id,
+                    limit=score_limit,
+                )
+                for score in score_payloads or []:
+                    source_value = get_attr(score, "source", default=None)
+                    if hasattr(source_value, "value"):
+                        source_value = source_value.value
+                    score_rows.append(
+                        DatasetRunItemScoreResponse(
+                            id=str(get_attr(score, "id", default="") or ""),
+                            name=str(get_attr(score, "name", default="") or "Score"),
+                            value=float(get_attr(score, "value", default=0.0) or 0.0),
+                            source=str(source_value) if source_value is not None else "API",
+                            comment=get_attr(score, "comment", default=None),
+                            created_at=get_attr(score, "created_at", "timestamp", "createdAt", default=None),
+                        )
+                    )
+            except Exception as score_exc:
+                logger.debug("Failed loading scores for trace {} in run detail: {}", trace_id, str(score_exc))
+
+        detailed_items.append(
+            _dataset_run_item_to_detail_response(
+                run_item,
+                trace_dict=trace_dict,
+                scores=score_rows,
+            )
+        )
+
+    return DatasetRunDetailResponse(
+        run=_dataset_run_to_response(run_obj),
+        item_count=len(run_items),
+        items=detailed_items,
+    )
+
+
+@router.post("/datasets/{dataset_name}/experiments")
+async def run_dataset_experiment(
+    dataset_name: str,
+    payload: RunDatasetExperimentRequest,
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> DatasetExperimentEnqueueResponse:
+    """Queue an experiment run against a dataset."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    flow_payload = await _resolve_flow_payload_for_experiment(
+        agent_id=payload.agent_id,
+        current_user=current_user,
+    )
+
+    judge_cfg = await _resolve_experiment_judge_config(
+        current_user=current_user,
+        evaluator_config_id=payload.evaluator_config_id,
+        criteria=payload.criteria,
+        model=payload.model,
+        model_api_key=payload.model_api_key,
+    )
+    if judge_cfg["criteria"] and not judge_cfg["model"]:
+        judge_cfg["model"] = "gpt-4o"
+
+    job_id = str(uuid4())
+    _set_dataset_experiment_job(
+        job_id,
+        status="queued",
+        dataset_name=dataset_name,
+        experiment_name=payload.experiment_name,
+        run_name=payload.run_name,
+        started_at=None,
+        finished_at=None,
+        result=None,
+        error=None,
+        user_id=str(current_user.id),
+    )
+
+    background_tasks.add_task(
+        _run_dataset_experiment_job,
+        job_id=job_id,
+        client=client,
+        dataset_name=dataset_name,
+        experiment_name=payload.experiment_name,
+        run_name=payload.run_name,
+        description=payload.description,
+        user_id=str(current_user.id),
+        flow_payload=flow_payload,
+        judge_name=judge_cfg["judge_name"],
+        judge_criteria=judge_cfg["criteria"],
+        judge_model=judge_cfg["model"],
+        judge_model_api_key=judge_cfg["model_api_key"],
+        max_concurrency=payload.max_concurrency,
+    )
+
+    return DatasetExperimentEnqueueResponse(
+        job_id=job_id,
+        dataset_name=dataset_name,
+        experiment_name=payload.experiment_name,
+        run_name=payload.run_name,
+        status="queued",
+    )
+
+
+@router.get("/datasets/experiments/{job_id}")
+async def get_dataset_experiment_job(
+    job_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> DatasetExperimentJobResponse:
+    """Fetch status for a background dataset experiment job."""
+    payload = _get_dataset_experiment_job(job_id)
+    if not payload or str(payload.get("user_id")) != str(current_user.id):
+        raise HTTPException(status_code=404, detail="Dataset experiment job not found")
+    return _dataset_job_response(job_id, payload)
 
 
 # =============================================================================

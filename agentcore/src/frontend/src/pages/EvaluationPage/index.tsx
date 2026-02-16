@@ -38,10 +38,23 @@ import {
   createEvaluator,
   getFlows,
   getEvaluationPresets,
+  getEvaluationDatasets,
+  createEvaluationDataset,
+  getEvaluationDatasetItems,
+  createEvaluationDatasetItem,
+  getEvaluationDatasetRuns,
+  getEvaluationDatasetRunDetail,
+  runEvaluationDatasetExperiment,
+  getDatasetExperimentJob,
   listEvaluators,
   previewEvaluation,
   updateEvaluator,
   deleteEvaluator,
+  EvaluationDataset,
+  EvaluationDatasetItem,
+  EvaluationDatasetRun,
+  EvaluationDatasetRunDetail,
+  DatasetExperimentJob,
   EvaluationAnalytics,
   EvaluationPreset,
   EvaluationStatus,
@@ -77,6 +90,33 @@ export default function EvaluationPage() {
   const [presets, setPresets] = useState<EvaluationPreset[]>([]);
   const [savedEvaluators, setSavedEvaluators] = useState<Array<any>>([]);
   const [editingEvaluator, setEditingEvaluator] = useState<string | null>(null);
+  const [datasets, setDatasets] = useState<EvaluationDataset[]>([]);
+  const [selectedDatasetName, setSelectedDatasetName] = useState<string>("");
+  const [datasetItems, setDatasetItems] = useState<EvaluationDatasetItem[]>([]);
+  const [datasetRuns, setDatasetRuns] = useState<EvaluationDatasetRun[]>([]);
+  const [datasetsLoading, setDatasetsLoading] = useState<boolean>(false);
+  const [datasetExperimentJob, setDatasetExperimentJob] = useState<DatasetExperimentJob | null>(null);
+  const [isRunDetailOpen, setIsRunDetailOpen] = useState<boolean>(false);
+  const [runDetailLoading, setRunDetailLoading] = useState<boolean>(false);
+  const [selectedRunDetail, setSelectedRunDetail] = useState<EvaluationDatasetRunDetail | null>(null);
+  const [datasetForm, setDatasetForm] = useState({ name: "", description: "" });
+  const [datasetItemForm, setDatasetItemForm] = useState({
+    input: "",
+    expected_output: "",
+    trace_id: "",
+    source_trace_id: "",
+  });
+  const [datasetExperimentForm, setDatasetExperimentForm] = useState({
+    experiment_name: "",
+    run_name: "",
+    description: "",
+    agent_id: "",
+    evaluator_config_id: "",
+    criteria: "",
+    model: "",
+    max_concurrency: "10",
+  });
+  const [datasetModelApiKey, setDatasetModelApiKey] = useState<string>("");
   
   // Dialog States
   const [isJudgeDialogOpen, setIsJudgeDialogOpen] = useState(false);
@@ -157,8 +197,107 @@ export default function EvaluationPage() {
     return false;
   };
 
+  const parseJsonOrString = (value: string): unknown => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed;
+    }
+  };
+
+  const stringifyCompact = (value: unknown): string => {
+    if (value === null || value === undefined) return "-";
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const fetchDatasets = async (keepSelection = true) => {
+    setDatasetsLoading(true);
+    try {
+      const response = await getEvaluationDatasets({ limit: 100 });
+      const items = Array.isArray(response?.items) ? response.items : [];
+      setDatasets(items);
+
+      if (items.length === 0) {
+        setSelectedDatasetName("");
+        setDatasetItems([]);
+        setDatasetRuns([]);
+        return;
+      }
+
+      const hasCurrent = keepSelection && items.some((dataset) => dataset.name === selectedDatasetName);
+      const nextDatasetName = hasCurrent ? selectedDatasetName : items[0].name;
+      if (nextDatasetName !== selectedDatasetName) {
+        setSelectedDatasetName(nextDatasetName);
+      } else {
+        await fetchDatasetDetails(nextDatasetName);
+      }
+    } catch (error) {
+      console.error("Failed to fetch datasets", error);
+      setDatasets([]);
+      setDatasetItems([]);
+      setDatasetRuns([]);
+    } finally {
+      setDatasetsLoading(false);
+    }
+  };
+
+  const fetchDatasetDetails = async (datasetName: string) => {
+    if (!datasetName) {
+      setDatasetItems([]);
+      setDatasetRuns([]);
+      return;
+    }
+
+    try {
+      const [itemsResult, runsResult] = await Promise.allSettled([
+        getEvaluationDatasetItems(datasetName, { limit: 100 }),
+        getEvaluationDatasetRuns(datasetName, { limit: 100 }),
+      ]);
+
+      if (itemsResult.status === "fulfilled") {
+        setDatasetItems(Array.isArray(itemsResult.value?.items) ? itemsResult.value.items : []);
+      } else {
+        setDatasetItems([]);
+      }
+
+      if (runsResult.status === "fulfilled") {
+        setDatasetRuns(Array.isArray(runsResult.value?.items) ? runsResult.value.items : []);
+      } else {
+        setDatasetRuns([]);
+      }
+    } catch (error) {
+      console.error("Failed to fetch dataset details", error);
+      setDatasetItems([]);
+      setDatasetRuns([]);
+    }
+  };
+
+  const pollDatasetJob = async (jobId: string, attempts = 30, delayMs = 2000) => {
+    for (let i = 0; i < attempts; i += 1) {
+      await sleep(delayMs);
+      try {
+        const job = await getDatasetExperimentJob(jobId);
+        setDatasetExperimentJob(job);
+        if (job.status === "completed" || job.status === "failed") {
+          return job;
+        }
+      } catch {
+        // Ignore transient failures while polling.
+      }
+    }
+    return null;
+  };
+
   useEffect(() => {
     fetchData();
+    fetchDatasets(false);
     getEvaluationPresets()
       .then((items) => {
         if (Array.isArray(items)) {
@@ -180,6 +319,19 @@ export default function EvaluationPage() {
       })
       .catch(() => {
         setSavedEvaluators([]);
+      });
+    getFlows()
+      .then((flows) => {
+        const normalized = flows && Array.isArray(flows.data) ? flows.data : Array.isArray(flows) ? flows : [];
+        setFlowList(normalized);
+        if (normalized.length > 0) {
+          setAvailableModels(normalized);
+        } else if (storeModels?.length) {
+          setAvailableModels(storeModels);
+        }
+      })
+      .catch(() => {
+        setFlowList([]);
       });
   }, []);
 
@@ -237,6 +389,16 @@ export default function EvaluationPage() {
     })();
     return () => { mounted = false; };
   }, [isJudgeDialogOpen]);
+
+  useEffect(() => {
+    if (activeTab !== "datasets") return;
+    fetchDatasets(true);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "datasets") return;
+    fetchDatasetDetails(selectedDatasetName);
+  }, [activeTab, selectedDatasetName]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -483,6 +645,127 @@ export default function EvaluationPage() {
     }
   };
 
+  const handleCreateDataset = async () => {
+    const name = datasetForm.name.trim();
+    if (!name) {
+      setErrorData({ title: "Dataset name is required" });
+      return;
+    }
+
+    try {
+      const created = await createEvaluationDataset({
+        name,
+        description: datasetForm.description.trim() || undefined,
+      });
+      setDatasetForm({ name: "", description: "" });
+      setSuccessData({ title: `Dataset '${created.name}' created` });
+      await fetchDatasets(false);
+      setSelectedDatasetName(created.name);
+    } catch (error) {
+      console.error("Failed to create dataset", error);
+      setErrorData({ title: "Failed to create dataset" });
+    }
+  };
+
+  const handleAddDatasetItem = async () => {
+    if (!selectedDatasetName) {
+      setErrorData({ title: "Select a dataset first" });
+      return;
+    }
+
+    const payload: Record<string, unknown> = {};
+    const parsedInput = parseJsonOrString(datasetItemForm.input);
+    const parsedExpected = parseJsonOrString(datasetItemForm.expected_output);
+
+    if (parsedInput !== undefined) payload.input = parsedInput;
+    if (parsedExpected !== undefined) payload.expected_output = parsedExpected;
+    if (datasetItemForm.source_trace_id.trim()) payload.source_trace_id = datasetItemForm.source_trace_id.trim();
+    if (datasetItemForm.trace_id.trim()) payload.trace_id = datasetItemForm.trace_id.trim();
+
+    if (Object.keys(payload).length === 0) {
+      setErrorData({ title: "Provide item input/expected output or choose a trace" });
+      return;
+    }
+
+    try {
+      await createEvaluationDatasetItem(selectedDatasetName, payload);
+      setDatasetItemForm({ input: "", expected_output: "", trace_id: "", source_trace_id: "" });
+      setSuccessData({ title: "Dataset item added" });
+      await fetchDatasetDetails(selectedDatasetName);
+    } catch (error) {
+      console.error("Failed to create dataset item", error);
+      setErrorData({ title: "Failed to create dataset item" });
+    }
+  };
+
+  const handleRunDatasetExperiment = async () => {
+    if (!selectedDatasetName) {
+      setErrorData({ title: "Select a dataset first" });
+      return;
+    }
+    if (!datasetExperimentForm.experiment_name.trim()) {
+      setErrorData({ title: "Experiment name is required" });
+      return;
+    }
+
+    const maxConcurrencyParsed = Number.parseInt(datasetExperimentForm.max_concurrency || "10", 10);
+    const maxConcurrency = Number.isFinite(maxConcurrencyParsed) && maxConcurrencyParsed > 0 ? maxConcurrencyParsed : 10;
+
+    try {
+      const job = await runEvaluationDatasetExperiment(selectedDatasetName, {
+        experiment_name: datasetExperimentForm.experiment_name.trim(),
+        run_name: datasetExperimentForm.run_name.trim() || undefined,
+        description: datasetExperimentForm.description.trim() || undefined,
+        agent_id: datasetExperimentForm.agent_id || undefined,
+        evaluator_config_id: datasetExperimentForm.evaluator_config_id || undefined,
+        criteria: datasetExperimentForm.criteria.trim() || undefined,
+        model: datasetExperimentForm.model.trim() || undefined,
+        model_api_key: datasetModelApiKey.trim() || undefined,
+        max_concurrency: maxConcurrency,
+      });
+
+      setDatasetExperimentJob({
+        job_id: job.job_id,
+        dataset_name: job.dataset_name,
+        experiment_name: job.experiment_name,
+        run_name: job.run_name,
+        status: job.status,
+      });
+      setNoticeData({ title: "Dataset experiment queued. Running in background." });
+
+      const finalJob = await pollDatasetJob(job.job_id);
+      if (finalJob?.status === "completed") {
+        setSuccessData({ title: "Dataset experiment completed" });
+        await fetchDatasetDetails(selectedDatasetName);
+      } else if (finalJob?.status === "failed") {
+        setErrorData({ title: finalJob.error || "Dataset experiment failed" });
+      }
+    } catch (error) {
+      console.error("Failed to run dataset experiment", error);
+      setErrorData({ title: "Failed to run dataset experiment" });
+    }
+  };
+
+  const handleOpenRunDetail = async (run: EvaluationDatasetRun) => {
+    if (!selectedDatasetName || !run?.id) return;
+    setIsRunDetailOpen(true);
+    setRunDetailLoading(true);
+    setSelectedRunDetail(null);
+    try {
+      const detail = await getEvaluationDatasetRunDetail(selectedDatasetName, run.id, {
+        item_limit: 100,
+        score_limit: 50,
+      });
+      setSelectedRunDetail(detail);
+    } catch (error) {
+      console.error("Failed to fetch run detail", error);
+      setSelectedRunDetail(null);
+      setErrorData({ title: "Failed to load run details" });
+    } finally {
+      setRunDetailLoading(false);
+    }
+  };
+
   // --- Render Helpers ---
 
   const renderOverview = () => {
@@ -680,6 +963,353 @@ export default function EvaluationPage() {
     );
   };
 
+  const renderDatasets = () => {
+    const flowOptions = (flowList || [])
+      .map((flow: any) => {
+        const id = flow?.metadata?.agent_id || flow?.metadata?.flow_id || flow?.id;
+        if (!id) return null;
+        return {
+          id: String(id),
+          label: flow?.metadata?.display_name || flow?.name || String(id),
+        };
+      })
+      .filter(Boolean) as Array<{ id: string; label: string }>;
+
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
+          <h3 className="text-lg font-semibold mb-3">Datasets</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+            Build reproducible test sets and run controlled experiments on your agents.
+          </p>
+          <ul className="list-disc pl-6 text-sm text-gray-600 dark:text-gray-300 space-y-1">
+            <li>Create test cases for your application with real production traces.</li>
+            <li>Collaboratively create and collect dataset items with your team.</li>
+            <li>Have a single source of truth for your test data.</li>
+          </ul>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-medium">Dataset Management</h3>
+            <Button size="sm" variant="outline" onClick={() => fetchDatasets(true)} disabled={datasetsLoading}>
+              {datasetsLoading ? "Refreshing..." : "Refresh"}
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Select Dataset</label>
+              <Select
+                value={selectedDatasetName || "__none__"}
+                onValueChange={(value) => setSelectedDatasetName(value === "__none__" ? "" : value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose dataset" />
+                </SelectTrigger>
+                <SelectContent>
+                  {datasets.length === 0 ? (
+                    <SelectItem value="__none__">No datasets</SelectItem>
+                  ) : (
+                    datasets.map((dataset) => (
+                      <SelectItem key={dataset.id || dataset.name} value={dataset.name}>
+                        {dataset.name}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New Dataset Name</label>
+              <Input
+                placeholder="e.g. support-faq-v1"
+                value={datasetForm.name}
+                onChange={(e) => setDatasetForm({ ...datasetForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Description</label>
+              <Input
+                placeholder="Optional description"
+                value={datasetForm.description}
+                onChange={(e) => setDatasetForm({ ...datasetForm, description: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="mt-4">
+            <Button size="sm" onClick={handleCreateDataset}>
+              <Plus className="h-4 w-4 mr-1" /> Create Dataset
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 className="font-medium">Dataset Items</h3>
+            {selectedDatasetName ? <span className="text-xs text-gray-500">Dataset: {selectedDatasetName}</span> : null}
+          </div>
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Input</label>
+              <textarea
+                className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                placeholder='Text or JSON, e.g. {"question":"What is VAT?"}'
+                value={datasetItemForm.input}
+                onChange={(e) => setDatasetItemForm({ ...datasetItemForm, input: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Expected Output</label>
+              <textarea
+                className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                placeholder="Optional expected output (text or JSON)"
+                value={datasetItemForm.expected_output}
+                onChange={(e) => setDatasetItemForm({ ...datasetItemForm, expected_output: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Add From Existing Trace</label>
+              <Select
+                value={datasetItemForm.trace_id || "__none__"}
+                onValueChange={(value) => setDatasetItemForm({ ...datasetItemForm, trace_id: value === "__none__" ? "" : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Pick a trace (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  {safePendingTraces.map((trace) => (
+                    <SelectItem key={trace.id} value={trace.id}>
+                      {trace.name || trace.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Source Trace ID (Optional)</label>
+              <Input
+                placeholder="Trace ID reference"
+                value={datasetItemForm.source_trace_id}
+                onChange={(e) => setDatasetItemForm({ ...datasetItemForm, source_trace_id: e.target.value })}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <Button size="sm" onClick={handleAddDatasetItem} disabled={!selectedDatasetName}>
+                <Plus className="h-4 w-4 mr-1" /> Add Dataset Item
+              </Button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                <tr>
+                  <th className="px-4 py-3">Timestamp</th>
+                  <th className="px-4 py-3">Item ID</th>
+                  <th className="px-4 py-3">Trace ID</th>
+                  <th className="px-4 py-3">Input</th>
+                  <th className="px-4 py-3">Expected Output</th>
+                  <th className="px-4 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {datasetItems.map((item) => (
+                  <tr key={item.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
+                    <td className="px-4 py-3">{item.created_at ? new Date(item.created_at).toLocaleString() : "-"}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{item.id}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{item.source_trace_id || "-"}</td>
+                    <td className="px-4 py-3 max-w-xs truncate" title={stringifyCompact(item.input)}>
+                      {stringifyCompact(item.input)}
+                    </td>
+                    <td className="px-4 py-3 max-w-xs truncate" title={stringifyCompact(item.expected_output)}>
+                      {stringifyCompact(item.expected_output)}
+                    </td>
+                    <td className="px-4 py-3">{item.status || "-"}</td>
+                  </tr>
+                ))}
+                {datasetItems.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                      No dataset items found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 className="font-medium">Run Experiment</h3>
+            <Button size="sm" variant="outline" onClick={() => fetchDatasetDetails(selectedDatasetName)} disabled={!selectedDatasetName}>
+              Refresh Runs
+            </Button>
+          </div>
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Experiment Name</label>
+              <Input
+                placeholder="e.g. Agent v2 Regression"
+                value={datasetExperimentForm.experiment_name}
+                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, experiment_name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Run Name</label>
+              <Input
+                placeholder="Optional run name"
+                value={datasetExperimentForm.run_name}
+                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, run_name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Max Concurrency</label>
+              <Input
+                type="number"
+                min="1"
+                max="50"
+                value={datasetExperimentForm.max_concurrency}
+                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, max_concurrency: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Agent (Flow)</label>
+              <Select
+                value={datasetExperimentForm.agent_id || "__none__"}
+                onValueChange={(value) => setDatasetExperimentForm({ ...datasetExperimentForm, agent_id: value === "__none__" ? "" : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose agent (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No agent (use dataset values)</SelectItem>
+                  {flowOptions.map((flow) => (
+                    <SelectItem key={flow.id} value={flow.id}>
+                      {flow.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Use Saved Evaluator</label>
+              <Select
+                value={datasetExperimentForm.evaluator_config_id || "__none__"}
+                onValueChange={(value) => setDatasetExperimentForm({ ...datasetExperimentForm, evaluator_config_id: value === "__none__" ? "" : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Optional evaluator" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  {savedEvaluators.map((ev) => (
+                    <SelectItem key={ev.id} value={ev.id}>
+                      {ev.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Judge Model (Optional)</label>
+              <Input
+                placeholder="e.g. gpt-4o"
+                value={datasetExperimentForm.model}
+                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, model: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium">Criteria (Optional)</label>
+              <Input
+                placeholder="Optional criteria for LLM evaluator"
+                value={datasetExperimentForm.criteria}
+                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, criteria: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Model API Key (Optional)</label>
+              <Input
+                placeholder="sk-..."
+                value={datasetModelApiKey}
+                onChange={(e) => setDatasetModelApiKey(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-3">
+              <label className="text-sm font-medium">Description (Optional)</label>
+              <Input
+                placeholder="Experiment notes"
+                value={datasetExperimentForm.description}
+                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, description: e.target.value })}
+              />
+            </div>
+            <div className="md:col-span-3">
+              <Button size="sm" onClick={handleRunDatasetExperiment} disabled={!selectedDatasetName}>
+                <Play className="h-4 w-4 mr-1" /> Run Experiment
+              </Button>
+            </div>
+          </div>
+          {datasetExperimentJob && (
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700 text-sm">
+              <span className="font-medium">Latest Job:</span>{" "}
+              <span className="font-mono">{datasetExperimentJob.job_id}</span>{" "}
+              <span className="ml-2">Status: {datasetExperimentJob.status}</span>
+              {datasetExperimentJob.error ? <span className="ml-2 text-red-600">{datasetExperimentJob.error}</span> : null}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                <tr>
+                  <th className="px-4 py-3">Timestamp</th>
+                  <th className="px-4 py-3">Run ID</th>
+                  <th className="px-4 py-3">Run Name</th>
+                  <th className="px-4 py-3">Description</th>
+                  <th className="px-4 py-3">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {datasetRuns.map((run) => (
+                  <tr
+                    key={run.id}
+                    className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                    onClick={() => handleOpenRunDetail(run)}
+                  >
+                    <td className="px-4 py-3">{run.created_at ? new Date(run.created_at).toLocaleString() : "-"}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-blue-600 dark:text-blue-400" title="Click to view run details">
+                      {run.id}
+                    </td>
+                    <td className="px-4 py-3">{run.name}</td>
+                    <td className="px-4 py-3 max-w-xl truncate" title={run.description || ""}>{run.description || "-"}</td>
+                    <td className="px-4 py-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenRunDetail(run);
+                        }}
+                      >
+                        View
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {datasetRuns.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                      No experiment runs found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
       <div className="flex flex-none flex-col justify-between border-b px-6 py-4">
@@ -721,6 +1351,16 @@ export default function EvaluationPage() {
             onClick={() => setActiveTab("judges")}
           >
             LLM Judges
+          </button>
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "datasets"
+                ? "border-blue-500 text-blue-600 dark:text-blue-400"
+                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+            }`}
+            onClick={() => setActiveTab("datasets")}
+          >
+            Datasets
           </button>
         </div>
 
@@ -877,6 +1517,7 @@ export default function EvaluationPage() {
                   </div>
                 </div>
               )}
+              {activeTab === "datasets" && renderDatasets()}
             </>
           )}
         </div>
@@ -1037,6 +1678,106 @@ export default function EvaluationPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsPreviewOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dataset Run Detail Dialog */}
+      <Dialog
+        open={isRunDetailOpen}
+        onOpenChange={(open) => {
+          setIsRunDetailOpen(open);
+          if (!open) {
+            setSelectedRunDetail(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-5xl w-full">
+          <DialogHeader>
+            <DialogTitle>Dataset Run Details</DialogTitle>
+            <DialogDescription>
+              Inspect traces and scores generated for this experiment run.
+            </DialogDescription>
+          </DialogHeader>
+          {runDetailLoading ? (
+            <div className="py-8 text-center text-sm text-gray-500">Loading run details...</div>
+          ) : selectedRunDetail ? (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div className="rounded border p-3">
+                  <div className="text-xs text-gray-500">Run ID</div>
+                  <div className="font-mono break-all">{selectedRunDetail.run.id}</div>
+                </div>
+                <div className="rounded border p-3">
+                  <div className="text-xs text-gray-500">Run Name</div>
+                  <div>{selectedRunDetail.run.name}</div>
+                </div>
+                <div className="rounded border p-3">
+                  <div className="text-xs text-gray-500">Items</div>
+                  <div>{selectedRunDetail.item_count}</div>
+                </div>
+              </div>
+
+              <div className="max-h-[420px] overflow-auto border rounded">
+                <table className="w-full text-sm text-left">
+                  <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                    <tr>
+                      <th className="px-4 py-3">Run Item ID</th>
+                      <th className="px-4 py-3">Trace ID</th>
+                      <th className="px-4 py-3">Trace Name</th>
+                      <th className="px-4 py-3">Input</th>
+                      <th className="px-4 py-3">Output</th>
+                      <th className="px-4 py-3">Scores</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedRunDetail.items.map((item) => (
+                      <tr key={item.id} className="border-b dark:border-gray-700 align-top">
+                        <td className="px-4 py-3 font-mono text-xs">{item.id}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{item.trace_id || "-"}</td>
+                        <td className="px-4 py-3">{item.trace_name || "-"}</td>
+                        <td className="px-4 py-3 max-w-[260px] truncate" title={stringifyCompact(item.trace_input)}>
+                          {stringifyCompact(item.trace_input)}
+                        </td>
+                        <td className="px-4 py-3 max-w-[260px] truncate" title={stringifyCompact(item.trace_output)}>
+                          {stringifyCompact(item.trace_output)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {item.score_count > 0 ? (
+                            <div className="space-y-1">
+                              {item.scores.slice(0, 4).map((score) => (
+                                <div key={score.id || `${score.name}-${score.created_at || ""}`} className="text-xs">
+                                  <span className="font-medium">{score.name}</span>: {score.value.toFixed(2)}
+                                </div>
+                              ))}
+                              {item.scores.length > 4 ? (
+                                <div className="text-xs text-gray-500">+{item.scores.length - 4} more</div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-500">No scores</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {selectedRunDetail.items.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                          No run items found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="py-8 text-center text-sm text-gray-500">No run details available.</div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsRunDetailOpen(false)}>
+              Close
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
