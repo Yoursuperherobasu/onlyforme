@@ -16,13 +16,16 @@ if TYPE_CHECKING:
 
     from agentcore.services.cache.service import AsyncBaseCacheService, CacheService
     from agentcore.services.chat.service import ChatService
+
     from agentcore.services.database.service import DatabaseService
     from agentcore.services.job_queue.service import JobQueueService
     from agentcore.services.session.service import SessionService
     from agentcore.services.settings.service import SettingsService
+
     from agentcore.services.storage.service import StorageService
     from agentcore.services.telemetry.service import TelemetryService
     from agentcore.services.tracing.service import TracingService
+
 
 
 def get_service(service_type: ServiceType, default=None):
@@ -68,6 +71,9 @@ def get_tracing_service() -> TracingService:
     return get_service(ServiceType.TRACING_SERVICE, TracingServiceFactory())
 
 
+
+
+
 def get_storage_service() -> StorageService:
     """Retrieves the storage service instance.
 
@@ -77,6 +83,7 @@ def get_storage_service() -> StorageService:
     from agentcore.services.storage.factory import StorageServiceFactory
 
     return get_service(ServiceType.STORAGE_SERVICE, default=StorageServiceFactory())
+
 
 
 def get_settings_service() -> SettingsService:
@@ -177,23 +184,21 @@ def get_session_service() -> SessionService:
     return get_service(ServiceType.SESSION_SERVICE, SessionServiceFactory())
 
 
+
+    return get_service(ServiceType.TASK_SERVICE, TaskServiceFactory())
+
+
 def get_chat_service() -> ChatService:
     """Get the chat service instance.
 
     Returns:
         ChatService: The chat service instance.
     """
-    from agentcore.services.chat.service import ChatService as ChatServiceCls
-    from agentcore.services.factory import ServiceFactory
-
-    class ChatServiceFactory(ServiceFactory):
-        def __init__(self):
-            super().__init__(ChatServiceCls)
-
-        def create(self, **kwargs):
-            return ChatServiceCls()
+    from agentcore.services.chat.factory import ChatServiceFactory
 
     return get_service(ServiceType.CHAT_SERVICE, ChatServiceFactory())
+
+
 
 
 def get_queue_service() -> JobQueueService:

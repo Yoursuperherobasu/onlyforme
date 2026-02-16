@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
 
   const envAgentCore = envAgentCoreResult.parsed || {};
 
-  const apiRoutes = API_ROUTES || ["^/api/v1/", "^/api/v2/", "/health"];
+  const apiRoutes = API_ROUTES || ["^/api/", "^/api/", "/health"];
 
   const target =
     envAgentCore.VITE_PROXY_TARGET || env.VITE_PROXY_TARGET || PROXY_TARGET || "http://localhost:7860";

@@ -12,6 +12,6 @@ export const customGetMCPUrl = (
 
   // Fallback to direct AgentCore SSE endpoint
   const apiHost = api.defaults.baseURL || window.location.origin;
-  const apiUrl = `${apiHost}/api/v1/mcp/project/${projectId}/sse`;
+  const apiUrl = `${apiHost}/api/mcp/project/${projectId}/sse`;
   return apiUrl;
 };

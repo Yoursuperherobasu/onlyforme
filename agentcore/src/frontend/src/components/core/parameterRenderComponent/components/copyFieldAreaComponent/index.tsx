@@ -11,8 +11,8 @@ import type { InputProps, TextAreaComponentType } from "../../types";
 const BACKEND_URL = "BACKEND_URL";
 const MCP_SSE_VALUE = "MCP_SSE";
 const { protocol, host } = customGetHostProtocol();
-const URL_WEBHOOK = `${protocol}//${host}/api/v1/webhook/`;
-const URL_MCP_SSE = `${protocol}//${host}/api/v1/mcp/sse`;
+const URL_WEBHOOK = `${protocol}//${host}/api/webhook/`;
+const URL_MCP_SSE = `${protocol}//${host}/api/mcp/sse`;
 
 const inputClasses = {
   base: ({ isFocused }: { isFocused: boolean }) =>

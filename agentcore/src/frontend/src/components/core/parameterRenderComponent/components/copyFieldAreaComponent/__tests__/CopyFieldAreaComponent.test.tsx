@@ -90,12 +90,12 @@ describe("CopyFieldAreaComponent", () => {
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/v1/webhook/test-endpoint",
+        "http://localhost:7860/api/webhook/test-endpoint",
       );
 
       expect(input).toBeInTheDocument();
       expect(input).toHaveValue(
-        "http://localhost:7860/api/v1/webhook/test-endpoint",
+        "http://localhost:7860/api/webhook/test-endpoint",
       );
     });
 
@@ -103,11 +103,11 @@ describe("CopyFieldAreaComponent", () => {
       render(<CopyFieldAreaComponent {...defaultProps} value="MCP_SSE" />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/v1/mcp/sse",
+        "http://localhost:7860/api/mcp/sse",
       );
 
       expect(input).toBeInTheDocument();
-      expect(input).toHaveValue("http://localhost:7860/api/v1/mcp/sse");
+      expect(input).toHaveValue("http://localhost:7860/api/mcp/sse");
     });
 
     it("should handle missing flow ID gracefully", () => {
@@ -120,12 +120,12 @@ describe("CopyFieldAreaComponent", () => {
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/v1/webhook/test-endpoint",
+        "http://localhost:7860/api/webhook/test-endpoint",
       );
 
       expect(input).toBeInTheDocument();
       expect(input).toHaveValue(
-        "http://localhost:7860/api/v1/webhook/test-endpoint",
+        "http://localhost:7860/api/webhook/test-endpoint",
       );
     });
 
@@ -139,12 +139,12 @@ describe("CopyFieldAreaComponent", () => {
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/v1/webhook/test-flow-id-123",
+        "http://localhost:7860/api/webhook/test-flow-id-123",
       );
 
       expect(input).toBeInTheDocument();
       expect(input).toHaveValue(
-        "http://localhost:7860/api/v1/webhook/test-flow-id-123",
+        "http://localhost:7860/api/webhook/test-flow-id-123",
       );
     });
 
@@ -158,11 +158,11 @@ describe("CopyFieldAreaComponent", () => {
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/v1/webhook/",
+        "http://localhost:7860/api/webhook/",
       );
 
       expect(input).toBeInTheDocument();
-      expect(input).toHaveValue("http://localhost:7860/api/v1/webhook/");
+      expect(input).toHaveValue("http://localhost:7860/api/webhook/");
     });
 
     it("should return original value when not BACKEND_URL or MCP_SSE_VALUE", () => {
@@ -253,7 +253,7 @@ describe("CopyFieldAreaComponent", () => {
 
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
-      const expectedUrl = `http://localhost:7860/api/v1/webhook/test-endpoint`;
+      const expectedUrl = `http://localhost:7860/api/webhook/test-endpoint`;
       const input = screen.getByDisplayValue(expectedUrl);
 
       expect(input).toBeInTheDocument();
@@ -269,7 +269,7 @@ describe("CopyFieldAreaComponent", () => {
 
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
-      const expectedUrl = `http://localhost:7860/api/v1/webhook/endpoint`;
+      const expectedUrl = `http://localhost:7860/api/webhook/endpoint`;
       const input = screen.getByDisplayValue(expectedUrl);
 
       expect(input).toBeInTheDocument();
@@ -285,12 +285,12 @@ describe("CopyFieldAreaComponent", () => {
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/v1/webhook/test-endpoint",
+        "http://localhost:7860/api/webhook/test-endpoint",
       );
 
       expect(input).toBeInTheDocument();
       expect(input).toHaveValue(
-        "http://localhost:7860/api/v1/webhook/test-endpoint",
+        "http://localhost:7860/api/webhook/test-endpoint",
       );
     });
   });
@@ -302,7 +302,7 @@ describe("CopyFieldAreaComponent", () => {
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/v1/webhook/test-endpoint",
+        "http://localhost:7860/api/webhook/test-endpoint",
       );
 
       expect(input).toBeInTheDocument();

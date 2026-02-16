@@ -24,7 +24,7 @@ export function getCurlWebhookCode({
   format = "multiline",
 }: GetCodeType & { format?: "multiline" | "singleline" }) {
   const { protocol, host } = customGetHostProtocol();
-  const baseUrl = `${protocol}//${host}/api/v1/webhook/${
+  const baseUrl = `${protocol}//${host}/api/webhook/${
     endpointName || flowId
   }`;
   const authHeader = !isAuth ? `-H 'x-api-key: <your api key>'` : "";
@@ -62,7 +62,7 @@ export function getNewCurlCode({
 }): { steps: { title: string; code: string }[] } | string {
   const { protocol, host } = customGetHostProtocol();
   const baseUrl = `${protocol}//${host}`;
-  const apiUrl = `${baseUrl}/api/v1/run/${endpointName || flowId}`;
+  const apiUrl = `${baseUrl}/api/run/${endpointName || flowId}`;
 
   // Auto-detect if no platform specified
   const detectedPlatform =
@@ -137,14 +137,14 @@ curl.exe --request POST \`
     if (detectedPlatform === "powershell") {
       uploadCommands.push(
         `curl.exe --request POST \`
-     --url "${baseUrl}/api/v1/files/upload/${flowId}" \`
+     --url "${baseUrl}/api/files/upload/${flowId}" \`
      ${shouldDisplayApiKey ? '--header "x-api-key: YOUR_API_KEY_HERE" \\' : ""}
      --form "file=@your_image_${uploadCounter}.jpg"`,
       );
     } else {
       uploadCommands.push(
         `curl --request POST \\
-     --url "${baseUrl}/api/v1/files/upload/${flowId}" \\
+     --url "${baseUrl}/api/files/upload/${flowId}" \\
      ${shouldDisplayApiKey ? '--header "x-api-key: YOUR_API_KEY_HERE" \\' : ""}
      --form "file=@your_image_${uploadCounter}.jpg"`,
       );

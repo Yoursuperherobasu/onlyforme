@@ -19,17 +19,25 @@ const DISCORD_API_URL =
 
 export async function getRepoStars(owner: string, repo: string) {
   try {
-    const response = await api.get(`${GITHUB_API_URL}/repos/${owner}/${repo}`);
+    const response = await api.get(`${GITHUB_API_URL}/repos/${owner}/${repo}`, {
+      withCredentials: false,
+    });
     return response?.data.stargazers_count;
   } catch (error) {
-    console.error("Error fetching repository data:", error);
+    // A private/moved/mistyped repo returns 404 from GitHub API.
+    // Keep UI stable without noisy console errors.
+    if ((error as any)?.response?.status !== 404) {
+      console.error("Error fetching repository data:", error);
+    }
     return null;
   }
 }
 
 export async function getDiscordCount() {
   try {
-    const response = await api.get(DISCORD_API_URL);
+    const response = await api.get(DISCORD_API_URL, {
+      withCredentials: false,
+    });
     return response?.data.approximate_member_count;
   } catch (error) {
     console.error("Error fetching repository data:", error);

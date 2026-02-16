@@ -16,6 +16,7 @@ export const URLs = {
   BUILD: `build`,
   CUSTOM_COMPONENT: `custom_component`,
   FLOWS: `flows`,
+  AGENTS: `agents`,
   FOLDERS: `projects`,
   PROJECTS: `projects`,
   VARIABLES: `variables`,
@@ -31,6 +32,7 @@ export const URLs = {
   KNOWLEDGE_BASES: `knowledge_bases`,
   MODELS: `models`,
   APPROVALS: `approvals`,
+  PUBLISH: `publish`,
   ROLES: `roles`,
 } as const;
 

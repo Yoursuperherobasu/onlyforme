@@ -10,8 +10,8 @@ describe("Webhook URL Generation Logic", () => {
   // Mock the protocol and host values
   const protocol = "http:";
   const host = "localhost:7860";
-  const URL_WEBHOOK = `${protocol}//${host}/api/v1/webhook/`;
-  const URL_MCP_SSE = `${protocol}//${host}/api/v1/mcp/sse`;
+  const URL_WEBHOOK = `${protocol}//${host}/api/webhook/`;
+  const URL_MCP_SSE = `${protocol}//${host}/api/mcp/sse`;
 
   // Helper function that mirrors the component's logic
   function generateWebhookUrl(
@@ -36,7 +36,7 @@ describe("Webhook URL Generation Logic", () => {
       );
 
       expect(result).toBe(
-        "http://localhost:7860/api/v1/webhook/test-endpointflow-123",
+        "http://localhost:7860/api/webhook/test-endpointflow-123",
       );
     });
 
@@ -47,25 +47,25 @@ describe("Webhook URL Generation Logic", () => {
         undefined,
       );
 
-      expect(result).toBe("http://localhost:7860/api/v1/webhook/test-endpoint");
+      expect(result).toBe("http://localhost:7860/api/webhook/test-endpoint");
     });
 
     it("should generate webhook URL with only flow ID when endpoint name is missing", () => {
       const result = generateWebhookUrl(BACKEND_URL, undefined, "flow-123");
 
-      expect(result).toBe("http://localhost:7860/api/v1/webhook/flow-123");
+      expect(result).toBe("http://localhost:7860/api/webhook/flow-123");
     });
 
     it("should generate base webhook URL when both endpoint name and flow ID are missing", () => {
       const result = generateWebhookUrl(BACKEND_URL, undefined, undefined);
 
-      expect(result).toBe("http://localhost:7860/api/v1/webhook/");
+      expect(result).toBe("http://localhost:7860/api/webhook/");
     });
 
     it("should handle empty string values", () => {
       const result = generateWebhookUrl(BACKEND_URL, "", "");
 
-      expect(result).toBe("http://localhost:7860/api/v1/webhook/");
+      expect(result).toBe("http://localhost:7860/api/webhook/");
     });
 
     it("should handle special characters in flow ID", () => {
@@ -73,7 +73,7 @@ describe("Webhook URL Generation Logic", () => {
       const result = generateWebhookUrl(BACKEND_URL, "endpoint", specialFlowId);
 
       expect(result).toBe(
-        `http://localhost:7860/api/v1/webhook/endpoint${specialFlowId}`,
+        `http://localhost:7860/api/webhook/endpoint${specialFlowId}`,
       );
     });
 
@@ -82,7 +82,7 @@ describe("Webhook URL Generation Logic", () => {
       const result = generateWebhookUrl(BACKEND_URL, "endpoint", longFlowId);
 
       expect(result).toBe(
-        `http://localhost:7860/api/v1/webhook/endpoint${longFlowId}`,
+        `http://localhost:7860/api/webhook/endpoint${longFlowId}`,
       );
     });
 
@@ -91,7 +91,7 @@ describe("Webhook URL Generation Logic", () => {
       const result = generateWebhookUrl(BACKEND_URL, "endpoint", unicodeFlowId);
 
       expect(result).toBe(
-        `http://localhost:7860/api/v1/webhook/endpoint${unicodeFlowId}`,
+        `http://localhost:7860/api/webhook/endpoint${unicodeFlowId}`,
       );
     });
   });
@@ -104,13 +104,13 @@ describe("Webhook URL Generation Logic", () => {
         "flow-123",
       );
 
-      expect(result).toBe("http://localhost:7860/api/v1/mcp/sse");
+      expect(result).toBe("http://localhost:7860/api/mcp/sse");
     });
 
     it("should generate MCP SSE URL with missing parameters", () => {
       const result = generateWebhookUrl(MCP_SSE_VALUE, undefined, undefined);
 
-      expect(result).toBe("http://localhost:7860/api/v1/mcp/sse");
+      expect(result).toBe("http://localhost:7860/api/mcp/sse");
     });
   });
 
@@ -137,14 +137,14 @@ describe("Webhook URL Generation Logic", () => {
         endpointName: "prod-webhook",
         flowId: "550e8400-e29b-41d4-a716-446655440000",
         expected:
-          "http://localhost:7860/api/v1/webhook/prod-webhook550e8400-e29b-41d4-a716-446655440000",
+          "http://localhost:7860/api/webhook/prod-webhook550e8400-e29b-41d4-a716-446655440000",
       },
       {
         description: "Development environment with simple names",
         value: BACKEND_URL,
         endpointName: "dev",
         flowId: "123",
-        expected: "http://localhost:7860/api/v1/webhook/dev123",
+        expected: "http://localhost:7860/api/webhook/dev123",
       },
       {
         description: "Flow with special characters in endpoint and ID",
@@ -152,7 +152,7 @@ describe("Webhook URL Generation Logic", () => {
         endpointName: "api-v2_beta",
         flowId: "flow_2024-01-15",
         expected:
-          "http://localhost:7860/api/v1/webhook/api-v2_betaflow_2024-01-15",
+          "http://localhost:7860/api/webhook/api-v2_betaflow_2024-01-15",
       },
     ];
 
@@ -185,7 +185,7 @@ describe("Webhook URL Generation Logic", () => {
 
       expect(endpointIndex).toBeLessThan(flowIndex);
       expect(result).toBe(
-        `http://localhost:7860/api/v1/webhook/${endpointName}${flowId}`,
+        `http://localhost:7860/api/webhook/${endpointName}${flowId}`,
       );
     });
   });

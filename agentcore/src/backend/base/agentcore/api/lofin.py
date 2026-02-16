@@ -11,20 +11,18 @@ from pydantic import BaseModel
 from jose import jwt
 import secrets
 from agentcore.api.utils import DbSession
-from agentcore.api.schemas import Token
+from agentcore.api.v1_schemas import Token
 from agentcore.initial_setup.setup import get_or_create_default_folder
 from agentcore.services.auth.utils import (
     authenticate_user,
     create_refresh_token,
-    create_user_longterm_token,
     create_user_tokens,
 )
 from agentcore.api.users import add_user
 from agentcore.services.database.models.user.crud import get_user_by_id
 from agentcore.services.deps import get_settings_service
 from agentcore.services.database.models.user.model import UserCreate
-from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
-from agentcore.services.cache.user_cache import UserCacheService
+from agentcore.services.auth.permissions import get_permissions_for_role
 
 
 class AzureSSORequest(BaseModel):
@@ -83,11 +81,11 @@ async def login_to_get_access_token(
             expires=None,  # Set to None to make it a session cookie
             domain=auth_settings.COOKIE_DOMAIN,
         )
-        
+        # [VARIABLE REMOVED] was: await get_variable_service().initialize_user_variables(user.id, db)
         # Create default project for user if it doesn't exist
         _ = await get_or_create_default_folder(db, user.id)
-        current_role = normalize_role(getattr(user, "role", "developer"))
-        permissions = await get_permissions_for_role(current_role)
+        current_role = getattr(user, "role", "developer")
+        permissions = await get_permissions_for_role(current_role) 
         print(current_role,"current_roleeeeeeeeeee")
         print(permissions,"permissssssssssssssssions")
         return {
@@ -133,7 +131,7 @@ async def azure_sso_login(
         ) from e
 
     email = payload.get("preferred_username") or payload.get("email")
-    azure_role = normalize_role(payload.get("roles", ["developer"])[0])
+    azure_role = payload.get("roles", ["developer"])[0]
     
     permissions = await get_permissions_for_role(azure_role)
     
@@ -162,23 +160,16 @@ async def azure_sso_login(
         # reuse signup API logic
         user = await add_user(user_create, db)
 
-        raise HTTPException(
-            status_code=400,
-            detail="User not resgistered. Please contact your department administrator to set up your account.",
-        )
-    
-    
-    settings_service = get_settings_service()
-    user_cache = UserCacheService(settings_service)
-    user_dict = user.model_dump(mode="json", exclude={"password"})
-    await user_cache.set_user(user_dict)
-
+    else:
+        # Returning user - Sync the role if it changed in Azure
+        if user.role != azure_role:
+            user.role = azure_role
+            db.add(user)
+            await db.commit()
     # -----------------------------
-    # Issue LangBuilder Tokens
+    # Issue AgentCore Tokens
     # -----------------------------
-
     tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
-    
     print(tokens,"tokenssssssssssssssssss")
     print(permissions,"permissssssssssssssssions")
     response.set_cookie(
@@ -209,7 +200,7 @@ async def azure_sso_login(
         domain=auth_settings.COOKIE_DOMAIN,
     )
 
-    
+    # [VARIABLE REMOVED] was: await get_variable_service().initialize_user_variables(user.id, db)
     _ = await get_or_create_default_folder(db, user.id)
 
     return {
@@ -234,7 +225,7 @@ async def refresh_token(
         user = await get_user_by_id(db, user_id)
         if not user:
              raise HTTPException(status_code=404, detail="User not found")
-        user_role = normalize_role(getattr(user, "role", "developer"))
+        user_role = getattr(user, "role", "developer")
         permissions = await get_permissions_for_role(user_role)
         response.set_cookie(
             "refresh_token_lf",

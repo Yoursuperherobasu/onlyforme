@@ -576,7 +576,7 @@ export const ADMIN_HEADER_TITLE = "Admin Page";
 export const ADMIN_HEADER_DESCRIPTION =
   "Navigate through this section to efficiently oversee all application users. From here, you can seamlessly manage user accounts.";
 
-export const BASE_URL_API = custom.BASE_URL_API || "/api/v1/";
+export const BASE_URL_API = custom.BASE_URL_API || "/api/";
 
 export const BASE_URL_API_V2 = custom.BASE_URL_API_V2 || "/api/v2/";
 
@@ -786,6 +786,7 @@ export const BUNDLES_SIDEBAR_FOLDER_NAMES = [
 export const AUTHORIZED_DUPLICATE_REQUESTS = [
   "/health",
   "/flows",
+  "/agents",
   "/logout",
   "/refresh",
   "/login",

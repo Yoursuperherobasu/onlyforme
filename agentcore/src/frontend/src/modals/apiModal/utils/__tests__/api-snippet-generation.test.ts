@@ -115,7 +115,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain('payload["session_id"] = str(uuid.uuid4())');
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate basic Python code without API key authentication", () => {
@@ -133,7 +133,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain('payload["session_id"] = str(uuid.uuid4())');
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate multi-step code for file uploads with authentication", () => {
@@ -155,7 +155,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain('headers = {"x-api-key": api_key}');
 
         // Check for file upload steps
-        expect(code).toContain("/api/v1/files/upload/");
+        expect(code).toContain("/api/files/upload/");
         expect(code).toContain("/api/v2/files");
         expect(code).toContain("with open");
         expect(code).toContain('files={"file": f}');
@@ -179,7 +179,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).not.toContain("api_key = 'YOUR_API_KEY_HERE'");
 
         // Check for file upload steps
-        expect(code).toContain("/api/v1/files/upload/");
+        expect(code).toContain("/api/files/upload/");
         expect(code).toContain("/api/v2/files");
         expect(code).toContain("with open");
         expect(code).toContain('files={"file": f}');
@@ -198,7 +198,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("session_id");
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate basic JavaScript code without API key authentication", () => {
@@ -212,7 +212,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("session_id");
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate multi-step code for file uploads with authentication", () => {
@@ -244,7 +244,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("makeRequest");
 
         // Check for upload steps
-        expect(code).toContain("/api/v1/files/upload/");
+        expect(code).toContain("/api/files/upload/");
         expect(code).toContain("/api/v2/files");
       });
 
@@ -276,7 +276,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("makeRequest");
 
         // Check for upload steps
-        expect(code).toContain("/api/v1/files/upload/");
+        expect(code).toContain("/api/files/upload/");
         expect(code).toContain("/api/v2/files");
       });
     });
@@ -292,7 +292,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("YOUR_SESSION_ID_HERE");
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate Unix cURL code without API key authentication", () => {
@@ -305,7 +305,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("YOUR_SESSION_ID_HERE");
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate PowerShell cURL code with API key authentication", () => {
@@ -318,7 +318,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("YOUR_SESSION_ID_HERE");
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate PowerShell cURL code without API key authentication", () => {
@@ -334,7 +334,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(code).toContain("YOUR_SESSION_ID_HERE");
 
         // Check for correct endpoint
-        expect(code).toContain("/api/v1/run/test-endpoint");
+        expect(code).toContain("/api/run/test-endpoint");
       });
 
       it("should generate multi-step code for file uploads with authentication", () => {
@@ -363,7 +363,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(result.steps[0]).toHaveProperty("title");
         expect(result.steps[0].title).toContain("Upload files");
         expect(result.steps[0]).toHaveProperty("code");
-        expect(result.steps[0].code).toContain("/api/v1/files/upload/");
+        expect(result.steps[0].code).toContain("/api/files/upload/");
         expect(result.steps[0].code).toContain("/api/v2/files");
         expect(result.steps[0].code).toContain('--form "file=@');
         expect(result.steps[0].code).toContain("x-api-key: YOUR_API_KEY_HERE");
@@ -372,7 +372,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(result.steps[1]).toHaveProperty("title");
         expect(result.steps[1].title).toContain("Execute");
         expect(result.steps[1]).toHaveProperty("code");
-        expect(result.steps[1].code).toContain("/api/v1/run/test-endpoint");
+        expect(result.steps[1].code).toContain("/api/run/test-endpoint");
         expect(result.steps[1].code).toContain("x-api-key: YOUR_API_KEY_HERE");
       });
 
@@ -402,7 +402,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(result.steps[0]).toHaveProperty("title");
         expect(result.steps[0].title).toContain("Upload files");
         expect(result.steps[0]).toHaveProperty("code");
-        expect(result.steps[0].code).toContain("/api/v1/files/upload/");
+        expect(result.steps[0].code).toContain("/api/files/upload/");
         expect(result.steps[0].code).toContain("/api/v2/files");
         expect(result.steps[0].code).toContain('--form "file=@');
         expect(result.steps[0].code).not.toContain(
@@ -413,7 +413,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(result.steps[1]).toHaveProperty("title");
         expect(result.steps[1].title).toContain("Execute");
         expect(result.steps[1]).toHaveProperty("code");
-        expect(result.steps[1].code).toContain("/api/v1/run/test-endpoint");
+        expect(result.steps[1].code).toContain("/api/run/test-endpoint");
         expect(result.steps[1].code).not.toContain(
           "x-api-key: YOUR_API_KEY_HERE",
         );

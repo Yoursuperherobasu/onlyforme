@@ -21,25 +21,6 @@ if sys.platform == 'win32':
 from dotenv import load_dotenv
 load_dotenv()
 
-from langfuse import get_client
-from importlib.metadata import version
-print("Langfuse version:", version("langfuse"))
-client = get_client()
-print("Langfuse class:", type(client))
-print("Langfuse version:", getattr(client, "__module__", "unknown"))
-
-# DEBUG: Print LANGFUSE env vars at startup
-import sys as _sys
-print("[STARTUP] Checking LANGFUSE env vars after load_dotenv():")
-_sys.stdout.flush()
-for _k, _v in os.environ.items():
-    if 'LANGFUSE' in _k.upper():
-        print(f"  {_k}={'SET' if _v else 'NOT SET'} (len={len(_v) if _v else 0})")
-        _sys.stdout.flush()
-print("[STARTUP] End of LANGFUSE env vars check")
-_sys.stdout.flush()
-
-
 import anyio
 import sqlalchemy
 from fastapi import FastAPI, HTTPException, Request, Response, status

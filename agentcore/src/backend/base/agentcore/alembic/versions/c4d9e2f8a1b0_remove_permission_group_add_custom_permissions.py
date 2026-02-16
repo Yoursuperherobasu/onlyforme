@@ -1,7 +1,7 @@
 """remove permission group and add custom permissions
 
 Revision ID: c4d9e2f8a1b0
-Revises: None
+Revises: d1e2f3a4b5c6
 Create Date: 2026-02-11 00:00:00.000000
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "c4d9e2f8a1b0"
-down_revision = None
+down_revision = "d1e2f3a4b5c6"
 branch_labels = None
 depends_on = None
 

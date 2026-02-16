@@ -36,7 +36,7 @@ export function getNewJsApiCode({
 
   // If no file uploads, use existing logic
   if (!hasFiles) {
-    const apiUrl = `${baseUrl}/api/v1/run/${endpointName || flowId}`;
+    const apiUrl = `${baseUrl}/api/run/${endpointName || flowId}`;
 
     const payloadString = JSON.stringify(processedPayload, null, 4);
 
@@ -107,7 +107,7 @@ const authHeaders = { 'x-api-key': apiKey };`
         const chatUploadOptions${index + 1} = {
             hostname: '${hostname}',
             port: ${port},
-            path: \`/api/v1/files/upload/\${FLOW_ID}\`,
+            path: \`/api/files/upload/\${FLOW_ID}\`,
             method: 'POST',
             headers: {
                 'Content-Type': \`multipart/form-data; boundary=\${chatBoundary${
@@ -285,7 +285,7 @@ ${allTweaks}
         const executeOptions = {
             hostname: '${hostname}',
             port: ${port},
-            path: \`/api/v1/run/${endpointName || flowId}\`,
+            path: \`/api/run/${endpointName || flowId}\`,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

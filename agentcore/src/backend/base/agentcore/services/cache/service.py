@@ -212,7 +212,10 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         # Redis is a main dependency, no need to import check
         from redis.asyncio import StrictRedis
 
-
+        logger.warning(
+            "RedisCache is an experimental feature and may not work as expected."
+            " Please report any issues to our GitHub repository."
+        )
         if url:
             self._client = StrictRedis.from_url(url)
         else:
