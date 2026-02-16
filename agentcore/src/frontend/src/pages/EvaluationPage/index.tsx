@@ -617,8 +617,9 @@ export default function EvaluationPage() {
               <tr>
                 <th className="px-6 py-3">Timestamp</th>
                 <th className="px-6 py-3">Trace ID</th>
+                <th className="px-6 py-3">Agent Name</th>
                 <th className="px-6 py-3">Metric</th>
-                <th className="px-6 py-3">Value</th>
+                <th className="px-6 py-3">Evaluation Score</th>
                 <th className="px-6 py-3">Source</th>
                   <th className="px-6 py-3">Comment</th>
                   <th className="px-6 py-3">Action</th>
@@ -631,8 +632,9 @@ export default function EvaluationPage() {
                     {score.created_at ? new Date(score.created_at).toLocaleString() : "-"}
                   </td>
                   <td className="px-6 py-4 font-mono text-xs text-blue-600 dark:text-blue-400">
-                    {shortId(score.trace_id)}
+                    <span title={score.trace_id}>{score.trace_id || "-"}</span>
                   </td>
+                  <td className="px-6 py-4 font-medium">{score.agent_name || "-"}</td>
                   <td className="px-6 py-4 font-medium">{score.name}</td>
                   <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded text-xs font-semibold ${
@@ -640,7 +642,7 @@ export default function EvaluationPage() {
                       score.value > 0.4 ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" :
                       "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
                     }`}>
-                      {score.value.toFixed(2)}
+                      {score.value.toFixed(2)} ({(score.value * 100).toFixed(0)}%)
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -666,7 +668,7 @@ export default function EvaluationPage() {
               ))}
               {recentScores.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
                     No evaluation scores found.
                   </td>
                 </tr>

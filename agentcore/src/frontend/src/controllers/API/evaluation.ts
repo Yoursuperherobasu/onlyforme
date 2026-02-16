@@ -3,6 +3,7 @@ import { api } from "./api";
 export interface Score {
   id: string;
   trace_id: string;
+  agent_name?: string;
   name: string;
   value: number;
   source: string;

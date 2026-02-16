@@ -20,13 +20,13 @@ interface WorkflowType {
 
 interface WorkflowsViewProps {
   workflows?: WorkflowType[];
-  setSearch: (search: string) => void;
+  setSearch?: (search: string) => void;
   onWorkflowClick?: (workflow: WorkflowType) => void;
 }
 
 export default function WorkflowsView({
   workflows,
-  setSearch,
+  setSearch = () => undefined,
   onWorkflowClick,
 }: WorkflowsViewProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");

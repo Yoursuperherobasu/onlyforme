@@ -31,7 +31,7 @@ from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent
 from agentcore.services.auth.utils import get_current_active_user
 from agentcore.services.database.models.user.model import User
 from agentcore.api.utils import DbSession
-from agentcore.api.observability import fetch_traces_from_langfuse
+from agentcore.api.observability import fetch_traces_from_langfuse, fetch_scores_for_trace
 
 # Try importing litellm for the judge
 try:
@@ -66,6 +66,7 @@ class ScoreResponse(BaseModel):
     """Represents a single evaluation score."""
     id: str
     trace_id: str
+    agent_name: str | None = None
     name: str
     value: float
     source: str  # "ANNOTATION" (human), "API" (llm judge)
@@ -1506,7 +1507,8 @@ async def get_scores(
 ) -> Dict[str, Any]:
     """
     List evaluation scores for the current user.
-    Filters by user_id to ensure isolation.
+    Uses user_id when available, with trace-based fallback for providers that do not
+    persist score-level user_id.
     """
     client = get_langfuse_client()
     if not client:
@@ -1514,45 +1516,484 @@ async def get_scores(
 
     try:
         user_id = str(current_user.id)
-        
-        scores_data = []
-        total = 0
 
-        # Fetch scores with user filter
-        if hasattr(client, 'client') and hasattr(client.client, 'scores'):
-            kwargs = {
-                "page": page,
-                "limit": limit,
-                "user_id": user_id  # Critical: filter by user
+        trace_lookup: Dict[str, Dict[str, Any]] = {}
+        user_trace_ids: set[str] = set()
+        trace_owner_cache: Dict[str, bool] = {}
+        try:
+            user_traces = fetch_traces_from_langfuse(client, user_id=user_id, limit=2000)
+            for raw_trace in user_traces or []:
+                trace_dict = parse_trace_data(raw_trace)
+                trace_key = str(trace_dict.get("id") or "")
+                if not trace_key:
+                    continue
+                trace_lookup[trace_key] = trace_dict
+                user_trace_ids.add(trace_key)
+        except Exception as trace_error:
+            logger.debug("Failed to prefetch user traces for score listing: {}", str(trace_error))
+
+        def _extract_scores_payload(response: Any) -> tuple[list[Any], int | None]:
+            if response is None:
+                return [], None
+
+            rows: list[Any] = []
+            total_items: int | None = None
+            if hasattr(response, "data"):
+                rows = list(response.data or [])
+                meta = getattr(response, "meta", None)
+                if isinstance(meta, dict):
+                    total_items = meta.get("total_items") or meta.get("total")
+                elif meta is not None:
+                    total_items = (
+                        getattr(meta, "total_items", None)
+                        or getattr(meta, "total", None)
+                    )
+            elif isinstance(response, dict):
+                rows = list(response.get("data") or [])
+                meta = response.get("meta")
+                if isinstance(meta, dict):
+                    total_items = meta.get("total_items") or meta.get("total")
+            elif isinstance(response, list):
+                rows = response
+                total_items = len(rows)
+            return rows, total_items
+
+        def _list_scores_page(page_num: int, page_limit: int, *, include_user_filter: bool) -> tuple[list[Any], int | None]:
+            if not (hasattr(client, "client") and hasattr(client.client, "scores")):
+                return [], None
+
+            kwargs: Dict[str, Any] = {
+                "page": page_num,
+                "limit": page_limit,
             }
             if trace_id:
                 kwargs["trace_id"] = trace_id
             if name:
                 kwargs["name"] = name
+            if include_user_filter:
+                kwargs["user_id"] = user_id
 
-            response = client.client.scores.list(**kwargs)
-            
-            if hasattr(response, 'data'):
-                scores_data = response.data
-                total = getattr(response, 'meta', {}).get('total_items', len(scores_data))
-            elif isinstance(response, list):
-                scores_data = response
-                total = len(response)
+            try:
+                response = client.client.scores.list(**kwargs)
+            except TypeError:
+                kwargs.pop("user_id", None)
+                response = client.client.scores.list(**kwargs)
+            return _extract_scores_payload(response)
 
-        # Parse to response model
-        items = []
-        for s in scores_data:
+        def _list_global_scores(max_rows: int = 2000) -> list[Any]:
+            """Best-effort global score scan across SDK variants."""
+            rows_out: list[Any] = []
+            seen_keys: set[str] = set()
+            page_size = min(100, max_rows)
+            max_pages = max(1, (max_rows + page_size - 1) // page_size)
+
+            def _append(rows: list[Any]) -> None:
+                for row in rows or []:
+                    row_id = str(get_attr(row, "id", default="") or "")
+                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
+                    row_name = str(get_attr(row, "name", default="score") or "score")
+                    row_ts = str(get_attr(row, "timestamp", "created_at", "createdAt", default="") or "")
+                    dedupe_key = row_id or f"{row_trace_id}::{row_name}::{row_ts}"
+                    if dedupe_key in seen_keys:
+                        continue
+                    seen_keys.add(dedupe_key)
+                    rows_out.append(row)
+
+            # Method 1: v3 score_v_2.get
+            if hasattr(client, "api") and hasattr(client.api, "score_v_2"):
+                for page_num in range(1, max_pages + 1):
+                    kwargs: Dict[str, Any] = {"limit": page_size, "page": page_num}
+                    try:
+                        payload = client.api.score_v_2.get(**kwargs)
+                    except Exception:
+                        break
+                    page_rows, _ = _extract_scores_payload(payload)
+                    if not page_rows:
+                        break
+                    _append(page_rows)
+                    if len(rows_out) >= max_rows or len(page_rows) < page_size:
+                        break
+
+            # Method 2: v3 api.scores.list/api.score.list
+            if len(rows_out) < max_rows and hasattr(client, "api"):
+                for attr in ("scores", "score"):
+                    score_api = getattr(client.api, attr, None)
+                    if not score_api or not hasattr(score_api, "list"):
+                        continue
+                    for page_num in range(1, max_pages + 1):
+                        kwargs = {"limit": page_size, "page": page_num}
+                        try:
+                            payload = score_api.list(**kwargs)
+                        except Exception:
+                            break
+                        page_rows, _ = _extract_scores_payload(payload)
+                        if not page_rows:
+                            break
+                        _append(page_rows)
+                        if len(rows_out) >= max_rows or len(page_rows) < page_size:
+                            break
+                    if len(rows_out) >= max_rows:
+                        break
+
+            # Method 3: direct scores client without user filter
+            if len(rows_out) < max_rows and hasattr(client, "client") and hasattr(client.client, "scores"):
+                for page_num in range(1, max_pages + 1):
+                    kwargs = {"limit": page_size, "page": page_num}
+                    try:
+                        payload = client.client.scores.list(**kwargs)
+                    except Exception:
+                        break
+                    page_rows, _ = _extract_scores_payload(payload)
+                    if not page_rows:
+                        break
+                    _append(page_rows)
+                    if len(rows_out) >= max_rows or len(page_rows) < page_size:
+                        break
+
+            return rows_out[:max_rows]
+
+        def _score_belongs_to_user(score_row: Any) -> bool:
+            score_user_id = get_attr(score_row, "user_id", "userId")
+            if score_user_id is not None:
+                return str(score_user_id) == user_id
+
+            score_trace_id = str(get_attr(score_row, "trace_id", "traceId", default="") or "")
+            if not score_trace_id:
+                return False
+            if score_trace_id in trace_owner_cache:
+                return trace_owner_cache[score_trace_id]
+            if score_trace_id in user_trace_ids:
+                trace_owner_cache[score_trace_id] = True
+                return True
+
+            # Last-resort ownership check: resolve trace and compare trace user_id.
+            try:
+                trace_raw = _fetch_trace_by_id(client, score_trace_id)
+                if trace_raw:
+                    trace_dict = parse_trace_data(trace_raw)
+                    trace_lookup[score_trace_id] = trace_dict
+                    trace_user_id = str(_extract_trace_user_id(trace_dict) or "")
+                    if trace_user_id:
+                        is_owner = trace_user_id == user_id
+                    else:
+                        # Some deployments don't populate user_id on traces/scores.
+                        # If we cannot establish ownership via user metadata at all,
+                        # allow the score as a best-effort fallback.
+                        is_owner = not user_trace_ids
+                    trace_owner_cache[score_trace_id] = is_owner
+                    if is_owner:
+                        user_trace_ids.add(score_trace_id)
+                    return is_owner
+            except Exception as owner_error:
+                logger.debug(
+                    "Could not verify trace ownership for score trace_id={}: {}",
+                    score_trace_id,
+                    str(owner_error),
+                )
+
+            if not user_trace_ids:
+                logger.debug(
+                    "Score ownership fallback: accepting trace_id={} without user metadata",
+                    score_trace_id,
+                )
+                trace_owner_cache[score_trace_id] = True
+                return True
+
+            trace_owner_cache[score_trace_id] = False
+            return False
+
+        def _score_matches_name(score_row: Any) -> bool:
+            if not name:
+                return True
+            score_name = str(get_attr(score_row, "name", default="") or "")
+            return name.lower() in score_name.lower()
+
+        raw_scores: list[Any] = []
+        total = 0
+        unscoped_collected: list[Any] = []
+
+        # Primary fetch with user filter.
+        primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=True)
+        primary_rows = [
+            row for row in primary_rows
+            if _score_belongs_to_user(row) and _score_matches_name(row)
+        ]
+        if primary_rows:
+            raw_scores = primary_rows
+            total = (
+                int(primary_total)
+                if primary_total is not None and len(primary_rows) > 0
+                else len(primary_rows)
+            )
+        else:
+            # Fallback: some score records do not carry user_id; scan without user filter,
+            # then enforce user isolation with trace ownership checks.
+            collected: list[Any] = []
+            seen_keys: set[str] = set()
+            unscoped_seen_keys: set[str] = set()
+            target_count = page * limit
+            scan_limit = min(200, max(50, limit))
+            max_scan_pages = 10
+
+            for scan_page in range(1, max_scan_pages + 1):
+                scan_rows, _ = _list_scores_page(scan_page, scan_limit, include_user_filter=False)
+                if not scan_rows:
+                    break
+
+                for row in scan_rows:
+                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
+                    if trace_id and row_trace_id != str(trace_id):
+                        continue
+                    if not _score_matches_name(row):
+                        continue
+
+                    # Keep an unscoped copy in case ownership metadata is completely absent.
+                    row_id_for_unscoped = str(get_attr(row, "id", default="") or "")
+                    unscoped_dedupe_key = row_id_for_unscoped or (
+                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
+                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
+                    )
+                    if unscoped_dedupe_key not in unscoped_seen_keys:
+                        unscoped_seen_keys.add(unscoped_dedupe_key)
+                        unscoped_collected.append(row)
+
+                    if not _score_belongs_to_user(row):
+                        continue
+
+                    row_id = str(get_attr(row, "id", default="") or "")
+                    dedupe_key = row_id or (
+                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
+                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
+                    )
+                    if dedupe_key in seen_keys:
+                        continue
+                    seen_keys.add(dedupe_key)
+                    collected.append(row)
+
+                if len(collected) >= target_count:
+                    break
+                if len(scan_rows) < scan_limit:
+                    break
+
+            # If the direct list endpoint is empty, try broader SDK-specific score APIs.
+            if not collected and not unscoped_collected:
+                global_scan_rows = _list_global_scores(max_rows=max(1000, page * limit * 10))
+                logger.info(
+                    "Global score scan fallback collected {} row(s) for user_id={}",
+                    len(global_scan_rows),
+                    user_id,
+                )
+                for row in global_scan_rows:
+                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
+                    if trace_id and row_trace_id != str(trace_id):
+                        continue
+                    if not _score_matches_name(row):
+                        continue
+
+                    row_id_for_unscoped = str(get_attr(row, "id", default="") or "")
+                    unscoped_dedupe_key = row_id_for_unscoped or (
+                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
+                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
+                    )
+                    if unscoped_dedupe_key not in unscoped_seen_keys:
+                        unscoped_seen_keys.add(unscoped_dedupe_key)
+                        unscoped_collected.append(row)
+
+                    if not _score_belongs_to_user(row):
+                        continue
+
+                    row_id = str(get_attr(row, "id", default="") or "")
+                    dedupe_key = row_id or (
+                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
+                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
+                    )
+                    if dedupe_key in seen_keys:
+                        continue
+                    seen_keys.add(dedupe_key)
+                    collected.append(row)
+
+            total = len(collected)
+            start = (page - 1) * limit
+            raw_scores = collected[start:start + limit]
+
+            # If ownership metadata is unavailable, fall back to unscoped rows so the
+            # UI remains usable in single-tenant/local deployments.
+            if not raw_scores and not user_trace_ids and unscoped_collected:
+                logger.warning(
+                    "Score ownership metadata unavailable for user_id={}; using unscoped score fallback",
+                    user_id,
+                )
+                total = len(unscoped_collected)
+                raw_scores = unscoped_collected[start:start + limit]
+
+        # Final fallback: collect scores per user-owned trace using observability's
+        # robust score fetcher when list-based score APIs are empty/incompatible.
+        if not raw_scores and (user_trace_ids or trace_id or unscoped_collected):
+            logger.info(
+                "Score list API returned no rows for user_id={}; using per-trace score fallback",
+                user_id,
+            )
+            trace_candidates: list[str] = []
+            if trace_id:
+                trace_candidates = [str(trace_id)]
+            elif user_trace_ids:
+                trace_candidates = list(user_trace_ids)
+            else:
+                trace_candidates = list(
+                    dict.fromkeys(
+                        str(get_attr(row, "trace_id", "traceId", default="") or "")
+                        for row in unscoped_collected
+                        if str(get_attr(row, "trace_id", "traceId", default="") or "")
+                    )
+                )
+
+            # Expand trace candidates with canonical ids and run_ids, as score writes may
+            # target a different id than the one returned by list endpoints.
+            expanded_trace_candidates: list[str] = []
+            for candidate_id in trace_candidates:
+                candidate_id = str(candidate_id or "").strip()
+                if not candidate_id:
+                    continue
+                if candidate_id not in expanded_trace_candidates:
+                    expanded_trace_candidates.append(candidate_id)
+
+                trace_dict = trace_lookup.get(candidate_id)
+                if not trace_dict:
+                    try:
+                        trace_raw = _fetch_trace_by_id(client, candidate_id)
+                        if trace_raw:
+                            trace_dict = parse_trace_data(trace_raw)
+                            resolved_id = str(trace_dict.get("id") or "")
+                            if resolved_id:
+                                trace_lookup[resolved_id] = trace_dict
+                            trace_lookup[candidate_id] = trace_dict
+                    except Exception as resolve_error:
+                        logger.debug(
+                            "Failed resolving canonical trace id for candidate {}: {}",
+                            candidate_id,
+                            str(resolve_error),
+                        )
+
+                if trace_dict:
+                    resolved_id = str(trace_dict.get("id") or "")
+                    if resolved_id and resolved_id not in expanded_trace_candidates:
+                        expanded_trace_candidates.append(resolved_id)
+                    run_id = _extract_trace_run_id(trace_dict)
+                    if run_id and run_id not in expanded_trace_candidates:
+                        expanded_trace_candidates.append(str(run_id))
+
+            if expanded_trace_candidates:
+                trace_candidates = expanded_trace_candidates
+                logger.info(
+                    "Expanded per-trace score fallback candidates to {} ids",
+                    len(trace_candidates),
+                )
+
+            collected_rows: list[dict[str, Any]] = []
+            seen_keys: set[str] = set()
+            max_traces_to_scan = 500
+
+            for trace_key in trace_candidates[:max_traces_to_scan]:
+                if not trace_key:
+                    continue
+                try:
+                    trace_scores = fetch_scores_for_trace(
+                        client,
+                        trace_id=trace_key,
+                        user_id=user_id,
+                        limit=200,
+                    )
+                except Exception as trace_score_error:
+                    logger.debug(
+                        "Per-trace score fetch failed for trace_id={}: {}",
+                        trace_key,
+                        str(trace_score_error),
+                    )
+                    continue
+
+                for trace_score in trace_scores:
+                    score_name = str(get_attr(trace_score, "name", default="") or "")
+                    if name and name.lower() not in score_name.lower():
+                        continue
+
+                    score_id = str(get_attr(trace_score, "id", default="") or "")
+                    created_at = get_attr(trace_score, "created_at", "timestamp", default=None)
+                    dedupe_key = score_id or f"{trace_key}::{score_name}::{created_at}"
+                    if dedupe_key in seen_keys:
+                        continue
+                    seen_keys.add(dedupe_key)
+
+                    source_value = get_attr(trace_score, "source", default=None)
+                    if hasattr(source_value, "value"):
+                        source_value = source_value.value
+
+                    collected_rows.append(
+                        {
+                            "id": score_id,
+                            "trace_id": trace_key,
+                            "name": score_name or "Score",
+                            "value": float(get_attr(trace_score, "value", default=0.0) or 0.0),
+                            "source": str(source_value) if source_value is not None else "API",
+                            "comment": get_attr(trace_score, "comment", default=None),
+                            "created_at": created_at,
+                            "observation_id": get_attr(trace_score, "observation_id", "observationId", default=None),
+                            "config_id": get_attr(trace_score, "config_id", "configId", default=None),
+                            "user_id": user_id,
+                        }
+                    )
+
+            def _score_sort_key(row: dict[str, Any]) -> datetime:
+                parsed = _parse_trace_timestamp(row.get("created_at"))
+                return parsed or datetime.min.replace(tzinfo=timezone.utc)
+
+            collected_rows.sort(key=_score_sort_key, reverse=True)
+            total = len(collected_rows)
+            start = (page - 1) * limit
+            raw_scores = collected_rows[start:start + limit]
+            logger.info(
+                "Per-trace score fallback produced {} row(s); returning {} row(s) for page={} limit={}",
+                total,
+                len(raw_scores),
+                page,
+                limit,
+            )
+
+        # Parse to response model (including agent/flow name).
+        items: list[ScoreResponse] = []
+        for s in raw_scores:
+            score_trace_id = str(get_attr(s, "trace_id", "traceId", default="") or "")
+            trace_dict = trace_lookup.get(score_trace_id)
+            if score_trace_id and not trace_dict:
+                try:
+                    trace_raw = _fetch_trace_by_id(client, score_trace_id)
+                    if trace_raw:
+                        trace_dict = parse_trace_data(trace_raw)
+                        trace_lookup[score_trace_id] = trace_dict
+                except Exception as trace_error:
+                    logger.debug("Failed to fetch trace {} for score enrichment: {}", score_trace_id, str(trace_error))
+
+            agent_name = _extract_trace_flow_name(trace_dict or {}) if trace_dict else None
+            if not agent_name and trace_dict:
+                trace_name = trace_dict.get("name")
+                agent_name = str(trace_name) if trace_name else None
+
+            source = get_attr(s, "source")
+            if hasattr(source, "value"):
+                source = source.value
+
+            score_id = str(get_attr(s, "id", default="") or "")
             items.append(ScoreResponse(
-                id=get_attr(s, 'id'),
-                trace_id=get_attr(s, 'trace_id', 'traceId'),
-                name=get_attr(s, 'name'),
-                value=float(get_attr(s, 'value', 0.0)),
-                source=get_attr(s, 'source', 'API'),
-                comment=get_attr(s, 'comment'),
-                user_id=get_attr(s, 'user_id', 'userId'),
-                created_at=get_attr(s, 'timestamp', 'createdAt'),
-                observation_id=get_attr(s, 'observation_id', 'observationId'),
-                config_id=get_attr(s, 'config_id', 'configId'),
+                id=score_id or f"{score_trace_id}:{get_attr(s, 'name', default='score')}",
+                trace_id=score_trace_id,
+                agent_name=agent_name,
+                name=str(get_attr(s, "name", default="Score") or "Score"),
+                value=float(get_attr(s, "value", default=0.0) or 0.0),
+                source=str(source) if source is not None else "API",
+                comment=get_attr(s, "comment"),
+                user_id=str(get_attr(s, "user_id", "userId")) if get_attr(s, "user_id", "userId") else None,
+                created_at=get_attr(s, "timestamp", "createdAt", "created_at"),
+                observation_id=get_attr(s, "observation_id", "observationId"),
+                config_id=get_attr(s, "config_id", "configId"),
             ))
 
         return {
