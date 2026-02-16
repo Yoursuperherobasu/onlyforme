@@ -26,6 +26,7 @@ import { useLogout, useRefreshAccessToken } from "./queries/auth";
 
 const api: AxiosInstance = axios.create({
   baseURL,
+  withCredentials: true,
 });
 
 const _cookies = new Cookies();

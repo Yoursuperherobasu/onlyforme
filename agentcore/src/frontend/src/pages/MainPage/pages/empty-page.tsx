@@ -1,7 +1,8 @@
 import { ExternalLink } from "lucide-react";
 import { FaDiscord, FaGithub } from "react-icons/fa";
 import { useShallow } from "zustand/react/shallow";
-
+import logoDarkPng from "@/assets/logo_dark.png";
+import logoLightPng from "@/assets/logo_light.png";
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
 import CardsWrapComponent from "@/components/core/cardsWrapComponent";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { useDarkStore } from "@/stores/darkStore";
 import { useFolderStore } from "@/stores/foldersStore";
 import { formatNumber } from "@/utils/utils";
 import useFileDrop from "../hooks/use-on-file-drop";
-import mothersonLogo from "@/assets/mothersonLogo.svg?react";
+
 const EMPTY_PAGE_TITLE = "Welcome to AgentCore";
 const EMPTY_PAGE_DESCRIPTION = "Your new favorite way to ship Agents";
 const EMPTY_PAGE_GITHUB_DESCRIPTION =
@@ -68,7 +69,7 @@ export const EmptyPageCommunity = ({
             <div className="z-50 flex flex-col items-center gap-2">
               <div className="z-50 dark:hidden">
                 <img
-                  src={mothersonLogo}
+                  src={logoLightPng}
                   alt="AgentCore Logo Light"
                   data-testid="empty_page_logo_light"
                   className="relative top-3"
@@ -76,7 +77,7 @@ export const EmptyPageCommunity = ({
               </div>
               <div className="z-50 hidden dark:block">
                 <img
-                  src={mothersonLogo}
+                  src={logoDarkPng}
                   alt="AgentCore Logo Dark"
                   data-testid="empty_page_logo_dark"
                   className="relative top-3"

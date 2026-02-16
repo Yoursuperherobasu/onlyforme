@@ -12,7 +12,7 @@ const createStoreMessage = (
   timestamp: string,
   sender: "User" | "Machine",
   text: string,
-  agent_id: string = "test-flow-id",
+  flow_id: string = "test-flow-id",
 ) => ({
   id,
   timestamp,
@@ -20,7 +20,7 @@ const createStoreMessage = (
   sender_name: sender === "User" ? "User" : "AI",
   text,
   session_id: "test-session",
-  agent_id,
+  flow_id,
   files: [],
   edit: false,
   error: false,
@@ -32,7 +32,7 @@ const createStoreMessage = (
 // Helper to simulate the transformation that chat-view.tsx does
 const transformMessages = (storeMessages: any[]): ChatMessageType[] => {
   return storeMessages
-    .filter((message) => message.agent_id === "test-flow-id")
+    .filter((message) => message.flow_id === "test-flow-id")
     .map((message) => ({
       isSend: message.sender === "User",
       message: message.text,
@@ -314,7 +314,7 @@ describe("Message Sorting Integration", () => {
           sender: "User",
           text: "Incomplete message",
           session_id: "test-session",
-          agent_id: "test-flow-id",
+          flow_id: "test-flow-id",
         },
         createStoreMessage(
           "complete1",

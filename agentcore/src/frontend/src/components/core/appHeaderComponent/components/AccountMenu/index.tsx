@@ -8,7 +8,6 @@ import { useLogout } from "@/controllers/API/queries/auth";
 import { CustomProfileIcon } from "@/customization/components/custom-profile-icon";
 import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
-import useAuthStore from "@/stores/authStore";
 import { useDarkStore } from "@/stores/darkStore";
 import { cn, stripReleaseStageFromVersion } from "@/utils/utils";
 import {
@@ -19,13 +18,17 @@ import {
   HeaderMenuToggle,
 } from "../HeaderMenu";
 import ThemeButtons from "../ThemeButtons";
-import { hasPermission } from "@/contexts/hasPermission";
+import useAuthStore from "@/stores/authStore";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 export const AccountMenu = () => {
   const version = useDarkStore((state) => state.version);
   const latestVersion = useDarkStore((state) => state.latestVersion);
   const navigate = useCustomNavigate();
   const { mutate: mutationLogout } = useLogout();
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
 
   const handleLogout = () => {
@@ -67,7 +70,7 @@ export const AccountMenu = () => {
               </span>
             </HeaderMenuItemButton>
 
-            {hasPermission("view_admin_page") && (
+            {can("view_admin_page") && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {
@@ -79,6 +82,22 @@ export const AccountMenu = () => {
                     id="menu_admin_page_button"
                   >
                     Admin Page
+                  </span>
+                </HeaderMenuItemButton>
+              </div>
+            )}
+            {can("manage_roles") && (
+              <div>
+                <HeaderMenuItemButton
+                  onClick={() => {
+                    navigate("/access-control");
+                  }}
+                >
+                  <span
+                    data-testid="menu_access_control_button"
+                    id="menu_access_control_button"
+                  >
+                    Access Control
                   </span>
                 </HeaderMenuItemButton>
               </div>

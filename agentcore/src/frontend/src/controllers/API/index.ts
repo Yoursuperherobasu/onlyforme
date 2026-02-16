@@ -52,7 +52,7 @@ export async function createApiKey(name: string) {
 }
 
 /**
- * Saves a new flow to the database.
+ * Saves a new agent to the database.
  *
  * @param {FlowType} newFlow - The flow data to save.
  * @returns {Promise<any>} The saved flow data.

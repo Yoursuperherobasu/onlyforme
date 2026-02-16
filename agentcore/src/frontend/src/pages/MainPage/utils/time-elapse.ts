@@ -3,10 +3,7 @@ export const timeElapsed = (dateTimeString: string | undefined): string => {
     return "";
   }
 
-  const normalized = dateTimeString.includes("T")
-    ? dateTimeString
-    : `${dateTimeString.replace(" ", "T")}Z`;
-  const givenDate = new Date(normalized);
+  const givenDate = new Date(dateTimeString);
   const now = new Date();
 
   const diffInMs = Math.abs(now.getTime() - givenDate.getTime());

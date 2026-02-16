@@ -13,6 +13,7 @@ export default function SettingsPage(): JSX.Element {
     href?: string;
     title: string;
     icon: React.ReactNode;
+    permissionKey?: string;
   }[] = [];
 
  
@@ -27,6 +28,7 @@ export default function SettingsPage(): JSX.Element {
           className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
         />
       ),
+      permissionKey: "view_settings_global_variables_tab",
     },
 
     {
@@ -38,6 +40,7 @@ export default function SettingsPage(): JSX.Element {
           className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
         />
       ),
+      permissionKey: "view_settings_shortcuts_tab",
     },
     {
       title: "Messages",
@@ -48,6 +51,7 @@ export default function SettingsPage(): JSX.Element {
           className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
         />
       ),
+      permissionKey: "view_settings_messages_tab",
     },
   );
 

@@ -576,9 +576,9 @@ export const ADMIN_HEADER_TITLE = "Admin Page";
 export const ADMIN_HEADER_DESCRIPTION =
   "Navigate through this section to efficiently oversee all application users. From here, you can seamlessly manage user accounts.";
 
-export const BASE_URL_API = custom.BASE_URL_API || "/api/";
+export const BASE_URL_API = custom.BASE_URL_API || "/api/v1/";
 
-export const BASE_URL_API_V2 = custom.BASE_URL_API_V2 || "/api/";
+export const BASE_URL_API_V2 = custom.BASE_URL_API_V2 || "/api/v2/";
 
 /**
  * URLs excluded from error retries.
@@ -624,6 +624,9 @@ export const CONTROL_NEW_USER = {
   password: "",
   is_active: false,
   is_superuser: false,
+  role: "business_user",
+  department_admin_email: "",
+  department_name: "",
 };
 
 export const tabsCode = [];

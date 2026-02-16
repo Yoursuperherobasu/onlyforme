@@ -2,17 +2,42 @@
 export const lazyIconsMapping = {
   AIML: () => import("@/icons/AIML").then((mod) => ({ default: mod.AIMLIcon })),
   
-  Google: () =>
-    import("@/icons/Google").then((mod) => ({ default: mod.GoogleIcon })),
  
+  
+  
+  
   GoogleGenerativeAI: () =>
     import("@/icons/GoogleGenerativeAI").then((mod) => ({
       default: mod.GoogleGenerativeAIIcon,
     })),
   
-  Mcp: () => import("@/icons/MCP").then((mod) => ({ default: mod.McpIcon })),
+  GradientInfinity: () =>
+    import("@/icons/GradientSparkles").then((mod) => ({
+      default: mod.GradientInfinity,
+    })),
   
-  Pinecone: () =>
-    import("@/icons/Pinecone").then((mod) => ({ default: mod.PineconeIcon })),
   
-  };
+  GradientUngroup: () =>
+    import("@/icons/GradientSparkles").then((mod) => ({
+      default: mod.GradientUngroup,
+    })),
+  GradientSave: () =>
+    import("@/icons/GradientSparkles").then((mod) => ({
+      default: mod.GradientSave,
+    })),
+  
+  Groq: () => import("@/icons/Groq").then((mod) => ({ default: mod.GroqIcon })),
+  
+  
+  
+  
+  
+  
+  
+ 
+ 
+  
+  
+  
+ 
+};

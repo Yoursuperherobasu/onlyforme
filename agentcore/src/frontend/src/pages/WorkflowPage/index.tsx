@@ -3,6 +3,8 @@ import {
   Workflow,
   X
 } from "lucide-react";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 import { useEffect, useState } from "react";
 
 interface WorkflowType {
@@ -20,19 +22,21 @@ interface WorkflowType {
 
 interface WorkflowsViewProps {
   workflows?: WorkflowType[];
-  setSearch?: (search: string) => void;
+  setSearch: (search: string) => void;
   onWorkflowClick?: (workflow: WorkflowType) => void;
 }
 
 export default function WorkflowsView({
   workflows,
-  setSearch = () => undefined,
+  setSearch,
   onWorkflowClick,
 }: WorkflowsViewProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [workflowStates, setWorkflowStates] = useState<{
     [key: string]: { status: boolean; enabled: boolean };
   }>({});
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   /* ---------------------------------- Dummy Workflows ---------------------------------- */
 
@@ -264,12 +268,16 @@ export default function WorkflowsView({
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   Failed Runs
                 </th>
+                {can("start_stop_agent") && (
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   Start/Stop
                 </th>
+                )}
+                {can("enable_disable_agent") && (
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   Enable/Disable
                 </th>
+                )}
               </tr>
             </thead>
 
@@ -315,7 +323,7 @@ export default function WorkflowsView({
                       <span className="text-sm text-muted-foreground">—</span>
                     )}
                   </td>
-
+                  {can("start_stop_agent") && (
                   <td className="px-6 py-4">
                     <button
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -333,7 +341,8 @@ export default function WorkflowsView({
                       />
                     </button>
                   </td>
-
+                  )}
+                  {can("enable_disable_agent") && (
                   <td className="px-6 py-4">
                     <button
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -351,6 +360,7 @@ export default function WorkflowsView({
                       />
                     </button>
                   </td>
+                  )}
                 </tr>
               ))}
             </tbody>

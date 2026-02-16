@@ -32,10 +32,8 @@ export default function ChatMessage({
   const convert = new Convert({ newline: true });
   const [hidden, setHidden] = useState(true);
   const [streamUrl, setStreamUrl] = useState(chat.stream_url);
-  const agent_id = useFlowsManagerStore((state) => state.currentFlowId);
+  const flow_id = useFlowsManagerStore((state) => state.currentFlowId);
   const fitViewNode = useFlowStore((state) => state.fitViewNode);
-  // We need to check if message is not undefined because
-  // we need to run .toString() on it
   const [chatMessage, setChatMessage] = useState(
     chat.message ? chat.message.toString() : "",
   );
@@ -55,11 +53,8 @@ export default function ChatMessage({
     chatMessageRef.current = chatMessage;
   }, [chat, isBuilding]);
 
-  // The idea now is that chat.stream_url MAY be a URL if we should stream the output of the chat
-  // probably the message is empty when we have a stream_url
-  // what we need is to update the chat_message with the SSE data
   const streamChunks = (url: string) => {
-    setIsStreaming(true); // Streaming starts
+    setIsStreaming(true);
     return new Promise<boolean>((resolve, reject) => {
       eventSource.current = new EventSource(url);
       eventSource.current.onmessage = (event) => {
@@ -82,7 +77,7 @@ export default function ChatMessage({
         reject(new Error("Streaming failed"));
       };
       eventSource.current.addEventListener("close", (event) => {
-        setStreamUrl(undefined); // Update state to reflect the stream is closed
+        setStreamUrl(undefined);
         eventSource.current?.close();
         setIsStreaming(false);
         resolve(true);
@@ -94,15 +89,12 @@ export default function ChatMessage({
     if (streamUrl && !isStreaming) {
       streamChunks(streamUrl)
         .then(() => {
-          if (updateChat) {
-            updateChat(chat, chatMessageRef.current);
-          }
+          if (updateChat) updateChat(chat, chatMessageRef.current);
         })
-        .catch((error) => {
-          console.error(error);
-        });
+        .catch((error) => console.error(error));
     }
   }, [streamUrl, chatMessage]);
+
   useEffect(() => {
     return () => {
       eventSource.current?.close();
@@ -111,10 +103,7 @@ export default function ChatMessage({
 
   useEffect(() => {
     if (chat.category === "error") {
-      // Short delay before showing error to allow for loading animation
-      const timer = setTimeout(() => {
-        setShowError(true);
-      }, 50);
+      const timer = setTimeout(() => setShowError(true), 50);
       return () => clearTimeout(timer);
     }
   }, [chat.category]);
@@ -122,9 +111,7 @@ export default function ChatMessage({
   let decodedMessage = chatMessage ?? "";
   try {
     decodedMessage = decodeURIComponent(chatMessage);
-  } catch (_e) {
-    // console.error(e);
-  }
+  } catch (_e) {}
   const isEmpty = decodedMessage?.trim() === "";
   const { mutate: updateMessageMutation } = useUpdateMessage();
 
@@ -137,7 +124,7 @@ export default function ChatMessage({
           sender_name: chat.sender_name ?? "AI",
           text: message,
           sender: chat.isSend ? "User" : "Machine",
-          agent_id,
+          flow_id,
           session_id: chat.session ?? "",
         },
         refetch: true,
@@ -148,9 +135,7 @@ export default function ChatMessage({
           setEditMessage(false);
         },
         onError: () => {
-          setErrorData({
-            title: "Error updating messages.",
-          });
+          setErrorData({ title: "Error updating messages." });
         },
       },
     );
@@ -165,7 +150,7 @@ export default function ChatMessage({
           sender_name: chat.sender_name ?? "AI",
           text: chat.message.toString(),
           sender: chat.isSend ? "User" : "Machine",
-          agent_id,
+          flow_id,
           session_id: chat.session ?? "",
           properties: {
             ...chat.properties,
@@ -176,21 +161,18 @@ export default function ChatMessage({
       },
       {
         onError: () => {
-          setErrorData({
-            title: "Error updating messages.",
-          });
+          setErrorData({ title: "Error updating messages." });
         },
       },
     );
   };
 
   const editedFlag = chat.edit ? (
-    <div className="text-sm text-muted-foreground">(Edited)</div>
+    <span className="ml-2 text-xs text-[#9aa0a6]">(Edited)</span>
   ) : null;
 
   if (chat.category === "error") {
     const blocks = chat.content_blocks ?? [];
-
     return (
       <ErrorView
         blocks={blocks}
@@ -205,19 +187,20 @@ export default function ChatMessage({
 
   return (
     <>
-      <div className="w-full py-4 word-break-break-word">
+      <div className="w-full py-5 word-break-break-word">
         <div
           className={cn(
-            "group relative flex w-full gap-4 rounded-md p-2",
-            editMessage ? "" : "hover:bg-muted",
+            "group relative flex w-full gap-4 px-2",
+            editMessage ? "" : "",
           )}
         >
+          {/* Avatar — circular, Gemini style */}
           <div
             className={cn(
-              "relative flex h-[32px] w-[32px] items-center justify-center overflow-hidden rounded-md text-2xl",
+              "relative flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-full",
               !chat.isSend
-                ? "bg-muted"
-                : "border border-border hover:border-input",
+                ? "bg-gradient-to-br from-[#4285f4] via-[#9b72cb] to-[#d96570]"
+                : "bg-[#e8eaed] dark:bg-[#3c4043]",
             )}
             style={
               chat.properties?.background_color
@@ -226,76 +209,83 @@ export default function ChatMessage({
             }
           >
             {!chat.isSend ? (
-              <div className="flex h-[18px] w-[18px] items-center justify-center">
+              <div className="flex h-5 w-5 items-center justify-center text-white">
                 {chat.properties?.icon ? (
                   chat.properties.icon.match(
                     /[\u2600-\u27BF\uD83C-\uDBFF\uDC00-\uDFFF]/,
                   ) ? (
-                    <span className="">{chat.properties.icon}</span>
+                    <span>{chat.properties.icon}</span>
                   ) : (
-                    <ForwardedIconComponent name={chat.properties.icon} />
+                    <ForwardedIconComponent
+                      name={chat.properties.icon}
+                      className="h-4 w-4"
+                    />
                   )
                 ) : (
                   <img
                     src={Robot}
-                    className="absolute bottom-0 left-0 scale-[60%]"
-                    alt={"robot_image"}
+                    className="absolute bottom-0 left-0 scale-[60%] brightness-0 invert"
+                    alt="robot_image"
                   />
                 )}
               </div>
             ) : (
-              <div className="flex h-[18px] w-[18px] items-center justify-center">
+              <div className="flex h-5 w-5 items-center justify-center text-[#5f6368] dark:text-[#c4c7c5]">
                 {chat.properties?.icon ? (
                   chat.properties.icon.match(
                     /[\u2600-\u27BF\uD83C-\uDBFF\uDC00-\uDFFF]/,
                   ) ? (
-                    <div className="">{chat.properties.icon}</div>
+                    <div>{chat.properties.icon}</div>
                   ) : (
-                    <ForwardedIconComponent name={chat.properties.icon} />
+                    <ForwardedIconComponent
+                      name={chat.properties.icon}
+                      className="h-4 w-4"
+                    />
                   )
                 ) : !ENABLE_DATASTAX_AGENTCORE && !playgroundPage ? (
                   <CustomProfileIcon />
                 ) : playgroundPage ? (
-                  <ForwardedIconComponent name="User" />
+                  <ForwardedIconComponent name="User" className="h-4 w-4" />
                 ) : (
                   <CustomProfileIcon />
                 )}
               </div>
             )}
           </div>
-          <div className="flex w-[94%] flex-col">
-            <div>
-              <div
-                className={cn(
-                  "flex max-w-full items-baseline gap-3 truncate pb-2 text-sm font-semibold",
-                )}
-                style={
-                  chat.properties?.text_color
-                    ? { color: chat.properties.text_color }
-                    : {}
-                }
-                data-testid={
-                  "sender_name_" + chat.sender_name?.toLocaleLowerCase()
-                }
-              >
-                <span className="flex items-center gap-2">
-                  {chat.sender_name}
-                  {isAudioMessage && (
-                    <div className="flex h-5 w-5 items-center justify-center rounded-sm bg-muted">
-                      <ForwardedIconComponent
-                        name="mic"
-                        className="h-3 w-3 text-muted-foreground"
-                      />
-                    </div>
-                  )}
-                </span>
-                {chat.properties?.source && !playgroundPage && (
-                  <div className="text-mmd font-normal text-muted-foreground">
-                    {chat.properties?.source.source}
+
+          {/* Message body */}
+          <div className="flex w-full min-w-0 flex-col gap-1">
+            {/* Sender name */}
+            <div
+              className="flex items-center gap-2 text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3]"
+              style={
+                chat.properties?.text_color
+                  ? { color: chat.properties.text_color }
+                  : {}
+              }
+              data-testid={
+                "sender_name_" + chat.sender_name?.toLocaleLowerCase()
+              }
+            >
+              <span className="flex items-center gap-2">
+                {chat.sender_name}
+                {isAudioMessage && (
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#f1f3f4] dark:bg-[#3c4043]">
+                    <ForwardedIconComponent
+                      name="mic"
+                      className="h-3 w-3 text-[#70757a] dark:text-[#9aa0a6]"
+                    />
                   </div>
                 )}
-              </div>
+              </span>
+              {chat.properties?.source && !playgroundPage && (
+                <span className="text-xs font-normal text-[#9aa0a6]">
+                  {chat.properties?.source.source}
+                </span>
+              )}
             </div>
+
+            {/* Content blocks */}
             {chat.content_blocks && chat.content_blocks.length > 0 && (
               <ContentBlockDisplay
                 playgroundPage={playgroundPage}
@@ -309,12 +299,14 @@ export default function ChatMessage({
                 chatId={chat.id}
               />
             )}
+
+            {/* Message content */}
             {!chat.isSend ? (
-              <div className="form-modal-chat-text-position flex-grow">
-                <div className="form-modal-chat-text">
+              <div className="flex-grow">
+                <div>
                   {hidden && chat.thought && chat.thought !== "" && (
                     <div
-                      onClick={(): void => setHidden((prev) => !prev)}
+                      onClick={() => setHidden((prev) => !prev)}
                       className="form-modal-chat-icon-div"
                     >
                       <IconComponent
@@ -330,10 +322,10 @@ export default function ChatMessage({
                       onClick={() => setHidden((prev) => !prev)}
                     />
                   )}
-                  {chat.thought && chat.thought !== "" && !hidden && <br></br>}
+                  {chat.thought && chat.thought !== "" && !hidden && <br />}
                   <div className="flex w-full flex-col">
                     <div
-                      className="flex w-full flex-col dark:text-white"
+                      className="flex w-full flex-col text-[#1f1f1f] dark:text-[#e3e3e3]"
                       data-testid="div-chat-message"
                     >
                       <div
@@ -343,19 +335,20 @@ export default function ChatMessage({
                         className="flex w-full flex-col"
                       >
                         {chatMessage === "" && isBuilding && lastMessage ? (
-                          <IconComponent
-                            name="MoreHorizontal"
-                            className="h-8 w-8 animate-pulse"
-                          />
+                          <div className="flex items-center gap-1 py-2">
+                            <span className="h-2 w-2 rounded-full bg-[#4285f4] animate-pulse" />
+                            <span className="h-2 w-2 rounded-full bg-[#9b72cb] animate-pulse [animation-delay:150ms]" />
+                            <span className="h-2 w-2 rounded-full bg-[#d96570] animate-pulse [animation-delay:300ms]" />
+                          </div>
                         ) : (
-                          <div className="min-h-8 w-full">
+                          <div className="min-h-6 w-full text-[15px] leading-relaxed">
                             {editMessage ? (
                               <EditMessageField
                                 key={`edit-message-${chat.id}`}
                                 message={decodedMessage}
-                                onEdit={(message) => {
-                                  handleEditMessage(message);
-                                }}
+                                onEdit={(message) =>
+                                  handleEditMessage(message)
+                                }
                                 onCancel={() => setEditMessage(false)}
                               />
                             ) : (
@@ -375,23 +368,23 @@ export default function ChatMessage({
                 </div>
               </div>
             ) : (
-              <div className="form-modal-chat-text-position flex-grow">
+              <div className="flex-grow">
                 <div className="flex w-full flex-col">
                   {editMessage ? (
                     <EditMessageField
                       key={`edit-message-${chat.id}`}
                       message={decodedMessage}
-                      onEdit={(message) => {
-                        handleEditMessage(message);
-                      }}
+                      onEdit={(message) => handleEditMessage(message)}
                       onCancel={() => setEditMessage(false)}
                     />
                   ) : (
                     <>
                       <div
                         className={cn(
-                          "w-full items-baseline whitespace-pre-wrap break-words text-sm font-normal",
-                          isEmpty ? "text-muted-foreground" : "text-primary",
+                          "w-full whitespace-pre-wrap break-words text-[15px] leading-relaxed",
+                          isEmpty
+                            ? "text-[#9aa0a6]"
+                            : "text-[#1f1f1f] dark:text-[#e3e3e3]",
                         )}
                         data-testid={`chat-message-${chat.sender_name}-${chatMessage}`}
                       >
@@ -401,35 +394,33 @@ export default function ChatMessage({
                     </>
                   )}
                   {chat.files && (
-                    <div className="my-2 flex flex-col gap-5">
-                      {chat.files?.map((file, index) => {
-                        return <FileCardWrapper index={index} path={file} />;
-                      })}
+                    <div className="my-3 flex flex-col gap-3">
+                      {chat.files?.map((file, index) => (
+                        <FileCardWrapper key={index} index={index} path={file} />
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
             )}
-          </div>
-          {!editMessage && (
-            <div className="invisible absolute -top-4 right-0 group-hover:visible">
-              <div>
+
+            {/* Action buttons — appear on hover, inline below message */}
+            {!editMessage && (
+              <div className="invisible mt-1 group-hover:visible">
                 <EditMessageButton
-                  onCopy={() => {
-                    navigator.clipboard.writeText(chatMessage);
-                  }}
+                  onCopy={() => navigator.clipboard.writeText(chatMessage)}
                   onEdit={
                     playgroundPage ? undefined : () => setEditMessage(true)
                   }
-                  className="h-fit group-hover:visible"
+                  className="h-fit"
                   isBotMessage={!chat.isSend}
                   onEvaluate={handleEvaluateAnswer}
                   evaluation={chat.properties?.positive_feedback}
                   isAudioMessage={isAudioMessage}
                 />
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
       <div id={lastMessage ? "last-chat-message" : undefined} />

@@ -83,7 +83,7 @@ export type EdgeDataType = {
 export type FlowStyleType = {
   emoji: string;
   color: string;
-  agent_id: string;
+  flow_id: string;
 };
 
 export type TweaksType = Array<

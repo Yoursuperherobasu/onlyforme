@@ -23,11 +23,11 @@ const InputSearchComponent = ({
 
   const getSearchPlaceholder = () => {
     if (pagePath.includes("flows")) {
-      return "Search Flows";
+      return "Search Agents";
     } else if (pagePath.includes("components")) {
       return "Search Components";
     } else {
-      return "Search Flows and Components";
+      return "Search Agents and Components";
     }
   };
 

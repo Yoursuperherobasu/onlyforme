@@ -1,9 +1,9 @@
 export const BASENAME = "";
 export const PORT = 3000;
 export const PROXY_TARGET = "http://localhost:7860";
-export const API_ROUTES = ["^/api/", "^/api/", "/health"];
-export const BASE_URL_API = "/api/";
-export const BASE_URL_API_V2 = "/api/";
+export const API_ROUTES = ["^/api/v1/", "^/api/v2/", "/health"];
+export const BASE_URL_API = "/api/v1/";
+export const BASE_URL_API_V2 = "/api/v2/";
 export const HEALTH_CHECK_URL = "/health_check";
 export const DOCS_LINK = "https://www.motherson.com/";
 

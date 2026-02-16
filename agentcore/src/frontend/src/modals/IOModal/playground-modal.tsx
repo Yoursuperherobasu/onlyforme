@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import ThemeButtons from "@/components/core/appHeaderComponent/components/ThemeButtons";
@@ -89,16 +88,13 @@ export default function IOModal({
     isLoading: sessionsLoading,
     refetch: refetchSessions,
   } = useGetSessionsFromFlowQuery(
-    {
-      id: currentFlowId,
-    },
+    { id: currentFlowId },
     { enabled: open },
   );
 
   useEffect(() => {
     if (sessionsFromDb && !sessionsLoading) {
       const sessions = [...sessionsFromDb.sessions];
-      // Always include the currentFlowId as the default session if it's not already present
       if (!sessions.includes(currentFlowId)) {
         sessions.unshift(currentFlowId);
       }
@@ -108,13 +104,10 @@ export default function IOModal({
 
   useEffect(() => {
     setIOModalOpen(open);
-    return () => {
-      setIOModalOpen(false);
-    };
+    return () => setIOModalOpen(false);
   }, [open]);
 
   function handleDeleteSession(session_id: string) {
-    // Update UI optimistically
     if (visibleSession === session_id) {
       const remainingSessions = sessions.filter((s) => s !== session_id);
       if (remainingSessions.length > 0) {
@@ -123,37 +116,20 @@ export default function IOModal({
         setvisibleSession(currentFlowId);
       }
     }
-
-    // Delete the session (which will delete all associated messages on the backend)
     deleteSessionFunction(
       { sessionId: session_id },
       {
         onSuccess: () => {
-          // Remove the session from local state
           deleteSession(session_id);
-
-          // Remove all messages for this session from local state
           const messageIdsToRemove = messages
             .filter((msg) => msg.session_id === session_id)
             .map((msg) => msg.id);
-
-          if (messageIdsToRemove.length > 0) {
-            removeMessages(messageIdsToRemove);
-          }
-
-          setSuccessData({
-            title: "Session deleted successfully.",
-          });
+          if (messageIdsToRemove.length > 0) removeMessages(messageIdsToRemove);
+          setSuccessData({ title: "Session deleted successfully." });
         },
         onError: () => {
-          // Revert optimistic UI update on error
-          if (visibleSession !== session_id) {
-            setvisibleSession(session_id);
-          }
-
-          setErrorData({
-            title: "Error deleting session.",
-          });
+          if (visibleSession !== session_id) setvisibleSession(session_id);
+          setErrorData({ title: "Error deleting session." });
         },
       },
     );
@@ -161,14 +137,9 @@ export default function IOModal({
 
   function startView() {
     if (!chatInput && !chatOutput) {
-      if (filteredInputs.length > 0) {
-        return filteredInputs[0];
-      } else {
-        return filteredOutputs[0];
-      }
-    } else {
-      return undefined;
+      return filteredInputs.length > 0 ? filteredInputs[0] : filteredOutputs[0];
     }
+    return undefined;
   }
 
   const [selectedViewField, setSelectedViewField] = useState<
@@ -188,9 +159,7 @@ export default function IOModal({
       {
         mode: "union",
         id: currentFlowId,
-        params: {
-          session_id: visibleSession,
-        },
+        params: { session_id: visibleSession },
       },
       { enabled: open },
     );
@@ -213,7 +182,7 @@ export default function IOModal({
         await buildFlow({
           input_value: chatValue,
           startNodeId: chatInput?.id,
-          files: files,
+          files,
           silent: true,
           session: sessionId,
           eventDelivery: eventDeliveryConfig,
@@ -243,7 +212,6 @@ export default function IOModal({
           console.error("Error refetching sessions:", error);
         }
       };
-
       handleRefetchAndSetSession();
       setNewChatOnPlayground(false);
     }
@@ -253,14 +221,11 @@ export default function IOModal({
     if (!visibleSession) {
       setSessionId(createNewSessionName());
       setCurrentSessionId(currentFlowId);
-    } else if (visibleSession) {
+    } else {
       setSessionId(visibleSession);
       setCurrentSessionId(visibleSession);
       if (selectedViewField?.type === "Session") {
-        setSelectedViewField({
-          id: visibleSession,
-          type: "Session",
-        });
+        setSelectedViewField({ id: visibleSession, type: "Session" });
       }
     }
   }, [visibleSession]);
@@ -270,31 +235,14 @@ export default function IOModal({
   );
 
   useEffect(() => {
-    if (open) {
-      setPlaygroundScrollBehaves("instant");
-    }
+    if (open) setPlaygroundScrollBehaves("instant");
   }, [open]);
 
   useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth < 1024) {
-        // 1024px is Tailwind's 'lg' breakpoint
-        setSidebarOpen(false);
-      } else {
-        setSidebarOpen(true);
-      }
-    };
-
-    // Initial check
+    const handleResize = () => setSidebarOpen(window.innerWidth >= 1024);
     handleResize();
-
-    // Add event listener
     window.addEventListener("resize", handleResize);
-
-    // Cleanup
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   const showPublishOptions = playgroundPage && ENABLE_PUBLISH;
@@ -311,12 +259,7 @@ export default function IOModal({
     swatchColors.length;
 
   const setActiveSession = (session: string) => {
-    setvisibleSession((prev) => {
-      if (prev === session) {
-        return undefined;
-      }
-      return session;
-    });
+    setvisibleSession((prev) => (prev === session ? undefined : session));
   };
 
   const [hasInitialized, setHasInitialized] = useState(false);
@@ -328,14 +271,9 @@ export default function IOModal({
       prevVisibleSessionRef.current = visibleSession;
       return;
     }
-    if (
-      open &&
-      visibleSession &&
-      prevVisibleSessionRef.current !== visibleSession
-    ) {
+    if (open && visibleSession && prevVisibleSessionRef.current !== visibleSession) {
       refetchMessages();
     }
-
     prevVisibleSessionRef.current = visibleSession;
   }, [visibleSession]);
 
@@ -347,64 +285,55 @@ export default function IOModal({
       type={isPlayground ? "full-screen" : undefined}
       onSubmit={async () => await sendMessage({ repeat: 1 })}
       size="x-large"
-      className="!rounded-[12px] p-0"
+      className="!rounded-none !border-0 p-0 overflow-hidden lg:!rounded-[24px]"
     >
       <BaseModal.Trigger>{children}</BaseModal.Trigger>
-      {/* TODO ADAPT TO ALL TYPES OF INPUTS AND OUTPUTS */}
       <BaseModal.Content overflowHidden className="h-full">
         {open && (
-          <div className="flex-max-width h-full">
+          <div className="io-shell relative flex h-full w-full bg-white dark:bg-[#131314]">
+            {/* ── Scrim ── */}
             <div
               className={cn(
-                "flex h-full flex-shrink-0 flex-col justify-start overflow-hidden transition-all duration-300",
-                sidebarOpen
-                  ? "absolute z-50 lg:relative lg:w-1/5 lg:max-w-[280px]"
-                  : "w-0",
+                "fixed inset-0 z-[60] bg-black/20 backdrop-blur-[1px] transition-opacity duration-200 lg:hidden",
+                sidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none",
+              )}
+              onClick={() => setSidebarOpen(false)}
+            />
+
+            {/* ── Drawer ── */}
+            <aside
+              className={cn(
+                "fixed inset-y-0 left-0 z-[70] flex w-[300px] flex-col",
+                "bg-[#f8f9fa] dark:bg-[#1e1f20]",
+                "transition-transform duration-300 ease-[cubic-bezier(.4,0,.2,1)]",
+                "lg:static lg:z-auto",
+                sidebarOpen ? "translate-x-0" : "-translate-x-full lg:-translate-x-full",
               )}
             >
-              <div
-                className={cn(
-                  "relative flex h-full flex-col overflow-y-auto border-r border-border bg-muted p-4 text-center custom-scroll dark:bg-canvas",
-                  playgroundPage ? "pt-[15px]" : "pt-3.5",
-                )}
-              >
-                <div className="flex items-center justify-between gap-2 pb-8 align-middle">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={cn(
-                        `flex rounded p-1`,
-                        swatchColors[swatchIndex],
-                      )}
-                    >
-                      <IconComponent
-                        name={flowIcon ?? "Workflow"}
-                        className="h-3.5 w-3.5"
-                      />
-                    </div>
-                    {sidebarOpen && (
-                      <div className="truncate font-semibold">
-                        {PlaygroundTitle}
-                      </div>
-                    )}
-                  </div>
-                  <ShadTooltip
-                    styleClasses="z-50"
-                    side="right"
-                    content="Hide sidebar"
+              {/* Drawer header */}
+              <div className="flex h-[60px] items-center justify-between px-4">
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#e8eaed] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
+                >
+                  <IconComponent name="Menu" className="h-5 w-5" />
+                </button>
+                <ShadTooltip styleClasses="z-[80]" content="New chat">
+                  <button
+                    onClick={() => {
+                      setvisibleSession(undefined);
+                      setSelectedViewField(undefined);
+                    }}
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#e8eaed] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
                   >
-                    <Button
-                      variant="ghost"
-                      className="flex h-8 w-8 items-center justify-center !p-0"
-                      onClick={() => setSidebarOpen(!sidebarOpen)}
-                    >
-                      <IconComponent
-                        name={sidebarOpen ? "PanelLeftClose" : "PanelLeftOpen"}
-                        className="h-[18px] w-[18px] text-ring"
-                      />
-                    </Button>
-                  </ShadTooltip>
-                </div>
-                {sidebarOpen && !sessionsLoading && (
+                    <IconComponent name="SquarePen" className="h-5 w-5" />
+                  </button>
+                </ShadTooltip>
+              </div>
+
+              {/* Sessions */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-1 custom-scroll">
+                {!sessionsLoading && (
                   <SidebarOpenView
                     sessions={sessions}
                     setSelectedViewField={setSelectedViewField}
@@ -416,73 +345,119 @@ export default function IOModal({
                     setActiveSession={setActiveSession}
                   />
                 )}
-                {sidebarOpen && showPublishOptions && (
-                  <div className="absolute bottom-2 left-0 flex w-full flex-col gap-8 border-t border-border px-2 py-4 transition-all">
-                    <div className="flex items-center justify-between px-2">
-                      <div className="text-sm">Theme</div>
+              </div>
+
+              {/* Drawer footer */}
+              <div className="px-4 py-3">
+                {showPublishOptions && (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-[#70757a] dark:text-[#9aa0a6]">Theme</span>
                       <ThemeButtons />
                     </div>
-                    <Button
+                    <button
                       onClick={AgentCoreButtonClick}
-                      variant="primary"
-                      className="w-full !rounded-xl shadow-lg"
+                      className="flex w-full items-center justify-center gap-2 rounded-full border border-[#dadce0] dark:border-[#3c4043] py-2.5 text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#f1f3f4] dark:hover:bg-[#2c2d2e] transition-colors"
                     >
-                      <AgentCoreLogoColor />
-                      <div className="text-sm">Built with AgentCore</div>
-                    </Button>
+                      <AgentCoreLogoColor className="h-4 w-4" />
+                      Built with AgentCore
+                    </button>
                   </div>
                 )}
               </div>
-            </div>
-            {!sidebarOpen && showPublishOptions && (
-              <div className="absolute bottom-6 left-4 hidden transition-all md:block">
-                <ShadTooltip
-                  styleClasses="z-50"
-                  side="right"
-                  content="Built with AgentCore"
-                >
-                  <Button
-                    variant="primary"
-                    className="h-12 w-12 !rounded-xl !p-4 shadow-lg"
-                    onClick={AgentCoreButtonClick}
-                  >
-                    <AgentCoreLogoColor className="h-[18px] w-[18px] scale-150" />
-                  </Button>
-                </ShadTooltip>
-              </div>
-            )}
-            <div className="flex h-full min-w-96 flex-grow bg-background">
-              {selectedViewField && !sessionsLoading && (
-                <SelectedViewField
+            </aside>
+
+            {/* ── Main area ── */}
+            <div className="flex h-full min-w-0 flex-1 flex-col">
+              {/* Top bar */}
+              <header className="flex h-[60px] flex-shrink-0 items-center justify-between px-4 lg:px-6">
+                <div className="flex items-center gap-2">
+                  {!sidebarOpen && (
+                    <>
+                      <button
+                        onClick={() => setSidebarOpen(true)}
+                        className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#f1f3f4] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
+                      >
+                        <IconComponent name="Menu" className="h-5 w-5" />
+                      </button>
+                      <ShadTooltip styleClasses="z-50" content="New chat">
+                        <button
+                          onClick={() => {
+                            setvisibleSession(undefined);
+                            setSelectedViewField(undefined);
+                          }}
+                          className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-[#f1f3f4] dark:text-[#c4c7c5] dark:hover:bg-[#2c2d2e] transition-colors"
+                        >
+                          <IconComponent name="SquarePen" className="h-5 w-5" />
+                        </button>
+                      </ShadTooltip>
+                    </>
+                  )}
+                  <div className="flex items-center gap-2 ml-1">
+                    <div
+                      className={cn(
+  "flex h-8 w-8 items-center justify-center rounded-full bg-[#DA2128]"
+)}
+                    >
+                      <IconComponent
+                        name={ "MessageCircle"}
+                        className="h-4 w-4 text-white"
+                      />
+                    </div>
+                    <span className="text-lg font-normal text-[#1f1f1f] dark:text-[#e3e3e3]">
+                      {PlaygroundTitle}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {!showPublishOptions }
+                  {showPublishOptions && !sidebarOpen && (
+                    <button
+                      onClick={AgentCoreButtonClick}
+                      className="flex items-center gap-1.5 rounded-full border border-[#dadce0] dark:border-[#3c4043] px-4 py-2 text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3] hover:bg-[#f1f3f4] dark:hover:bg-[#2c2d2e] transition-colors"
+                    >
+                      <AgentCoreLogoColor className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">AgentCore</span>
+                    </button>
+                  )}
+                </div>
+              </header>
+
+              {/* Content */}
+              <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+                {selectedViewField && !sessionsLoading && (
+                  <SelectedViewField
+                    selectedViewField={selectedViewField}
+                    setSelectedViewField={setSelectedViewField}
+                    haveChat={haveChat}
+                    inputs={filteredInputs}
+                    outputs={filteredOutputs}
+                    sessions={sessions}
+                    currentFlowId={currentFlowId}
+                    nodes={filteredNodes}
+                  />
+                )}
+                <ChatViewWrapper
+                  playgroundPage={playgroundPage}
                   selectedViewField={selectedViewField}
+                  visibleSession={visibleSession}
+                  sessions={sessions}
+                  sidebarOpen={sidebarOpen}
+                  currentFlowId={currentFlowId}
+                  setSidebarOpen={setSidebarOpen}
+                  isPlayground={isPlayground}
+                  setvisibleSession={setvisibleSession}
                   setSelectedViewField={setSelectedViewField}
                   haveChat={haveChat}
-                  inputs={filteredInputs}
-                  outputs={filteredOutputs}
-                  sessions={sessions}
-                  currentFlowId={currentFlowId}
-                  nodes={filteredNodes}
+                  messagesFetched={messagesFetched}
+                  sessionId={sessionId}
+                  sendMessage={sendMessage}
+                  canvasOpen={canvasOpen}
+                  setOpen={setOpen}
+                  playgroundTitle={PlaygroundTitle}
                 />
-              )}
-              <ChatViewWrapper
-                playgroundPage={playgroundPage}
-                selectedViewField={selectedViewField}
-                visibleSession={visibleSession}
-                sessions={sessions}
-                sidebarOpen={sidebarOpen}
-                currentFlowId={currentFlowId}
-                setSidebarOpen={setSidebarOpen}
-                isPlayground={isPlayground}
-                setvisibleSession={setvisibleSession}
-                setSelectedViewField={setSelectedViewField}
-                haveChat={haveChat}
-                messagesFetched={messagesFetched}
-                sessionId={sessionId}
-                sendMessage={sendMessage}
-                canvasOpen={canvasOpen}
-                setOpen={setOpen}
-                playgroundTitle={PlaygroundTitle}
-              />
+              </div>
             </div>
           </div>
         )}

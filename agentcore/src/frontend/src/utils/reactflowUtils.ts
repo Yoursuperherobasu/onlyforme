@@ -2019,7 +2019,7 @@ export const createNewFlow = (
 ) => {
   return {
     description: flow?.description ?? getRandomDescription(),
-    name: flow?.name ? flow.name : "New Flow",
+    name: flow?.name ? flow.name : "New Agent",
     data: flowData,
     id: "",
     icon: flow?.icon ?? undefined,

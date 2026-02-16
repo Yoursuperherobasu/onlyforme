@@ -31,6 +31,7 @@ export const URLs = {
   KNOWLEDGE_BASES: `knowledge_bases`,
   MODELS: `models`,
   APPROVALS: `approvals`,
+  ROLES: `roles`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

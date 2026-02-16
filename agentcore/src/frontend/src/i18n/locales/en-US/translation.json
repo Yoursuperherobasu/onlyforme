@@ -238,14 +238,14 @@
   "Drop your flows here": "Drop your flows here",
   "Drop your components here": "Drop your components here",
   "No flows in this project.": "No flows in this project.",
-  "Create a new flow": "Create a new flow",
+  "Create a new agent": "Create a new agent",
   "or browse the store.": "or browse the store.",
   "No saved or custom components. Learn more about": "No saved or custom components. Learn more about",
   "creating custom components": "creating custom components",
   "Empty project": "Empty project",
   "Start building": "Start building",
   "Begin with a template, or start from scratch.": "Begin with a template, or start from scratch.",
-  "New Flow": "New Flow"
+  "New Agent": "New Agent"
   ,
   "Welcome to AgentCore": "Welcome to AgentCore",
   "Your new favorite way to ship Agents": "Your new favorite way to ship Agents",
@@ -342,7 +342,7 @@
   "Flows deleted successfully": "Flows deleted successfully",
   "Search flows...": "Search flows...",
   "Search components...": "Search components...",
-  "New Flow": "New Flow",
+  "New Agent": "New Agent",
   "MCP Server": "MCP Server"
   ,
   "Selected items deleted successfully": "Selected items deleted successfully",

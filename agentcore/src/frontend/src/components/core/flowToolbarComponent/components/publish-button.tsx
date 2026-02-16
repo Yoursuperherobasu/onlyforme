@@ -3,6 +3,8 @@ import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { PUBLISH_BUTTON_NAME } from "@/constants/constants";
 import { CustomIOModal } from "@/customization/components/custom-new-modal";
 import { ENABLE_PUBLISH } from "@/customization/feature-flags";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext"; 
 
 interface PublishButtonProps {
   hasIO: boolean;
@@ -49,21 +51,42 @@ const PublishButton = ({
   setOpen,
   canvasOpen,
 }: PublishButtonProps) => {
-  return hasIO ? (
+  const { permissions } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canPublish = can("edit_flows");
+
+  // If user doesn't have edit_flows permission, show disabled button with no interaction
+  if (!canPublish) {
+    return (
+      <ShadTooltip content="You don't have permission to publish">
+        <div className="pointer-events-none">
+          <DisabledButton />
+        </div>
+      </ShadTooltip>
+    );
+  }
+
+  // If user has permission but flow doesn't have IO, show disabled with different tooltip
+  if (!hasIO) {
+    return (
+      <ShadTooltip content="Add a Chat Input or Chat Output to use the playground">
+        <div className="pointer-events-none">
+          <DisabledButton />
+        </div>
+      </ShadTooltip>
+    );
+  }
+
+  // User has permission and flow has IO - show active button
+  return (
     <CustomIOModal
       open={open}
       setOpen={setOpen}
-      disable={!hasIO}
+      disable={false}
       canvasOpen={canvasOpen}
     >
       <ActiveButton />
     </CustomIOModal>
-  ) : (
-    <ShadTooltip content="Add a Chat Input or Chat Output to use the playground">
-      <div>
-        <DisabledButton />
-      </div>
-    </ShadTooltip>
   );
 };
 

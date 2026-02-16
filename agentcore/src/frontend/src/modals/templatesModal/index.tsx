@@ -7,6 +7,8 @@ import useAddFlow from "@/hooks/flows/use-add-flow";
 import type { newFlowModalPropsType } from "../../types/components";
 import BaseModal from "../baseModal";
 import TemplateContentComponent from "./components/TemplateContentComponent";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 export default function TemplatesModal({
   open,
@@ -15,6 +17,9 @@ export default function TemplatesModal({
   const addFlow = useAddFlow();
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
+
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   return (
     <BaseModal size="templates" open={open} setOpen={setOpen} className="p-0">
@@ -40,6 +45,7 @@ export default function TemplatesModal({
                     Begin with a fresh flow to build from scratch.
                   </div>
                 </div>
+                 {can("edit_flows") && (
                 <Button
                   onClick={() => {
                     addFlow().then((id) => {
@@ -47,7 +53,7 @@ export default function TemplatesModal({
                         `/flow/${id}${folderId ? `/folder/${folderId}` : ""}`,
                       );
                     });
-                    track("New Flow Created", { template: "Blank Flow" });
+                    track("New Agent Created", { template: "Blank Agent" });
                   }}
                   size="sm"
                   data-testid="blank-flow"
@@ -57,8 +63,9 @@ export default function TemplatesModal({
                     name="Plus"
                     className="h-4 w-4 shrink-0"
                   />
-                  Blank Flow
+                  Blank Agent
                 </Button>
+                 )}
               </div>
             </BaseModal.Footer>
           </main>

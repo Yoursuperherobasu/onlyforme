@@ -108,7 +108,7 @@ export const useGetMessagesPollingMutation = (
       const config = {};
 
       if (id) {
-        config["params"] = { agent_id: id };
+        config["params"] = { flow_id: id };
       }
 
       if (params) {

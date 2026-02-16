@@ -8,6 +8,8 @@ import useAlertStore from "@/stores/alertStore";
 import { track } from "@/customization/utils/analytics";
 import { customGetDownloadFolderBlob } from "@/customization/utils/custom-get-download-folders";
 import type { FolderType } from "@/pages/MainPage/entities";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,7 +53,8 @@ export default function FolderCardsView({
   const { mutate: mutateDownloadFolder } = useGetDownloadFolders({});
 
   const displayFolders = folders || [];
-  
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
   // Filter folders based on search query
   const filteredFolders = displayFolders.filter(folder => 
     folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -72,7 +75,7 @@ export default function FolderCardsView({
   const getFlowCount = (folderId: string) => {
     if (!flows || flows.length === 0) return 0;
     const count = flows.filter((flow) => flow.folder_id === folderId).length;
-    console.log(`Folder ${folderId} has ${count} flows`);
+    console.log(`Folder ${folderId} has ${count} agents`);
     return count;
   };
 
@@ -198,7 +201,9 @@ export default function FolderCardsView({
         <div className="border-b bg-muted/30 px-6 py-6">
           <h2 className="mb-4 text-sm font-semibold text-muted-foreground">Recents</h2>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {/* Create New Project Card - CENTERED AND FIXED */}
+
+            {/* Create New Project Card*/}
+            {can("edit_projects_page") && (
             <div
               className="group relative flex flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-5 transition-all hover:border-primary hover:bg-accent"
             >
@@ -213,8 +218,9 @@ export default function FolderCardsView({
               </div>
               <span className="text-center text-xs font-medium text-muted-foreground mt-2">Blank project</span>
             </div>
+            )}
 
-            {/* Recent Folder Cards - ENTERPRISE DESIGN */}
+            {/* Recent Folder Cards*/}
             {recentFolders.map((folder) => {
               const flowCount = getFlowCount(folder.id);
               return (
@@ -225,6 +231,7 @@ export default function FolderCardsView({
                   {/* Top Right Icons - Menu and Info */}
                   <div className="absolute right-2 top-2 z-10 flex gap-1">
                     {/* Info Button - View Full Details */}
+                    {can("view_projects_page") && (
                     <button
                       onClick={() => handleOpenDetailModal(folder)}
                       className="flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-blue-100 group-hover:opacity-100"
@@ -232,8 +239,10 @@ export default function FolderCardsView({
                     >
                       <Info className="h-3.5 w-3.5 text-[var(--info-foreground)]" />
                     </button>
+                    )}
 
-                    {/* Menu Button */}
+                    {/* Menu Button - Only show if user has edit or delete permissions */}
+                    {can("edit_projects_page") && (
                     <div className="z-20">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -245,6 +254,7 @@ export default function FolderCardsView({
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {can("edit_projects_page") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -254,6 +264,8 @@ export default function FolderCardsView({
                             <Edit2 className="mr-2 h-4 w-4" />
                             Rename
                           </DropdownMenuItem>
+                          )}
+                          {can("edit_projects_page") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -263,6 +275,8 @@ export default function FolderCardsView({
                             <Download className="mr-2 h-4 w-4" />
                             Download
                           </DropdownMenuItem>
+                          )}
+                          {can("delete_project") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -273,15 +287,18 @@ export default function FolderCardsView({
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
                           </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
+                    )}
                   </div>
 
                   {/* Clickable card content - Centered */}
                   <button
-                    onClick={() => onFolderClick(folder.id)}
-                    className="flex flex-1 flex-col items-center justify-center gap-3 w-full text-center py-2"
+                    onClick={() => can("view_projects_page") && onFolderClick(folder.id)}
+                    disabled={!can("view_projects_page")}
+                    className="flex flex-1 flex-col items-center justify-center gap-3 w-full text-center py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {/* Icon */}
                     <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
@@ -310,7 +327,7 @@ export default function FolderCardsView({
 
                   {/* Stats - Bottom */}
                   <div className="flex flex-col items-center justify-center gap-1 text-xs text-muted-foreground pt-2 border-t border-border/50 w-full">
-                    <span>{flowCount} {flowCount === 1 ? "flow" : "flows"}</span>
+                    <span>{flowCount} {flowCount === 1 ? "agent" : "agents"}</span>
                     {folder.updated_at && (
                       <span className="text-xs">{formatDate(folder.updated_at)}</span>
                     )}
@@ -358,8 +375,8 @@ export default function FolderCardsView({
                     >
                       {/* Main Row */}
                       <div
-                        className="group grid grid-cols-12 gap-4 px-4 py-3 transition-colors hover:bg-muted/50 cursor-pointer items-center"
-                        onClick={() => onFolderClick(folder.id)}
+                        className={`group grid grid-cols-12 gap-4 px-4 py-3 transition-colors hover:bg-muted/50 items-center ${can("view_projects_page") ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}
+                        onClick={() => can("view_projects_page") && onFolderClick(folder.id)}
                       >
                         {/* Name Column */}
                         <div className="col-span-6 flex items-center gap-3 min-w-0">
@@ -376,7 +393,7 @@ export default function FolderCardsView({
                               </p>
                             )}
                             <p className="text-xs text-muted-foreground mt-1">
-                              {flowCount} {flowCount === 1 ? "flow" : "flows"}
+                              {flowCount} {flowCount === 1 ? "agent" : "agents"}
                             </p>
                           </div>
                         </div>
@@ -393,8 +410,9 @@ export default function FolderCardsView({
                           </span>
                         </div>
 
-                        {/* Actions Column */}
+                        {/* Actions Column - Only show if user has edit or delete permissions */}
                         <div className="col-span-1 flex items-center justify-end">
+                          {(can("edit_projects_page") || can("delete_project")) && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <button
@@ -405,6 +423,7 @@ export default function FolderCardsView({
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              {can("edit_projects_page") && (
                               <DropdownMenuItem
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -414,6 +433,8 @@ export default function FolderCardsView({
                                 <Edit2 className="mr-2 h-4 w-4" />
                                 Rename
                               </DropdownMenuItem>
+                              )}
+                              {can("edit_projects_page") && (
                               <DropdownMenuItem
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -423,6 +444,8 @@ export default function FolderCardsView({
                                 <Download className="mr-2 h-4 w-4" />
                                 Download
                               </DropdownMenuItem>
+                              )}
+                              {can("delete_project") && (
                               <DropdownMenuItem
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -433,8 +456,10 @@ export default function FolderCardsView({
                                 <Trash2 className="mr-2 h-4 w-4" />
                                 Delete
                               </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
+                          )}
                         </div>
                       </div>
 
@@ -597,7 +622,7 @@ export default function FolderCardsView({
                     {selectedFolderDetail.name}
                   </h2>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {getFlowCount(selectedFolderDetail.id)} {getFlowCount(selectedFolderDetail.id) === 1 ? "flow" : "flows"}
+                    {getFlowCount(selectedFolderDetail.id)} {getFlowCount(selectedFolderDetail.id) === 1 ? "agent" : "agents"}
                   </p>
                 </div>
               </div>
@@ -623,7 +648,7 @@ export default function FolderCardsView({
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">FLOWS</h3>
+                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">AGENTS</h3>
                   <p className="text-sm font-medium">
                     {getFlowCount(selectedFolderDetail.id)}
                   </p>
@@ -641,6 +666,7 @@ export default function FolderCardsView({
 
             {/* Actions */}
             <div className="flex items-center gap-2 pt-4 border-t">
+              {can("view_projects_page") && (
               <Button
                 variant="outline"
                 className="flex-1"
@@ -651,6 +677,8 @@ export default function FolderCardsView({
               >
                 Open Project
               </Button>
+              )}
+              {(can("edit_projects_page") || can("delete_project")) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm">
@@ -658,6 +686,7 @@ export default function FolderCardsView({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  {can("edit_projects_page") && (
                   <DropdownMenuItem
                     onClick={() => {
                       setDetailModalOpen(false);
@@ -667,6 +696,8 @@ export default function FolderCardsView({
                     <Edit2 className="mr-2 h-4 w-4" />
                     Rename
                   </DropdownMenuItem>
+                  )}
+                  {can("edit_projects_page") && (
                   <DropdownMenuItem
                     onClick={() => {
                       setDetailModalOpen(false);
@@ -676,6 +707,8 @@ export default function FolderCardsView({
                     <Download className="mr-2 h-4 w-4" />
                     Download
                   </DropdownMenuItem>
+                  )}
+                  {can("delete_project") && (
                   <DropdownMenuItem
                     onClick={() => {
                       setDetailModalOpen(false);
@@ -686,8 +719,10 @@ export default function FolderCardsView({
                     <Trash2 className="mr-2 h-4 w-4" />
                     Delete
                   </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
+              )}
             </div>
           </div>
         </>

@@ -33,7 +33,7 @@ export const useGetMessagesQuery: useQueryFunctionType<
     const isPlaygroundPage = useFlowStore.getState().playgroundPage;
     const config = {};
     if (id) {
-      config["params"] = { agent_id: id };
+      config["params"] = { flow_id: id };
     }
     if (params) {
       // Process params to ensure session_id is properly encoded

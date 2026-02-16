@@ -13,7 +13,6 @@ import ShadTooltip from "../../components/common/shadTooltipComponent";
 import { Button } from "../../components/ui/button";
 import { CheckBoxDiv } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
-import { useTranslation } from 'react-i18next';
 import {
   Table,
   TableBody,
@@ -44,6 +43,7 @@ import useAlertStore from "../../stores/alertStore";
 import type { Users } from "../../types/api";
 import type { UserInputType } from "../../types/components";
 
+
 export default function AdminPage() {
   const [inputValue, setInputValue] = useState("");
 
@@ -53,19 +53,21 @@ export default function AdminPage() {
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { userData } = useContext(AuthContext);
   const [totalRowsCount, setTotalRowsCount] = useState(0);
-  const { t } = useTranslation();
 
   const { mutate: mutateDeleteUser } = useDeleteUsers();
   const { mutate: mutateUpdateUser } = useUpdateUser();
   const { mutate: mutateAddUser } = useAddUser();
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   const userList = useRef([]);
 
- const hasFetchedRef = useRef(false);
+  useEffect(() => {
+    setTimeout(() => {
+      getUsers();
+    }, 500);
+  }, []);
 
-useEffect(() => {
-  getUsers();
-}, []);
   const [filterUserList, setFilterUserList] = useState(userList.current);
 
   const { mutate: mutateGetUsers, isPending, isIdle } = useGetUsers({});
@@ -188,29 +190,6 @@ useEffect(() => {
     );
   }
 
-  function handleSuperUserEdit(check, userId, user) {
-    const userEdit = cloneDeep(user);
-    userEdit.is_superuser = !check;
-
-    mutateUpdateUser(
-      { user_id: userId, user: userEdit },
-      {
-        onSuccess: () => {
-          resetFilter();
-          setSuccessData({
-            title: USER_EDIT_SUCCESS_ALERT,
-          });
-        },
-        onError: (error) => {
-          setErrorData({
-            title: USER_EDIT_ERROR_ALERT,
-            list: [error["response"]["data"]["detail"]],
-          });
-        },
-      },
-    );
-  }
-
   function handleNewUser(user: UserInputType) {
     mutateAddUser(user, {
       onSuccess: (res) => {
@@ -219,7 +198,7 @@ useEffect(() => {
             user_id: res["id"],
             user: {
               is_active: user.is_active,
-              is_superuser: user.is_superuser,
+              role: user.role,
             },
           },
           {
@@ -247,23 +226,29 @@ useEffect(() => {
     });
   }
 
+  // Helper function to format role for display
+  function formatRole(role: string) {
+    if (!role) return "N/A";
+    return role.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+  }
+
   return (
     <>
       {userData && (
         <div className="admin-page-panel flex h-full flex-col pb-8">
           <div className="main-page-nav-arrangement">
             <span className="main-page-nav-title">
-              
-              {t(ADMIN_HEADER_TITLE)}
+              <IconComponent name="Shield" className="w-6" />
+              {ADMIN_HEADER_TITLE}
             </span>
           </div>
           <span className="admin-page-description-text">
-            {t(ADMIN_HEADER_DESCRIPTION)}
+            {ADMIN_HEADER_DESCRIPTION}
           </span>
           <div className="flex w-full justify-between px-4">
             <div className="flex w-96 items-center gap-4">
               <Input
-                placeholder={t("Search Username")}
+                placeholder="Search Username"
                 value={inputValue}
                 onChange={(e) => handleFilterUsers(e.target.value)}
               />
@@ -275,11 +260,14 @@ useEffect(() => {
                     setFilterUserList(userList.current);
                   }}
                 >
-                  
+                  <IconComponent name="X" className="w-6 text-foreground" />
                 </div>
               ) : (
                 <div>
-                 
+                  <IconComponent
+                    name="Search"
+                    className="w-6 text-foreground"
+                  />
                 </div>
               )}
             </div>
@@ -295,18 +283,18 @@ useEffect(() => {
                 }}
                 asChild
               >
-                <Button variant="primary">{t("New User")}</Button>
+                <Button variant="primary">New User</Button>
               </UserManagementModal>
             </div>
           </div>
-          {isPending ? (
+          {isPending || isIdle ? (
             <div className="flex h-full w-full items-center justify-center">
               <CustomLoader remSize={12} />
             </div>
-          ) : userList.current.length === 0 ? (
+          ) : userList.current.length === 0 && !isIdle ? (
             <>
               <div className="m-4 flex items-center justify-between text-sm">
-                {t("No users registered.")}
+                No users registered.
               </div>
             </>
           ) : (
@@ -324,36 +312,35 @@ useEffect(() => {
                     }
                   >
                     <TableRow>
-                      <TableHead className="h-10">{t("Id")}</TableHead>
-                      <TableHead className="h-10">{t("Username")}</TableHead>
-                      <TableHead className="h-10">{t("Active")}</TableHead>
-                      <TableHead className="h-10">{t("Roles")}</TableHead>
-                      <TableHead className="h-10">{t("Created At")}</TableHead>
-                      <TableHead className="h-10">{t("Updated At")}</TableHead>
+                      
+                      <TableHead className="h-10">Username</TableHead>
+                      <TableHead className="h-10">Active</TableHead>
+                      <TableHead className="h-10">Role</TableHead>
+                      <TableHead className="h-10">Created At</TableHead>
+                      <TableHead className="h-10">Updated At</TableHead>
                       <TableHead className="h-10 w-[100px] text-right"></TableHead>
                     </TableRow>
                   </TableHeader>
-                  {!isPending && (
+                  {!isPending && can("manage_users") && (
+                    
                     <TableBody>
                       {filterUserList.map((user: UserInputType, index) => (
+                        
                         <TableRow key={index}>
-                          <TableCell className="truncate py-2 font-medium">
-                            <ShadTooltip content={user.id}>
-                              <span className="cursor-default">{user.id}</span>
-                            </ShadTooltip>
-                          </TableCell>
+                          
                           <TableCell className="truncate py-2">
                             <ShadTooltip content={user.username}>
                               <span className="cursor-default">
-                                {t(user.username)}
+                                {user.username}
                               </span>
                             </ShadTooltip>
                           </TableCell>
+                          
                           <TableCell className="relative left-1 truncate py-2 text-align-last-left">
                             <ConfirmationModal
                               size="x-small"
                               title="Edit"
-                              titleHeader={`${t(user.username)}`}
+                              titleHeader={`${user.username}`}
                               modalContentTitle="Attention!"
                               cancelText="Cancel"
                               confirmationText="Confirm"
@@ -370,8 +357,8 @@ useEffect(() => {
                             >
                               <ConfirmationModal.Content>
                                 <span>
-                                  {t("Are you completely confident about the changes you are making to this user?")}
-                                  {t("you are making to this user?")}
+                                  Are you completely confident about the changes
+                                  you are making to this user?
                                 </span>
                               </ConfirmationModal.Content>
                               <ConfirmationModal.Trigger>
@@ -381,37 +368,12 @@ useEffect(() => {
                               </ConfirmationModal.Trigger>
                             </ConfirmationModal>
                           </TableCell>
-                          <TableCell className="relative left-1 truncate py-2 text-align-last-left">
-                            <ConfirmationModal
-                              size="x-small"
-                              title="Edit"
-                              titleHeader={`${user.username}`}
-                              modalContentTitle="Attention!"
-                              cancelText="Cancel"
-                              confirmationText="Confirm"
-                              icon={"UserCog2"}
-                              data={user}
-                              index={index}
-                              onConfirm={(index, user) => {
-                                handleSuperUserEdit(
-                                  user.is_superuser,
-                                  user.id,
-                                  user,
-                                );
-                              }}
-                            >
-                              <ConfirmationModal.Content>
-                                <span>
-                                  {t("Are you completely confident about the changes you are making to this user?")}
-                                  {t("you are making to this user?")}
-                                </span>
-                              </ConfirmationModal.Content>
-                              <ConfirmationModal.Trigger>
-                                <div className="flex w-fit cursor-pointer">
-                                  <span>{user.is_superuser ? "Admin" : "User"}</span>
-                                </div>
-                              </ConfirmationModal.Trigger>
-                            </ConfirmationModal>
+                          <TableCell className="truncate py-2">
+                            <ShadTooltip content={formatRole(user.role)}>
+                              <span className="cursor-default">
+                                {formatRole(user.role)}
+                              </span>
+                            </ShadTooltip>
                           </TableCell>
                           <TableCell className="truncate py-2">
                             {
@@ -429,6 +391,7 @@ useEffect(() => {
                           </TableCell>
                           <TableCell className="flex w-[100px] py-2 text-right">
                             <div className="flex">
+                              
                               <UserManagementModal
                                 title="Edit"
                                 titleHeader={`${user.id}`}
@@ -448,6 +411,7 @@ useEffect(() => {
                                   />
                                 </ShadTooltip>
                               </UserManagementModal>
+                              
 
                               <ConfirmationModal
                                 size="x-small"
@@ -465,8 +429,8 @@ useEffect(() => {
                               >
                                 <ConfirmationModal.Content>
                                   <span>
-                                    {t("Are you sure you want to delete this user?")}
-                                    {t("This action cannot be undone.")}
+                                    Are you sure you want to delete this user?
+                                    This action cannot be undone.
                                   </span>
                                 </ConfirmationModal.Content>
                                 <ConfirmationModal.Trigger>
@@ -481,6 +445,7 @@ useEffect(() => {
                         </TableRow>
                       ))}
                     </TableBody>
+                    
                   )}
                 </Table>
               </div>

@@ -1,5 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, XCircle, Play, FileText } from "lucide-react";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
+import ShadTooltip from "@/components/common/shadTooltipComponent";
 
 interface AgentCardProps {
   id: string;
@@ -35,10 +38,15 @@ export function AgentCard({
   onRunTest,
 }: AgentCardProps) {
   const statusColors = {
-    pending: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
-    approved: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    pending:
+      "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+    approved:
+      "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
     rejected: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   };
+
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   return (
     <div className="rounded-lg border border-border bg-card p-6 transition-shadow hover:shadow-md">
@@ -87,59 +95,66 @@ export function AgentCard({
 
       {/* Actions */}
       {/* Actions */}
-<div className="flex w-full items-center gap-2">
-  {/* LEFT actions */}
-  <div className="flex flex-wrap items-center gap-2">
-    <Button variant="outline" onClick={onReviewDetails} className="gap-2">
-      <FileText className="h-4 w-4" />
-      Review Details
-    </Button>
-    <Button variant="outline" onClick={onRunTest} className="gap-2">
-      <Play className="h-4 w-4" />
-      Run Test
-    </Button>
-  </div>
+      <div className="flex w-full items-center gap-2">
+        {/* LEFT actions */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={onReviewDetails} className="gap-2">
+            <FileText className="h-4 w-4" />
+            Review Details
+          </Button>
+          <Button variant="outline" onClick={onRunTest} className="gap-2">
+            <Play className="h-4 w-4" />
+            Run Test
+          </Button>
+        </div>
 
-  {/* RIGHT actions */}
-  {status === "pending" && (
-    <div className="ml-auto flex items-center gap-2">
-      
-
-     <Button
-  variant="outline"
-  onClick={onReject}
-  className="
-    gap-2
-    border-red-500 text-red-600
-    hover:!bg-red-50 hover:!text-red-600
-    dark:border-red-700 dark:text-red-400
-    dark:hover:!bg-red-950/30 dark:hover:!text-red-400
-  "
+        {/* RIGHT actions */}
+        {status === "pending" && (
+          <div className="ml-auto flex items-center gap-2">
+           <ShadTooltip 
+  content={!can("approve_reject_page") ? "You don't have permission to reject" : ""}
 >
-  <XCircle className="h-4 w-4" />
-  Reject
-</Button>
-
-
-      <Button
-  variant="outline"
-  onClick={onApprove}
-  className="
+  <span className="inline-block">
+    <Button
+      variant="outline"
+      onClick={onReject}
+      disabled={!can("approve_reject_page")}
+      className="
+        gap-2
+        border-red-500 text-red-600
+        hover:!bg-red-50 hover:!text-red-600
+        dark:border-red-700 dark:text-red-400
+        dark:hover:!bg-red-950/30 dark:hover:!text-red-400
+      "
+    >
+      <XCircle className="h-4 w-4" />
+      Reject
+    </Button>
+  </span>
+</ShadTooltip>
+           
+          <ShadTooltip 
+  content={!can("approve_reject_page") ? "You don't have permission to approve" : ""}
+>
+            <Button
+              variant="outline"
+              onClick={onApprove}
+              className="
     gap-2
-    border-green-700 text-green-600
+    border-green-600 text-green-600
     hover:!bg-green-50 hover:!text-green-600
     dark:border-green-700 dark:text-green-400
     dark:hover:!bg-green-950/30 dark:hover:!text-green-400
   "
->
-  <CheckCircle2 className="h-4 w-4" />
-  Approve
-</Button>
-
-    </div>
-  )}
-</div>
-
+  disabled={!can("approve_reject_page")}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Approve
+            </Button>
+          </ShadTooltip>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

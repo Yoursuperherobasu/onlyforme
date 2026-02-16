@@ -7,6 +7,8 @@ import { UseRequestProcessor } from "../../services/request-processor";
 interface getUsersQueryParams {
   skip: number;
   limit: number;
+  role?: string;
+  q?: string;
 }
 
 export const useGetUsers: useMutationFunctionType<any, getUsersQueryParams> = (
@@ -17,9 +19,13 @@ export const useGetUsers: useMutationFunctionType<any, getUsersQueryParams> = (
   async function getUsers({
     skip,
     limit,
+    role,
+    q,
   }: getUsersQueryParams): Promise<Array<Users>> {
+    const roleParam = role ? `&role=${encodeURIComponent(role)}` : "";
+    const qParam = q ? `&q=${encodeURIComponent(q)}` : "";
     const res = await api.get(
-      `${getURL("USERS")}/?skip=${skip}&limit=${limit}`,
+      `${getURL("USERS")}/?skip=${skip}&limit=${limit}${roleParam}${qParam}`,
     );
     if (res.status === 200) {
       return res.data;

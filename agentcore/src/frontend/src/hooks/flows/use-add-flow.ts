@@ -59,7 +59,7 @@ const useAddFlow = () => {
           globalVariablesEntries,
         );
       });
-      // Create a new flow with a default name if no flow is provided.
+      // Create anew agent with a default name if no flow is provided.
       if (params?.override && flow) {
         const flowId = flows?.find((f) => f.name === flow.name);
         if (flowId) {
@@ -78,7 +78,7 @@ const useAddFlow = () => {
 
       postAddFlow(newFlow, {
         onSuccess: (createdFlow) => {
-          // Add the new flow to the list of flows.
+          // Add the new agent to the list of flows.
           const { data, flows: myFlows } = processFlows([
             createdFlow,
             ...(flows ?? []),

@@ -355,6 +355,8 @@ const SideBarFoldersButtonsComponent = ({
     userDismissedMcpDialog,
   );
 
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+
   // Dispatch custom event when sidebar state changes
   useEffect(() => {
     const event = new CustomEvent("sidebar-state-change", {
@@ -410,224 +412,250 @@ const SideBarFoldersButtonsComponent = ({
       <SidebarMenu className="text-[var(--sidebar-foreground)]">
 
         {/* Dashboard */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/dashboard-admin")}
-            onClick={() => _navigate("/dashboard-admin")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="LayoutDashboard"
-              className="h-4 w-4"
-            />
-            Dashboard
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_dashboard") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/dashboard-admin")}
+              onClick={() => _navigate("/dashboard-admin")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="LayoutDashboard"
+                className="h-4 w-4"
+              />
+              Dashboard
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Projects */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/flows")}
-            onClick={() => _navigate("/flows")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="FolderKanban"
-              className="h-4 w-4"
-            />
-            Projects
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_projects_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/flows")}
+              onClick={() => _navigate("/flows")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="FolderKanban"
+                className="h-4 w-4"
+              />
+              Projects
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Review & Approval */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/approval")}
-            onClick={() => _navigate("/approval")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="ClipboardCheck"
-              className="h-4 w-4"
-            />
-            Review & Approval
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_approval_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/approval")}
+              onClick={() => _navigate("/approval")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="ClipboardCheck"
+                className="h-4 w-4"
+              />
+              Review & Approval
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Agent Registry */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/agent-catalogue")}
-            onClick={() => _navigate("/agent-catalogue")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Bot"
-              className="h-4 w-4"
-            />
-            Agent Registry
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_published_agents") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/agent-catalogue")}
+              onClick={() => _navigate("/agent-catalogue")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Bot"
+                className="h-4 w-4"
+              />
+              Agent Registry
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Model Registry */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/model-catalogue")}
-            onClick={() => _navigate("/model-catalogue")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Database"
-              className="h-4 w-4"
-            />
-            Model Registry
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_models") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/model-catalogue")}
+              onClick={() => _navigate("/model-catalogue")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Database"
+                className="h-4 w-4"
+              />
+              Model Registry
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Agent Runtime */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/workflows")}
-            onClick={() => _navigate("/workflows")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="PlayCircle"
-              className="h-4 w-4"
-            />
-            Agent Control Panel
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_control_panel") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/workflows")}
+              onClick={() => _navigate("/workflows")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="PlayCircle"
+                className="h-4 w-4"
+              />
+              Agent Control Panel
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Orchestrator */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/orchestrator-chat")}
-            onClick={() => _navigate("/orchestrator-chat")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="GitBranch"
-              className="h-4 w-4"
-            />
-            Orchestration Chat
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("interact_agents") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/orchestrator-chat")}
+              onClick={() => _navigate("/orchestrator-chat")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="GitBranch"
+                className="h-4 w-4"
+              />
+              Orchestration Chat
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Observability */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/observability-dashboard")}
-            onClick={() => _navigate("/observability-dashboard")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Activity"
-              className="h-4 w-4"
-            />
-            Observability
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_traces") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/observability-dashboard")}
+              onClick={() => _navigate("/observability-dashboard")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Activity"
+                className="h-4 w-4"
+              />
+              Observability
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Evaluation */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/evaluation")}
-            onClick={() => _navigate("/evaluation")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Scale"
-              className="h-4 w-4"
-            />
-            Evaluation
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    size="md"
+                    isActive={pathname.startsWith("/evaluation")}
+                    onClick={() => _navigate("/evaluation")}
+                    className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+                  >
+                    <ForwardedIconComponent
+                      name="Scale"
+                      className="h-4 w-4"
+                    />
+                    Evaluation
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
 
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/guardrails")}
-            onClick={() => _navigate("/guardrails")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="ShieldCheck"
-              className="h-4 w-4"
-            />
-            Guardrails Catalogue
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_guardrails") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/guardrails")}
+              onClick={() => _navigate("/guardrails")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="ShieldCheck"
+                className="h-4 w-4"
+              />
+              Guardrails Catalogue
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/vector-db")}
-            onClick={() => _navigate("/vector-db")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Database"
-              className="h-4 w-4"
-            />
-            VectorDB Catalogue
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_vector_db") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/vector-db")}
+              onClick={() => _navigate("/vector-db")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Database"
+                className="h-4 w-4"
+              />
+              VectorDB Catalogue
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/mcp-servers")}
-            onClick={() => _navigate("/mcp-servers")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Server"
-              className="h-4 w-4"
-            />
-            MCP Servers
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_mcp") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/mcp-servers")}
+              onClick={() => _navigate("/mcp-servers")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Server"
+                className="h-4 w-4"
+              />
+              MCP Servers
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Timeout Settings */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/assets/files")}
-            onClick={() => _navigate("/assets/files")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="BookOpen"
-              className="h-4 w-4"
-            />
-            Knowledge Base Management
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_knowledge_base_management") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/assets/files")}
+              onClick={() => _navigate("/assets/files")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="BookOpen"
+                className="h-4 w-4"
+              />
+              Knowledge Base Management
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/timeout-settings")}
-            onClick={() => _navigate("/timeout-settings")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Clock"
-              className="h-4 w-4"
-            />
-            Platform Configurations
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_platform_configs") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/timeout-settings")}
+              onClick={() => _navigate("/timeout-settings")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Clock"
+                className="h-4 w-4"
+              />
+              Platform Configurations
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
       </SidebarMenu>
     </SidebarGroupContent>
@@ -639,17 +667,19 @@ const SideBarFoldersButtonsComponent = ({
       {/* ================= FOOTER ================= */}
       <SidebarFooter className="border-t">
         <div className="grid w-full items-center gap-2 p-2">
-          <SidebarMenuButton
-            onClick={() => _navigate("/settings")}
-            size="md"
-           className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Settings"
-              className="h-4 w-4"
-            />
-            Settings
-          </SidebarMenuButton>
+          {can("view_settings_page") && (
+            <SidebarMenuButton
+              onClick={() => _navigate("/settings")}
+              size="md"
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Settings"
+                className="h-4 w-4"
+              />
+              Settings
+            </SidebarMenuButton>
+          )}
         </div>
       </SidebarFooter>
     </Sidebar>

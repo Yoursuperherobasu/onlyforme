@@ -11,6 +11,8 @@ import { ENABLE_MCP } from "@/customization/feature-flags";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import useAlertStore from "@/stores/alertStore";
 import { cn } from "@/utils/utils";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 interface HeaderComponentProps {
   flowType: "flows" | "components" | "mcp";
@@ -50,6 +52,9 @@ const HeaderComponent = ({
     useGetDownloadFlows();
   const { mutate: deleteFlows, isPending: isDeleting } = useDeleteDeleteFlows();
 
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+
   useEffect(() => {
     debouncedSetSearch(debouncedSearch);
 
@@ -82,7 +87,7 @@ const HeaderComponent = ({
 
   const handleDelete = () => {
     deleteFlows(
-      { agent_ids: selectedFlows },
+      { flow_ids: selectedFlows },
       {
         onSuccess: () => {
           setSuccessData({ title: "Flows deleted successfully" });
@@ -114,29 +119,7 @@ const HeaderComponent = ({
         <>
           <div className={cn("flex flex-row-reverse pb-4")}>
             <div className="w-full border-b dark:border-border" />
-            {/* {tabTypes.map((type) => (
-              <Button
-                key={type}
-                unstyled
-                id={`${type}-btn`}
-                data-testid={`${type}-btn`}
-                onClick={() => {
-                  setFlowType(type as "flows" | "components");
-                }}
-                className={`border-b ${
-                  flowType === type
-                    ? "border-b-2 border-foreground text-foreground"
-                    : "border-border text-muted-foreground hover:text-foreground"
-                } text-nowrap px-2 pb-2 pt-1 text-mmd`}
-              >
-                <div className={flowType === type ? "-mb-px" : ""}>
-                  {type === "mcp"
-                    ? "MCP Server"
-                    : type.charAt(0).toUpperCase() + type.slice(1)}
-                </div>
-              </Button>
-            ))}
-             */}
+            
           </div>
           {/* Search and filters */}
           {flowType !== "mcp" && (
@@ -223,7 +206,8 @@ const HeaderComponent = ({
                     </Button>
                   </DeleteConfirmationModal>
                 </div>
-                <ShadTooltip content="New Flow" side="bottom">
+                {can("edit_flows") && (
+                <ShadTooltip content="New Agent" side="bottom">
                   <Button
                     variant="default"
                     size="iconMd"
@@ -238,10 +222,11 @@ const HeaderComponent = ({
                       className="h-4 w-4"
                     />
                     <span className="hidden whitespace-nowrap font-semibold md:inline">
-                      New Flow
+                      New Agent
                     </span>
                   </Button>
                 </ShadTooltip>
+                )}
               </div>
             </div>
           )}

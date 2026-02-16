@@ -1,15 +1,10 @@
-import {
-  Plus,
-  Search,
-  Eye,
-  Copy,
-  Star,
-  Grid3x3,
-  List,
-} from "lucide-react";
+import { Plus, Search, Eye, Copy, Star, Grid3x3, List } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ModelType } from "@/types/models/models";
 import { Button } from "@/components/ui/button";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
+import ShadTooltip from "@/components/common/shadTooltipComponent";
 // import EditModelModal from "./components/edit-model-modal";
 
 interface AgentCatalogueViewProps {
@@ -32,13 +27,17 @@ export default function AgentCatalogueView({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelType | null>(null);
 
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+
   /* ---------------------------------- Dummy Agents ---------------------------------- */
 
   const DUMMY_AGENTS = [
     {
       id: "1",
       name: "Customer Support Agent",
-      description: "Intelligent customer support automation with context-aware responses.",
+      description:
+        "Intelligent customer support automation with context-aware responses.",
       provider: "Weaviate",
       team: "Team",
       contextWindow: "1M tokens",
@@ -54,7 +53,8 @@ export default function AgentCatalogueView({
     {
       id: "2",
       name: "Data Processing Pipeline",
-      description: "Automated data extraction, transformation, and loading workflows.",
+      description:
+        "Automated data extraction, transformation, and loading workflows.",
       provider: "Weaviate",
       team: "AI",
       contextWindow: "1M tokens",
@@ -70,7 +70,8 @@ export default function AgentCatalogueView({
     {
       id: "3",
       name: "Code Review Assistant",
-      description: "AI-powered code review with security and performance insights.",
+      description:
+        "AI-powered code review with security and performance insights.",
       provider: "OpenAI",
       team: "PRO",
       contextWindow: "128K tokens",
@@ -86,7 +87,8 @@ export default function AgentCatalogueView({
     {
       id: "4",
       name: "Email Automation Flow",
-      description: "Scalp email campaigns with personalization and A/B testing.",
+      description:
+        "Scalp email campaigns with personalization and A/B testing.",
       provider: "MarketingAI",
       team: "",
       contextWindow: "200K tokens",
@@ -102,7 +104,8 @@ export default function AgentCatalogueView({
     {
       id: "5",
       name: "Sales Intelligence Bot",
-      description: "Track leads and automate follow-ups with AI-driven insights.",
+      description:
+        "Track leads and automate follow-ups with AI-driven insights.",
       provider: "SalesForce",
       team: "Enterprise",
       contextWindow: "500K tokens",
@@ -118,7 +121,8 @@ export default function AgentCatalogueView({
     {
       id: "6",
       name: "Document Analyzer",
-      description: "Extract and analyze data from documents with high accuracy.",
+      description:
+        "Extract and analyze data from documents with high accuracy.",
       provider: "Google",
       team: "Cloud",
       contextWindow: "2M tokens",
@@ -181,7 +185,8 @@ export default function AgentCatalogueView({
             <h1 className="text-2xl font-semibold">Agent Registry</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Discover and deploy pre-built AI agents and workflows. Clone, customize, and integrate into your applications.
+            Discover and deploy pre-built AI agents and workflows. Clone,
+            customize, and integrate into your applications.
           </p>
         </div>
 
@@ -195,9 +200,6 @@ export default function AgentCatalogueView({
               className="w-64 rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
             />
           </div>
-
-
-          
         </div>
       </div>
 
@@ -209,12 +211,10 @@ export default function AgentCatalogueView({
               key={agent.id}
               className="group relative border rounded-lg bg-card overflow-hidden hover:border-primary/50 transition-all"
             >
-             
               {/* Card Content */}
               <div className="p-6">
                 {/* Icon & Title */}
                 <div className="flex items-start gap-4 mb-4">
-                 
                   <div className="flex-1 min-w-0">
                     <h3 className="text-lg font-semibold mb-1 truncate">
                       {agent.name}
@@ -246,24 +246,58 @@ export default function AgentCatalogueView({
                 </div>
 
                 {/* Rating & Actions */}
+               
                 <div className="flex items-center justify-between pt-4 border-t">
-                  <div className="flex items-center gap-1.5 text-sm">
-                    <Star className="h-4 w-4 fill-yellow-500 text-yellow-500" />
-                    <span className="font-medium">{agent.rating}</span>
-                    <span className="text-muted-foreground">
-                      ({agent.reviews})
-                    </span>
-                  </div>
+                  <ShadTooltip 
+  content={!can("copy_agents") ? "You don't have permission to view ratings" : ""}
+>
+  <div className={`flex items-center gap-1.5 text-sm ${!can("copy_agents") ? "opacity-50 pointer-events-none cursor-not-allowed" : ""}`}>
+    <Star className="h-4 w-4 fill-yellow-500 text-yellow-500" />
+    <span className="font-medium">{agent.rating}</span>
+    <span className="text-muted-foreground">
+      ({agent.reviews})
+    </span>
+  </div>
+</ShadTooltip>
+                  
 
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm">
-                      <Eye className="h-3.5 w-3.5 mr-1.5" />
-                      View
-                    </Button>
-                    <Button size="sm">
-                      <Copy className="h-3.5 w-3.5 mr-1.5" />
-                      Copy
-                    </Button>
+                    <ShadTooltip
+                      content={
+                        !can("view_only_flow")
+                          ? "You don't have permission to view"
+                          : ""
+                      }
+                    >
+                      <span className="inline-block">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={!can("approve_reject_page")}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1.5" />
+                          View
+                        </Button>
+                      </span>
+                    </ShadTooltip>
+
+                    <ShadTooltip
+                      content={
+                        !can("copy_agents")
+                          ? "You don't have permission to copy"
+                          : ""
+                      }
+                    >
+                      <span className="inline-block">
+                        <Button
+                          size="sm"
+                          disabled={!can("approve_reject_page")}
+                        >
+                          <Copy className="h-3.5 w-3.5 mr-1.5" />
+                          Copy
+                        </Button>
+                      </span>
+                    </ShadTooltip>
                   </div>
                 </div>
               </div>

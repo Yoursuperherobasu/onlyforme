@@ -115,7 +115,7 @@ export const useGetBuildsMutation: useMutationFunctionType<
     try {
       requestInProgressRef.current[payload.flowId] = true;
       const config = {};
-      config["params"] = { agent_id: payload.flowId };
+      config["params"] = { flow_id: payload.flowId };
       const res = await api.get<any>(`${getURL("BUILDS")}`, config);
 
       if (currentFlow) {

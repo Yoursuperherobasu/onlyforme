@@ -17,6 +17,9 @@ import {
 import { Button } from "@/components/ui/button";
 import EditModelModal from "./components/edit-model-modal";
 import { getProviderIcon } from "@/utils/logo_provider";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
+import ShadTooltip from "@/components/common/shadTooltipComponent";
 
 
 interface ModelCardsViewProps {
@@ -138,6 +141,11 @@ export default function ModelCardsView({
 
   const displayModels = models?.length ? models : DUMMY_MODELS;
 
+
+
+  const { permissions, role } = useContext(AuthContext);
+    const can = (permissionKey: string) => permissions?.includes(permissionKey);
+
   /* ---------------------------------- Filtering ---------------------------------- */
 
   const filteredModels = displayModels.filter((model) => {
@@ -204,15 +212,22 @@ export default function ModelCardsView({
             />
           </div>
 
-          <Button
-            onClick={() => {
-              setSelectedModel(null); // create mode
-              setIsEditModalOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add Custom Model
-          </Button>
+          <ShadTooltip 
+  content={!can("add_new_model") ? "You don't have permission to add custom models" : ""}
+>
+  <span className="inline-block">
+    <Button
+      onClick={() => {
+        setSelectedModel(null); // create mode
+        setIsEditModalOpen(true);
+      }}
+      disabled={!can("add_new_model")}
+    >
+      <Plus className="mr-2 h-4 w-4" />
+      Add Custom Model
+    </Button>
+  </span>
+</ShadTooltip>
         </div>
       </div>
 

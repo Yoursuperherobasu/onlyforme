@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 import {
   Select,
   SelectContent,
@@ -65,6 +67,9 @@ export default function TimeoutSettings() {
   ]);
 
   const [hasChanges, setHasChanges] = useState(false);
+
+  const { permissions, role } = useContext(AuthContext);
+      const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   const handleValueChange = (id: string, newValue: string) => {
     setSettings((prev) =>

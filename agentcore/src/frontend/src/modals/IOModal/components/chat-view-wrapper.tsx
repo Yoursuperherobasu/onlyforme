@@ -1,8 +1,4 @@
-import ShadTooltip from "@/components/common/shadTooltipComponent";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/utils/utils";
-import IconComponent from "../../../components/common/genericIconComponent";
 import type { ChatViewWrapperProps } from "../types/chat-view-wrapper";
 import ChatView from "./chatView/components/chat-view";
 
@@ -27,87 +23,40 @@ export const ChatViewWrapper = ({
   return (
     <div
       className={cn(
-        "flex h-full w-full flex-col justify-between px-4 pb-4 pt-2",
+        "flex h-full w-full flex-col",
         selectedViewField ? "hidden" : "",
       )}
     >
-      <div
-        className={cn(
-          "flex h-10 shrink-0 items-center text-base font-semibold",
-          playgroundPage ? "justify-between" : "lg:justify-start",
-        )}
-      >
-        <div className={cn(sidebarOpen ? "lg:hidden" : "left-4")}>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setSidebarOpen(true)}
-              className="h-8 w-8"
-            >
-              <IconComponent
-                name="PanelLeftOpen"
-                className="h-[18px] w-[18px] text-ring"
-              />
-            </Button>
-          </div>
-        </div>
-        {visibleSession && sessions.length > 0 && (
-          <div
-            className={cn(
-              "truncate text-center font-semibold",
-              playgroundPage ? "" : "mr-12 flex-grow lg:mr-0",
-              sidebarOpen ? "blur-sm lg:blur-0" : "",
-            )}
-          >
+      {/* Session indicator — subtle centered pill */}
+      {visibleSession && sessions.length > 0 && (
+        <div className="flex justify-center py-2">
+          <span className="inline-flex items-center rounded-full bg-[#f1f3f4] dark:bg-[#2c2d2e] px-4 py-1.5 text-xs font-medium text-[#5f6368] dark:text-[#9aa0a6]">
             {visibleSession === currentFlowId
-              ? "Default Session"
-              : `${visibleSession}`}
-          </div>
-        )}
-        <div
-          className={cn(
-            sidebarOpen ? "pointer-events-none opacity-0" : "",
-            "flex items-center justify-center rounded-sm ring-offset-background transition-opacity focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-            playgroundPage ? "right-2 top-4" : "absolute right-12 top-2 h-8",
-          )}
-        >
-          <ShadTooltip side="bottom" styleClasses="z-50" content="New Chat">
-            <Button
-              className="mr-2 h-[32px] w-[32px] hover:bg-secondary-hover"
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                setvisibleSession(undefined);
-                setSelectedViewField(undefined);
-              }}
-            >
-              <IconComponent
-                name="Plus"
-                className="!h-[18px] !w-[18px] text-ring"
-              />
-            </Button>
-          </ShadTooltip>
-          {!playgroundPage && <Separator orientation="vertical" />}
+              ? "New Conversation"
+              : visibleSession}
+          </span>
         </div>
-      </div>
-
-      {messagesFetched && (
-        <ChatView
-          focusChat={sessionId}
-          sendMessage={sendMessage}
-          visibleSession={visibleSession}
-          closeChat={
-            !canvasOpen
-              ? undefined
-              : () => {
-                  setOpen(false);
-                }
-          }
-          playgroundPage={playgroundPage}
-          sidebarOpen={sidebarOpen}
-        />
       )}
+
+      {/* Chat area — takes remaining space */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {messagesFetched && (
+          <ChatView
+            focusChat={sessionId}
+            sendMessage={sendMessage}
+            visibleSession={visibleSession}
+            closeChat={
+              !canvasOpen
+                ? undefined
+                : () => {
+                    setOpen(false);
+                  }
+            }
+            playgroundPage={playgroundPage}
+            sidebarOpen={sidebarOpen}
+          />
+        )}
+      </div>
     </div>
   );
 };

@@ -6,6 +6,8 @@ import {
   Route,
 } from "react-router-dom";
 import { ProtectedAdminRoute } from "./components/authorization/authAdminGuard";
+import { ProtectedAccessControlRoute } from "./components/authorization/authAccessControlGuard";
+import { ProtectedPermissionRoute } from "./components/authorization/permissionGuard";
 import { ProtectedRoute } from "./components/authorization/authGuard";
 import { ProtectedLoginRoute } from "./components/authorization/authLoginGuard";
 import { AuthSettingsGuard } from "./components/authorization/authSettingsGuard";
@@ -54,12 +56,12 @@ import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
+const AccessControlPage = lazy(() => import("./pages/AccessControlPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
 const DeleteAccountPage = lazy(() => import("./pages/DeleteAccountPage"));
 
 const PlaygroundPage = lazy(() => import("./pages/Playground"));
 
-const SignUp = lazy(() => import("./pages/SignUpPage"));
 
 const router = createBrowserRouter(
   createRoutesFromElements([
@@ -68,7 +70,9 @@ const router = createBrowserRouter(
         path=""
         element={
           <ContextWrapper key={1}>
-            <PlaygroundPage />
+
+              <PlaygroundPage />
+            
           </ContextWrapper>
         }
       />
@@ -98,62 +102,124 @@ const router = createBrowserRouter(
                     index
                     element={<CustomNavigate replace to={"dashboard-admin"} />}
                   />
-                  <Route path="approval" element={<ApprovalPage />} />
-                  <Route path="model-catalogue" element={<ModelCatalogue />} />
+                  <Route
+                    path="approval"
+                    element={
+                      
+                        <ApprovalPage />
+                 
+                    }
+                  />
+                  <Route
+                    path="model-catalogue"
+                    element={
+                      
+                        <ModelCatalogue />
+                    
+                    }
+                  />
                   <Route
                     path="orchestrator-chat"
-                    element={<AgentOrchestrator />}
+                    element={
+                     
+                        <AgentOrchestrator />
+                
+                    }
                   />
                   <Route
                     path="guardrails"
-                    element={<GuardrailsView />}
+                    element={
+                      
+                        <GuardrailsView />
+             
+                    }
                   />
                   <Route
                     path="vector-db"
-                    element={<VectorDBView />}
+                    element={
+                      
+                        <VectorDBView />
+                   
+                    }
                   />
                   <Route
                     path="mcp-servers"
-                    element={<MCPServersPage />}
+                    element={
+                     
+                        <MCPServersPage />
+                   
+                    }
                   />
                   <Route
                     path="dashboard-admin"
-                    element={<DashboardAdmin />}
+                    element={
+                     
+                        <DashboardAdmin />
+                     
+                    }
                   />
                   <Route
                     path="timeout-settings"
-                    element={<TimeoutSettings />}
+                    element={
+                      
+                        <TimeoutSettings />
+                    
+                    }
                   />
                   
                   <Route
                     path="agent-catalogue"
-                    element={<AgentCatalogueView />}
+                    element={
+                    
+                        <AgentCatalogueView />
+                     
+                    }
                   />
-                  
                   <Route
                     path="observability-dashboard"
-                    element={<ObservabilityDashboard />}
+                    element={
+                     
+                        <ObservabilityDashboard />
+               
+                    }
                   />
 
+                  <Route
+                    path="workflows"
+                    element={
+                     
+                        <WorkflowsView />
+                
+                    }
+                  />
                   <Route
                     path="evaluation"
                     element={<EvaluationPage />}
                   />
-
-                  <Route path="workflows" element={<WorkflowsView />} />
                   {ENABLE_FILE_MANAGEMENT && (
                     <Route path="assets">
                       <Route
                         index
                         element={<CustomNavigate replace to="files" />}
                       />
-                      <Route path="files" element={<FilesPage />} />
-                      {ENABLE_KNOWLEDGE_BASES && (
+                      <Route
+                        path="files"
+                        element={
+                          
+                            <FilesPage />
+                          
+                        }
+                      />
+                      
                         <Route
                           path="knowledge-bases"
-                          element={<KnowledgePage />}
+                          element={
+                            
+                              <KnowledgePage />
+                      
+                          }
                         />
-                      )}
+                      
                     </Route>
                   )}
                   <Route path="flows/">
@@ -191,7 +257,14 @@ const router = createBrowserRouter(
                     />
                   </Route>
                 </Route>
-                <Route path="settings" element={<SettingsPage />}>
+                <Route
+                  path="settings"
+                  element={
+                    
+                      <SettingsPage />
+                    
+                  }
+                >
                   <Route
                     index
                     element={<CustomNavigate replace to={"global-variables"} />}
@@ -219,11 +292,33 @@ const router = createBrowserRouter(
                     </ProtectedAdminRoute>
                   }
                 />
+                <Route
+                  path="access-control"
+                  element={
+                    <ProtectedAccessControlRoute>
+                      <AccessControlPage />
+                    </ProtectedAccessControlRoute>
+                  }
+                />
               </Route>
               <Route path="flow/:id/">
                 <Route path="" element={<CustomDashboardWrapperPage />}>
-                  <Route path="folder/:folderId/" element={<FlowPage />} />
-                  <Route path="" element={<FlowPage />} />
+                  <Route
+                    path="folder/:folderId/"
+                    element={
+                     
+                        <FlowPage />
+                     
+                    }
+                  />
+                  <Route
+                    path=""
+                    element={
+                     
+                        <FlowPage />
+                 
+                    }
+                  />
                 </Route>
                 <Route path="view" element={<ViewPage />} />
               </Route>
@@ -238,14 +333,7 @@ const router = createBrowserRouter(
             }
           />
 
-          <Route
-            path="signup"
-            element={
-              <ProtectedLoginRoute>
-                <SignUp />
-              </ProtectedLoginRoute>
-            }
-          />
+          
           <Route
             path="login/admin"
             element={

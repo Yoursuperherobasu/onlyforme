@@ -10,7 +10,7 @@ export default function PublishStatusBadge() {
   const flowId = currentFlow?.id;
 
   const { data: publishRecords, refetch } = useGetPublishStatus(
-    { agent_id: flowId ?? "" },
+    { flow_id: flowId ?? "" },
     {
       refetchInterval: 30000, // Refetch every 30 seconds
     },

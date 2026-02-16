@@ -31,12 +31,14 @@ const ListComponent = ({
   setSelected,
   shiftPressed,
   index,
+  disabled = false,
 }: {
   flowData: FlowType;
   selected: boolean;
   setSelected: (selected: boolean) => void;
   shiftPressed: boolean;
   index: number;
+  disabled?: boolean;
 }) => {
   const navigate = useCustomNavigate();
   const [openDelete, setOpenDelete] = useState(false);
@@ -51,6 +53,8 @@ const ListComponent = ({
   const editFlowLink = `/flow/${flowData.id}${folderId ? `/folder/${folderId}` : ""}`;
 
   const handleClick = async () => {
+    if (disabled) return; // Prevent click when disabled
+    
     if (shiftPressed) {
       setSelected(!selected);
     } else {
@@ -101,17 +105,19 @@ const ListComponent = ({
     <>
       <Card
         key={flowData.id}
-        draggable
-        onDragStart={onDragStart}
+        draggable={!disabled}
+        onDragStart={disabled ? undefined : onDragStart}
         onClick={handleClick}
-        className={`flex flex-row bg-background ${
-          isComponent ? "cursor-default" : "cursor-pointer"
-        } group justify-between rounded-lg border-none px-4 py-3 shadow-none hover:bg-muted`}
+        className={cn(
+          "flex flex-row bg-background group justify-between rounded-lg border-none px-4 py-3 shadow-none hover:bg-muted",
+          isComponent || disabled ? "cursor-default" : "cursor-pointer",
+          disabled && "opacity-50 pointer-events-none"
+        )}
         data-testid="list-card"
       >
         <div
           className={`flex min-w-0 ${
-            isComponent ? "cursor-default" : "cursor-pointer"
+            isComponent || disabled ? "cursor-default" : "cursor-pointer"
           } items-center gap-4`}
         >
           <div className="group/checkbox relative flex items-center">
@@ -125,6 +131,7 @@ const ListComponent = ({
                 checked={selected}
                 onCheckedChange={(checked) => setSelected(checked as boolean)}
                 onClick={(e) => e.stopPropagation()}
+                disabled={disabled}
                 className={cn(
                   "ml-2 transition-opacity focus-visible:ring-0",
                   !selected && "opacity-0 group-hover/checkbox:opacity-100",
@@ -172,12 +179,13 @@ const ListComponent = ({
 
         <div className="ml-5 flex items-center gap-2">
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+            <DropdownMenuTrigger asChild disabled={disabled}>
               <Button
                 variant="ghost"
                 size="iconMd"
                 data-testid="home-dropdown-menu"
                 className="group"
+                disabled={disabled}
               >
                 <ForwardedIconComponent
                   name="Ellipsis"

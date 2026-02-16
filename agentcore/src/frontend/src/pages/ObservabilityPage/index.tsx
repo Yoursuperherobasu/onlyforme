@@ -181,15 +181,6 @@ interface ObservationResponse {
   level: string | null;
 }
 
-interface ScoreItem {
-  id: string;
-  name: string;
-  value: number;
-  source: string | null;
-  comment: string | null;
-  created_at: string | null;
-}
-
 interface TraceDetailResponse {
   id: string;
   name: string | null;
@@ -201,7 +192,6 @@ interface TraceDetailResponse {
   total_cost: number;
   latency_ms: number | null;
   observations: ObservationResponse[];
-  scores: ScoreItem[];
 }
 
 interface SessionDetailResponse {
@@ -303,6 +293,8 @@ function formatLocalDate(date: Date): string {
 }
 
 function getDateRangeParams(preset: DateRangePreset): { from_date?: string; to_date?: string } {
+  if (preset === "all") return {};
+
   const now = new Date();
   // Use local date instead of UTC to match user's timezone
   const to_date = formatLocalDate(now);
@@ -321,13 +313,8 @@ function getDateRangeParams(preset: DateRangePreset): { from_date?: string; to_d
     case "90d":
       from_date = formatLocalDate(new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000));
       break;
-    case "all":
-      // For "all", use 1 year ago to fetch all historical data
-      from_date = formatLocalDate(new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000));
-      break;
     default:
-      // Default to 7 days
-      from_date = formatLocalDate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+      return {};
   }
 
   return { from_date, to_date };
@@ -400,7 +387,7 @@ function getUserTimezoneOffset(): number {
 }
 
 async function fetchStatus(): Promise<LangfuseStatus> {
-  const response = await api.get<LangfuseStatus>("/api/observability/status");
+  const response = await api.get<LangfuseStatus>("/api/v1/observability/status");
   return response.data;
 }
 
@@ -414,7 +401,7 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
 
   const queryString = searchParams.toString();
-  const url = `/api/observability/metrics?${queryString}`;
+  const url = `/api/v1/observability/metrics?${queryString}`;
   const response = await api.get<Metrics>(url);
   return response.data;
 }
@@ -425,17 +412,17 @@ async function fetchSessions(params: FetchMetricsParams = {}): Promise<{ session
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
 
-  const response = await api.get(`/api/observability/sessions?${searchParams.toString()}`);
+  const response = await api.get(`/api/v1/observability/sessions?${searchParams.toString()}`);
   return response.data;
 }
 
 async function fetchSessionDetail(sessionId: string): Promise<SessionDetailResponse> {
-  const response = await api.get<SessionDetailResponse>(`/api/observability/sessions/${encodeURIComponent(sessionId)}`);
+  const response = await api.get<SessionDetailResponse>(`/api/v1/observability/sessions/${encodeURIComponent(sessionId)}`);
   return response.data;
 }
 
 async function fetchTraceDetail(traceId: string): Promise<TraceDetailResponse> {
-  const response = await api.get<TraceDetailResponse>(`/api/observability/traces/${traceId}`);
+  const response = await api.get<TraceDetailResponse>(`/api/v1/observability/traces/${traceId}`);
   return response.data;
 }
 
@@ -446,14 +433,14 @@ async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: A
   if (params.search) searchParams.set("search", params.search);
 
   const queryString = searchParams.toString();
-  const url = queryString ? `/api/observability/agents?${queryString}` : "/api/observability/agents";
+  const url = queryString ? `/api/v1/observability/agents?${queryString}` : "/api/v1/observability/agents";
   const response = await api.get(url);
   return response.data;
 }
 
 async function fetchAgentDetail(flowId: string): Promise<AgentDetailResponse> {
   const tzOffset = getUserTimezoneOffset();
-  const response = await api.get<AgentDetailResponse>(`/api/observability/agents/${flowId}?tz_offset=${tzOffset}`);
+  const response = await api.get<AgentDetailResponse>(`/api/v1/observability/agents/${flowId}?tz_offset=${tzOffset}`);
   return response.data;
 }
 
@@ -463,14 +450,14 @@ async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ project
   if (params.to_date) searchParams.set("to_date", params.to_date);
 
   const queryString = searchParams.toString();
-  const url = queryString ? `/api/observability/projects?${queryString}` : "/api/observability/projects";
+  const url = queryString ? `/api/v1/observability/projects?${queryString}` : "/api/v1/observability/projects";
   const response = await api.get(url);
   return response.data;
 }
 
 async function fetchProjectDetail(projectId: string): Promise<ProjectDetailResponse> {
   const tzOffset = getUserTimezoneOffset();
-  const response = await api.get<ProjectDetailResponse>(`/api/observability/projects/${projectId}?tz_offset=${tzOffset}`);
+  const response = await api.get<ProjectDetailResponse>(`/api/v1/observability/projects/${projectId}?tz_offset=${tzOffset}`);
   return response.data;
 }
 
@@ -748,9 +735,9 @@ export default function ObservabilityPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState("overview");
   const [expandedObservation, setExpandedObservation] = useState<string | null>(null);
 
-  // Filter state - Default to "today" for fast initial load
+  // Filter state
   const [filters, setFilters] = useState<Filters>({
-    dateRange: "today",
+    dateRange: "30d",
     search: "",
     models: [],
   });
@@ -770,11 +757,9 @@ export default function ObservabilityPage(): JSX.Element {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ["langfuse-status"],
     queryFn: fetchStatus,
-    staleTime: 60000, // Status stays fresh for 1 minute
     refetchInterval: 60000,
   });
 
-  // Metrics - fetch for overview, models, and usage tabs
   const { data: metrics, isLoading: metricsLoading } = useQuery({
     queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(",")],
     queryFn: () => fetchMetrics({
@@ -782,39 +767,32 @@ export default function ObservabilityPage(): JSX.Element {
       search: filters.search || undefined,
       models: filters.models.length > 0 ? filters.models.join(",") : undefined,
     }),
-    enabled: status?.connected && (activeTab === "overview" || activeTab === "models" || activeTab === "usage"),
-    staleTime: 30000,
-    refetchInterval: (activeTab === "overview" || activeTab === "models" || activeTab === "usage") ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
-  // Sessions - only fetch when sessions tab is active
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
     queryKey: ["observability-sessions", filters.dateRange],
     queryFn: () => fetchSessions(dateParams),
-    enabled: status?.connected && activeTab === "sessions",
-    staleTime: 30000, // Data stays fresh for 30s
-    refetchInterval: activeTab === "sessions" ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
-  // Agents - fetch for overview (recent activity) and agents tab
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
     queryKey: ["observability-agents", filters.dateRange, filters.search],
     queryFn: () => fetchAgents({
       ...dateParams,
       search: filters.search || undefined,
     }),
-    enabled: status?.connected && (activeTab === "overview" || activeTab === "agents"),
-    staleTime: 30000,
-    refetchInterval: (activeTab === "overview" || activeTab === "agents") ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
-  // Projects - only fetch when projects tab is active
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["observability-projects", filters.dateRange],
     queryFn: () => fetchProjects(dateParams),
-    enabled: status?.connected && activeTab === "projects",
-    staleTime: 30000,
-    refetchInterval: activeTab === "projects" ? 60000 : false,
+    enabled: status?.connected,
+    refetchInterval: 60000,
   });
 
   const { data: sessionDetail } = useQuery({
@@ -827,9 +805,6 @@ export default function ObservabilityPage(): JSX.Element {
     queryKey: ["trace-detail", selectedTrace],
     queryFn: () => fetchTraceDetail(selectedTrace!),
     enabled: !!selectedTrace,
-    // Judge scores are written asynchronously; keep trace detail fresh while dialog is open.
-    refetchInterval: selectedTrace ? 4000 : false,
-    staleTime: 0,
   });
 
   const { data: agentDetail } = useQuery({
@@ -943,7 +918,7 @@ export default function ObservabilityPage(): JSX.Element {
       {/* Header */}
       <div className="border-b bg-white px-8 py-6 shadow-sm">
         <div className="flex items-center gap-3">
-          <BarChart3 className="h-7 w-7" style={{ color: THEME.primary }} />
+          
           <div>
             <h1 className="text-2xl font-semibold" style={{ color: THEME.textMain }}>
               Observability
@@ -1029,12 +1004,12 @@ export default function ObservabilityPage(): JSX.Element {
           )}
 
           {/* Clear Filters */}
-          {(filters.search || filters.models.length > 0 || filters.dateRange !== "today") && (
+          {(filters.search || filters.models.length > 0 || filters.dateRange !== "30d") && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => {
-                setFilters({ dateRange: "today", search: "", models: [] });
+                setFilters({ dateRange: "30d", search: "", models: [] });
                 setSearchInput("");
               }}
               className="h-9"
@@ -2140,92 +2115,21 @@ export default function ObservabilityPage(): JSX.Element {
           {traceDetail && (
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
-                {(() => {
-                  // Build header stats including evaluation if present
-                  const stats: Array<{ label: string; value: string; icon: any }> = [
-                    { label: "Input Tokens", value: formatTokens(traceDetail.input_tokens), icon: Layers },
-                    { label: "Output Tokens", value: formatTokens(traceDetail.output_tokens), icon: Layers },
-                    { label: "Cost", value: formatCost(traceDetail.total_cost), icon: DollarSign },
-                    { label: "Latency", value: formatLatency(traceDetail.latency_ms), icon: Timer },
-                  ];
-
-                  // If there are evaluation scores, pick the most recent by created_at and add it to stats
-                  console.log('Trace Detail Scores:', traceDetail.scores);
-                  if (traceDetail.scores && Array.isArray(traceDetail.scores) && traceDetail.scores.length > 0) {
-                    try {
-                      const sorted = [...traceDetail.scores].sort((a, b) => {
-                        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
-                        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
-                        return tb - ta;
-                      });
-                      const latest = sorted[0];
-                      console.log('Latest score:', latest);
-                      const label = latest.name || "Evaluation";
-                      const percent = typeof latest.value === 'number' ? `${(latest.value * 100).toFixed(0)}%` : String(latest.value);
-                      stats.push({ label, value: percent, icon: CheckCircle2 });
-                      console.log('Added score to stats:', { label, value: percent });
-                    } catch (e) {
-                      console.error('Error processing score:', e);
-                      // fallback: simple push
-                      const latest = traceDetail.scores[0];
-                      stats.push({ label: latest.name || "Evaluation", value: (latest.value ?? '').toString(), icon: CheckCircle2 });
-                    }
-                  } else {
-                    console.log('No scores found or invalid scores array');
-                  }
-
-                  return stats.map((stat, idx) => (
-                    <div key={idx} className="bg-gray-50 p-4 rounded-lg">
-                      <div className="flex items-center gap-2 mb-1">
-                        <stat.icon className="h-4 w-4" style={{ color: THEME.textSecondary }} />
-                        <p className="text-sm" style={{ color: THEME.textSecondary }}>{stat.label}</p>
-                      </div>
-                      <p className="text-xl font-bold" style={{ color: THEME.textMain }}>{stat.value}</p>
+                {[
+                  { label: "Input Tokens", value: formatTokens(traceDetail.input_tokens), icon: Layers },
+                  { label: "Output Tokens", value: formatTokens(traceDetail.output_tokens), icon: Layers },
+                  { label: "Cost", value: formatCost(traceDetail.total_cost), icon: DollarSign },
+                  { label: "Latency", value: formatLatency(traceDetail.latency_ms), icon: Timer },
+                ].map((stat, idx) => (
+                  <div key={idx} className="bg-gray-50 p-4 rounded-lg">
+                    <div className="flex items-center gap-2 mb-1">
+                      <stat.icon className="h-4 w-4" style={{ color: THEME.textSecondary }} />
+                      <p className="text-sm" style={{ color: THEME.textSecondary }}>{stat.label}</p>
                     </div>
-                  ));
-                })()}
-              </div>
-
-              {/* Evaluation Scores Section */}
-              {traceDetail.scores && traceDetail.scores.length > 0 && (
-                <div>
-                  <h4 className="font-medium mb-3" style={{ color: THEME.textMain }}>Evaluation Scores</h4>
-                  <div className="grid grid-cols-2 gap-3">
-                    {traceDetail.scores.map((score) => (
-                      <div key={score.id} className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="bg-blue-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">
-                              {(score.value * 100).toFixed(0)}
-                            </div>
-                            <div>
-                              <p className="font-semibold text-sm" style={{ color: THEME.textMain }}>
-                                {score.name}
-                              </p>
-                              <p className="text-xs" style={{ color: THEME.textSecondary }}>
-                                {score.source === 'API' ? '🤖 LLM Judge' : '👤 Manual'}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-xl font-bold" style={{ color: THEME.primary }}>
-                              {score.value.toFixed(2)}
-                            </p>
-                            <p className="text-xs" style={{ color: THEME.textSecondary }}>0-1 scale</p>
-                          </div>
-                        </div>
-                        {score.comment && (
-                          <div className="mt-2 pt-2 border-t border-blue-200">
-                            <p className="text-xs" style={{ color: THEME.textSecondary }}>
-                              {typeof score.comment === 'string' ? score.comment : JSON.stringify(score.comment)}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                    <p className="text-xl font-bold" style={{ color: THEME.textMain }}>{stat.value}</p>
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
 
               <div>
                 <h4 className="font-medium mb-3" style={{ color: THEME.textMain }}>Observations Timeline</h4>

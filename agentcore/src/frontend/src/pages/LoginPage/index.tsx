@@ -35,8 +35,6 @@ export default function LoginPage(): JSX.Element {
   const { t } = useTranslation();
 
   // 🔥 ZUSTAND (REACTIVE)
-  const setAuthContext = useAuthStore((s) => s.setAuthContext);
-  const setIsAuthenticated = useAuthStore((s) => s.setIsAuthenticated);
 
   const { mutate } = useLoginUser();
 
@@ -61,7 +59,7 @@ export default function LoginPage(): JSX.Element {
       console.log("🟣 [SSO] Sending token to backend...");
 
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/azure/sso`,
+        `${import.meta.env.VITE_API_URL}/api/v1/azure/sso`,
         {
           method: "POST",
           credentials: "include",
@@ -82,11 +80,12 @@ export default function LoginPage(): JSX.Element {
 
       // legacy token handling (cookies, redirects)
       console.log("🟡 [SSO] Calling AuthContext.login()");
-      setAuthContext({
-        role: data.role,
-        permissions: data.permissions,
-      });
-      setIsAuthenticated(true);
+      login(
+        data.access_token,
+        data.role,
+        data.permissions,
+        data.refresh_token,
+      );
 
       console.log("🟢 [SSO] Zustand AFTER SET:", useAuthStore.getState());
 

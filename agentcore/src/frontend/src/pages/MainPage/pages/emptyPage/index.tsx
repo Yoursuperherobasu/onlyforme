@@ -4,6 +4,8 @@ import CardsWrapComponent from "@/components/core/cardsWrapComponent";
 import { Button } from "@/components/ui/button";
 import { useFolderStore } from "@/stores/foldersStore";
 import useFileDrop from "../../hooks/use-on-file-drop";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 type EmptyPageProps = {
   setOpenModal: (open: boolean) => void;
@@ -12,6 +14,8 @@ type EmptyPageProps = {
 export const EmptyPage = ({ setOpenModal }: EmptyPageProps) => {
   const folders = useFolderStore((state) => state.folders);
   const handleFileDrop = useFileDrop(undefined);
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   return (
     <CardsWrapComponent
@@ -34,6 +38,7 @@ export const EmptyPage = ({ setOpenModal }: EmptyPageProps) => {
             >
               Begin with a template, or start from scratch.
             </p>
+            {can("edit_flows") && (
             <Button
               variant="default"
               onClick={() => setOpenModal(true)}
@@ -46,9 +51,10 @@ export const EmptyPage = ({ setOpenModal }: EmptyPageProps) => {
                 className="h-4 w-4"
               />
               <span className="hidden whitespace-nowrap font-semibold md:inline">
-                New Flow
+                New Agent
               </span>
             </Button>
+            )}
           </div>
         </div>
         <div className="gradient-bg">

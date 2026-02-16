@@ -16,7 +16,7 @@ export const useDeleteBuilds: useMutationFunctionType<
 
   const deleteBuildsFn = async (payload: IDeleteBuilds): Promise<any> => {
     const config = {};
-    config["params"] = { agent_id: payload.flowId };
+    config["params"] = { flow_id: payload.flowId };
     const res = await api.delete<any>(`${getURL("BUILDS")}`, config);
     return res.data;
   };

@@ -36,10 +36,8 @@ export function AuthProvider({ children }): React.ReactElement {
     getAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN) ?? null,
   );
   // --- ADD THESE STATES FOR RBAC ---
-  const [role, setRole] = useState<string | null>(localStorage.getItem("user_role"));
-  const [permissions, setPermissions] = useState<string[]>(
-    JSON.parse(localStorage.getItem("user_permissions") || "[]")
-  );
+  const [role, setRole] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   // ---------------------------------
   const [userData, setUserData] = useState<Users | null>(null);
   const [apiKey, setApiKey] = useState<string | null>(
@@ -49,6 +47,7 @@ export function AuthProvider({ children }): React.ReactElement {
   const checkHasStore = useStoreStore((state) => state.checkHasStore);
   const fetchApiData = useStoreStore((state) => state.fetchApiData);
   const setIsAuthenticated = useAuthStore((state) => state.setIsAuthenticated);
+  const setAuthContext = useAuthStore((state) => state.setAuthContext);
 
   const { mutate: mutateLoggedUser } = useGetUserData();
   const { mutate: mutateGetGlobalVariables } = useGetGlobalVariablesMutation();
@@ -68,11 +67,20 @@ export function AuthProvider({ children }): React.ReactElement {
   }, []);
 
   useEffect(() => {
-  if (cookies.get(AGENTCORE_ACCESS_TOKEN)) {
-    getUser(); // 🔥 triggers /whoami on refresh
-    console.log("REFRTESH TRIFGERR")
-  }
-}, []);
+    // Always attempt whoami on mount; backend can read httpOnly cookies.
+    getUser();
+  }, []);
+
+  useEffect(() => {
+    const token = cookies.get(AGENTCORE_ACCESS_TOKEN);
+    if (!token) return;
+
+    const interval = setInterval(() => {
+      getUser(); // refresh permissions every minute
+    }, 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   function getUser() {
     mutateLoggedUser(
@@ -80,11 +88,12 @@ export function AuthProvider({ children }): React.ReactElement {
       {
         onSuccess: async (user) => {
           setUserData(user);
-          const store = useAuthStore.getState();
-          store.setAuthContext({
+          setAuthContext({
             role: user.role,
             permissions: user.permissions,
           });
+          setRole(user.role);
+          setPermissions(user.permissions || []);
 
           
           checkHasStore();
@@ -111,16 +120,16 @@ export function AuthProvider({ children }): React.ReactElement {
       setAuthCookie(cookies, AGENTCORE_REFRESH_TOKEN, refreshToken);
     }
 
-    const store = useAuthStore.getState();
-
-    store.setAuthContext({
+    setAuthContext({
       role: userRole,
       permissions: userPermissions,
     });
+    setRole(userRole);
+    setPermissions(userPermissions);
 
 
     setAccessToken(newAccessToken);
-    store.setIsAuthenticated(true);
+    setIsAuthenticated(true);
     getUser();
     getGlobalVariables();
   }

@@ -159,6 +159,7 @@ export type changeUser = {
   username?: string;
   is_active?: boolean;
   is_superuser?: boolean;
+  role?: string;
   password?: string;
   profile_image?: string;
   optins?: {
@@ -184,12 +185,32 @@ export type Users = {
   profile_image: string;
   create_at: Date;
   updated_at: Date;
+  creator_email?: string | null;
+  creator_role?: string | null;
+  department_admin_email?: string | null;
+  department_name?: string | null;
   optins?: {
     github_starred?: boolean;
     discord_clicked?: boolean;
     dialog_dismissed?: boolean;
     mcp_dialog_dismissed?: boolean;
   };
+};
+
+export type Permission = {
+  id: string;
+  key: string;
+  name: string;
+  description?: string | null;
+  group?: string | null;
+};
+
+export type Role = {
+  id: string;
+  name: string;
+  description?: string | null;
+  is_system: boolean;
+  permissions: string[];
 };
 
 export type Component = {

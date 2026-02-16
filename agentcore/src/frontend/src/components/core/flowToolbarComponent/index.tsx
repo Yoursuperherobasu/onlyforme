@@ -7,12 +7,17 @@ import useFlowStore from "../../../stores/flowStore";
 import { useShortcutsStore } from "../../../stores/shortcuts";
 import { cn, isThereModal } from "../../../utils/utils";
 import FlowToolbarOptions from "./components/flow-toolbar-options";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext"; 
 
 const FlowToolbar = memo(function FlowToolbar(): JSX.Element {
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const preventDefault = true;
   const [open, setOpen] = useState<boolean>(false);
   const [openApiModal, setOpenApiModal] = useState<boolean>(false);
   const [openExportModal, setOpenExportModal] = useState<boolean>(false);
+  
   const handleAPIWShortcut = (e: KeyboardEvent) => {
     if (isThereModal() && !openApiModal) return;
     setOpenApiModal((oldOpen) => !oldOpen);
@@ -20,6 +25,7 @@ const FlowToolbar = memo(function FlowToolbar(): JSX.Element {
 
   const handleChatWShortcut = (e: KeyboardEvent) => {
     if (isThereModal() && !open) return;
+    if (!can("edit_flows")) return;
     if (useFlowStore.getState().hasIO) {
       setOpen((oldState) => !oldState);
     }

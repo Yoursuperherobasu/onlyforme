@@ -22,7 +22,7 @@ const useDeleteFlow = () => {
         id = [id];
       }
       mutate(
-        { agent_ids: id },
+        { flow_ids: id },
         {
           onSuccess: () => {
             const { data, flows: myFlows } = processFlows(

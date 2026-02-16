@@ -24,6 +24,8 @@ import { cn } from "@/utils/utils";
 import { createKnowledgeBaseColumns } from "../config/knowledgeBaseColumns";
 import KnowledgeBaseEmptyState from "./KnowledgeBaseEmptyState";
 import KnowledgeBaseSelectionOverlay from "./KnowledgeBaseSelectionOverlay";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 interface KnowledgeBasesTabProps {
   quickFilterText: string;
@@ -59,6 +61,10 @@ const KnowledgeBasesTab = ({
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
   const folderIdUrl = folderId ?? myCollectionId;
 
+
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [knowledgeBaseToDelete, setKnowledgeBaseToDelete] =
     useState<KnowledgeBaseInfo | null>(null);
@@ -135,7 +141,7 @@ const KnowledgeBasesTab = ({
       addFlow({ flow: knowledgeBasesExample }).then((id) => {
         navigate(`/flow/${id}/folder/${folderIdUrl}`);
       });
-      track("New Flow Created", {
+      track("New Agent Created", {
         template: `${knowledgeBasesExample.name} Template`,
       });
     }

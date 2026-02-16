@@ -1,6 +1,7 @@
 import { useLocation } from "react-router-dom";
 import { CustomLink } from "@/customization/components/custom-link";
 import { useIsMobile } from "@/hooks/use-mobile";
+import useAuthStore from "@/stores/authStore";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +17,7 @@ type SideBarButtonsComponentProps = {
     href?: string;
     title: string;
     icon: React.ReactNode;
+    permissionKey?: string;
   }[];
   handleOpenNewFolderModal?: () => void;
 };
@@ -23,6 +25,7 @@ type SideBarButtonsComponentProps = {
 const SideBarButtonsComponent = ({ items }: SideBarButtonsComponentProps) => {
   const location = useLocation();
   const pathname = location.pathname;
+  const permissions = useAuthStore((state) => state.permissions);
 
   const isMobile = useIsMobile();
 
@@ -32,7 +35,11 @@ const SideBarButtonsComponent = ({ items }: SideBarButtonsComponentProps) => {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item, index) => (
+              {items
+                .filter((item) =>
+                  item.permissionKey ? permissions?.includes(item.permissionKey) : true,
+                )
+                .map((item, index) => (
                 <SidebarMenuItem key={index}>
                   <CustomLink to={item.href!} replace>
                     <SidebarMenuButton

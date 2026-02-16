@@ -12,12 +12,17 @@ import { useFolderStore } from "../../../../stores/foldersStore";
 import type { TemplateContentProps } from "../../../../types/templates/types";
 import { updateIds } from "../../../../utils/reactflowUtils";
 import { TemplateCategoryComponent } from "../TemplateCategoryComponent";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 export default function TemplateContentComponent({
   currentTab,
   categories,
 }: TemplateContentProps) {
   const allExamples = useFlowsManagerStore((state) => state.examples);
+
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   const examples = allExamples
     .filter((example) => {
@@ -70,7 +75,7 @@ export default function TemplateContentComponent({
     addFlow({ flow: example }).then((id) => {
       navigate(`/flow/${id}/folder/${folderIdUrl}`);
     });
-    track("New Flow Created", { template: `${example.name} Template` });
+    track("New Agent Created", { template: `${example.name} Template` });
   };
 
   const handleClearSearch = () => {

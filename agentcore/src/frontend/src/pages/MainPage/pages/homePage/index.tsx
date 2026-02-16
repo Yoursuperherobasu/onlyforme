@@ -20,6 +20,8 @@ import ListSkeleton from "../../components/listSkeleton";
 import ModalsComponent from "../../components/modalsComponent";
 import useFileDrop from "../../hooks/use-on-file-drop";
 import EmptyFolder from "../emptyFolder";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
   const [view, setView] = useState<"grid" | "list">(() => {
@@ -32,6 +34,9 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
   const [pageSize, setPageSize] = useState(12);
   const [search, setSearch] = useState("");
   const navigate = useCustomNavigate();
+
+  const { permissions, role } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   const [flowType, setFlowType] = useState<"flows" | "components" | "mcp">(
     type,
@@ -313,6 +318,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
                               setSelectedFlow(selected, flow.id, index)
                             }
                             shiftPressed={isShiftPressed || isCtrlPressed}
+                            disabled={can("view_flows_page") && !can("edit_flows")}
                           />
                         ))}
                       </div>
@@ -324,7 +330,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
                         onClick={() => setNewProjectModal(true)}
                         className="cursor-pointer underline"
                       >
-                        Create a new flow
+                        Create a new agent
                       </a>
                       , or browse the store.
                     </div>
