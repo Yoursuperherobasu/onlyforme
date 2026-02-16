@@ -27,13 +27,13 @@ export const ChatViewWrapper = ({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 w-full flex-col",
+        "flex h-full min-h-0 w-full flex-col bg-background",
         selectedViewField ? "hidden" : "",
       )}
     >
       <div
         className={cn(
-          "flex h-14 shrink-0 items-center justify-between border-b border-border/70 px-4 text-base font-semibold md:px-6",
+          "flex h-14 shrink-0 items-center justify-between border-b border-border px-4 text-base md:px-6",
           playgroundPage ? "justify-between" : "lg:justify-start",
         )}
       >
@@ -55,7 +55,7 @@ export const ChatViewWrapper = ({
         {visibleSession && sessions.length > 0 && (
           <div
             className={cn(
-              "truncate text-center font-semibold",
+              "truncate text-center text-sm font-semibold",
               playgroundPage ? "px-3" : "mr-12 flex-grow lg:mr-0",
               sidebarOpen ? "blur-sm lg:blur-0" : "",
             )}
@@ -67,27 +67,11 @@ export const ChatViewWrapper = ({
         )}
         <div
           className={cn(
-            sidebarOpen ? "pointer-events-none opacity-0" : "",
             "flex items-center justify-center rounded-sm ring-offset-background transition-opacity focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
             playgroundPage ? "" : "h-8",
           )}
         >
-          <ShadTooltip side="bottom" styleClasses="z-50" content="New Chat">
-            <Button
-              className="mr-2 h-[32px] w-[32px] hover:bg-secondary-hover"
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                setvisibleSession(undefined);
-                setSelectedViewField(undefined);
-              }}
-            >
-              <IconComponent
-                name="Plus"
-                className="!h-[18px] !w-[18px] text-ring"
-              />
-            </Button>
-          </ShadTooltip>
+         
           {!playgroundPage && <Separator orientation="vertical" />}
         </div>
       </div>

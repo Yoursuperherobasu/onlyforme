@@ -176,8 +176,9 @@ export default function ChatView({
       initial="instant"
       mass={1}
     >
-      <StickToBottom.Content className="flex min-h-0 flex-1 flex-col">
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pt-4 md:px-6">
+      <StickToBottom.Content className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2 md:px-6">
+        <div className="mx-auto flex h-full w-full max-w-4xl flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background">
+          <div className="flex min-h-0 flex-1 flex-col px-4 py-4 md:px-6">
           {chatHistory &&
             (isBuilding || chatHistory?.length > 0 ? (
               chatHistory?.map((chat, index) => (
@@ -192,17 +193,17 @@ export default function ChatView({
               ))
             ) : (
               <div className="flex w-full flex-grow flex-col items-center justify-center">
-                <div className="flex flex-col items-center justify-center gap-4 p-8">
+                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-muted/30 p-8">
                   <MothersonLogo
                     title="Motherson Logo"
-                    className="h-10 w-10 scale-[1.5]"
+                    className="h-9 w-9"
                   />
                   <div className="flex flex-col items-center justify-center">
-                    <h3 className="mt-2 pb-2 text-2xl font-semibold text-primary">
+                    <h3 className="pb-1 text-xl font-semibold text-primary">
                       New chat
                     </h3>
                     <p
-                      className="text-lg text-muted-foreground"
+                      className="text-base text-muted-foreground"
                       data-testid="new-chat-text"
                     >
                       <TextEffectPerChar>
@@ -213,11 +214,12 @@ export default function ChatView({
                 </div>
               </div>
             ))}
+          </div>
         </div>
         <div
           className={
             displayLoadingMessage
-              ? "mx-auto w-full max-w-3xl px-4 py-4 word-break-break-word md:px-6"
+              ? "mx-auto w-full max-w-4xl px-4 py-2 word-break-break-word md:px-6"
               : ""
           }
           ref={ref}
@@ -228,8 +230,8 @@ export default function ChatView({
         </div>
       </StickToBottom.Content>
 
-      <div className="border-t border-border/60 bg-background/90 px-4 pb-4 pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 md:px-6">
-        <div className="mx-auto w-full max-w-3xl">
+      <div className="border-t border-border bg-background px-4 pb-4 pt-3 md:px-6">
+        <div className="mx-auto w-full max-w-4xl">
           <CustomChatInput
             playgroundPage={!!playgroundPage}
             noInput={!inputTypes.includes("ChatInput")}

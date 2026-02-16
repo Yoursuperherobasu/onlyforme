@@ -205,20 +205,22 @@ export default function ChatMessage({
 
   return (
     <>
-      <div className="w-full py-3 word-break-break-word">
+      <div className="w-full py-2.5 word-break-break-word">
         <div
           className={cn(
-            "group relative flex w-full gap-3 rounded-2xl px-3 py-3",
-            chat.isSend ? "bg-muted/40" : "",
-            !editMessage && !chat.isSend ? "hover:bg-muted/40" : "",
+            "group relative flex w-full gap-3 rounded-xl border px-3 py-2.5 transition-colors",
+            chat.isSend
+              ? "border-border bg-muted/35"
+              : "border-border bg-background",
+            !editMessage && !chat.isSend ? "hover:bg-muted/20" : "",
           )}
         >
           <div
             className={cn(
-              "relative mt-0.5 flex h-[32px] w-[32px] shrink-0 items-center justify-center overflow-hidden rounded-full text-2xl",
+              "relative mt-0.5 flex h-[32px] w-[32px] shrink-0 items-center justify-center overflow-hidden rounded-md text-2xl",
               !chat.isSend
-                ? "bg-muted"
-                : "border border-border hover:border-input",
+                ? "border border-border bg-muted"
+                : "border border-border bg-background",
             )}
             style={
               chat.properties?.background_color
@@ -312,7 +314,7 @@ export default function ChatMessage({
             )}
             {!chat.isSend ? (
               <div className="form-modal-chat-text-position flex-grow">
-                <div className="form-modal-chat-text">
+                <div className="form-modal-chat-text rounded-lg bg-transparent p-1">
                   {hidden && chat.thought && chat.thought !== "" && (
                     <div
                       onClick={(): void => setHidden((prev) => !prev)}
@@ -377,7 +379,7 @@ export default function ChatMessage({
               </div>
             ) : (
               <div className="form-modal-chat-text-position flex-grow">
-                <div className="flex w-full flex-col">
+                <div className="flex w-full flex-col rounded-lg bg-transparent p-1">
                   {editMessage ? (
                     <EditMessageField
                       key={`edit-message-${chat.id}`}
@@ -413,7 +415,7 @@ export default function ChatMessage({
             )}
           </div>
           {!editMessage && (
-            <div className="invisible absolute -top-3 right-2 group-hover:visible">
+            <div className="invisible absolute -top-2 right-2 group-hover:visible">
               <div>
                 <EditMessageButton
                   onCopy={() => {

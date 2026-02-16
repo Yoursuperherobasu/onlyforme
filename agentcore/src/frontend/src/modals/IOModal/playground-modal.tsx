@@ -27,16 +27,6 @@ import { SidebarOpenView } from "./components/sidebar-open-view";
 import { useGetFlowId } from "./hooks/useGetFlowId";
 
 /* ── Gradient palette for the monogram avatar ─────────────────────── */
-const AVATAR_GRADIENTS = [
-  "from-violet-500 to-indigo-600",
-  "from-rose-500 to-pink-600",
-  "from-amber-500 to-orange-600",
-  "from-emerald-500 to-teal-600",
-  "from-sky-500 to-blue-600",
-  "from-fuchsia-500 to-purple-600",
-  "from-lime-500 to-green-600",
-  "from-cyan-500 to-teal-600",
-];
 
 export default function IOModal({
   children,
@@ -327,14 +317,6 @@ export default function IOModal({
   }, [visibleSession]);
 
   // ─── Derived: monogram initial & gradient ─────────────────────────
-  const monogramLetter = (PlaygroundTitle || "P").charAt(0).toUpperCase();
-  const avatarGradientIndex =
-    (flowGradient && !isNaN(parseInt(flowGradient))
-      ? parseInt(flowGradient)
-      : getNumberFromString(flowGradient ?? flowId ?? "")) %
-    AVATAR_GRADIENTS.length;
-  const avatarGradient = AVATAR_GRADIENTS[avatarGradientIndex];
-
   // ═══════════════════════════════════════════════════════════════════
   // ═══  REDESIGNED SIDEBAR (visual-only changes)  ═══════════════════
   // ═══════════════════════════════════════════════════════════════════
@@ -343,78 +325,33 @@ export default function IOModal({
     <div
       className={cn(
         "relative flex h-full w-full flex-col overflow-y-auto custom-scroll",
-        "px-3.5 pb-4",
-        playgroundPage ? "pt-5" : "pt-4",
+        "p-4",
+        playgroundPage ? "pt-4" : "pt-3.5",
       )}
     >
       {/* ── Header: Gradient Monogram + Title ───────────────────────── */}
-      <div className="group mb-6 px-1">
-        {/* Monogram avatar row */}
-        <div className="flex items-center gap-3.5">
-          <div className="relative">
-            {/* Main avatar */}
-            <div
-              className={cn(
-                "flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px]",
-                "bg-gradient-to-br shadow-md",
-                "ring-1 ring-white/20",
-                "transition-transform duration-200 group-hover:scale-105",
-                avatarGradient,
-              )}
-            >
-              <span className="text-[15px] font-bold leading-none text-white drop-shadow-sm">
-                {monogramLetter}
-              </span>
-            </div>
-            {/* Ambient glow behind avatar */}
-            <div
-              className={cn(
-                "absolute -inset-1.5 -z-10 rounded-[18px] bg-gradient-to-br opacity-25 blur-lg",
-                "transition-opacity duration-300 group-hover:opacity-40",
-                avatarGradient,
-              )}
-            />
+      <div className="mb-4 rounded-lg border border-border bg-background px-3 py-3">
+        <div className="flex items-center gap-2.5">
+          <div
+            className={cn(
+              "flex rounded-md p-1.5",
+              swatchColors[swatchIndex],
+            )}
+          >
+           
           </div>
-
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-[14px] font-semibold leading-tight tracking-[-0.02em] text-foreground">
-              {PlaygroundTitle}
-            </h2>
-            <div className="mt-1 flex items-center gap-1.5">
-              <div
-                className="h-[6px] w-[6px] rounded-full bg-emerald-500"
-                style={{
-                  boxShadow: "0 0 6px rgba(16,185,129,0.45)",
-                }}
-              />
-              <span className="text-[11px] font-medium text-muted-foreground/60">
-                Active
-              </span>
-            </div>
-          </div>
+          <div className="truncate text-sm font-semibold">{PlaygroundTitle}</div>
         </div>
-
-        {/* Thin separator with fade */}
-        <div className="mt-4 h-px bg-gradient-to-r from-border/60 via-border/30 to-transparent" />
       </div>
 
       {/* ── Sessions Section ─────────────────────────────────────────── */}
       <div className="min-h-0 flex-1">
         {/* Section label row */}
-        <div className="mb-2.5 flex items-center justify-between px-1.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/45">
+        <div className="mb-2 flex items-center justify-between px-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Conversations
           </span>
-          {sessions.length > 0 && (
-            <span
-              className={cn(
-                "flex h-[18px] min-w-[18px] items-center justify-center rounded-md px-1.5",
-                "bg-muted/70 text-[10px] font-semibold tabular-nums text-muted-foreground/50",
-              )}
-            >
-              {sessions.length}
-            </span>
-          )}
+          <span className="text-xs text-muted-foreground">{sessions.length}</span>
         </div>
 
         {!sessionsLoading && (
@@ -433,33 +370,19 @@ export default function IOModal({
 
       {/* ── Footer / Publish Options ────────────────────────────────── */}
       {showPublishOptions && (
-        <div className="relative mt-auto space-y-3.5 pt-5">
-          {/* Gradient divider */}
-          <div className="absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-border/50 to-transparent" />
-
-          <div className="flex items-center justify-between px-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/45">
-              Theme
-            </span>
+        <div className="mt-4 border-t border-border pt-3">
+          <div className="mb-3 flex items-center justify-between px-1">
+            <span className="text-sm text-muted-foreground">Theme</span>
             <ThemeButtons />
           </div>
 
           <Button
             onClick={AgentCoreButtonClick}
             variant="primary"
-            className={cn(
-              "group/btn relative w-full overflow-hidden !rounded-xl py-2.5",
-              "shadow-md transition-all duration-300",
-              "hover:shadow-lg hover:brightness-110",
-              "active:scale-[0.98]",
-            )}
+            className="w-full !rounded-lg"
           >
-            {/* Shimmer sweep on hover */}
-            <div className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/[0.12] to-transparent transition-transform duration-700 ease-out group-hover/btn:translate-x-full" />
             <AgentCoreLogoColor />
-            <span className="relative ml-1.5 text-[13px] font-medium tracking-[-0.01em]">
-              Built with AgentCore
-            </span>
+            <span className="ml-1 text-sm">Built with AgentCore</span>
           </Button>
         </div>
       )}
@@ -488,22 +411,9 @@ export default function IOModal({
             {/* ── Sidebar Container ─────────────────────────────────── */}
             <div
               className={cn(
-                "relative flex h-full w-[280px] shrink-0 flex-col",
-                "border-r border-border/40",
-                // Subtle layered background
-                "bg-gradient-to-b from-muted/35 via-background to-muted/25",
-                "dark:from-card/40 dark:via-background/80 dark:to-card/30",
+                "relative flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-muted/20",
               )}
             >
-              {/* Faint noise texture */}
-              <div
-                className="pointer-events-none absolute inset-0 opacity-[0.012] dark:opacity-[0.025]"
-                style={{
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
-                }}
-              />
-              {/* Top edge highlight */}
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent dark:via-white/[0.04]" />
               {sidebarContent}
             </div>
 

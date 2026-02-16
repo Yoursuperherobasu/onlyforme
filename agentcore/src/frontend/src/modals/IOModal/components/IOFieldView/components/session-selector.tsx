@@ -133,8 +133,8 @@ export default function SessionSelector({
       className={cn(
         "group w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left text-mmd transition-all",
         isVisible
-          ? "border-primary/25 bg-primary/10 font-semibold shadow-sm"
-          : "border-transparent bg-transparent font-normal hover:border-border/80 hover:bg-background/70",
+          ? "border-border bg-muted/40 font-semibold"
+          : "border-transparent bg-transparent font-normal hover:border-border hover:bg-background",
       )}
     >
       <div className="flex w-full items-center justify-between overflow-hidden align-middle">
