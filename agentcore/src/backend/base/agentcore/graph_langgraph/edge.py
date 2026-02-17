@@ -11,8 +11,6 @@ if TYPE_CHECKING:
 class LangGraphEdge:
     """Lightweight edge wrapper for LangGraph execution.
     
-    This replaces the heavy Edge class from graph/edge/base.py with
-    a minimal implementation.
     """
     
     def __init__(self, source: LangGraphVertex, target: LangGraphVertex, edge_data: dict[str, Any]) -> None:

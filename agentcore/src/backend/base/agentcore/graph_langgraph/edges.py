@@ -49,8 +49,6 @@ def add_edges_to_workflow(
 def build_adjacency_maps(edges_data: list[dict[str, Any]]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """Build predecessor and successor maps from edges.
     
-    This maintains compatibility with the original Graph implementation.
-    
     Args:
         edges_data: List of edge data
         

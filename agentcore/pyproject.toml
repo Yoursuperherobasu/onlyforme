@@ -4,7 +4,6 @@ version = "1.0.0"
 description = "web application"
 requires-python = ">=3.10,<3.13"
 
-keywords = ["nlp", "langchain", "openai", "gpt", "gui"]
 # Define your main dependencies here
 dependencies = [
     "agentcore-base~=0.6.5",

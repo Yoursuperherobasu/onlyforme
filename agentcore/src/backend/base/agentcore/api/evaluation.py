@@ -1187,21 +1187,9 @@ def _resolve_openai_fallback_api_key(model: str, explicit_api_key: str | None = 
 
     provider = _infer_litellm_provider(model)
     env_by_provider: dict[str, list[str]] = {
-        "openai": ["OPENAI_API_KEY"],
         "groq": ["GROQ_API_KEY"],
-        "anthropic": ["ANTHROPIC_API_KEY"],
-        "openrouter": ["OPENROUTER_API_KEY"],
         "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-        "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
-        "vertex_ai": ["VERTEX_API_KEY", "GOOGLE_API_KEY"],
-        "mistral": ["MISTRAL_API_KEY"],
-        "cohere": ["COHERE_API_KEY"],
-        "togetherai": ["TOGETHERAI_API_KEY", "TOGETHER_API_KEY"],
-        "fireworks_ai": ["FIREWORKS_API_KEY"],
-        "xai": ["XAI_API_KEY"],
-        "deepseek": ["DEEPSEEK_API_KEY"],
-        "perplexity": ["PERPLEXITY_API_KEY"],
-        "sambanova": ["SAMBANOVA_API_KEY"],
+
     }
 
     env_names = env_by_provider.get(provider or "", [])

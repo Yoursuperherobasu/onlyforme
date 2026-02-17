@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 class LangGraphExecutor:
     """Handles execution of LangGraph workflows.
     
-    This replaces the Graph.process() method with LangGraph-based execution.
     """
     
     def __init__(self, adapter: LangGraphAdapter) -> None:
@@ -45,8 +44,6 @@ class LangGraphExecutor:
     ) -> dict[str, Any]:
         """Execute the LangGraph workflow.
         
-        This method replaces Graph.process() and runs the entire flow.
-        
         Args:
             inputs: Input data for the agent
             files: List of file paths
@@ -63,8 +60,7 @@ class LangGraphExecutor:
         
         # Update input vertices with the input data (like ChatInput's input_value)
         if inputs:
-            logger.debug(f"Updating input vertices with data: {inputs}")
-            print("8888888888888888888888888888888888888888888888888888")
+
             print(inputs)
             for vertex_id in self.adapter._is_input_vertices:
                 vertex = self.adapter.get_vertex(vertex_id)

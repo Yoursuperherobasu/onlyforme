@@ -13,9 +13,6 @@ logger = logging.getLogger(__name__)
 
 class LangGraphVertex:
     """Lightweight vertex wrapper for LangGraph execution.
-    
-    This replaces the heavy Vertex class from graph/vertex/base.py with
-    a minimal implementation that only contains what LangGraph needs.
     """
     
     def __init__(self, node_data: dict[str, Any], graph_adapter: Any) -> None:

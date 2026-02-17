@@ -11,9 +11,6 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status
 from pydantic import BaseModel
 from loguru import logger
 
-# ============================================================================
-# PYDANTIC MODELS
-# ============================================================================
 
 class SubmittedBy(BaseModel):
     name: str
@@ -50,9 +47,6 @@ class ApprovalResponse(BaseModel):
     approvedBy: Optional[str] = None
 
 
-# ============================================================================
-# SAMPLE DATA (In-Memory Storage)
-# ============================================================================
 
 SAMPLE_AGENTS = [
     {

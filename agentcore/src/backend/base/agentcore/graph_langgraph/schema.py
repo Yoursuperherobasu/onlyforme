@@ -17,11 +17,6 @@ if TYPE_CHECKING:
     from agentcore.schema.log import LoggableType
 
 
-# =============================================================================
-# Node/Vertex Schema Types
-# =============================================================================
-
-
 class NodeTypeEnum(str, Enum):
     NoteNode = "noteNode"
     GenericNode = "genericNode"
@@ -43,12 +38,6 @@ class NodeData(TypedDict):
     selected: NotRequired[bool]
     parent_node_id: NotRequired[str]
     type: NotRequired[NodeTypeEnum]
-
-
-# =============================================================================
-# Edge Schema Types
-# =============================================================================
-
 
 class SourceHandleDict(TypedDict, total=False):
     baseClasses: list[str]
@@ -151,10 +140,6 @@ class SourceHandle(BaseModel):
         return v
 
 
-# =============================================================================
-# Graph Schema Types
-# =============================================================================
-
 
 class ViewPort(TypedDict):
     x: float
@@ -187,10 +172,6 @@ class StartConfigDict(TypedDict):
 class LogCallbackFunction(Protocol):
     def __call__(self, event_name: str, log: LoggableType) -> None: ...
 
-
-# =============================================================================
-# Vertex/Component State Types
-# =============================================================================
 
 
 class VertexStates(str, Enum):
