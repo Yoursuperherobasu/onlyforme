@@ -627,6 +627,8 @@ export const CONTROL_NEW_USER = {
   role: "business_user",
   department_admin_email: "",
   department_name: "",
+  organization_name: "",
+  organization_description: "",
 };
 
 export const tabsCode = [];

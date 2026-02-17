@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from agentcore.services.database.models.user.crud import get_user_by_username
+from sqlalchemy.exc import IntegrityError
 
 import httpx
 from pydantic import BaseModel
@@ -16,13 +17,12 @@ from agentcore.initial_setup.setup import get_or_create_default_folder
 from agentcore.services.auth.utils import (
     authenticate_user,
     create_refresh_token,
-    create_user_longterm_token,
     create_user_tokens,
+    get_password_hash,
 )
-from agentcore.api.users import add_user
 from agentcore.services.database.models.user.crud import get_user_by_id
 from agentcore.services.deps import get_settings_service
-from agentcore.services.database.models.user.model import UserCreate
+from agentcore.services.database.models.user.model import User
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 from agentcore.services.cache.user_cache import UserCacheService
 
@@ -109,7 +109,6 @@ async def azure_sso_login(
     db: DbSession,
 ):
     auth_settings = get_settings_service().auth_settings
-    
 
     # -----------------------------
     # Verify Azure token
@@ -133,10 +132,8 @@ async def azure_sso_login(
         ) from e
 
     email = payload.get("preferred_username") or payload.get("email")
-    azure_role = normalize_role(payload.get("roles", ["developer"])[0])
-    
-    permissions = await get_permissions_for_role(azure_role)
-    
+    normalized_email = str(email).strip().lower() if email else ""
+    root_email = str(auth_settings.PLATFORM_ROOT_EMAIL).strip().lower() if auth_settings.PLATFORM_ROOT_EMAIL else ""
 
     if not email:
         raise HTTPException(
@@ -148,26 +145,52 @@ async def azure_sso_login(
     # Find or Create User
     # -----------------------------
     user = await get_user_by_username(db, email)
+    resolved_role = "consumer"
+
+    if root_email and normalized_email == root_email:
+        resolved_role = "root"
+        if user:
+            if normalize_role(getattr(user, "role", "consumer")) != "root":
+                user.role = "root"
+                user.is_superuser = True
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+    elif user:
+        resolved_role = normalize_role(getattr(user, "role", "consumer"))
+    else:
+        resolved_role = "consumer"
 
     if not user:
-        # create fake strong password (never used)
         random_password = secrets.token_urlsafe(32)
-
-        user_create = UserCreate(
+        user = User(
             username=email,
-            password=random_password,
-            role=azure_role
+            email=email,
+            display_name=payload.get("name"),
+            entra_object_id=payload.get("oid"),
+            password=get_password_hash(random_password),
+            role=resolved_role,
+            is_superuser=resolved_role in {"root", "super_admin", "department_admin"},
+            is_active=auth_settings.NEW_USER_IS_ACTIVE,
         )
+        try:
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError:
+            await db.rollback()
+            existing_user = await get_user_by_username(db, email)
+            if not existing_user:
+                raise HTTPException(status_code=500, detail="Unable to provision SSO user.")
+            user = existing_user
+            resolved_role = normalize_role(getattr(user, "role", "consumer"))
 
-        # reuse signup API logic
-        user = await add_user(user_create, db)
+    # DB role always wins for registered users (except configured root email override above)
+    if user and not (root_email and normalized_email == root_email):
+        resolved_role = normalize_role(getattr(user, "role", "consumer"))
 
-        raise HTTPException(
-            status_code=400,
-            detail="User not resgistered. Please contact your department administrator to set up your account.",
-        )
-    
-    
+    permissions = await get_permissions_for_role(resolved_role)
+
     settings_service = get_settings_service()
     user_cache = UserCacheService(settings_service)
     user_dict = user.model_dump(mode="json", exclude={"password"})
@@ -179,8 +202,6 @@ async def azure_sso_login(
 
     tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
     
-    print(tokens,"tokenssssssssssssssssss")
-    print(permissions,"permissssssssssssssssions")
     response.set_cookie(
         "refresh_token_lf",
         tokens["refresh_token"],
@@ -214,7 +235,7 @@ async def azure_sso_login(
 
     return {
         **tokens,
-        "role": azure_role,
+        "role": resolved_role,
         "permissions": permissions
     }
 
