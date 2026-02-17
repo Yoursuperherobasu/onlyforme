@@ -25,7 +25,7 @@ import { CustomRoutesStorePages } from "./customization/utils/custom-routes-stor
 import { AppAuthenticatedPage } from "./pages/AppAuthenticatedPage";
 import { AppInitPage } from "./pages/AppInitPage";
 import { AppWrapperPage } from "./pages/AppWrapperPage";
-import AgentPage from "./pages/AgentPage";
+import AgentBuilderPage from "./pages/AgentBuilderPage";
 import LoginPage from "./pages/LoginPage";
 import FilesPage from "./pages/MainPage/pages/filesPage";
 import HomePage from "./pages/MainPage/pages/homePage";
@@ -306,7 +306,7 @@ const router = createBrowserRouter(
                     path="folder/:folderId/"
                     element={
                      
-                        <AgentPage />
+                        <AgentBuilderPage />
                      
                     }
                   />
@@ -314,7 +314,7 @@ const router = createBrowserRouter(
                     path=""
                     element={
                      
-                        <AgentPage />
+                        <AgentBuilderPage />
                  
                     }
                   />

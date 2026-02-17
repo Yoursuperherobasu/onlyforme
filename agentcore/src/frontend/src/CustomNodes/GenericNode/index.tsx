@@ -16,7 +16,7 @@ import {
   TOOLTIP_HIDDEN_OUTPUTS,
   TOOLTIP_OPEN_HIDDEN_OUTPUTS,
 } from "../../constants/constants";
-import NodeToolbarComponent from "../../pages/AgentPage/components/nodeToolbarComponent";
+import NodeToolbarComponent from "../../pages/AgentBuilderPage/components/nodeToolbarComponent";
 import { useChangeOnUnfocus } from "../../shared/hooks/use-change-on-unfocus";
 import useAlertStore from "../../stores/alertStore";
 import useAgentStore from "../../stores/agentStore";

@@ -107,8 +107,8 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
     });
     set({ componentsToUpdate: outdatedNodes });
   },
-  onAgentPage: false,
-  setOnAgentPage: (AgentPage) => set({ onAgentPage: AgentPage }),
+  onAgentBuilderPage: false,
+  setOnAgentBuilderPage: (AgentBuilderPage) => set({ onAgentBuilderPage: AgentBuilderPage }),
   agentState: undefined,
   agentBuildStatus: {},
   nodes: [],
@@ -895,7 +895,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
       onValidateNodes: validateSubgraph,
       nodes: get().nodes || undefined,
       edges: get().edges || undefined,
-      logBuilds: get().onAgentPage,
+      logBuilds: get().onAgentBuilderPage,
       playgroundPage,
       eventDelivery,
     });

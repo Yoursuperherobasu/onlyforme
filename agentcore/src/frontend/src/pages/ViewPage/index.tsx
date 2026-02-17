@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
-import Page from "../AgentPage/components/PageComponent";
+import Page from "../AgentBuilderPage/components/PageComponent";
 
 export default function ViewPage() {
   const setCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);

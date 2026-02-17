@@ -4,7 +4,7 @@ import {
   SelectContentWithoutPortal,
   SelectItem,
 } from "@/components/ui/select-custom";
-import ToolbarSelectItem from "@/pages/AgentPage/components/nodeToolbarComponent/toolbarSelectItem";
+import ToolbarSelectItem from "@/pages/AgentBuilderPage/components/nodeToolbarComponent/toolbarSelectItem";
 import type { NoteDataType } from "@/types/agent";
 
 export const SelectItems = memo(

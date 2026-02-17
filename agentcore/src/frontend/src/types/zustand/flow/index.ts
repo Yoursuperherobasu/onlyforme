@@ -82,8 +82,8 @@ export type AgentStoreType = {
       | ((oldState: ComponentsToUpdateType[]) => ComponentsToUpdateType[]),
   ) => void;
   updateComponentsToUpdate: (nodes: AllNodeType[]) => void;
-  onAgentPage: boolean;
-  setOnAgentPage: (onAgentPage: boolean) => void;
+  onAgentBuilderPage: boolean;
+  setOnAgentBuilderPage: (onAgentBuilderPage: boolean) => void;
   agentPool: AgentPoolType;
   setHasIO: (hasIO: boolean) => void;
   setInputs: (

@@ -20,7 +20,7 @@ import {
 } from "./components/agentSidebarComponent";
 import Page from "./components/PageComponent";
 
-export default function AgentPage({ view }: { view?: boolean }): JSX.Element {
+export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Element {
   const types = useTypesStore((state) => state.types);
 
   useGetTypes({
@@ -40,7 +40,7 @@ export default function AgentPage({ view }: { view?: boolean }): JSX.Element {
   const isBuilding = useAgentStore((state) => state.isBuilding);
   const blocker = useBlocker(changesNotSaved || isBuilding);
 
-  const setOnAgentPage = useAgentStore((state) => state.setOnAgentPage);
+  const setOnAgentBuilderPage = useAgentStore((state) => state.setOnAgentBuilderPage);
   const { id } = useParams();
   const navigate = useCustomNavigate();
   const saveAgent = useSaveAgent();
@@ -118,10 +118,10 @@ export default function AgentPage({ view }: { view?: boolean }): JSX.Element {
   }, [id, currentAgentId, currentAgent, types]);
 
   useEffect(() => {
-    setOnAgentPage(true);
+    setOnAgentBuilderPage(true);
 
     return () => {
-      setOnAgentPage(false);
+      setOnAgentBuilderPage(false);
       console.warn("unmounting");
 
       setCurrentAgent(undefined);

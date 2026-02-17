@@ -6,7 +6,7 @@ import { PanelLeft } from "lucide-react";
 import * as React from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useIsMobile } from "@/hooks/use-mobile";
-import isWrappedWithClass from "../../pages/AgentPage/components/PageComponent/utils/is-wrapped-with-class";
+import isWrappedWithClass from "../../pages/AgentBuilderPage/components/PageComponent/utils/is-wrapped-with-class";
 import { useShortcutsStore } from "../../stores/shortcuts";
 import { cn } from "../../utils/utils";
 import ShadTooltip from "../common/shadTooltipComponent";

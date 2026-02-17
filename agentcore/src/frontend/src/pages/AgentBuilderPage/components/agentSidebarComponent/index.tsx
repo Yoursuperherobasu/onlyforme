@@ -80,7 +80,7 @@ export function useSearchContext() {
   return context;
 }
 
-// Create a provider that can be used at the AgentPage level
+// Create a provider that can be used at the AgentBuilderPage level
 export function AgentSearchProvider({
   children,
 }: {

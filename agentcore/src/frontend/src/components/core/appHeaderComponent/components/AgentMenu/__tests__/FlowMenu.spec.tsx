@@ -57,7 +57,7 @@ jest.mock("@/stores/agentStore", () => ({
   __esModule: true,
   default: (sel) =>
     sel({
-      onAgentPage: true,
+      onAgentBuilderPage: true,
       isBuilding: false,
       currentAgent: {
         id: "1",

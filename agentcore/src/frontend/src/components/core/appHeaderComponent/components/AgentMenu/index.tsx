@@ -54,7 +54,7 @@ export const MenuBar = memo((): JSX.Element => {
       updated_at: state.currentAgent?.updated_at,
     })),
   );
-  const onAgentPage = useAgentStore((state) => state.onAgentPage);
+  const onAgentBuilderPage = useAgentStore((state) => state.onAgentBuilderPage);
   const measureRef = useRef<HTMLSpanElement>(null);
   const changesNotSaved = useUnsavedChanges();
 
@@ -88,7 +88,7 @@ export const MenuBar = memo((): JSX.Element => {
       : getNumberFromString(currentAgentGradient ?? currentAgentId ?? "")) %
     swatchColors.length;
 
-  return onAgentPage ? (
+  return onAgentBuilderPage ? (
     <Popover open={openSettings} onOpenChange={setOpenSettings}>
       <PopoverAnchor>
         <div
