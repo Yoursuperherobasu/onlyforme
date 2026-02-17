@@ -665,7 +665,7 @@ const SideBarFoldersButtonsComponent = ({
 
 
       {/* ================= FOOTER ================= */}
-      <SidebarFooter className="border-t">
+      {/* <SidebarFooter className="border-t">
         <div className="grid w-full items-center gap-2 p-2">
           {can("view_settings_page") && (
             <SidebarMenuButton
@@ -681,7 +681,7 @@ const SideBarFoldersButtonsComponent = ({
             </SidebarMenuButton>
           )}
         </div>
-      </SidebarFooter>
+      </SidebarFooter> */}
     </Sidebar>
   );
 };
