@@ -15,7 +15,7 @@ def upload(file_path: str, host: str, agent_id: str):
     Args:
         file_path (str): The path to the file to be uploaded.
         host (str): The host URL of Agentcore.
-        agent_id (UUID): The ID of the flow to which the file belongs.
+        agent_id (UUID): The ID of the agent to which the file belongs.
 
     Returns:
         dict: A dictionary containing the file path.
@@ -44,7 +44,7 @@ def upload_file(file_path: str, host: str, agent_id: str, components: list[str],
         file_path (str): The path to the file to be uploaded.
         host (str): The host URL of Agentcore.
         port (int): The port number of Agentcore.
-        agent_id (UUID): The ID of the flow to which the file belongs.
+        agent_id (UUID): The ID of the agent to which the file belongs.
         components (str): List of component IDs or names that need the file.
         tweaks (dict): A dictionary of tweaks to be applied to the file.
 
@@ -75,28 +75,28 @@ def upload_file(file_path: str, host: str, agent_id: str, components: list[str],
     raise UploadError(msg)
 
 
-def get_flow(url: str, agent_id: str):
-    """Get the details of a flow from Agentcore.
+def get_agent(url: str, agent_id: str):
+    """Get the details of a agent from Agentcore.
 
     Args:
         url (str): The host URL of Agentcore.
         port (int): The port number of Agentcore.
-        agent_id (UUID): The ID of the flow to retrieve.
+        agent_id (UUID): The ID of the agent to retrieve.
 
     Returns:
-        dict: A dictionary containing the details of the flow.
+        dict: A dictionary containing the details of the agent.
 
     Raises:
         UploadError: If an error occurs during the retrieval process.
     """
     try:
-        flow_url = f"{url}/api/flows/{agent_id}"
-        response = httpx.get(flow_url)
+        agent_url = f"{url}/api/agents/{agent_id}"
+        response = httpx.get(agent_url)
         if response.status_code == httpx.codes.OK:
             json_response = response.json()
             return AgentBase(**json_response).model_dump()
     except Exception as e:
-        msg = f"Error retrieving flow: {e}"
+        msg = f"Error retrieving agent: {e}"
         raise UploadError(msg) from e
 
 

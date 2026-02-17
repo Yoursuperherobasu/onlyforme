@@ -38,10 +38,10 @@ async def log_transaction(
     target_id: str | None = None,
     error: str | None = None,
 ) -> None:
-    """Asynchronously logs a transaction record for a vertex in a flow if transaction storage is enabled.
+    """Asynchronously logs a transaction record for a vertex in a agent if transaction storage is enabled.
 
     Args:
-        agent_id: The flow ID (string or UUID)
+        agent_id: The agent ID (string or UUID)
         vertex_id: The source vertex ID
         status: Transaction status ("success" or "error")
         inputs: The vertex inputs (optional)
@@ -98,7 +98,7 @@ async def log_vertex_build(
     Converts parameters to string if present. Handles exceptions by logging errors.
     
     Args:
-        agent_id: The flow ID (string or UUID)
+        agent_id: The agent ID (string or UUID)
         vertex_id: The vertex ID
         valid: Whether the build was successful
         params: The vertex parameters

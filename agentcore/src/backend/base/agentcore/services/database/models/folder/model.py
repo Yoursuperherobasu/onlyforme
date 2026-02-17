@@ -54,7 +54,7 @@ class FolderReadWithAgents(FolderBase):
     def model_dump(self, **kwargs) -> dict:
         d = super().model_dump(**kwargs)
         if "agents" in d:
-            d["flows"] = d.pop("agents")
+            d["agents"] = d.pop("agents")
         return d
 
 

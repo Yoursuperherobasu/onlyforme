@@ -39,7 +39,7 @@ from agentcore.services.job_queue.service import JobQueueNotFoundError, JobQueue
 from agentcore.services.telemetry.schema import ComponentPayload, PlaygroundPayload
 
 
-async def start_flow_build(
+async def start_agent_build(
     *,
     agent_id: uuid.UUID,
     background_tasks: BackgroundTasks,
@@ -51,9 +51,9 @@ async def start_flow_build(
     log_builds: bool,
     current_user: CurrentActiveUser,
     queue_service: JobQueueService,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
 ) -> str:
-    """Start the flow build process by setting up the queue and starting the build task.
+    """Start the agent build process by setting up the queue and starting the build task.
 
     Returns:
         the job_id.
@@ -61,7 +61,7 @@ async def start_flow_build(
     job_id = str(uuid.uuid4())
     try:
         _, event_manager = queue_service.create_queue(job_id)
-        task_coro = generate_flow_events(
+        task_coro = generate_agent_events(
             agent_id=agent_id,
             background_tasks=background_tasks,
             event_manager=event_manager,
@@ -72,7 +72,7 @@ async def start_flow_build(
             start_component_id=start_component_id,
             log_builds=log_builds,
             current_user=current_user,
-            flow_name=flow_name,
+            agent_name=agent_name,
         )
         queue_service.start_job(job_id, task_coro)
     except Exception as e:
@@ -81,7 +81,7 @@ async def start_flow_build(
     return job_id
 
 
-async def get_flow_events_response(
+async def get_agent_events_response(
     *,
     job_id: str,
     queue_service: JobQueueService,
@@ -94,7 +94,7 @@ async def get_flow_events_response(
             if event_task is None:
                 logger.error(f"No event task found for job {job_id}")
                 raise HTTPException(status_code=404, detail="No event task found for job")
-            return await create_flow_response(
+            return await create_agent_response(
                 queue=main_queue,
                 event_manager=event_manager,
                 event_task=event_task,
@@ -143,16 +143,16 @@ async def get_flow_events_response(
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise
-        logger.exception(f"Unexpected error processing flow events for job {job_id}")
+        logger.exception(f"Unexpected error processing agent events for job {job_id}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc!s}") from exc
 
 
-async def create_flow_response(
+async def create_agent_response(
     queue: asyncio.Queue,
     event_manager: EventManager,
     event_task: asyncio.Task,
 ) -> DisconnectHandlerStreamingResponse:
-    """Create a streaming response for the flow build process."""
+    """Create a streaming response for the agent build process."""
 
     async def consume_and_yield() -> AsyncIterator[str]:
         while True:
@@ -179,7 +179,7 @@ async def create_flow_response(
     )
 
 
-async def generate_flow_events(
+async def generate_agent_events(
     *,
     agent_id: uuid.UUID,
     background_tasks: BackgroundTasks,
@@ -191,11 +191,11 @@ async def generate_flow_events(
     start_component_id: str | None,
     log_builds: bool,
     current_user: CurrentActiveUser,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
 ) -> None:
-    """Generate events for flow building process.
+    """Generate events for agent building process.
 
-    This function handles the core flow building logic and generates appropriate events:
+    This function handles the core agent building logic and generates appropriate events:
     - Building and validating the graph
     - Processing vertices
     - Handling errors and cleanup
@@ -216,7 +216,7 @@ async def generate_flow_events(
             agent_id_str = str(agent_id)
             # Create a fresh session for database operations
             async with session_scope() as fresh_session:
-                graph = await create_graph(fresh_session, agent_id_str, flow_name)
+                graph = await create_graph(fresh_session, agent_id_str, agent_name)
 
             first_layer = sort_vertices(graph)
 
@@ -255,7 +255,7 @@ async def generate_flow_events(
             ),
         )
 
-    async def create_graph(fresh_session, agent_id_str: str, flow_name: str | None) -> Graph | LangGraphAdapter:
+    async def create_graph(fresh_session, agent_id_str: str, agent_name: str | None) -> Graph | LangGraphAdapter:
         if inputs is not None and getattr(inputs, "session", None) is not None:
             effective_session_id = inputs.session
         else:
@@ -270,16 +270,16 @@ async def generate_flow_events(
                 session_id=effective_session_id,
             )
 
-        if not flow_name:
+        if not agent_name:
             result = await fresh_session.exec(select(Agent.name).where(Agent.id == agent_id))
-            flow_name = result.first()
+            agent_name = result.first()
 
         # Build graph using LangGraph
         return await build_graph_from_data(
             agent_id=agent_id_str,
             payload=data.model_dump(),
             user_id=str(current_user.id),
-            flow_name=flow_name,
+            agent_name=agent_name,
             session_id=effective_session_id,
         )
 
@@ -524,12 +524,12 @@ async def generate_flow_events(
     await event_manager.queue.put((None, None, time.time()))
 
 
-async def cancel_flow_build(
+async def cancel_agent_build(
     *,
     job_id: str,
     queue_service: JobQueueService,
 ) -> bool:
-    """Cancel an ongoing flow build job.
+    """Cancel an ongoing agent build job.
 
     Args:
         job_id: The unique identifier of the job to cancel
@@ -563,7 +563,7 @@ async def cancel_flow_build(
     except asyncio.CancelledError:
         # Check if the task was actually cancelled
         if task_before_cleanup.cancelled():
-            logger.info(f"Successfully cancelled flow build for job_id {job_id} (CancelledError caught)")
+            logger.info(f"Successfully cancelled agent build for job_id {job_id} (CancelledError caught)")
             return True
         # If the task wasn't cancelled, re-raise the exception
         logger.error(f"CancelledError caught but task for job_id {job_id} was not cancelled")
@@ -572,9 +572,9 @@ async def cancel_flow_build(
     # If no exception was raised, verify that the task was actually cancelled
     # The task should be done (cancelled) after cleanup
     if task_before_cleanup.cancelled():
-        logger.info(f"Successfully cancelled flow build for job_id {job_id}")
+        logger.info(f"Successfully cancelled agent build for job_id {job_id}")
         return True
 
     # If we get here, the task wasn't cancelled properly
-    logger.error(f"Failed to cancel flow build for job_id {job_id}, task is still running")
+    logger.error(f"Failed to cancel agent build for job_id {job_id}, task is still running")
     return False

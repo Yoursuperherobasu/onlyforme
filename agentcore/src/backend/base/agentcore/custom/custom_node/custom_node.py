@@ -85,7 +85,7 @@ class ExecutableNode(NodeBase):
         self.status: Any | None = None
 
         # Initialize collections with empty defaults
-        self._flows_data: list[Data] | None = None
+        self._agents_data: list[Data] | None = None
         self._outputs: list[OutputValue] = []
         self._logs: list[Log] = []
         self._output_logs: dict[str, list[Log] | Log] = {}
@@ -180,8 +180,8 @@ class ExecutableNode(NodeBase):
         return self.graph.agent_id
 
     @property
-    def flow_name(self):
-        return self.graph.flow_name
+    def agent_name(self):
+        return self.graph.agent_name
 
     def _get_field_order(self):
         return self.field_order or list(self.field_config.keys())
@@ -460,7 +460,7 @@ class ExecutableNode(NodeBase):
         self,
         inputs: dict | list[dict] | None = None,
         agent_id: str | None = None,
-        flow_name: str | None = None,
+        agent_name: str | None = None,
         output_type: str | None = "chat",
         tweaks: dict | None = None,
     ) -> Any:
@@ -468,7 +468,7 @@ class ExecutableNode(NodeBase):
             inputs=inputs,
             output_type=output_type,
             agent_id=agent_id,
-            flow_name=flow_name,
+            agent_name=agent_name,
             tweaks=tweaks,
             user_id=str(self.user_id),
             run_id=self.graph.run_id,
@@ -484,7 +484,7 @@ class ExecutableNode(NodeBase):
         try:
             return await list_agents(user_id=str(self.user_id))
         except Exception as e:
-            msg = f"Error listing flows: {e}"
+            msg = f"Error listing agents: {e}"
             raise ValueError(msg) from e
 
     def build(self, *args: Any, **kwargs: Any) -> Any:

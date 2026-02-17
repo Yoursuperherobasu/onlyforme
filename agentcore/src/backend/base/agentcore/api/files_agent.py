@@ -23,25 +23,25 @@ router = APIRouter(tags=["Files"], prefix="/files")
 # Create dep that gets the agent_id from the request
 # then finds it in the database and returns it while
 # using the current user as the owner
-async def get_flow(
+async def get_agent(
     agent_id: UUID,
     current_user: CurrentActiveUser,
     session: DbSession,
 ):
     # AttributeError: 'SelectOfScalar' object has no attribute 'first'
-    flow = await session.get(Agent, agent_id)
-    if not flow:
-        raise HTTPException(status_code=404, detail="Flow not found")
-    if flow.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You don't have access to this flow")
-    return flow
+    agent = await session.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="agent not found")
+    if agent.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You don't have access to this agent")
+    return agent
 
 
 @router.post("/upload/{agent_id}", status_code=HTTPStatus.CREATED)
 async def upload_file(
     *,
     file: UploadFile,
-    flow: Annotated[Agent, Depends(get_flow)],
+    agent: Annotated[Agent, Depends(get_agent)],
     current_user: CurrentActiveUser,
     storage_service: Annotated[StorageService, Depends(get_storage_service)],
     settings_service: Annotated[SettingsService, Depends(get_settings_service)],
@@ -56,17 +56,17 @@ async def upload_file(
             status_code=413, detail=f"File size is larger than the maximum file size {max_file_size_upload}MB."
         )
 
-    if flow.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You don't have access to this flow")
+    if agent.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You don't have access to this agent")
 
     try:
         file_content = await file.read()
         timestamp = datetime.now(tz=timezone.utc).astimezone().strftime("%Y-%m-%d_%H-%M-%S")
         file_name = file.filename or hashlib.sha256(file_content).hexdigest()
         full_file_name = f"{timestamp}_{file_name}"
-        folder = str(flow.id)
+        folder = str(agent.id)
         await storage_service.save_file(agent_id=folder, file_name=full_file_name, data=file_content)
-        return UploadFileResponse(agent_id=str(flow.id), file_path=f"{folder}/{full_file_name}")
+        return UploadFileResponse(agent_id=str(agent.id), file_path=f"{folder}/{full_file_name}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -170,11 +170,11 @@ async def list_profile_pictures():
 
 @router.get("/list/{agent_id}")
 async def list_files(
-    flow: Annotated[Agent, Depends(get_flow)],
+    agent: Annotated[Agent, Depends(get_agent)],
     storage_service: Annotated[StorageService, Depends(get_storage_service)],
 ):
     try:
-        files = await storage_service.list_files(agent_id=str(flow.id))
+        files = await storage_service.list_files(agent_id=str(agent.id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -184,11 +184,11 @@ async def list_files(
 @router.delete("/delete/{agent_id}/{file_name}")
 async def delete_file(
     file_name: str,
-    flow: Annotated[Agent, Depends(get_flow)],
+    agent: Annotated[Agent, Depends(get_agent)],
     storage_service: Annotated[StorageService, Depends(get_storage_service)],
 ):
     try:
-        await storage_service.delete_file(agent_id=str(flow.id), file_name=file_name)
+        await storage_service.delete_file(agent_id=str(agent.id), file_name=file_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

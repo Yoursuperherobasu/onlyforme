@@ -74,7 +74,7 @@ async def aget_messages(
         session_id (Optional[str]): The session ID associated with the messages.
         order_by (Optional[str]): The field to order the messages by. Defaults to "timestamp".
         order (Optional[str]): The order in which to retrieve the messages. Defaults to "DESC".
-        agent_id (Optional[UUID]): The flow ID associated with the messages.
+        agent_id (Optional[UUID]): The Agent ID associated with the messages.
         limit (Optional[int]): The maximum number of messages to retrieve.
 
     Returns:
@@ -225,7 +225,7 @@ async def astore_message(
 
     Args:
         message (Message): The message to store.
-        agent_id (Optional[str]): The flow ID associated with the message.
+        agent_id (Optional[str]): The agent ID associated with the message.
             When running from the CustomComponent you can access this using `self.graph.agent_id`.
 
     Returns:

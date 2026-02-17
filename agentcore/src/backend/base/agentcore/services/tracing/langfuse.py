@@ -112,7 +112,7 @@ class LangFuseTracer(BaseTracer):
         user_id: str | None = None,
         session_id: str | None = None,
         agent_id: str | None = None,
-        flow_name: str | None = None,
+        agent_name: str | None = None,
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
     ) -> None:
@@ -123,7 +123,7 @@ class LangFuseTracer(BaseTracer):
         self.user_id = user_id
         self.session_id = session_id
         self.agent_id = agent_id or trace_name
-        self.flow_name = flow_name
+        self.agent_name = agent_name
         self.observability_project_id = observability_project_id
         self.observability_project_name = observability_project_name
 
@@ -192,19 +192,19 @@ class LangFuseTracer(BaseTracer):
                 try:
                     if not self._client.auth_check():
                         logger.warning(
-                            f"Langfuse auth_check failed for flow={self.flow_name}. "
+                            f"Langfuse auth_check failed for agent={self.agent_name}. "
                             f"Check LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_BASE_URL. "
                             f"Will attempt to continue anyway."
                         )
                     else:
-                        logger.debug(f"Langfuse auth_check passed for flow={self.flow_name}")
+                        logger.debug(f"Langfuse auth_check passed for agent={self.agent_name}")
                 except Exception as e:
                     logger.warning(f"Langfuse auth_check error (continuing anyway): {e}")
 
             # Build trace metadata
             trace_metadata = {
                 "agent_id": self.agent_id,
-                "flow_name": self.flow_name,
+                "agent_name": self.agent_name,
                 "run_id": str(self.trace_id),
                 "user_id": self.user_id,
                 "session_id": self.session_id,
@@ -218,7 +218,7 @@ class LangFuseTracer(BaseTracer):
             # The root span becomes the trace, input/output derive from it
             self._root_context = self._client.start_as_current_observation(
                 as_type="span",
-                name=self.flow_name or self.agent_id,
+                name=self.agent_name or self.agent_id,
                 metadata=trace_metadata,
             )
             self._root_span = self._root_context.__enter__()
@@ -231,12 +231,12 @@ class LangFuseTracer(BaseTracer):
             self._propagate_context.__enter__()
 
             self._ready = True
-            logger.info(f"Langfuse v3 tracer ready: flow={self.flow_name}, user={self.user_id}, session={self.session_id}")
+            logger.info(f"Langfuse v3 tracer ready: agent={self.agent_name}, user={self.user_id}, session={self.session_id}")
 
         except ImportError:
             logger.warning("langfuse not installed - tracing disabled")
         except Exception as e:
-            logger.error(f"Error setting up Langfuse tracer for flow={self.flow_name}: {e}", exc_info=True)
+            logger.error(f"Error setting up Langfuse tracer for agent={self.agent_name}: {e}", exc_info=True)
 
     # ======================================================
     # Span lifecycle
@@ -258,8 +258,8 @@ class LangFuseTracer(BaseTracer):
 
         name = trace_name.removesuffix(f" ({trace_id})")
 
-        # Prevent duplicate root span if the component name matches the flow name
-        root_name = self.flow_name or self.agent_id
+        # Prevent duplicate root span if the component name matches the agent name
+        root_name = self.agent_name or self.agent_id
         if root_name and name == root_name:
             return
 

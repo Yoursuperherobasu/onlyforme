@@ -240,7 +240,7 @@ class AgentHeader(BaseModel):
     name: str = Field(description="The name of the agent")
     folder_id: UUID | None = Field(
         None,
-        description="The ID of the folder containing the flow. None if not associated with a folder",
+        description="The ID of the folder containing the agent. None if not associated with a folder",
     )
     is_component: bool | None = Field(None, description="Flag indicating whether the agent is a component")
     endpoint_name: str | None = Field(None, description="The name of the endpoint associated with this agent")

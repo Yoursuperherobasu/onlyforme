@@ -103,7 +103,7 @@ def validate_input_and_tweaks(input_request: SimplifiedAPIRequest) -> None:
 
 
 async def simple_run_agent(
-    flow: Agent,
+    agent: Agent,
     input_request: SimplifiedAPIRequest,
     *,
     stream: bool = False,
@@ -116,18 +116,18 @@ async def simple_run_agent(
 
         task_result: list[RunOutputs] = []
         user_id = api_key_user.id if api_key_user else None
-        agent_id_str = str(flow.id)
-        if flow.data is None:
-            msg = f"Flow {agent_id_str} has no data"
+        agent_id_str = str(agent.id)
+        if agent.data is None:
+            msg = f"agent {agent_id_str} has no data"
             raise ValueError(msg)
-        graph_data = flow.data.copy()
+        graph_data = agent.data.copy()
         graph_data = process_tweaks(graph_data, input_request.tweaks or {}, stream=stream)
         # Build graph using LangGraph
         graph = await build_graph_from_data(
             agent_id=agent_id_str,
             payload=graph_data,
             user_id=str(user_id) if user_id else None,
-            flow_name=flow.name,
+            agent_name=agent.name,
         )
         inputs = None
         if input_request.input_value is not None:
@@ -167,17 +167,17 @@ async def simple_run_agent(
 
 
 async def simple_run_agent_task(
-    flow: Agent,
+    agent: Agent,
     input_request: SimplifiedAPIRequest,
     *,
     stream: bool = False,
     api_key_user: User | None = None,
     event_manager: EventManager | None = None,
 ):
-    """Run a flow task as a BackgroundTask, therefore it should not throw exceptions."""
+    """Run a agent task as a BackgroundTask, therefore it should not throw exceptions."""
     try:
         return await simple_run_agent(
-            flow=flow,
+            agent=agent,
             input_request=input_request,
             stream=stream,
             api_key_user=api_key_user,
@@ -185,7 +185,7 @@ async def simple_run_agent_task(
         )
 
     except Exception:  # noqa: BLE001
-        logger.exception(f"Error running flow {flow.id} task")
+        logger.exception(f"Error running agent {agent.id} task")
 
 
 async def consume_and_yield(queue: asyncio.Queue, client_consumed_queue: asyncio.Queue) -> AsyncGenerator:
@@ -224,39 +224,39 @@ async def consume_and_yield(queue: asyncio.Queue, client_consumed_queue: asyncio
 
 
 async def run_agent_generator(
-    flow: Agent,
+    agent: Agent,
     input_request: SimplifiedAPIRequest,
     api_key_user: User | None,
     event_manager: EventManager,
     client_consumed_queue: asyncio.Queue,
 ) -> None:
-    """Executes a flow asynchronously and manages event streaming to the client.
+    """Executes a agent asynchronously and manages event streaming to the client.
 
-    This coroutine runs a flow with streaming enabled and handles the event lifecycle,
+    This coroutine runs a agent with streaming enabled and handles the event lifecycle,
     including success completion and error scenarios.
 
     Args:
-        flow (Flow): The flow to execute
-        input_request (SimplifiedAPIRequest): The input parameters for the flow
-        api_key_user (User | None): Optional authenticated user running the flow
+        agent (agent): The agent to execute
+        input_request (SimplifiedAPIRequest): The input parameters for the agent
+        api_key_user (User | None): Optional authenticated user running the agent
         event_manager (EventManager): Manages the streaming of events to the client
         client_consumed_queue (asyncio.Queue): Tracks client consumption of events
 
     Events Generated:
-        - "add_message": Sent when new messages are added during flow execution
+        - "add_message": Sent when new messages are added during agent execution
         - "token": Sent for each token generated during streaming
-        - "end": Sent when flow execution completes, includes final result
+        - "end": Sent when agent execution completes, includes final result
         - "error": Sent if an error occurs during execution
 
     Notes:
-        - Runs the flow with streaming enabled via simple_run_agent()
+        - Runs the agent with streaming enabled via simple_run_agent()
         - On success, sends the final result via event_manager.on_end()
         - On error, logs the error and sends it via event_manager.on_error()
         - Always sends a final None event to signal completion
     """
     try:
         result = await simple_run_agent(
-            flow=flow,
+            agent=agent,
             input_request=input_request,
             stream=True,
             api_key_user=api_key_user,
@@ -265,7 +265,7 @@ async def run_agent_generator(
         event_manager.on_end(data={"result": result.model_dump()})
         await client_consumed_queue.get()
     except (ValueError, InvalidChatInputError, SerializationError) as e:
-        logger.error(f"Error running flow: {e}")
+        logger.error(f"Error running agent: {e}")
         event_manager.on_error(data={"error": str(e)})
     finally:
         await event_manager.queue.put((None, None, time.time))
@@ -275,20 +275,20 @@ async def run_agent_generator(
 async def simplified_run_agent(
     *,
     background_tasks: BackgroundTasks,
-    flow: Annotated[AgentRead | None, Depends(get_agent_by_id_or_endpoint_name)],
+    agent: Annotated[AgentRead | None, Depends(get_agent_by_id_or_endpoint_name)],
     input_request: SimplifiedAPIRequest | None = None,
     stream: bool = False,
     api_key_user: Annotated[UserRead, Depends(api_key_security)],
 ):
-    """Executes a specified flow by ID with support for streaming and telemetry.
+    """Executes a specified agent by ID with support for streaming and telemetry.
 
-    This endpoint executes a flow identified by ID or name, with options for streaming the response
+    This endpoint executes a agent identified by ID or name, with options for streaming the response
     and tracking execution metrics. It handles both streaming and non-streaming execution modes.
 
     Args:
         background_tasks (BackgroundTasks): FastAPI background task manager
-        flow (AgentRead | None): The flow to execute, loaded via dependency
-        input_request (SimplifiedAPIRequest | None): Input parameters for the flow
+        agent (AgentRead | None): The agent to execute, loaded via dependency
+        input_request (SimplifiedAPIRequest | None): Input parameters for the agent
         stream (bool): Whether to stream the response
         api_key_user (UserRead): Authenticated user from API key
         request (Request): The incoming HTTP request
@@ -298,7 +298,7 @@ async def simplified_run_agent(
         or a RunResponse with the complete execution results
 
     Raises:
-        HTTPException: For flow not found (404) or invalid input (400)
+        HTTPException: For agent not found (404) or invalid input (400)
         APIException: For internal execution errors (500)
 
     Notes:
@@ -313,8 +313,8 @@ async def simplified_run_agent(
     """
     telemetry_service = get_telemetry_service()
     input_request = input_request if input_request is not None else SimplifiedAPIRequest()
-    if flow is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flow not found")
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
     start_time = time.perf_counter()
 
     if stream:
@@ -323,7 +323,7 @@ async def simplified_run_agent(
         event_manager = create_stream_tokens_event_manager(queue=asyncio_queue)
         main_task = asyncio.create_task(
             run_agent_generator(
-                flow=flow,
+                agent=agent,
                 input_request=input_request,
                 api_key_user=api_key_user,
                 event_manager=event_manager,
@@ -343,7 +343,7 @@ async def simplified_run_agent(
 
     try:
         result = await simple_run_agent(
-            flow=flow,
+            agent=agent,
             input_request=input_request,
             stream=stream,
             api_key_user=api_key_user,
@@ -370,11 +370,11 @@ async def simplified_run_agent(
             ),
         )
         if "badly formed hexadecimal UUID string" in str(exc):
-            # This means the Flow ID is not a valid UUID which means it can't find the flow
+            # This means the agent ID is not a valid UUID which means it can't find the agent
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         if "not found" in str(exc):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, flow=flow) from exc
+        raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, agent=agent) from exc
     except InvalidChatInputError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
@@ -387,23 +387,23 @@ async def simplified_run_agent(
                 run_error_message=str(exc),
             ),
         )
-        raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, flow=flow) from exc
+        raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, agent=agent) from exc
 
     return result
 
 
 @router.post("/webhook/{agent_id_or_name}", response_model=dict, status_code=HTTPStatus.ACCEPTED)  # noqa: RUF100, FAST003
 async def webhook_run_agent(
-    flow: Annotated[Agent, Depends(get_agent_by_id_or_endpoint_name)],
+    agent: Annotated[Agent, Depends(get_agent_by_id_or_endpoint_name)],
     user: Annotated[User, Depends(get_user_by_agent_id_or_endpoint_name)],
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    """Run a flow using a webhook request.
+    """Run a agent using a webhook request.
 
     Args:
-        flow (Flow, optional): The flow to be executed. Defaults to Depends(get_flow_by_id).
-        user (User): The flow user.
+        agent (agent, optional): The agent to be executed. Defaults to Depends(get_agent_by_id).
+        user (User): The agent user.
         request (Request): The incoming HTTP request.
         background_tasks (BackgroundTasks): The background tasks manager.
 
@@ -411,7 +411,7 @@ async def webhook_run_agent(
         dict: A dictionary containing the status of the task.
 
     Raises:
-        HTTPException: If the flow is not found or if there is an error processing the request.
+        HTTPException: If the agent is not found or if there is an error processing the request.
     """
     telemetry_service = get_telemetry_service()
     start_time = time.perf_counter()
@@ -425,12 +425,12 @@ async def webhook_run_agent(
             raise HTTPException(status_code=500, detail=error_msg) from exc
 
         if not data:
-            error_msg = "Request body is empty. You should provide a JSON payload containing the flow ID."
+            error_msg = "Request body is empty. You should provide a JSON payload containing the agent ID."
             raise HTTPException(status_code=400, detail=error_msg)
 
         try:
-            # get all webhook components in the flow
-            webhook_components = get_all_webhook_components_in_agent(flow.data)
+            # get all webhook components in the agent
+            webhook_components = get_all_webhook_components_in_agent(agent.data)
             tweaks = {}
 
             for component in webhook_components:
@@ -446,7 +446,7 @@ async def webhook_run_agent(
             logger.debug("Starting background task")
             background_tasks.add_task(
                 simple_run_agent_task,
-                flow=flow,
+                agent=agent,
                 input_request=input_request,
                 api_key_user=user,
             )

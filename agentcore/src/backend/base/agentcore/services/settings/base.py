@@ -183,9 +183,9 @@ class Settings(BaseSettings):
     """If set to True, Agentcore will not track telemetry."""
     telemetry_base_url: str = "https://localhost:7860"  # Disabled endpoint
     transactions_storage_enabled: bool = True
-    """If set to True, Agentcore will track transactions between flows."""
+    """If set to True, Agentcore will track transactions between agents."""
     vertex_builds_storage_enabled: bool = True
-    """If set to True, Agentcore will keep track of each vertex builds (outputs) in the UI for any flow."""
+    """If set to True, Agentcore will keep track of each vertex builds (outputs) in the UI for any agent."""
 
     # Config
     host: str = "localhost"
@@ -203,9 +203,9 @@ class Settings(BaseSettings):
     frontend_path: str | None = None
     """The path to the frontend directory containing build files. This is for development purposes only.."""
     auto_saving: bool = True
-    """If set to True, Agentcore will auto save flows."""
+    """If set to True, Agentcore will auto save agents."""
     auto_saving_interval: int = 1000
-    """The interval in ms at which Agentcore will auto save flows."""
+    """The interval in ms at which Agentcore will auto save agents."""
     health_check_max_retries: int = 5
     """The maximum number of retries for the health check."""
     max_file_size_upload: int = 1024
@@ -237,12 +237,12 @@ class Settings(BaseSettings):
     mcp_server_enable_progress_notifications: bool = False
     """If set to False, Agentcore will not send progress notifications in the MCP server."""
 
-    # Public Flow Settings
+    # Public Agent Settings
     public_agent_cleanup_interval: int = Field(default=3600, gt=600)
-    """The interval in seconds at which public temporary flows will be cleaned up.
+    """The interval in seconds at which public temporary agents will be cleaned up.
     Default is 1 hour (3600 seconds). Minimum is 600 seconds (10 minutes)."""
     public_agent_expiration: int = Field(default=86400, gt=600)
-    """The time in seconds after which a public temporary flow will be considered expired and eligible for cleanup.
+    """The time in seconds after which a public temporary agent will be considered expired and eligible for cleanup.
     Default is 24 hours (86400 seconds). Minimum is 600 seconds (10 minutes)."""
     event_delivery: Literal["polling", "streaming", "direct"] = "streaming"
     """How to deliver build events to the frontend. Can be 'polling', 'streaming' or 'direct'."""

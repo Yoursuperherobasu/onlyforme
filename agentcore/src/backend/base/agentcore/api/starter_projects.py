@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from agentcore.graph_langgraph import GraphDump
 
-router = APIRouter(prefix="/starter-projects", tags=["Flows"])
+router = APIRouter(prefix="/starter-projects", tags=["agents"])
 
 
 @router.get("/", status_code=200)

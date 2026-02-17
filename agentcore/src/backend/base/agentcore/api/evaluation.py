@@ -26,9 +26,9 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 from sqlalchemy import or_
 from agentcore.services.deps import session_scope
-# `flow` objects are stored as `Agent` in the DB; import AccessTypeEnum and
-# alias `Agent` to `Flow` so the rest of the module can keep using `Flow`.
-from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent as Flow
+# `agent` objects are stored as `Agent` in the DB; import AccessTypeEnum and
+# alias `Agent` to `agent` so the rest of the module can keep using `agent`.
+from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent as agent
 
 from agentcore.services.auth.utils import get_current_active_user
 from agentcore.services.database.models.user.model import User
@@ -110,7 +110,7 @@ class JudgeConfig(BaseModel):
     # Filtering options to select traces
     trace_id: Optional[str] = None
     agent_id: Optional[str] = None
-    flow_name: Optional[str] = None
+    agent_name: Optional[str] = None
     session_id: Optional[str] = None
     project_name: Optional[str] = None
     ts_from: Optional[str] = None  # ISO timestamp
@@ -131,7 +131,7 @@ class EvaluatorCreateRequest(BaseModel):
     trace_id: Optional[str] = None
     agent_id: Optional[str] = None
     agent_ids: Optional[List[str]] = None
-    flow_name: Optional[str] = None
+    agent_name: Optional[str] = None
     session_id: Optional[str] = None
     project_name: Optional[str] = None
     ts_from: Optional[str] = None  # ISO timestamp
@@ -151,7 +151,7 @@ class EvaluatorResponse(BaseModel):
     ground_truth: Optional[str] = None
     trace_id: Optional[str] = None
     agent_id: Optional[str] = None
-    flow_name: Optional[str] = None
+    agent_name: Optional[str] = None
     session_id: Optional[str] = None
     project_name: Optional[str] = None
     ts_from: Optional[str] = None
@@ -184,7 +184,7 @@ class TraceForReview(BaseModel):
     input: Any | None
     output: Any | None
     session_id: str | None
-    flow_name: str | None
+    agent_name: str | None
     has_scores: bool = False
     score_count: int = 0
 
@@ -697,25 +697,25 @@ def _run_async(coro):
     return container.get("value")
 
 
-async def _run_dataset_item_with_flow(
+async def _run_dataset_item_with_agent(
     *,
-    flow_payload: dict[str, Any],
+    agent_payload: dict[str, Any],
     user_id: str,
     item_input: Any,
     session_id: str,
 ) -> Any:
-    """Execute one dataset item input against a flow and return parsed output."""
+    """Execute one dataset item input against a agent and return parsed output."""
     from agentcore.api.endpoints import simple_run_agent
     from agentcore.api.v1_schemas import SimplifiedAPIRequest
 
-    flow_stub = SimpleNamespace(
-        id=flow_payload["id"],
-        name=flow_payload["name"],
-        data=flow_payload["data"],
+    agent_stub = SimpleNamespace(
+        id=agent_payload["id"],
+        name=agent_payload["name"],
+        data=agent_payload["data"],
     )
     api_user_stub = SimpleNamespace(id=user_id)
     run_response = await simple_run_agent(
-        flow=flow_stub,
+        agent=agent_stub,
         input_request=SimplifiedAPIRequest(
             input_value=_to_text(item_input),
             input_type="chat",
@@ -1501,7 +1501,7 @@ def _extract_trace_user_id(trace_dict: Dict[str, Any]) -> str | None:
 
 
 def _normalize_agent_id(agent_id: str | None) -> str | None:
-    """Normalize flow identifiers from UI/API inputs."""
+    """Normalize agent identifiers from UI/API inputs."""
     if not agent_id:
         return None
     value = str(agent_id).strip()
@@ -1525,7 +1525,7 @@ def _normalize_targets(target: Union[str, List[str], None]) -> List[str]:
 
 
 def _normalize_agent_ids(agent_ids: Optional[List[str]]) -> List[str]:
-    """Normalize and de-duplicate flow ids."""
+    """Normalize and de-duplicate agent ids."""
     if not agent_ids:
         return []
     normalized: List[str] = []
@@ -1537,10 +1537,10 @@ def _normalize_agent_ids(agent_ids: Optional[List[str]]) -> List[str]:
 
 
 def _extract_trace_agent_id(trace_dict: Dict[str, Any]) -> str | None:
-    """Extract flow id from trace metadata/tags."""
+    """Extract agent id from trace metadata/tags."""
     metadata = trace_dict.get("metadata")
     if isinstance(metadata, dict):
-        agent_id = _normalize_agent_id(metadata.get("agent_id") or metadata.get("flowId"))
+        agent_id = _normalize_agent_id(metadata.get("agent_id") or metadata.get("agentId"))
         if agent_id:
             return agent_id
 
@@ -1554,18 +1554,18 @@ def _extract_trace_agent_id(trace_dict: Dict[str, Any]) -> str | None:
     return None
 
 
-def _extract_trace_flow_name(trace_dict: Dict[str, Any]) -> str | None:
-    """Extract flow name from trace metadata/tags/name."""
+def _extract_trace_agent_name(trace_dict: Dict[str, Any]) -> str | None:
+    """Extract agent name from trace metadata/tags/name."""
     metadata = trace_dict.get("metadata")
     if isinstance(metadata, dict):
-        value = metadata.get("flow_name") or metadata.get("flowName")
+        value = metadata.get("agent_name") or metadata.get("agentName")
         if value:
             return str(value)
 
     tags = trace_dict.get("tags") or []
     if isinstance(tags, list):
         for tag in tags:
-            if isinstance(tag, str) and tag.startswith("flow_name:"):
+            if isinstance(tag, str) and tag.startswith("agent_name:"):
                 return tag.split(":", 1)[1]
 
     name = trace_dict.get("name")
@@ -1619,7 +1619,7 @@ def _trace_matches_evaluator_filters(
     session_id: str | None = None,
     agent_id: str | None = None,
     agent_ids: Optional[List[str]] = None,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
     project_name: str | None = None,
     ts_from: datetime | None = None,
     ts_to: datetime | None = None,
@@ -1629,7 +1629,7 @@ def _trace_matches_evaluator_filters(
     trace_run_id = _extract_trace_run_id(trace_dict)
     trace_session_id = str(trace_dict.get("session_id") or "")
     trace_agent_id = _extract_trace_agent_id(trace_dict)
-    trace_flow_name = _extract_trace_flow_name(trace_dict) or ""
+    trace_agent_name = _extract_trace_agent_name(trace_dict) or ""
     trace_project_name = _extract_trace_project_name(trace_dict) or ""
     trace_ts = _parse_trace_timestamp(trace_dict.get("timestamp"))
 
@@ -1641,7 +1641,7 @@ def _trace_matches_evaluator_filters(
     if session_id and str(session_id) != trace_session_id:
         return False
 
-    # Strict flow filtering: if filters are present and trace does not expose a matching agent_id, reject.
+    # Strict agent filtering: if filters are present and trace does not expose a matching agent_id, reject.
     if normalized_agent_id:
         if not trace_agent_id or trace_agent_id != normalized_agent_id:
             return False
@@ -1649,7 +1649,7 @@ def _trace_matches_evaluator_filters(
         if not trace_agent_id or trace_agent_id not in normalized_agent_ids:
             return False
 
-    if flow_name and flow_name.lower() not in trace_flow_name.lower():
+    if agent_name and agent_name.lower() not in trace_agent_name.lower():
         return False
     if project_name and project_name.lower() not in trace_project_name.lower():
         return False
@@ -1718,14 +1718,14 @@ def _choose_trace_candidate(
     user_id: str,
     session_id: str | None = None,
     agent_id: str | None = None,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
 ) -> Dict[str, Any] | None:
     """Choose the best matching trace from a list using contextual scoring."""
     normalized_agent_id = _normalize_agent_id(agent_id)
     requested_session = str(session_id) if session_id else None
-    requested_flow_name = str(flow_name).lower() if flow_name else None
+    requested_agent_name = str(agent_name).lower() if agent_name else None
     requested_project_name = str(project_name).lower() if project_name else None
     requested_user_id = str(user_id) if user_id else None
 
@@ -1739,7 +1739,7 @@ def _choose_trace_candidate(
         candidate_user_id = str(_extract_trace_user_id(trace_dict) or "")
         candidate_session_id = str(trace_dict.get("session_id") or "")
         candidate_agent_id = _extract_trace_agent_id(trace_dict)
-        candidate_flow_name = (_extract_trace_flow_name(trace_dict) or "").lower()
+        candidate_agent_name = (_extract_trace_agent_name(trace_dict) or "").lower()
         candidate_project_name = (_extract_trace_project_name(trace_dict) or "").lower()
         candidate_run_id = _extract_trace_run_id(trace_dict)
         candidate_ts = _parse_trace_timestamp(trace_dict.get("timestamp"))
@@ -1748,7 +1748,7 @@ def _choose_trace_candidate(
         if requested_user_id and candidate_user_id and candidate_user_id != requested_user_id:
             continue
 
-        # Exclude explicit conflicts for session/flow when candidate provides those fields.
+        # Exclude explicit conflicts for session/agent when candidate provides those fields.
         if requested_session and candidate_session_id and candidate_session_id != requested_session:
             continue
         if normalized_agent_id and candidate_agent_id and candidate_agent_id != normalized_agent_id:
@@ -1765,7 +1765,7 @@ def _choose_trace_candidate(
             score += 140.0
         if normalized_agent_id and candidate_agent_id == normalized_agent_id:
             score += 120.0
-        if requested_flow_name and requested_flow_name in candidate_flow_name:
+        if requested_agent_name and requested_agent_name in candidate_agent_name:
             score += 50.0
         if requested_project_name and requested_project_name in candidate_project_name:
             score += 35.0
@@ -1822,7 +1822,7 @@ async def _resolve_trace_for_judge(
     user_id: str,
     session_id: str | None = None,
     agent_id: str | None = None,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
     max_attempts: int = 8,
@@ -1872,7 +1872,7 @@ async def _resolve_trace_for_judge(
             user_id=str(user_id),
             session_id=session_id,
             agent_id=agent_id,
-            flow_name=flow_name,
+            agent_name=agent_name,
             project_name=project_name,
             timestamp=resolved_timestamp,
         )
@@ -1893,7 +1893,7 @@ async def _resolve_trace_for_judge(
                     user_id=str(user_id),
                     session_id=session_id,
                     agent_id=agent_id,
-                    flow_name=flow_name,
+                    agent_name=agent_name,
                     project_name=project_name,
                     timestamp=resolved_timestamp,
                 )
@@ -1919,7 +1919,7 @@ async def run_llm_judge_task(
     ground_truth: str | None = None,
     session_id: str | None = None,
     agent_id: str | None = None,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
 ):
@@ -1939,7 +1939,7 @@ async def run_llm_judge_task(
             user_id=str(user_id),
             session_id=session_id,
             agent_id=agent_id,
-            flow_name=flow_name,
+            agent_name=agent_name,
             project_name=project_name,
             timestamp=timestamp,
         )
@@ -2150,33 +2150,33 @@ Respond ONLY with valid JSON, no markdown formatting."""
         logger.opt(exception=True).error("LLM Judge error for trace_ref={}: {}", trace_id, str(e))
 
 
-async def _resolve_flow_payload_for_experiment(
+async def _resolve_agent_payload_for_experiment(
     *,
     agent_id: str | None,
     current_user: User,
 ) -> dict[str, Any] | None:
-    """Resolve flow payload for dataset experiment task execution."""
+    """Resolve agent payload for dataset experiment task execution."""
     normalized_agent_id = _normalize_agent_id(agent_id)
     if not normalized_agent_id:
         return None
     try:
-        flow_uuid = UUID(normalized_agent_id)
+        agent_uuid = UUID(normalized_agent_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid agent_id for experiment run")
 
     async with session_scope() as session:
-        flow = await session.get(Flow, flow_uuid)
-        if not flow:
-            raise HTTPException(status_code=404, detail=f"Flow {normalized_agent_id} not found")
-        if str(flow.user_id) != str(current_user.id) and flow.access_type != AccessTypeEnum.PUBLIC:
-            raise HTTPException(status_code=403, detail="You do not have access to this flow")
-        if flow.data is None:
-            raise HTTPException(status_code=400, detail="Selected flow has no data payload")
+        agent = await session.get(agent, agent_uuid)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"agent {normalized_agent_id} not found")
+        if str(agent.user_id) != str(current_user.id) and agent.access_type != AccessTypeEnum.PUBLIC:
+            raise HTTPException(status_code=403, detail="You do not have access to this agent")
+        if agent.data is None:
+            raise HTTPException(status_code=400, detail="Selected agent has no data payload")
 
         return {
-            "id": str(flow.id),
-            "name": flow.name or str(flow.id),
-            "data": flow.data,
+            "id": str(agent.id),
+            "name": agent.name or str(agent.id),
+            "data": agent.data,
         }
 
 
@@ -2229,7 +2229,7 @@ def _run_dataset_experiment_sync(
     run_name: str | None,
     description: str | None,
     user_id: str,
-    flow_payload: dict[str, Any] | None,
+    agent_payload: dict[str, Any] | None,
     judge_name: str | None,
     judge_criteria: str | None,
     judge_model: str | None,
@@ -2247,18 +2247,18 @@ def _run_dataset_experiment_sync(
     def task(*, item, **kwargs):  # noqa: ARG001
         item_input = get_attr(item, "input", default=None)
         item_id = str(get_attr(item, "id", default="") or "")
-        if flow_payload:
+        if agent_payload:
             session_id = f"dataset:{dataset_name}:{item_id or int(time.time() * 1000)}"
             return _run_async(
-                _run_dataset_item_with_flow(
-                    flow_payload=flow_payload,
+                _run_dataset_item_with_agent(
+                    agent_payload=agent_payload,
                     user_id=str(user_id),
                     item_input=item_input,
                     session_id=session_id,
                 )
             )
 
-        # Fallback mode (no flow selected): return input as output.
+        # Fallback mode (no agent selected): return input as output.
         # This keeps behavior explicit and avoids accidentally inflating scores.
         return item_input
 
@@ -2322,9 +2322,9 @@ def _run_dataset_experiment_sync(
         "app_user_id": str(user_id),
         "source": "agentcore-evaluation-datasets",
     }
-    if flow_payload:
-        experiment_metadata["agent_id"] = str(flow_payload["id"])
-        experiment_metadata["agent_name"] = str(flow_payload["name"])
+    if agent_payload:
+        experiment_metadata["agent_id"] = str(agent_payload["id"])
+        experiment_metadata["agent_name"] = str(agent_payload["name"])
     if judge_criteria:
         experiment_metadata["judge_enabled"] = "true"
     if judge_name:
@@ -2382,7 +2382,7 @@ async def _run_dataset_experiment_job(
     run_name: str | None,
     description: str | None,
     user_id: str,
-    flow_payload: dict[str, Any] | None,
+    agent_payload: dict[str, Any] | None,
     judge_name: str | None,
     judge_criteria: str | None,
     judge_model: str | None,
@@ -2404,7 +2404,7 @@ async def _run_dataset_experiment_job(
             run_name=run_name,
             description=description,
             user_id=user_id,
-            flow_payload=flow_payload,
+            agent_payload=agent_payload,
             judge_name=judge_name,
             judge_criteria=judge_criteria,
             judge_model=judge_model,
@@ -2913,7 +2913,7 @@ async def get_scores(
                 limit,
             )
 
-        # Parse to response model (including agent/flow name).
+        # Parse to response model (including agent/agent name).
         items: list[ScoreResponse] = []
         for s in raw_scores:
             score_trace_id = str(get_attr(s, "trace_id", "traceId", default="") or "")
@@ -2927,7 +2927,7 @@ async def get_scores(
                 except Exception as trace_error:
                     logger.debug("Failed to fetch trace {} for score enrichment: {}", score_trace_id, str(trace_error))
 
-            agent_name = _extract_trace_flow_name(trace_dict or {}) if trace_dict else None
+            agent_name = _extract_trace_agent_name(trace_dict or {}) if trace_dict else None
             if not agent_name and trace_dict:
                 trace_name = trace_dict.get("name")
                 agent_name = str(trace_name) if trace_name else None
@@ -3108,7 +3108,7 @@ async def get_pending_reviews(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: DbSession,
     trace_id: Annotated[Optional[str], Query()] = None,
-    flow_name: Annotated[Optional[str], Query()] = None,
+    agent_name: Annotated[Optional[str], Query()] = None,
     session_id: Annotated[Optional[str], Query()] = None,
     user_id_filter: Annotated[Optional[str], Query()] = None,
     ts_from: Annotated[Optional[str], Query()] = None,
@@ -3152,10 +3152,10 @@ async def get_pending_reviews(
                 if trace_id:
                     score_counts[trace_id] += 1
 
-        # Get flow names from database for better context
-        flow_query = select(Flow).where(Flow.user_id == current_user.id)
-        db_flows = (await session.execute(flow_query)).scalars().all()
-        flow_names = {str(flow.id): flow.name for flow in db_flows}
+        # Get agent names from database for better context
+        agent_query = select(agent).where(agent.user_id == current_user.id)
+        db_agents = (await session.execute(agent_query)).scalars().all()
+        agent_names = {str(agent.id): agent.name for agent in db_agents}
 
         # Apply filtering and build response
         result = []
@@ -3169,19 +3169,19 @@ async def get_pending_reviews(
             if trace_id and str(tid) != str(trace_id):
                 continue
 
-            # filter by flow name substring match (uses metadata or agent_id)
+            # filter by agent name substring match (uses metadata or agent_id)
             metadata = trace_dict.get('metadata') or {}
-            inferred_flow_name = None
+            inferred_agent_name = None
             if isinstance(metadata, dict):
-                inferred_flow_name = metadata.get('flow_name') or metadata.get('flowId') or metadata.get('agent_id')
-            if not inferred_flow_name:
-                # fallback to DB lookup using flow id stored in metadata
+                inferred_agent_name = metadata.get('agent_name') or metadata.get('agentId') or metadata.get('agent_id')
+            if not inferred_agent_name:
+                # fallback to DB lookup using agent id stored in metadata
                 agent_id = metadata.get('agent_id') if isinstance(metadata, dict) else None
                 if agent_id:
-                    inferred_flow_name = flow_names.get(str(agent_id))
+                    inferred_agent_name = agent_names.get(str(agent_id))
 
-            if flow_name:
-                if not inferred_flow_name or flow_name.lower() not in str(inferred_flow_name).lower():
+            if agent_name:
+                if not inferred_agent_name or agent_name.lower() not in str(inferred_agent_name).lower():
                     continue
 
             # filter by session id
@@ -3232,7 +3232,7 @@ async def get_pending_reviews(
                 input=trace_dict.get('input'),
                 output=trace_dict.get('output'),
                 session_id=trace_dict.get('session_id'),
-                flow_name=inferred_flow_name,
+                agent_name=inferred_agent_name,
                 has_scores=score_count > 0,
                 score_count=score_count
             ))
@@ -3585,7 +3585,7 @@ async def run_dataset_experiment(
     if not _dataset_owned_by_user(dataset, str(current_user.id)):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    flow_payload = await _resolve_flow_payload_for_experiment(
+    agent_payload = await _resolve_agent_payload_for_experiment(
         agent_id=payload.agent_id,
         current_user=current_user,
     )
@@ -3623,7 +3623,7 @@ async def run_dataset_experiment(
         run_name=payload.run_name,
         description=payload.description,
         user_id=str(current_user.id),
-        flow_payload=flow_payload,
+        agent_payload=agent_payload,
         judge_name=judge_cfg["judge_name"],
         judge_criteria=judge_cfg["criteria"],
         judge_model=judge_cfg["model"],
@@ -3681,8 +3681,8 @@ EVALUATION_PRESETS = [
     {
         "id": "coherence",
         "name": "Coherence",
-        "description": "Evaluate if the response flows logically and makes sense.",
-        "criteria": "Evaluate the coherence and logical flow of the output on a scale 0-1. Consider:\n- Logical structure: Do ideas connect naturally?\n- Internal consistency: Are there contradictions?\n- Clarity of thought: Is the reasoning easy to follow?",
+        "description": "Evaluate if the response agents logically and makes sense.",
+        "criteria": "Evaluate the coherence and logical agent of the output on a scale 0-1. Consider:\n- Logical structure: Do ideas connect naturally?\n- Internal consistency: Are there contradictions?\n- Clarity of thought: Is the reasoning easy to follow?",
         "requires_ground_truth": False,
     },
     {
@@ -3720,8 +3720,7 @@ async def run_saved_evaluators_for_new_trace(
     trace_id: str,
     user_id: str,
     agent_id: str | None = None,
-    flow_id: str | None = None,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
     session_id: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
@@ -3729,7 +3728,7 @@ async def run_saved_evaluators_for_new_trace(
     """Run all saved evaluators targeting new traces for a just-finished trace."""
     logger.info(
         f"🔍 EVALUATOR FUNCTION CALLED: trace={trace_id}, user={user_id}, "
-        f"flow_id={flow_id}, agent_id={agent_id}, flow_name={flow_name}"
+        f"agent_id={agent_id}, agent_id={agent_id}, agent_name={agent_name}"
     )
     
     if not (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
@@ -3750,8 +3749,8 @@ async def run_saved_evaluators_for_new_trace(
     requested_timestamp = _parse_trace_timestamp(timestamp) or datetime.now(timezone.utc)
     trace_ref_id = str(trace_id)
     
-    # Use flow_id or agent_id (they're aliases)
-    agent_id = agent_id or flow_id
+    # Use agent_id or agent_id (they're aliases)
+    agent_id = agent_id or agent_id
 
     trace_dict: Dict[str, Any] = {
         "id": trace_ref_id,
@@ -3759,7 +3758,7 @@ async def run_saved_evaluators_for_new_trace(
         "timestamp": requested_timestamp,
         "metadata": {
             "agent_id": _normalize_agent_id(agent_id),
-            "flow_name": flow_name,
+            "agent_name": agent_name,
             "project_name": project_name,
             "run_id": trace_ref_id,
         },
@@ -3771,7 +3770,7 @@ async def run_saved_evaluators_for_new_trace(
         user_id=str(user_id),
         session_id=session_id,
         agent_id=agent_id,
-        flow_name=flow_name,
+        agent_name=agent_name,
         project_name=project_name,
         timestamp=requested_timestamp,
         max_attempts=4,
@@ -3795,7 +3794,7 @@ async def run_saved_evaluators_for_new_trace(
         logger.info(
             f"🔎 Evaluator {idx}/{len(evaluators)}: name='{evaluator.name}', "
             f"target={evaluator.target}, agent_id={evaluator.agent_id}, "
-            f"agent_ids={evaluator.agent_ids}, flow_name={evaluator.flow_name}"
+            f"agent_ids={evaluator.agent_ids}, agent_name={evaluator.agent_name}"
         )
         
         targets = _normalize_targets(evaluator.target)
@@ -3805,7 +3804,7 @@ async def run_saved_evaluators_for_new_trace(
 
         logger.info(
             f"  🎯 Checking filters: trace_dict_agent_id={trace_dict.get('metadata', {}).get('agent_id')}, "
-            f"trace_dict_flow_name={trace_dict.get('metadata', {}).get('flow_name')}"
+            f"trace_dict_agent_name={trace_dict.get('metadata', {}).get('agent_name')}"
         )
         
         matches = _trace_matches_evaluator_filters(
@@ -3814,7 +3813,7 @@ async def run_saved_evaluators_for_new_trace(
             session_id=evaluator.session_id,
             agent_id=evaluator.agent_id,
             agent_ids=evaluator.agent_ids,
-            flow_name=evaluator.flow_name,
+            agent_name=evaluator.agent_name,
             project_name=evaluator.project_name,
             ts_from=evaluator.ts_from,
             ts_to=evaluator.ts_to,
@@ -3848,7 +3847,7 @@ async def run_saved_evaluators_for_new_trace(
                 ground_truth=evaluator.ground_truth,
                 session_id=session_id,
                 agent_id=agent_id,
-                flow_name=flow_name,
+                agent_name=agent_name,
                 project_name=project_name,
                 timestamp=requested_timestamp,
             )
@@ -3880,7 +3879,7 @@ async def list_evaluation_presets(
 async def list_evaluation_models(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Dict[str, Any]:
-    """Return flows accessible to the current user as a normalized model list.
+    """Return agents accessible to the current user as a normalized model list.
 
     This endpoint intentionally uses the application's standard auth (JWT/cookie)
     so the frontend can fetch the Model Catalogue without requiring an API key.
@@ -3888,53 +3887,53 @@ async def list_evaluation_models(
     try:
         async with session_scope() as session:
             stmt = (
-                select(Flow)
+                select(agent)
                 .where(
                     or_(
-                        Flow.is_component == False,  # noqa: E712
-                        Flow.is_component.is_(None),
+                        agent.is_component == False,  # noqa: E712
+                        agent.is_component.is_(None),
                     )
                 )
                 .where(
                     or_(
-                        Flow.user_id == current_user.id,
-                        Flow.access_type == AccessTypeEnum.PUBLIC,
+                        agent.user_id == current_user.id,
+                        agent.access_type == AccessTypeEnum.PUBLIC,
                     )
                 )
             )
             _res = await session.exec(stmt)
-            flows = _res.all()
+            agents = _res.all()
 
-        def to_payload(flow: Flow) -> dict:
-            updated = flow.updated_at
+        def to_payload(agent: agent) -> dict:
+            updated = agent.updated_at
             try:
                 updated_dt = datetime.fromisoformat(updated) if isinstance(updated, str) else updated
             except Exception:
                 updated_dt = None
             created_ts = int(updated_dt.timestamp()) if updated_dt else int(time.time())
             return {
-                "id": f"lb:{flow.endpoint_name or flow.id}",
-                "name": flow.name,
+                "id": f"lb:{agent.endpoint_name or agent.id}",
+                "name": agent.name,
                 "object": "model",
                 "created": created_ts,
-                "owned_by": str(flow.user_id) if flow.user_id else None,
-                "root": f"lb:{flow.endpoint_name or flow.id}",
+                "owned_by": str(agent.user_id) if agent.user_id else None,
+                "root": f"lb:{agent.endpoint_name or agent.id}",
                 "parent": None,
                 "permission": [],
                 "metadata": {
-                    "display_name": flow.name,
-                    "description": flow.description,
-                    "endpoint_name": flow.endpoint_name,
+                    "display_name": agent.name,
+                    "description": agent.description,
+                    "endpoint_name": agent.endpoint_name,
                     # New canonical key used across the codebase
-                    "agent_id": str(flow.id),
+                    "agent_id": str(agent.id),
                     # Legacy aliases expected by some frontend codepaths — keep for compatibility
-                    "flow_id": str(flow.id),
-                    "flow_ids": [str(flow.id)],
-                    "access": flow.access_type.value if flow.access_type else AccessTypeEnum.PRIVATE.value,
+                    "agent_id": str(agent.id),
+                    "agent_ids": [str(agent.id)],
+                    "access": agent.access_type.value if agent.access_type else AccessTypeEnum.PRIVATE.value,
                 },
             }
 
-        return {"object": "list", "data": [to_payload(f) for f in flows]}
+        return {"object": "list", "data": [to_payload(f) for f in agents]}
     except Exception as e:
         logger.opt(exception=True).error("Error listing evaluation models: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -3970,7 +3969,7 @@ async def create_evaluator_config(
                 trace_id=payload.trace_id,
                 agent_id=normalized_agent_id,
                 agent_ids=normalized_agent_ids or None,
-                flow_name=payload.flow_name,
+                agent_name=payload.agent_name,
                 session_id=payload.session_id,
                 project_name=payload.project_name,
                 ts_from=from_ts,
@@ -4009,7 +4008,7 @@ async def create_evaluator_config(
                             session_id=payload.session_id,
                             agent_id=normalized_agent_id,
                             agent_ids=normalized_agent_ids,
-                            flow_name=payload.flow_name,
+                            agent_name=payload.agent_name,
                             project_name=payload.project_name,
                             ts_from=from_ts,
                             ts_to=to_ts,
@@ -4032,7 +4031,7 @@ async def create_evaluator_config(
                             ground_truth=payload.ground_truth,
                             session_id=str(matched_trace.get("session_id") or "") or None,
                             agent_id=_extract_trace_agent_id(matched_trace),
-                            flow_name=_extract_trace_flow_name(matched_trace),
+                            agent_name=_extract_trace_agent_name(matched_trace),
                             project_name=_extract_trace_project_name(matched_trace),
                             timestamp=_parse_trace_timestamp(matched_trace.get("timestamp")),
                         )
@@ -4102,7 +4101,7 @@ async def update_evaluator_config(
             eval_obj.trace_id = payload.trace_id
             eval_obj.agent_id = normalized_agent_id
             eval_obj.agent_ids = normalized_agent_ids or None
-            eval_obj.flow_name = payload.flow_name
+            eval_obj.agent_name = payload.agent_name
             eval_obj.session_id = payload.session_id
             eval_obj.project_name = payload.project_name
             eval_obj.ts_from = from_ts

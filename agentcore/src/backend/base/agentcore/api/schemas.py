@@ -127,26 +127,26 @@ class FileResponse(ChatMessage):
         return v
 
 
-class FlowListCreate(BaseModel):
-    flows: list[dict[str, Any]]
+class agentListCreate(BaseModel):
+    agents: list[dict[str, Any]]
 
 
-class FlowListIds(BaseModel):
-    flow_ids: list[str]
+class agentListIds(BaseModel):
+    agent_ids: list[str]
 
 
-class FlowListRead(BaseModel):
-    flows: list[dict[str, Any]]
+class agentListRead(BaseModel):
+    agents: list[dict[str, Any]]
 
 
-class FlowListReadWithFolderName(BaseModel):
-    flows: list[dict[str, Any]]
+class agentListReadWithFolderName(BaseModel):
+    agents: list[dict[str, Any]]
     folder_name: str
     description: str
 
 
 class InitResponse(BaseModel):
-    flow_id: str = Field(serialization_alias="flowId")
+    agent_id: str = Field(serialization_alias="agentId")
 
 
 class BuiltResponse(BaseModel):
@@ -156,7 +156,7 @@ class BuiltResponse(BaseModel):
 class UploadFileResponse(BaseModel):
     """Upload file response schema."""
 
-    flow_id: str = Field(serialization_alias="flowId")
+    agent_id: str = Field(serialization_alias="agentId")
     file_path: Path
 
 
@@ -195,11 +195,11 @@ class CustomComponentResponseError(BaseModel):
 
 
 class ComponentListCreate(BaseModel):
-    flows: list[dict[str, Any]]
+    agents: list[dict[str, Any]]
 
 
 class ComponentListRead(BaseModel):
-    flows: list[dict[str, Any]]
+    agents: list[dict[str, Any]]
 
 
 class UsersResponse(BaseModel):
@@ -391,13 +391,13 @@ class SimplifiedAPIRequest(BaseModel):
     session_id: str | None = Field(default=None, description="The session id")
 
 
-# (alias) type ReactFlowJsonObject<NodeData = any, EdgeData = any> = {
+# (alias) type ReactagentJsonObject<NodeData = any, EdgeData = any> = {
 #     nodes: Node<NodeData>[];
 #     edges: Edge<EdgeData>[];
 #     viewport: Viewport;
 # }
-# import ReactFlowJsonObject
-class FlowDataRequest(BaseModel):
+# import ReactagentJsonObject
+class agentDataRequest(BaseModel):
     nodes: list[dict]
     edges: list[dict]
     viewport: dict | None = None
@@ -413,8 +413,8 @@ class ConfigResponse(BaseModel):
     health_check_max_retries: int
     max_file_size_upload: int
     webhook_polling_interval: int
-    public_flow_cleanup_interval: int
-    public_flow_expiration: int
+    public_agent_cleanup_interval: int
+    public_agent_expiration: int
     event_delivery: Literal["polling", "streaming", "direct"]
 
     @classmethod
@@ -437,14 +437,14 @@ class ConfigResponse(BaseModel):
             health_check_max_retries=settings.health_check_max_retries,
             max_file_size_upload=settings.max_file_size_upload,
             webhook_polling_interval=settings.webhook_polling_interval,
-            public_flow_cleanup_interval=settings.public_flow_cleanup_interval,
-            public_flow_expiration=settings.public_flow_expiration,
+            public_agent_cleanup_interval=settings.public_agent_cleanup_interval,
+            public_agent_expiration=settings.public_agent_expiration,
             event_delivery=settings.event_delivery,
         )
 
 
-class CancelFlowResponse(BaseModel):
-    """Response model for flow build cancellation."""
+class CancelagentResponse(BaseModel):
+    """Response model for agent build cancellation."""
 
     success: bool
     message: str
@@ -472,7 +472,7 @@ class AuthSettings(BaseModel):
 
 
 class MCPSettings(BaseModel):
-    """Model representing MCP settings for a flow."""
+    """Model representing MCP settings for a agent."""
 
     id: UUID
     mcp_enabled: bool | None = None

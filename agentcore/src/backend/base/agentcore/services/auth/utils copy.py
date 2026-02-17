@@ -570,7 +570,7 @@ async def get_current_user_mcp(
         return result
 
     # If result is an ApiKey, we need to get the associated user
-    # This should not happen in normal flow, but adding for completeness
+    # This should not happen in normal agent, but adding for completeness
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Invalid authentication result",

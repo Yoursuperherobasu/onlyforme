@@ -19,9 +19,9 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from agentcore.api.build import (
-    cancel_flow_build,
-    get_flow_events_response,
-    start_flow_build,
+    cancel_agent_build,
+    get_agent_events_response,
+    start_agent_build,
 )
 from agentcore.api.limited_background_tasks import LimitVertexBuildBackgroundTasks
 from agentcore.api.utils import (
@@ -34,7 +34,7 @@ from agentcore.api.utils import (
     format_exception_message,
     get_top_level_vertices,
     parse_exception,
-    verify_public_flow_and_get_user,
+    verify_public_agent_and_get_user,
 )
 from agentcore.api.v1_schemas import (
     CancelAgentResponse,
@@ -77,12 +77,12 @@ async def retrieve_vertices_order(
     start_component_id: str | None = None,
     session: DbSession,
 ) -> VerticesOrderResponse:
-    """Retrieve the vertices order for a given flow.
+    """Retrieve the vertices order for a given agent.
 
     Args:
-        agent_id (str): The ID of the flow.
+        agent_id (str): The ID of the agent.
         background_tasks (BackgroundTasks): The background tasks.
-        data (Optional[AgentDataRequest], optional): The flow data. Defaults to None.
+        data (Optional[AgentDataRequest], optional): The agent data. Defaults to None.
         stop_component_id (str, optional): The ID of the stop component. Defaults to None.
         start_component_id (str, optional): The ID of the start component. Defaults to None.
         session (AsyncSession, optional): The session dependency.
@@ -138,8 +138,8 @@ async def retrieve_vertices_order(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.post("/build/{agent_id}/flow")
-async def build_flow(
+@router.post("/build/{agent_id}/agent")
+async def build_agent(
     *,
     agent_id: uuid.UUID,
     background_tasks: LimitVertexBuildBackgroundTasks,
@@ -151,41 +151,20 @@ async def build_flow(
     log_builds: bool = True,
     current_user: CurrentActiveUser,
     queue_service: Annotated[JobQueueService, Depends(get_queue_service)],
-    flow_name: str | None = None,
+    agent_name: str | None = None,
     event_delivery: EventDeliveryType = EventDeliveryType.POLLING,
 ):
-    """Build and process a flow, returning a job ID for event polling.
-
-    This endpoint requires authentication through the CurrentActiveUser dependency.
-    For public flows that don't require authentication, use the /build_public_tmp/agent_id/flow endpoint.
-
-    Args:
-        agent_id: UUID of the flow to build
-        background_tasks: Background tasks manager
-        inputs: Optional input values for the flow
-        data: Optional flow data
-        files: Optional files to include
-        stop_component_id: Optional ID of component to stop at
-        start_component_id: Optional ID of component to start from
-        log_builds: Whether to log the build process
-        current_user: The authenticated user
-        queue_service: Queue service for job management
-        flow_name: Optional name for the flow
-        event_delivery: Optional event delivery type - default is streaming
-
-    Returns:
-        Dict with job_id that can be used to poll for build status
-    """
-    logger.debug(f"build_flow called: agent_id={agent_id}")
+   
+    logger.debug(f"build_agent called: agent_id={agent_id}")
     if files:
         logger.debug(f"Files: {files}")
-    # First verify the flow exists
+    # First verify the agent exists
     async with session_scope() as session:
-        flow = await session.get(Agent, agent_id)
-        if not flow:
-            raise HTTPException(status_code=404, detail=f"Flow with id {agent_id} not found")
+        agent = await session.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
 
-    job_id = await start_flow_build(
+    job_id = await start_agent_build(
         agent_id=agent_id,
         background_tasks=background_tasks,
         inputs=inputs,
@@ -196,13 +175,13 @@ async def build_flow(
         log_builds=log_builds,
         current_user=current_user,
         queue_service=queue_service,
-        flow_name=flow_name,
+        agent_name=agent_name,
     )
 
     # This is required to support FE tests - we need to be able to set the event delivery to direct
     if event_delivery != EventDeliveryType.DIRECT:
         return {"job_id": job_id}
-    return await get_flow_events_response(
+    return await get_agent_events_response(
         job_id=job_id,
         queue_service=queue_service,
         event_delivery=event_delivery,
@@ -217,7 +196,7 @@ async def get_build_events(
     event_delivery: EventDeliveryType = EventDeliveryType.STREAMING,
 ):
     """Get events for a specific build job."""
-    return await get_flow_events_response(
+    return await get_agent_events_response(
         job_id=job_id,
         queue_service=queue_service,
         event_delivery=event_delivery,
@@ -231,18 +210,18 @@ async def cancel_build(
 ):
     """Cancel a specific build job."""
     try:
-        # Cancel the flow build and check if it was successful
-        cancellation_success = await cancel_flow_build(job_id=job_id, queue_service=queue_service)
+        # Cancel the agent build and check if it was successful
+        cancellation_success = await cancel_agent_build(job_id=job_id, queue_service=queue_service)
 
         if cancellation_success:
             # Cancellation succeeded or wasn't needed
-            return CancelAgentResponse(success=True, message="Flow build cancelled successfully")
+            return CancelAgentResponse(success=True, message="Agent build cancelled successfully")
         # Cancellation was attempted but failed
-        return CancelAgentResponse(success=False, message="Failed to cancel flow build")
+        return CancelAgentResponse(success=False, message="Failed to cancel agent build")
     except asyncio.CancelledError:
         # If CancelledError reaches here, it means the task was not successfully cancelled
-        logger.error(f"Failed to cancel flow build for job_id {job_id} (CancelledError caught)")
-        return CancelAgentResponse(success=False, message="Failed to cancel flow build")
+        logger.error(f"Failed to cancel agent build for job_id {job_id} (CancelledError caught)")
+        return CancelAgentResponse(success=False, message="Failed to cancel agent build")
     except ValueError as exc:
         # Job not found
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -251,7 +230,7 @@ async def cancel_build(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {exc!s}") from exc
     except Exception as exc:
         # Any other unexpected error
-        logger.exception(f"Error cancelling flow build for job_id {job_id}: {exc}")
+        logger.exception(f"Error cancelling agent build for job_id {job_id}: {exc}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
@@ -268,7 +247,7 @@ async def build_vertex(
     """Build a vertex instead of the entire graph.
 
     Args:
-        agent_id (str): The ID of the flow.
+        agent_id (str): The ID of the agent.
         vertex_id (str): The ID of the vertex to build.
         background_tasks (BackgroundTasks): The background tasks dependency.
         inputs (Optional[InputValueRequest], optional): The input values for the vertex. Defaults to None.
@@ -541,7 +520,7 @@ async def build_vertex_stream(
         raise HTTPException(status_code=500, detail="Error building Component") from exc
 
 
-@router.post("/build_public_tmp/{agent_id}/flow")
+@router.post("/build_public_tmp/{agent_id}/agent")
 async def build_public_tmp(
     *,
     background_tasks: LimitVertexBuildBackgroundTasks,
@@ -552,49 +531,19 @@ async def build_public_tmp(
     stop_component_id: str | None = None,
     start_component_id: str | None = None,
     log_builds: bool | None = True,
-    flow_name: str | None = None,
+    agent_name: str | None = None,
     request: Request,
     queue_service: Annotated[JobQueueService, Depends(get_queue_service)],
     event_delivery: EventDeliveryType = EventDeliveryType.POLLING,
 ):
-    """Build a public flow without requiring authentication.
-
-    This endpoint is specifically for public flows that don't require authentication.
-    It uses a client_id cookie to create a deterministic flow ID for tracking purposes.
-
-    The endpoint:
-    1. Verifies the requested flow is marked as public in the database
-    2. Creates a deterministic UUID based on client_id and agent_id
-    3. Uses the flow owner's permissions to build the flow
-
-    Requirements:
-    - The flow must be marked as PUBLIC in the database
-    - The request must include a client_id cookie
-
-    Args:
-        agent_id: UUID of the public flow to build
-        background_tasks: Background tasks manager
-        inputs: Optional input values for the flow
-        data: Optional flow data
-        files: Optional files to include
-        stop_component_id: Optional ID of component to stop at
-        start_component_id: Optional ID of component to start from
-        log_builds: Whether to log the build process
-        flow_name: Optional name for the flow
-        request: FastAPI request object (needed for cookie access)
-        queue_service: Queue service for job management
-        event_delivery: Optional event delivery type - default is streaming
-
-    Returns:
-        Dict with job_id that can be used to poll for build status
-    """
+   
     try:
-        # Verify this is a public flow and get the associated user
+        # Verify this is a public agent and get the associated user
         client_id = request.cookies.get("client_id")
-        owner_user, new_agent_id = await verify_public_flow_and_get_user(agent_id=agent_id, client_id=client_id)
+        owner_user, new_agent_id = await verify_public_agent_and_get_user(agent_id=agent_id, client_id=client_id)
 
-        # Start the flow build using the new flow ID
-        job_id = await start_flow_build(
+        # Start the agent build using the new agent ID
+        job_id = await start_agent_build(
             agent_id=new_agent_id,
             background_tasks=background_tasks,
             inputs=inputs,
@@ -605,16 +554,16 @@ async def build_public_tmp(
             log_builds=log_builds or False,
             current_user=owner_user,
             queue_service=queue_service,
-            flow_name=flow_name or f"{client_id}_{agent_id}",
+            agent_name=agent_name or f"{client_id}_{agent_id}",
         )
     except Exception as exc:
-        logger.exception("Error building public flow")
+        logger.exception("Error building public agent")
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     if event_delivery != EventDeliveryType.DIRECT:
         return {"job_id": job_id}
-    return await get_flow_events_response(
+    return await get_agent_events_response(
         job_id=job_id,
         queue_service=queue_service,
         event_delivery=event_delivery,

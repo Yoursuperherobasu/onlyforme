@@ -79,7 +79,7 @@ async def run_graph(
         input_value (str): The input value to be passed to the graph.
         input_type (str): The type of the input value.
         output_type (str): The type of the desired output.
-        session_id (str | None, optional): The session ID to be used for the flow. Defaults to None.
+        session_id (str | None, optional): The session ID to be used for the agent. Defaults to None.
         fallback_to_env_vars (bool, optional): Whether to fallback to environment variables.
             Defaults to False.
         output_component (Optional[str], optional): The specific output component to retrieve. Defaults to None.

@@ -33,11 +33,11 @@ async def list_agents(*, user_id: str | None = None) -> list[Data]:
         async with session_scope() as session:
             uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
             stmt = select(Agent).where(Agent.user_id == uuid_user_id).where(Agent.is_component == False)  # noqa: E712
-            flows = (await session.exec(stmt)).all()
+            agents = (await session.exec(stmt)).all()
 
-            return [flow.to_data() for flow in flows]
+            return [agent.to_data() for agent in agents]
     except Exception as e:
-        msg = f"Error listing flows: {e}"
+        msg = f"Error listing agents: {e}"
         raise ValueError(msg) from e
 
 
@@ -48,18 +48,18 @@ async def load_agent(
     from agentcore.processing.process import process_tweaks
 
     if not agent_id and not agent_name:
-        msg = "Flow ID or Flow Name is required"
+        msg = "Agent ID or Agent Name is required"
         raise ValueError(msg)
     if not agent_id and agent_name:
-        agent_id = await find_flow(agent_name, user_id)
+        agent_id = await find_agent(agent_name, user_id)
         if not agent_id:
-            msg = f"Flow {agent_name} not found"
+            msg = f"Agent {agent_name} not found"
             raise ValueError(msg)
 
     async with session_scope() as session:
-        graph_data = flow.data if (flow := await session.get(Agent, agent_id)) else None
+        graph_data = agent.data if (agent := await session.get(Agent, agent_id)) else None
     if not graph_data:
-        msg = f"Flow {agent_id} not found"
+        msg = f"Agent {agent_id} not found"
         raise ValueError(msg)
     if tweaks:
         graph_data = process_tweaks(graph_data=graph_data, tweaks=tweaks)
@@ -70,8 +70,8 @@ async def find_agent(agent_name: str, user_id: str) -> str | None:
     async with session_scope() as session:
         uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
         stmt = select(Agent).where(Agent.name == agent_name).where(Agent.user_id == uuid_user_id)
-        flow = (await session.exec(stmt)).first()
-        return flow.id if flow else None
+        agent = (await session.exec(stmt)).first()
+        return agent.id if agent else None
 
 
 async def run_agent(
@@ -132,23 +132,23 @@ async def run_agent(
 def generate_function_for_agent(
     inputs: list[Vertex], agent_id: str, user_id: str | UUID | None
 ) -> Callable[..., Awaitable[Any]]:
-    """Generate a dynamic flow function based on the given inputs and flow ID.
+    """Generate a dynamic agent function based on the given inputs and agent ID.
 
     Args:
-        inputs (List[Vertex]): The list of input vertices for the flow.
-        agent_id (str): The ID of the flow.
-        user_id (str | UUID | None): The user ID associated with the flow.
+        inputs (List[Vertex]): The list of input vertices for the agent.
+        agent_id (str): The ID of the agent.
+        user_id (str | UUID | None): The user ID associated with the agent.
 
     Returns:
-        Coroutine: The dynamic flow function.
+        Coroutine: The dynamic agent function.
 
     Raises:
         None
 
     Example:
         inputs = [vertex1, vertex2]
-        agent_id = "my_flow"
-        function = generate_function_for_flow(inputs, agent_id)
+        agent_id = "my_agent"
+        function = generate_function_for_agent(inputs, agent_id)
         result = function(input1, input2)
     """
     # Prepare function arguments with type hints and default values
@@ -178,7 +178,7 @@ async def agent_function({func_args}):
     tweaks = {{ {arg_mappings} }}
     from agentcore.helpers.agent import run_agent
     from langchain_core.tools import ToolException
-    from agentcore.base.flow_processing.utils import build_data_from_result_data, format_flow_output_data
+    from agentcore.base.agent_processing.utils import build_data_from_result_data, format_agent_output_data
     try:
         run_outputs = await run_agent(
             tweaks={{key: {{'input_value': value}} for key, value in tweaks.items()}},
@@ -194,42 +194,42 @@ async def agent_function({func_args}):
             for output in run_output.outputs:
                 if output:
                     data.extend(build_data_from_result_data(output))
-        return format_flow_output_data(data)
+        return format_agent_output_data(data)
     except Exception as e:
-        raise ToolException(f'Error running flow: ' + e)
+        raise ToolException(f'Error running agent: ' + e)
 """
 
     compiled_func = compile(func_body, "<string>", "exec")
     local_scope: dict = {}
     exec(compiled_func, globals(), local_scope)  # noqa: S102
-    return local_scope["flow_function"]
+    return local_scope["agent_function"]
 
 
 def build_function_and_schema(
-    flow_data: Data, graph: Graph, user_id: str | UUID | None
+    agent_data: Data, graph: Graph, user_id: str | UUID | None
 ) -> tuple[Callable[..., Awaitable[Any]], type[BaseModel]]:
-    """Builds a dynamic function and schema for a given flow.
+    """Builds a dynamic function and schema for a given agent.
 
     Args:
-        flow_data (Data): The flow record containing information about the flow.
-        graph (Graph): The graph representing the flow.
-        user_id (str): The user ID associated with the flow.
+        agent_data (Data): The agent record containing information about the agent.
+        graph (Graph): The graph representing the agent.
+        user_id (str): The user ID associated with the agent.
 
     Returns:
         Tuple[Callable, BaseModel]: A tuple containing the dynamic function and the schema.
     """
-    agent_id = flow_data.id
+    agent_id = agent_data.id
     inputs = get_agent_inputs(graph)
-    dynamic_flow_function = generate_function_for_flow(inputs, agent_id, user_id=user_id)
-    schema = build_schema_from_inputs(flow_data.name, inputs)
-    return dynamic_flow_function, schema
+    dynamic_agent_function = generate_function_for_agent(inputs, agent_id, user_id=user_id)
+    schema = build_schema_from_inputs(agent_data.name, inputs)
+    return dynamic_agent_function, schema
 
 
 def get_agent_inputs(graph: Graph) -> list[Vertex]:
-    """Retrieves the flow inputs from the given graph.
+    """Retrieves the agent inputs from the given graph.
 
     Args:
-        graph (Graph): The graph object representing the flow.
+        graph (Graph): The graph object representing the agent.
 
     Returns:
         List[Data]: A list of input data, where each record contains the ID, name, and description of the input vertex.
@@ -278,25 +278,25 @@ async def get_agent_by_id_or_endpoint_name(agent_id_or_name: str, user_id: str |
         endpoint_name = None
         try:
             agent_id = UUID(agent_id_or_name)
-            flow = await session.get(Agent, agent_id)
+            agent = await session.get(Agent, agent_id)
         except ValueError:
             endpoint_name = agent_id_or_name
             stmt = select(Agent).where(Agent.endpoint_name == endpoint_name)
             if user_id:
                 uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
                 stmt = stmt.where(Agent.user_id == uuid_user_id)
-            flow = (await session.exec(stmt)).first()
-        if flow is None:
-            raise HTTPException(status_code=404, detail=f"Flow identifier {agent_id_or_name} not found")
-        return AgentRead.model_validate(flow, from_attributes=True)
+            agent = (await session.exec(stmt)).first()
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent identifier {agent_id_or_name} not found")
+        return AgentRead.model_validate(agent, from_attributes=True)
 
 
 async def generate_unique_agent_name(agent_name, user_id, session):
     original_name = agent_name
     n = 1
     while True:
-        # Check if a flow with the given name exists
-        existing_flow = (
+        # Check if a agent with the given name exists
+        existing_agent = (
             await session.exec(
                 select(Agent).where(
                     Agent.name == agent_name,
@@ -305,23 +305,23 @@ async def generate_unique_agent_name(agent_name, user_id, session):
             )
         ).first()
 
-        # If no flow with the given name exists, return the name
-        if not existing_flow:
+        # If no agent with the given name exists, return the name
+        if not existing_agent:
             return agent_name
 
-        # If a flow with the name already exists, append (n) to the name and increment n
+        # If a agent with the name already exists, append (n) to the name and increment n
         agent_name = f"{original_name} ({n})"
         n += 1
 
 
-def json_schema_from_agent(flow: Agent) -> dict:
-    """Generate JSON schema from flow input nodes."""
+def json_schema_from_agent(agent: Agent) -> dict:
+    """Generate JSON schema from agent input nodes."""
     from agentcore.graph_langgraph import LangGraphAdapter as Graph
 
-    # Get the flow's data which contains the nodes and their configurations
-    flow_data = flow.data or {}
+    # Get the agent's data which contains the nodes and their configurations
+    agent_data = agent.data or {}
 
-    graph = Graph.from_payload(flow_data)
+    graph = Graph.from_payload(agent_data)
     input_nodes = [vertex for vertex in graph.vertices if vertex.is_input]
 
     properties = {}

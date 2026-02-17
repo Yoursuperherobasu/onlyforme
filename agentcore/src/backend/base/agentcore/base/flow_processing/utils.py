@@ -40,7 +40,7 @@ def build_data_from_result_data(result_data: ResultData) -> list[Data]:
         return []
     data = []
 
-    # Handle results without chat messages (calling flow)
+    # Handle results without chat messages (calling agent)
     if not messages:
         # Result with a single record
         if isinstance(result_data.artifacts, dict):
@@ -72,16 +72,16 @@ def build_data_from_result_data(result_data: ResultData) -> list[Data]:
     return data
 
 
-def format_flow_output_data(data: list[Data]) -> str:
-    """Format the flow output data into a string.
+def format_agent_output_data(data: list[Data]) -> str:
+    """Format the agent output data into a string.
 
     Args:
         data (List[Data]): The list of data to format.
 
     Returns:
-        str: The formatted flow output data.
+        str: The formatted agent output data.
 
     """
-    result = "Flow run output:\n"
+    result = "agent run output:\n"
     results = "\n".join([value.get_text() if hasattr(value, "get_text") else str(value) for value in data])
     return result + results

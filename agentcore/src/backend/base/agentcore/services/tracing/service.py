@@ -43,7 +43,7 @@ class TraceContext:
         user_id: str | None,
         session_id: str | None,
         agent_id: str | None = None,
-        flow_name: str | None = None,
+        agent_name: str | None = None,
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
     ):
@@ -54,7 +54,7 @@ class TraceContext:
         self.session_id: str | None = session_id
         # Observability tracking fields
         self.agent_id: str | None = agent_id
-        self.flow_name: str | None = flow_name
+        self.agent_name: str | None = agent_name
         self.observability_project_id: str | None = observability_project_id
         self.observability_project_name: str | None = observability_project_name
         self.tracers: dict[str, BaseTracer] = {}
@@ -131,7 +131,7 @@ class TracingService(Service):
         if self.deactivated:
             logger.warning("🚫 Langfuse tracer init skipped - tracing deactivated")
             return
-        logger.info(f"🎯 Creating LangFuseTracer instance for flow={trace_context.flow_name}")
+        logger.info(f"🎯 Creating LangFuseTracer instance for agent={trace_context.agent_name}")
         langfuse_tracer = _get_langfuse_tracer()
         tracer_instance = langfuse_tracer(
             trace_name=trace_context.run_name,
@@ -141,12 +141,12 @@ class TracingService(Service):
             user_id=trace_context.user_id,
             session_id=trace_context.session_id,
             agent_id=trace_context.agent_id,
-            flow_name=trace_context.flow_name,
+            agent_name=trace_context.agent_name,
             observability_project_id=trace_context.observability_project_id,
             observability_project_name=trace_context.observability_project_name,
         )
         trace_context.tracers["langfuse"] = tracer_instance
-        logger.info(f"✅ LangFuseTracer created: ready={tracer_instance.ready}, flow={trace_context.flow_name}")
+        logger.info(f"✅ LangFuseTracer created: ready={tracer_instance.ready}, agent={trace_context.agent_name}")
 
     async def start_tracers(
         self,
@@ -156,7 +156,7 @@ class TracingService(Service):
         session_id: str | None,
         project_name: str | None = None,
         agent_id: str | None = None,
-        flow_name: str | None = None,
+        agent_name: str | None = None,
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
     ) -> None:
@@ -168,21 +168,21 @@ class TracingService(Service):
 
         Args:
             run_id: Unique identifier for this run
-            run_name: Name of this run (typically flow_name - agent_id)
+            run_name: Name of this run (typically agent_name - agent_id)
             user_id: User ID for observability isolation
             session_id: Session ID for grouping related traces
             project_name: Langchain project name
-            agent_id: Flow UUID for observability tracking
-            flow_name: Flow name for observability display
+            agent_id: Agent UUID for observability tracking
+            agent_name: Agent name for observability display
             observability_project_id: Folder ID for project-level grouping
             observability_project_name: Folder name for project display
         """
         if self.deactivated:
-            logger.warning(f"🚫 TRACING DEACTIVATED - skipping tracer start for flow={flow_name}")
+            logger.warning(f"🚫 TRACING DEACTIVATED - skipping tracer start for agent={agent_name}")
             return
         try:
             project_name = project_name or os.getenv("LANGCHAIN_PROJECT", "Agentcore")
-            logger.info(f"📝 Creating trace context: flow={flow_name}, user={user_id}, session={session_id}")
+            logger.info(f"📝 Creating trace context: agent={agent_name}, user={user_id}, session={session_id}")
             trace_context = TraceContext(
                 run_id=run_id,
                 run_name=run_name,
@@ -190,19 +190,19 @@ class TracingService(Service):
                 user_id=user_id,
                 session_id=session_id,
                 agent_id=agent_id,
-                flow_name=flow_name,
+                agent_name=agent_name,
                 observability_project_id=observability_project_id,
                 observability_project_name=observability_project_name,
             )
             trace_context_var.set(trace_context)
             
-            logger.info(f"🔧 Initializing Langfuse tracer for flow={flow_name}")
+            logger.info(f"🔧 Initializing Langfuse tracer for agent={agent_name}")
             self._initialize_langfuse_tracer(trace_context)
-            logger.info(f"▶️ Starting trace worker for flow={flow_name}")
+            logger.info(f"▶️ Starting trace worker for agent={agent_name}")
             await self._start(trace_context)
-            logger.info(f"✅ Trace context ready for flow={flow_name}")
+            logger.info(f"✅ Trace context ready for agent={agent_name}")
         except Exception as e:  # noqa: BLE001
-            logger.error(f"❌ Error initializing tracers for flow={flow_name}: {e}", exc_info=True)
+            logger.error(f"❌ Error initializing tracers for agent={agent_name}: {e}", exc_info=True)
 
     async def _stop(self, trace_context: TraceContext) -> None:
         try:
@@ -239,7 +239,7 @@ class TracingService(Service):
 
         logger.info(
             f"🎯 SCHEDULING EVALUATORS: trace={trace_context.run_id}, "
-            f"flow={trace_context.flow_name}, agent_id={trace_context.agent_id}, "
+            f"agent={trace_context.agent_name}, agent_id={trace_context.agent_id}, "
             f"user={trace_context.user_id}, session={trace_context.session_id}"
         )
 
@@ -251,7 +251,7 @@ class TracingService(Service):
                     trace_id=str(trace_context.run_id),
                     user_id=str(trace_context.user_id),
                     agent_id=trace_context.agent_id,
-                    flow_name=trace_context.flow_name,
+                    agent_name=trace_context.agent_name,
                     session_id=trace_context.session_id,
                     project_name=trace_context.observability_project_name or trace_context.project_name,
                     timestamp=datetime.now(timezone.utc),

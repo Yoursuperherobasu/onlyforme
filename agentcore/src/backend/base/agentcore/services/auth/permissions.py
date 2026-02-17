@@ -29,13 +29,13 @@ def normalize_role(role: str) -> str:
 ACTIONS = {
     "VIEW_DASHBOARD": "view_dashboard",
     "MANAGE_USERS": "manage_users",
-    "EDIT_FLOWS": "edit_flows",
+    "EDIT_FLOWS": "edit_agents",
     "VIEW_COSTS": "view_costs",
     "VIEW_FILES_TAB": "view_files_tab",
     "VIEW_ADMIN_PAGE": "view_admin_page",
     "VIEW_ACCESS_CONTROL_PAGE": "view_access_control_page",
     "MANAGE_ROLES": "manage_roles",
-    "VIEW_FLOWS_PAGE": "view_flows_page",
+    "VIEW_FLOWS_PAGE": "view_agents_page",
     "VIEW_COMPONENTS_PAGE": "view_components_page",
     "VIEW_ASSETS_FILES_TAB": "view_assets_files_tab",
     "VIEW_ASSETS_KNOWLEDGE_TAB": "view_assets_knowledge_tab",
@@ -55,7 +55,7 @@ ACTIONS = {
     "VIEW_TIMEOUT_SETTINGS_PAGE": "view_timeout_settings_page",
     "VIEW_WORKFLOWS_PAGE": "view_workflows_page",
     "VIEW_PLAYGROUND_PAGE": "view_playground_page",
-    "VIEW_FLOW_EDITOR": "view_flow_editor",
+    "VIEW_FLOW_EDITOR": "view_agent_editor",
 }
 
 ROLE_PERMISSIONS: Dict[str, List[str]] = {

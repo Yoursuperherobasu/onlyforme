@@ -7,18 +7,18 @@ from collections import defaultdict, deque
 from typing import Any
 
 
-def process_flow(flow_object: dict[str, Any]) -> dict[str, Any]:
-    """Process flow data to handle group nodes.
+def process_agent(agent_object: dict[str, Any]) -> dict[str, Any]:
+    """Process agent data to handle group nodes.
     
-    This is a simplified version that handles nested flows.
+    This is a simplified version that handles nested agents.
     
     Args:
-        flow_object: Flow data with nodes and edges
+        agent_object: Agent data with nodes and edges
         
     Returns:
-        Processed flow data
+        Processed agent data
     """
-    cloned_flow = copy.deepcopy(flow_object)
+    cloned_agent = copy.deepcopy(agent_object)
     processed_nodes = set()
     
     def process_node(node: dict[str, Any]) -> None:
@@ -27,22 +27,22 @@ def process_flow(flow_object: dict[str, Any]) -> dict[str, Any]:
         if node_id in processed_nodes:
             return
         
-        # Check if node contains a nested flow
+        # Check if node contains a nested agent
         if (node.get("data") and 
             node["data"].get("node") and 
-            node["data"]["node"].get("flow")):
-            # Recursively process nested flow
-            process_flow(node["data"]["node"]["flow"]["data"])
+            node["data"]["node"].get("agent")):
+            # Recursively process nested agent
+            process_agent(node["data"]["node"]["agent"]["data"])
         
         processed_nodes.add(node_id)
     
-    nodes_to_process = deque(cloned_flow.get("nodes", []))
+    nodes_to_process = deque(cloned_agent.get("nodes", []))
     
     while nodes_to_process:
         node = nodes_to_process.popleft()
         process_node(node)
     
-    return cloned_flow
+    return cloned_agent
 
 
 def has_cycle(vertex_ids: list[str], edges: list[tuple[str, str]]) -> bool:
@@ -392,7 +392,7 @@ def find_start_component_id(vertices, *, is_webhook: bool = False):
 
     Args:
         vertices (list): A list of vertex IDs.
-        is_webhook (bool, optional): Whether the flow is being run as a webhook. Defaults to False.
+        is_webhook (bool, optional): Whether the agent is being run as a webhook. Defaults to False.
 
     Returns:
         str or None: The component ID that matches the highest priority input type, or None if no match is found.

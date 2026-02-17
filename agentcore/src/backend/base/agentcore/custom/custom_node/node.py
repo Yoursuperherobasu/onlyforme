@@ -77,18 +77,18 @@ class PlaceholderGraph(NamedTuple):
     allowing components to function in isolation or in simplified contexts.
 
     Attributes:
-        agent_id (str | None): Unique identifier for the flow, if applicable.
-        user_id (str | None): Identifier of the user associated with the flow, if any.
+        agent_id (str | None): Unique identifier for the agent, if applicable.
+        user_id (str | None): Identifier of the user associated with the agent, if any.
         session_id (str | None): Identifier for the current session, if applicable.
         context (dict): Additional contextual information for the component's execution.
-        flow_name (str | None): Name of the flow, if available.
+        agent_name (str | None): Name of the agent, if available.
     """
 
     agent_id: str | None
     user_id: str | None
     session_id: str | None
     context: dict
-    flow_name: str | None
+    agent_name: str | None
 
 
 class Node(ExecutableNode):
@@ -838,10 +838,10 @@ class Node(ExecutableNode):
             # If it got up to here it means it was going to raise
             session_id = self._session_id if hasattr(self, "_session_id") else None
             user_id = self._user_id if hasattr(self, "_user_id") else None
-            flow_name = self._flow_name if hasattr(self, "_flow_name") else None
+            agent_name = self._agent_name if hasattr(self, "_agent_name") else None
             agent_id = self._agent_id if hasattr(self, "_agent_id") else None
             return PlaceholderGraph(
-                agent_id=agent_id, user_id=str(user_id), session_id=session_id, context={}, flow_name=flow_name
+                agent_id=agent_id, user_id=str(user_id), session_id=session_id, context={}, agent_name=agent_name
             )
         msg = f"Attribute {name} not found in {self.__class__.__name__}"
         raise AttributeError(msg)

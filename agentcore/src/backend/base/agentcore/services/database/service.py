@@ -159,7 +159,7 @@ class DatabaseService(Service):
 
     @staticmethod
     def _generate_unique_agent_name(original_name: str, existing_names: set[str]) -> str:
-        """Generate a unique flow name by adding or incrementing a suffix."""
+        """Generate a unique agent name by adding or incrementing a suffix."""
         if original_name not in existing_names:
             return original_name
 
@@ -194,7 +194,7 @@ class DatabaseService(Service):
         }
 
         # To account for tables that existed in older versions
-        # legacy_tables = ["flowstyle"]
+        # legacy_tables = ["agentstyle"]
 
         for table, model in model_mapping.items():
             expected_columns = list(model.model_fields.keys())

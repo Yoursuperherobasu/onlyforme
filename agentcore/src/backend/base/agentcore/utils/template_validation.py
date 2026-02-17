@@ -49,44 +49,44 @@ def validate_template_structure(template_data: dict[str, Any], filename: str) ->
     return errors
 
 
-def validate_flow_can_build(template_data: dict[str, Any], filename: str) -> list[str]:
-    """Validate that the template can be built into a working flow.
+def validate_agent_can_build(template_data: dict[str, Any], filename: str) -> list[str]:
+    """Validate that the template can be built into a working agent.
 
     Args:
         template_data: The template data to validate
         filename: Name of the template file for error reporting
 
     Returns:
-        List of build errors, empty if flow builds successfully
+        List of build errors, empty if agent builds successfully
     """
     errors = []
 
     try:
-        # Create a unique flow ID for testing
+        # Create a unique agent ID for testing
         agent_id = str(uuid.uuid4())
-        flow_name = filename.replace(".json", "")
+        agent_name = filename.replace(".json", "")
 
         # Try to build the graph from the template data
-        graph = Graph.from_payload(template_data, agent_id, flow_name, user_id="test_user")
+        graph = Graph.from_payload(template_data, agent_id, agent_name, user_id="test_user")
 
         # Validate stream configuration
         graph.validate_stream()
 
         # Basic validation that the graph has vertices
         if not graph.vertices:
-            errors.append(f"{filename}: Flow has no vertices after building")
+            errors.append(f"{filename}: Agent has no vertices after building")
 
         # Validate that all vertices have valid IDs
         errors.extend([f"{filename}: Vertex missing ID" for vertex in graph.vertices if not vertex.id])
 
     except (ValueError, TypeError, KeyError, AttributeError) as e:
-        errors.append(f"{filename}: Failed to build flow graph: {e!s}")
+        errors.append(f"{filename}: Failed to build agent graph: {e!s}")
 
     return errors
 
 
-def validate_flow_code(template_data: dict[str, Any], filename: str) -> list[str]:
-    """Validate flow code using direct function call.
+def validate_agent_code(template_data: dict[str, Any], filename: str) -> list[str]:
+    """Validate agent code using direct function call.
 
     Args:
         template_data: The template data to validate
@@ -137,10 +137,10 @@ def validate_flow_code(template_data: dict[str, Any], filename: str) -> list[str
     return errors
 
 
-async def validate_flow_execution(
+async def validate_agent_execution(
     client, template_data: dict[str, Any], filename: str, headers: dict[str, str]
 ) -> list[str]:
-    """Validate flow execution by building and running the flow.
+    """Validate agent execution by building and running the agent.
 
     Args:
         client: AsyncClient for API requests
@@ -154,21 +154,21 @@ async def validate_flow_execution(
     errors = []
 
     try:
-        # Create a flow from the template with timeout
-        create_response = await client.post("api/flows/", json=template_data, headers=headers, timeout=10)
+        # Create a agent from the template with timeout
+        create_response = await client.post("api/agents/", json=template_data, headers=headers, timeout=10)
 
         if create_response.status_code != 201:  # noqa: PLR2004
-            errors.append(f"{filename}: Failed to create flow: {create_response.status_code}")
+            errors.append(f"{filename}: Failed to create agent: {create_response.status_code}")
             return errors
 
         agent_id = create_response.json()["id"]
 
         try:
-            # Build the flow with timeout
-            build_response = await client.post(f"api/build/{agent_id}/flow", json={}, headers=headers, timeout=10)
+            # Build the agent with timeout
+            build_response = await client.post(f"api/build/{agent_id}/agent", json={}, headers=headers, timeout=10)
 
             if build_response.status_code != 200:  # noqa: PLR2004
-                errors.append(f"{filename}: Failed to build flow: {build_response.status_code}")
+                errors.append(f"{filename}: Failed to build agent: {build_response.status_code}")
                 return errors
 
             job_id = build_response.json()["job_id"]
@@ -185,23 +185,23 @@ async def validate_flow_execution(
             await _validate_event_stream(events_response, job_id, filename, errors)
 
         finally:
-            # Clean up the flow with timeout
+            # Clean up the agent with timeout
             try:  # noqa: SIM105
-                await client.delete(f"api/flows/{agent_id}", headers=headers, timeout=10)
+                await client.delete(f"api/agents/{agent_id}", headers=headers, timeout=10)
             except asyncio.TimeoutError:
                 # Log but don't fail if cleanup times out
                 pass
 
     except asyncio.TimeoutError:
-        errors.append(f"{filename}: Flow execution timed out")
+        errors.append(f"{filename}: Agent execution timed out")
     except (ValueError, TypeError, KeyError, AttributeError) as e:
-        errors.append(f"{filename}: Flow execution validation failed: {e!s}")
+        errors.append(f"{filename}: Agent execution validation failed: {e!s}")
 
     return errors
 
 
 async def _validate_event_stream(response, job_id: str, filename: str, errors: list[str]) -> None:
-    """Validate the event stream from flow execution.
+    """Validate the event stream from agent execution.
 
     Args:
         response: The response object with event stream
@@ -253,14 +253,14 @@ async def _validate_event_stream(response, job_id: str, filename: str, errors: l
                         error_msg = error_data.get("error", "Unknown error")
                         # Skip if error is just "False" which is not a real error
                         if error_msg != "False" and error_msg is not False:
-                            errors.append(f"{filename}: Flow execution error: {error_msg}")
+                            errors.append(f"{filename}: Agent execution error: {error_msg}")
                     else:
                         error_msg = str(error_data)
                         if error_msg != "False":
-                            errors.append(f"{filename}: Flow execution error: {error_msg}")
+                            errors.append(f"{filename}: Agent execution error: {error_msg}")
 
                 elif event_type == "message":
-                    # Handle message events (normal part of flow execution)
+                    # Handle message events (normal part of agent execution)
                     pass
 
                 elif event_type in ["token", "add_message", "stream_closed"]:
@@ -274,11 +274,11 @@ async def _validate_event_stream(response, job_id: str, filename: str, errors: l
         # Only require end event - some templates may not follow the standard pattern
         if not end_event_seen:
             errors.append(f"{filename}: Missing end event in execution")
-        # Allow flows with no vertices to be executed (some templates might be simple)
+        # Allow agents with no vertices to be executed (some templates might be simple)
         # if vertex_count == 0:
-        #     errors.append(f"{filename}: No vertices executed in flow")
+        #     errors.append(f"{filename}: No vertices executed in agent")
 
     except asyncio.TimeoutError:
-        errors.append(f"{filename}: Flow execution timeout")
+        errors.append(f"{filename}: Agent execution timeout")
     except (ValueError, TypeError, KeyError, AttributeError) as e:
         errors.append(f"{filename}: Event stream validation failed: {e!s}")

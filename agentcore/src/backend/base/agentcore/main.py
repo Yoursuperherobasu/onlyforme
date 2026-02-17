@@ -124,7 +124,7 @@ def get_lifespan(*, fix_migration=True, version=None):
             queue_service = get_queue_service()
             if not queue_service.is_started():  # Start if not already started
                 queue_service.start()
-            logger.debug(f"Flows loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
+            logger.debug(f"Agents loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
             logger.debug("Loading mcp servers for projects")
@@ -278,8 +278,8 @@ def create_app():
         )
 
     # Exclude API routes from OTEL instrumentation to prevent HTTP traces
-    # from polluting Langfuse with "POST /api/..." instead of actual flow names.
-    # Flow tracing is handled separately by the TracingService with proper names.
+    # from polluting Langfuse with "POST /api/..." instead of actual agent names.
+    # Agent tracing is handled separately by the TracingService with proper names.
     FastAPIInstrumentor.instrument_app(
         app,
         excluded_urls="/api/.*,/health,/health_check",

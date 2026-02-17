@@ -99,7 +99,7 @@ try:
         user_id="test_user",
         session_id="test_session",
         agent_id="test_agent",
-        flow_name="test_flow",
+        agent_name="test_agent",
     )
     
     print(f"  Tracer created: ready={tracer.ready}")

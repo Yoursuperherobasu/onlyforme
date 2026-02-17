@@ -128,8 +128,8 @@ async def _resolve_current_user(
     return await api_key_security(query_key or token, header_key or token)
 
 
-async def _fetch_accessible_flows(user: UserRead) -> list[Agent]:
-    """Return flows that the caller can access via the OpenAI shim."""
+async def _fetch_accessible_agents(user: UserRead) -> list[Agent]:
+    """Return agents that the caller can access via the OpenAI shim."""
     async with session_scope() as session:
         stmt = (
             select(Agent)
@@ -144,13 +144,13 @@ async def _fetch_accessible_flows(user: UserRead) -> list[Agent]:
         return list((await session.exec(stmt)).all())
 
 
-def _model_identifier(flow: Agent, *, include_prefix: bool = True) -> str:
-    suffix = flow.endpoint_name or str(flow.id)
+def _model_identifier(agent: Agent, *, include_prefix: bool = True) -> str:
+    suffix = agent.endpoint_name or str(agent.id)
     return f"lb:{suffix}" if include_prefix else suffix
 
 
-def _flow_to_model_payload(flow: Agent) -> dict[str, Any]:
-    updated = flow.updated_at
+def _agent_to_model_payload(agent: Agent) -> dict[str, Any]:
+    updated = agent.updated_at
     if isinstance(updated, str):
         try:
             updated_dt = datetime.fromisoformat(updated)
@@ -160,52 +160,52 @@ def _flow_to_model_payload(flow: Agent) -> dict[str, Any]:
         updated_dt = updated
     created_ts = int(updated_dt.timestamp()) if updated_dt else int(time.time())
     return {
-        "id": _model_identifier(flow),
-        "name": flow.name,
+        "id": _model_identifier(agent),
+        "name": agent.name,
         "object": "model",
         "created": created_ts,
-        "owned_by": str(flow.user_id) if flow.user_id else None,
-        "root": _model_identifier(flow),
+        "owned_by": str(agent.user_id) if agent.user_id else None,
+        "root": _model_identifier(agent),
         "parent": None,
         "permission": [],
         "metadata": {
-            "display_name": flow.name,
-            "description": flow.description,
-            "endpoint_name": flow.endpoint_name,
-            "agent_id": str(flow.id),
-            "access": flow.access_type.value if flow.access_type else AccessTypeEnum.PRIVATE.value,
+            "display_name": agent.name,
+            "description": agent.description,
+            "endpoint_name": agent.endpoint_name,
+            "agent_id": str(agent.id),
+            "access": agent.access_type.value if agent.access_type else AccessTypeEnum.PRIVATE.value,
         },
     }
 
 
-def _build_flow_lookup(flows: list[Agent]) -> dict[str, AgentRead]:
+def _build_agent_lookup(agents: list[Agent]) -> dict[str, AgentRead]:
     lookup: dict[str, AgentRead] = {}
-    for flow in flows:
-        flow_read = AgentRead.model_validate(flow, from_attributes=True)
+    for agent in agents:
+        agent_read = AgentRead.model_validate(agent, from_attributes=True)
         for key in {
-            str(flow.id),
-            _model_identifier(flow),
-            _model_identifier(flow, include_prefix=False),
-            f"lb:{flow.id}",
+            str(agent.id),
+            _model_identifier(agent),
+            _model_identifier(agent, include_prefix=False),
+            f"lb:{agent.id}",
         }:
-            lookup[key] = flow_read
+            lookup[key] = agent_read
     return lookup
 
 
-def _ensure_flow_access(flow: AgentRead, user: UserRead) -> None:
-    if flow.access_type == AccessTypeEnum.PUBLIC:
+def _ensure_agent_access(agent: AgentRead, user: UserRead) -> None:
+    if agent.access_type == AccessTypeEnum.PUBLIC:
         return
-    if flow.user_id and flow.user_id == user.id:
+    if agent.user_id and agent.user_id == user.id:
         return
-    raise HTTPException(status_code=403, detail="Flow is not accessible with this API key")
+    raise HTTPException(status_code=403, detail="Agent is not accessible with this API key")
 
 
 @router.get("/v1/models")
 async def list_models(current_user: Annotated[UserRead, Depends(_resolve_current_user)]):
-    flows = await _fetch_accessible_flows(current_user)
-    if not flows:
+    agents = await _fetch_accessible_agents(current_user)
+    if not agents:
         return {"object": "list", "data": []}
-    return {"object": "list", "data": [_flow_to_model_payload(flow) for flow in flows]}
+    return {"object": "list", "data": [_agent_to_model_payload(agent) for agent in agents]}
 
 
 @router.post("/v1/chat/completions")
@@ -215,21 +215,21 @@ async def chat(req: ChatRequest, current_user: Annotated[UserRead, Depends(_reso
     if not req.messages:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
 
-    flows = await _fetch_accessible_flows(current_user)
-    if not flows:
-        raise HTTPException(status_code=404, detail="No flows available for this account")
+    agents = await _fetch_accessible_agents(current_user)
+    if not agents:
+        raise HTTPException(status_code=404, detail="No agents available for this account")
 
-    flow_lookup = _build_flow_lookup(flows)
-    requested_model = req.model or _model_identifier(flows[0])
-    flow_key = requested_model.split(":", 1)[1] if requested_model.startswith("lb:") else requested_model
-    flow_read = flow_lookup.get(requested_model) or flow_lookup.get(flow_key)
-    if flow_read is None:
+    agent_lookup = _build_agent_lookup(agents)
+    requested_model = req.model or _model_identifier(agents[0])
+    agent_key = requested_model.split(":", 1)[1] if requested_model.startswith("lb:") else requested_model
+    agent_read = agent_lookup.get(requested_model) or agent_lookup.get(agent_key)
+    if agent_read is None:
         # attempt to resolve via helper that checks DB + permissions
-        target_identifier = flow_key
-        flow_read = await get_agent_by_id_or_endpoint_name(target_identifier, user_id=str(current_user.id))
-        _ensure_flow_access(flow_read, current_user)
+        target_identifier = agent_key
+        agent_read = await get_agent_by_id_or_endpoint_name(target_identifier, user_id=str(current_user.id))
+        _ensure_agent_access(agent_read, current_user)
     else:
-        _ensure_flow_access(flow_read, current_user)
+        _ensure_agent_access(agent_read, current_user)
 
     prompt = _last_user(req.messages)
     simplified_request = SimplifiedAPIRequest(
@@ -237,7 +237,7 @@ async def chat(req: ChatRequest, current_user: Annotated[UserRead, Depends(_reso
         input_type="chat",
         output_type="chat",
     )
-    run_response = await simple_run_agent(flow=flow_read, input_request=simplified_request, api_key_user=current_user)
+    run_response = await simple_run_agent(agent=agent_read, input_request=simplified_request, api_key_user=current_user)
     lb_json = run_response.model_dump()
     text = _extract_text(lb_json)
 

@@ -10,4 +10,4 @@ class FolderWithPaginatedAgents(BaseModel):
     model_config = {"populate_by_name": True}
 
     folder: FolderRead
-    agents: Page[Agent] = Field(serialization_alias="flows")
+    agents: Page[Agent] = Field(serialization_alias="agents")

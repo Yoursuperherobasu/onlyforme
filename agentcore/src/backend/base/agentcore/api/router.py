@@ -4,9 +4,9 @@ from fastapi import APIRouter
 from agentcore.api.api_key import router as api_key_router
 from agentcore.api.chat import router as chat_router
 from agentcore.api.endpoints import router as endpoints_router
-from agentcore.api.files_flow import router as files_router
+from agentcore.api.files_agent import router as files_router
 from agentcore.api.files_user import router as files_router_user
-from agentcore.api.flows import router as flows_router
+from agentcore.api.agent import router as agents_router
 from agentcore.api.login import router as login_router
 from agentcore.api.mcp_server import router as mcp_router
 from agentcore.api.mcp_projects import router as mcp_projects_router
@@ -31,7 +31,7 @@ router = APIRouter(
 router.include_router(chat_router)
 router.include_router(endpoints_router)
 router.include_router(validate_router)
-router.include_router(flows_router)
+router.include_router(agents_router)
 router.include_router(users_router)
 router.include_router(api_key_router)
 router.include_router(login_router)

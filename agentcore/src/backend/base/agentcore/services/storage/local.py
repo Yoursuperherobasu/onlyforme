@@ -21,12 +21,12 @@ class LocalStorageService(StorageService):
         """Save a file in the local storage.
 
         Args:
-            agent_id: The identifier for the flow.
+            agent_id: The identifier for the agent.
             file_name: The name of the file to be saved.
             data: The byte content of the file.
 
         Raises:
-            FileNotFoundError: If the specified flow does not exist.
+            FileNotFoundError: If the specified agent does not exist.
             IsADirectoryError: If the file name is a directory.
             PermissionError: If there is no permission to write the file.
         """
@@ -37,16 +37,16 @@ class LocalStorageService(StorageService):
         try:
             async with async_open(str(file_path), "wb") as f:
                 await f.write(data)
-            logger.info(f"File {file_name} saved successfully in flow {agent_id}.")
+            logger.info(f"File {file_name} saved successfully in agent {agent_id}.")
         except Exception:
-            logger.exception(f"Error saving file {file_name} in flow {agent_id}")
+            logger.exception(f"Error saving file {file_name} in agent {agent_id}")
             raise
 
     async def get_file(self, agent_id: str, file_name: str) -> bytes:
         """Retrieve a file from the local storage.
 
         Args:
-            agent_id: The identifier for the flow.
+            agent_id: The identifier for the agent.
             file_name: The name of the file to be retrieved.
 
         Returns:
@@ -57,34 +57,34 @@ class LocalStorageService(StorageService):
         """
         file_path = self.data_dir / agent_id / file_name
         if not await file_path.exists():
-            logger.warning(f"File {file_name} not found in flow {agent_id}.")
-            msg = f"File {file_name} not found in flow {agent_id}"
+            logger.warning(f"File {file_name} not found in agent {agent_id}.")
+            msg = f"File {file_name} not found in agent {agent_id}"
             raise FileNotFoundError(msg)
 
         async with async_open(str(file_path), "rb") as f:
             content = await f.read()
 
-        logger.debug(f"File {file_name} retrieved successfully from flow {agent_id}.")
+        logger.debug(f"File {file_name} retrieved successfully from agent {agent_id}.")
         return content
 
     async def list_files(self, agent_id: str):
-        """List all files in a specified flow.
+        """List all files in a specified agent.
 
         Args:
-            agent_id: The identifier for the flow.
+            agent_id: The identifier for the agent.
 
         Returns:
             A list of file names.
 
         Raises:
-            FileNotFoundError: If the flow directory does not exist.
+            FileNotFoundError: If the agent directory does not exist.
         """
         if not isinstance(agent_id, str):
             agent_id = str(agent_id)
         folder_path = self.data_dir / agent_id
         if not await folder_path.exists() or not await folder_path.is_dir():
-            logger.warning(f"Flow {agent_id} directory does not exist.")
-            msg = f"Flow {agent_id} directory does not exist."
+            logger.warning(f"Agent {agent_id} directory does not exist.")
+            msg = f"Agent {agent_id} directory does not exist."
             raise FileNotFoundError(msg)
 
         files = [
@@ -93,21 +93,21 @@ class LocalStorageService(StorageService):
             if await anyio.Path(file).is_file()
         ]
 
-        logger.info(f"Listed {len(files)} files in flow {agent_id}.")
+        logger.info(f"Listed {len(files)} files in agent {agent_id}.")
         return files
 
     async def delete_file(self, agent_id: str, file_name: str) -> None:
         """Delete a file from the local storage.
 
-        :param agent_id: The identifier for the flow.
+        :param agent_id: The identifier for the agent.
         :param file_name: The name of the file to be deleted.
         """
         file_path = self.data_dir / agent_id / file_name
         if await file_path.exists():
             await file_path.unlink()
-            logger.info(f"File {file_name} deleted successfully from flow {agent_id}.")
+            logger.info(f"File {file_name} deleted successfully from agent {agent_id}.")
         else:
-            logger.warning(f"Attempted to delete non-existent file {file_name} in flow {agent_id}.")
+            logger.warning(f"Attempted to delete non-existent file {file_name} in agent {agent_id}.")
 
     async def teardown(self) -> None:
         """Perform any cleanup operations when the service is being torn down."""
@@ -118,8 +118,8 @@ class LocalStorageService(StorageService):
         # Get the file size from the file path
         file_path = self.data_dir / agent_id / file_name
         if not await file_path.exists():
-            logger.warning(f"File {file_name} not found in flow {agent_id}.")
-            msg = f"File {file_name} not found in flow {agent_id}"
+            logger.warning(f"File {file_name} not found in agent {agent_id}.")
+            msg = f"File {file_name} not found in agent {agent_id}"
             raise FileNotFoundError(msg)
 
         file_size_stat = await file_path.stat()

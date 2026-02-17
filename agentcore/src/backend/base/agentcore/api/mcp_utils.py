@@ -19,7 +19,7 @@ from sqlmodel import select
 from agentcore.api.endpoints import simple_run_agent
 from agentcore.api.v1_schemas import SimplifiedAPIRequest
 from agentcore.base.mcp.constants import MAX_MCP_TOOL_NAME_LENGTH
-from agentcore.base.mcp.util import get_flow_snake_case, get_unique_name, sanitize_mcp_name
+from agentcore.base.mcp.util import get_agent_snake_case, get_unique_name, sanitize_mcp_name
 from agentcore.helpers.agent import json_schema_from_agent
 from agentcore.schema.message import Message
 from agentcore.services.database.models import Agent
@@ -88,26 +88,26 @@ async def handle_list_resources(project_id=None):
 
         async with session_scope() as session:
             # Build query based on whether project_id is provided
-            flows_query = select(Agent).where(Agent.folder_id == project_id) if project_id else select(Agent)
+            agents_query = select(Agent).where(Agent.folder_id == project_id) if project_id else select(Agent)
 
-            flows = (await session.exec(flows_query)).all()
+            agents = (await session.exec(agents_query)).all()
 
-            for flow in flows:
-                if flow.id:
+            for agent in agents:
+                if agent.id:
                     try:
-                        files = await storage_service.list_files(agent_id=str(flow.id))
+                        files = await storage_service.list_files(agent_id=str(agent.id))
                         for file_name in files:
                             # URL encode the filename
                             safe_filename = quote(file_name)
                             resource = types.Resource(
-                                uri=f"{base_url}/api/files/{flow.id}/{safe_filename}",
+                                uri=f"{base_url}/api/files/{agent.id}/{safe_filename}",
                                 name=file_name,
-                                description=f"File in flow: {flow.name}",
+                                description=f"File in agent: {agent.name}",
                                 mimeType=build_content_type_from_extension(file_name),
                             )
                             resources.append(resource)
                     except FileNotFoundError as e:
-                        msg = f"Error listing files for flow {flow.id}: {e}"
+                        msg = f"Error listing files for agent {agent.id}: {e}"
                         logger.debug(msg)
                         continue
     except Exception as e:
@@ -141,7 +141,7 @@ async def handle_read_resource(uri: str) -> bytes:
         # Read the file content
         content = await storage_service.get_file(agent_id=agent_id, file_name=filename)
         if not content:
-            msg = f"File {filename} not found in flow {agent_id}"
+            msg = f"File {filename} not found in agent {agent_id}"
             raise ValueError(msg)
 
         # Ensure content is base64 encoded
@@ -163,8 +163,8 @@ async def handle_call_tool(
         name: Tool name
         arguments: Tool arguments
         server: MCP server instance
-        project_id: Optional project ID to filter flows by project
-        is_action: Whether to use action name for flow lookup
+        project_id: Optional project ID to filter agents by project
+        is_action: Whether to use action name for agent lookup
     """
     mcp_config = get_mcp_config()
     if mcp_config.enable_progress_notifications is None:
@@ -174,15 +174,15 @@ async def handle_call_tool(
     current_user = current_user_ctx.get()
 
     async def execute_tool(session):
-        # Get flow id from name
-        flow = await get_flow_snake_case(name, current_user.id, session, is_action=is_action)
-        if not flow:
-            msg = f"Flow with name '{name}' not found"
+        # Get agent id from name
+        agent = await get_agent_snake_case(name, current_user.id, session, is_action=is_action)
+        if not agent:
+            msg = f"agent with name '{name}' not found"
             raise ValueError(msg)
 
-        # If project_id is provided, verify the flow belongs to the project
-        if project_id and flow.folder_id != project_id:
-            msg = f"Flow '{name}' not found in project {project_id}"
+        # If project_id is provided, verify the agent belongs to the project
+        if project_id and agent.folder_id != project_id:
+            msg = f"agent '{name}' not found in project {project_id}"
             raise ValueError(msg)
 
         # Process inputs
@@ -224,7 +224,7 @@ async def handle_call_tool(
             try:
                 try:
                     result = await simple_run_agent(
-                        flow=flow,
+                        agent=agent,
                         input_request=input_request,
                         stream=False,
                         api_key_user=current_user,
@@ -249,7 +249,7 @@ async def handle_call_tool(
                                 else:
                                     add_result(str(value))
                 except Exception as e:  # noqa: BLE001
-                    error_msg = f"Error Executing the {flow.name} tool. Error: {e!s}"
+                    error_msg = f"Error Executing the {agent.name} tool. Error: {e!s}"
                     collected_results.append(types.TextContent(type="text", text=error_msg))
 
                 return collected_results
@@ -280,40 +280,40 @@ async def handle_list_tools(project_id=None, *, mcp_enabled_only=False):
 
     Args:
         project_id: Optional project ID to filter tools by project
-        mcp_enabled_only: Whether to filter for MCP-enabled flows only
+        mcp_enabled_only: Whether to filter for MCP-enabled agents only
     """
     tools = []
     try:
         async with session_scope() as session:
             # Build query based on parameters
             if project_id:
-                # Filter flows by project and optionally by MCP enabled status
-                flows_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
+                # Filter agents by project and optionally by MCP enabled status
+                agents_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
                 if mcp_enabled_only:
-                    flows_query = flows_query.where(Agent.mcp_enabled == True)  # noqa: E712
+                    agents_query = agents_query.where(Agent.mcp_enabled == True)  # noqa: E712
             else:
-                # Get all flows
-                flows_query = select(Agent)
+                # Get all agents
+                agents_query = select(Agent)
 
-            flows = (await session.exec(flows_query)).all()
+            agents = (await session.exec(agents_query)).all()
 
             existing_names = set()
-            for flow in flows:
-                if flow.user_id is None:
+            for agent in agents:
+                if agent.user_id is None:
                     continue
 
                 # For project-specific tools, use action names if available
                 if project_id:
                     base_name = (
-                        sanitize_mcp_name(flow.action_name) if flow.action_name else sanitize_mcp_name(flow.name)
+                        sanitize_mcp_name(agent.action_name) if agent.action_name else sanitize_mcp_name(agent.name)
                     )
                     name = get_unique_name(base_name, MAX_MCP_TOOL_NAME_LENGTH, existing_names)
-                    description = flow.action_description or (
-                        flow.description if flow.description else f"Tool generated from flow: {name}"
+                    description = agent.action_description or (
+                        agent.description if agent.description else f"Tool generated from agent: {name}"
                     )
                 else:
                     # For global tools, use simple sanitized names
-                    base_name = sanitize_mcp_name(flow.name)
+                    base_name = sanitize_mcp_name(agent.name)
                     name = base_name[:MAX_MCP_TOOL_NAME_LENGTH]
                     if name in existing_names:
                         i = 1
@@ -326,19 +326,19 @@ async def handle_list_tools(project_id=None, *, mcp_enabled_only=False):
                                 break
                             i += 1
                     description = (
-                        f"{flow.id}: {flow.description}" if flow.description else f"Tool generated from flow: {name}"
+                        f"{agent.id}: {agent.description}" if agent.description else f"Tool generated from agent: {name}"
                     )
 
                 try:
                     tool = types.Tool(
                         name=name,
                         description=description,
-                        inputSchema=json_schema_from_agent(flow),
+                        inputSchema=json_schema_from_agent(agent),
                     )
                     tools.append(tool)
                     existing_names.add(name)
                 except Exception as e:  # noqa: BLE001
-                    msg = f"Error in listing tools: {e!s} from flow: {base_name}"
+                    msg = f"Error in listing tools: {e!s} from agent: {base_name}"
                     logger.warning(msg)
                     continue
     except Exception as e:

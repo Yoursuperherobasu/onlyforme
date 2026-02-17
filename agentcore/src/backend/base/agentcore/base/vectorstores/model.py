@@ -39,7 +39,7 @@ def check_cached_vector_store(f):
 
 
 class LCVectorStoreNode(Node):
-    # Used to ensure a single vector store is built for each run of the flow
+    # Used to ensure a single vector store is built for each run of the agent
     _cached_vector_store: VectorStore | None = None
 
     def __init_subclass__(cls, **kwargs):

@@ -6,7 +6,7 @@ from agentcore.schema.message import Message
 
 class HumanApprovalComponent(Node):
     display_name = "Human Approval"
-    description = "Pause workflow execution and wait for human approval before proceeding."
+    description = "Pause workagent execution and wait for human approval before proceeding."
     icon = "UserCheck"
     name = "HumanApproval"
 

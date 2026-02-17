@@ -31,9 +31,9 @@ class RunAgentBaseNode(Node):
 
     _base_inputs: list[InputTypes] = [
         DropdownInput(
-            name="flow_name_selected",
-            display_name="Flow Name",
-            info="The name of the flow to run.",
+            name="agent_name_selected",
+            display_name="agent Name",
+            info="The name of the agent to run.",
             options=[],
             real_time_refresh=True,
             value=None,
@@ -41,39 +41,39 @@ class RunAgentBaseNode(Node):
         MessageInput(
             name="session_id",
             display_name="Session ID",
-            info="The session ID to run the flow in.",
+            info="The session ID to run the agent in.",
             value="",
             advanced=True,
         ),
     ]
     _base_outputs: list[Output] = [
         Output(
-            name="flow_outputs_data",
-            display_name="Flow Data Output",
+            name="agent_outputs_data",
+            display_name="agent Data Output",
             method="data_output",
             hidden=True,
             group_outputs=True,
             tool_mode=False,  # This output is not intended to be used as a tool, so tool_mode is disabled.
         ),
         Output(
-            name="flow_outputs_dataframe",
-            display_name="Flow Dataframe Output",
+            name="agent_outputs_dataframe",
+            display_name="agent Dataframe Output",
             method="dataframe_output",
             hidden=True,
             group_outputs=True,
             tool_mode=False,  # This output is not intended to be used as a tool, so tool_mode is disabled.
         ),
         Output(
-            name="flow_outputs_message", group_outputs=True, display_name="Flow Message Output", method="message_output"
+            name="agent_outputs_message", group_outputs=True, display_name="agent Message Output", method="message_output"
         ),
     ]
-    default_keys = ["code", "_type", "flow_name_selected", "session_id"]
-    FLOW_INPUTS: list[dotdict] = []
-    flow_tweak_data: dict = {}
+    default_keys = ["code", "_type", "agent_name_selected", "session_id"]
+    agent_INPUTS: list[dotdict] = []
+    agent_tweak_data: dict = {}
 
     @abstractmethod
     async def run_agent_with_tweaks(self) -> list[Data]:
-        """Run the flow with tweaks."""
+        """Run the agent with tweaks."""
 
     async def data_output(self) -> Data:
         """Return the data output."""
@@ -111,28 +111,28 @@ class RunAgentBaseNode(Node):
             return Message(text=message_result)
         return Message(text=message_result.data["text"])
 
-    async def get_flow_names(self) -> list[str]:
-        # TODO: get flfow ID with flow name
-        flow_data = await self.alist_agents()
-        return [flow_data.data["name"] for flow_data in flow_data]
+    async def get_agent_names(self) -> list[str]:
+        # TODO: get flfow ID with agent name
+        agent_data = await self.alist_agents()
+        return [agent_data.data["name"] for agent_data in agent_data]
 
-    async def get_flow(self, flow_name_selected: str) -> Data | None:
-        # get flow from flow id
-        flow_datas = await self.alist_agents()
-        for flow_data in flow_datas:
-            if flow_data.data["name"] == flow_name_selected:
-                return flow_data
+    async def get_agent(self, agent_name_selected: str) -> Data | None:
+        # get agent from agent id
+        agent_datas = await self.alist_agents()
+        for agent_data in agent_datas:
+            if agent_data.data["name"] == agent_name_selected:
+                return agent_data
         return None
 
-    async def get_graph(self, flow_name_selected: str | None = None) -> Graph:
-        if flow_name_selected:
-            flow_data = await self.get_flow(flow_name_selected)
-            if flow_data:
-                return Graph.from_payload(flow_data.data["data"])
-            msg = "Flow not found"
+    async def get_graph(self, agent_name_selected: str | None = None) -> Graph:
+        if agent_name_selected:
+            agent_data = await self.get_agent(agent_name_selected)
+            if agent_data:
+                return Graph.from_payload(agent_data.data["data"])
+            msg = "agent not found"
             raise ValueError(msg)
         # Ensure a Graph is always returned or an exception is raised
-        msg = "No valid flow JSON or flow name selected."
+        msg = "No valid agent JSON or agent name selected."
         raise ValueError(msg)
 
     def get_new_fields_from_graph(self, graph: Graph) -> list[dotdict]:
@@ -195,15 +195,15 @@ class RunAgentBaseNode(Node):
             if field not in [new_field["name"] for new_field in new_fields] + self.default_keys
         ]
 
-    async def get_required_data(self, flow_name_selected):
-        self.flow_data = await self.alist_agents()
-        for flow_data in self.flow_data:
-            if flow_data.data["name"] == flow_name_selected:
-                graph = Graph.from_payload(flow_data.data["data"])
+    async def get_required_data(self, agent_name_selected):
+        self.agent_data = await self.alist_agents()
+        for agent_data in self.agent_data:
+            if agent_data.data["name"] == agent_name_selected:
+                graph = Graph.from_payload(agent_data.data["data"])
                 new_fields = self.get_new_fields_from_graph(graph)
                 new_fields = self.update_input_types(new_fields)
 
-                return flow_data.data["description"], [field for field in new_fields if field.get("tool_mode") is True]
+                return agent_data.data["description"], [field for field in new_fields if field.get("tool_mode") is True]
         return None
 
     def update_input_types(self, fields: list[dotdict]) -> list[dotdict]:
@@ -218,14 +218,14 @@ class RunAgentBaseNode(Node):
     @override
     async def _get_tools(self) -> list[Tool]:
         component_toolkit: type[ComponentToolkit] = _get_component_toolkit()
-        flow_description, tool_mode_inputs = await self.get_required_data(self.flow_name_selected)
+        agent_description, tool_mode_inputs = await self.get_required_data(self.agent_name_selected)
         # # convert list of dicts to list of dotdicts
         tool_mode_inputs = [dotdict(field) for field in tool_mode_inputs]
         return component_toolkit(component=self).get_tools(
-            tool_name=f"{self.flow_name_selected}_tool",
+            tool_name=f"{self.agent_name_selected}_tool",
             tool_description=(
-                f"Tool designed to execute the flow '{self.flow_name_selected}'. Flow details: {flow_description}."
+                f"Tool designed to execute the agent '{self.agent_name_selected}'. agent details: {agent_description}."
             ),
             callbacks=self.get_langchain_callbacks(),
-            flow_mode_inputs=tool_mode_inputs,
+            agent_mode_inputs=tool_mode_inputs,
         )

@@ -176,7 +176,7 @@ async def upload_user_file(
         # Optionally, you could also delete the file from disk if the DB insert fails.
         raise HTTPException(status_code=500, detail=f"Database error: {e}") from e
 
-    return UploadFileResponse(flow_id=str(current_user.id), file_path=Path(new_file.path))
+    return UploadFileResponse(agent_id=str(current_user.id), file_path=Path(new_file.path))
 
 
 async def get_file_by_name(
@@ -461,7 +461,7 @@ async def edit_file_name(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error editing file: {e}") from e
 
-    return UploadFileResponse(flow_id=str(current_user.id), file_path=Path(file.path))
+    return UploadFileResponse(agent_id=str(current_user.id), file_path=Path(file.path))
 
 
 @router.delete("/{file_id}")

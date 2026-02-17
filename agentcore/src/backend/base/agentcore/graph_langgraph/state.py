@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 # EventManager is optional and only used at runtime, use string annotation
 class AgentCoreState(TypedDict):
-    """State that flows through the LangGraph execution.
+    """State that agents through the LangGraph execution.
     
     This state is passed between nodes and maintains the execution context,
-    results, and events for the entire flow.
+    results, and events for the entire agent.
     """
     
     # Core execution results
@@ -25,9 +25,9 @@ class AgentCoreState(TypedDict):
     # Event streaming (accumulate events as list)
     events: Annotated[list[dict[str, Any]], add]
     
-    # Flow metadata
+    # Agent metadata
     agent_id: str
-    flow_name: str | None
+    agent_name: str | None
     session_id: str
     user_id: str | None
     

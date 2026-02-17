@@ -6,7 +6,7 @@ from langchain_core.tools import BaseTool, ToolException
 from loguru import logger
 from typing_extensions import override
 
-from agentcore.base.flow_processing.utils import build_data_from_result_data, format_flow_output_data
+from agentcore.base.agent_processing.utils import build_data_from_result_data, format_agent_output_data
 from agentcore.graph_langgraph import LangGraphAdapter as Graph  # cannot be a part of TYPE_CHECKING   # noqa: TC001
 from agentcore.graph_langgraph import LangGraphVertex as Vertex  # cannot be a part of TYPE_CHECKING  # noqa: TC001
 from agentcore.helpers.agent import build_schema_from_inputs, get_arg_names, get_agent_inputs, run_agent
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pydantic.v1 import BaseModel
 
 
-class FlowTool(BaseTool):
+class AgentTool(BaseTool):
     name: str
     description: str
     graph: Graph | None = None
@@ -76,7 +76,7 @@ class FlowTool(BaseTool):
             for output in run_output.outputs:
                 if output:
                     data.extend(build_data_from_result_data(output))
-        return format_flow_output_data(data)
+        return format_agent_output_data(data)
 
     def validate_inputs(self, args_names: list[dict[str, str]], args: Any, kwargs: Any):
         """Validate the inputs."""
@@ -128,4 +128,4 @@ class FlowTool(BaseTool):
             for output in run_output.outputs:
                 if output:
                     data.extend(build_data_from_result_data(output))
-        return format_flow_output_data(data)
+        return format_agent_output_data(data)

@@ -48,7 +48,7 @@ class LangGraphExecutor:
         This method replaces Graph.process() and runs the entire flow.
         
         Args:
-            inputs: Input data for the flow
+            inputs: Input data for the agent
             files: List of file paths
             user_id: User ID for execution
             event_manager: Event manager for streaming
@@ -59,7 +59,7 @@ class LangGraphExecutor:
         Returns:
             Final state after execution
         """
-        logger.info(f"Starting LangGraph execution for flow {self.adapter.agent_id}")
+        logger.info(f"Starting LangGraph execution for agent {self.adapter.agent_id}")
         
         # Update input vertices with the input data (like ChatInput's input_value)
         if inputs:
@@ -113,7 +113,7 @@ class LangGraphExecutor:
         """Execute with streaming (yields state updates).
         
         Args:
-            inputs: Input data for the flow
+            inputs: Input data for the agent
             files: List of file paths
             user_id: User ID for execution
             event_manager: Event manager for streaming
@@ -124,7 +124,7 @@ class LangGraphExecutor:
         Yields:
             State updates as execution progresses
         """
-        logger.info(f"Starting streaming LangGraph execution for flow {self.adapter.agent_id}")
+        logger.info(f"Starting streaming LangGraph execution for agent {self.adapter.agent_id}")
         
         # Update input vertices with the input data (like ChatInput's input_value)
         if inputs:
@@ -192,9 +192,9 @@ class LangGraphExecutor:
             completed_vertices=[],
             events=[],
             
-            # Flow metadata
+            # Agent metadata
             agent_id=self.adapter.agent_id or "",
-            flow_name=self.adapter.flow_name,
+            agent_name=self.adapter.agent_name,
             session_id=inputs.get("session_id") or self.adapter.session_id or self.adapter.agent_id or "",
             user_id=user_id,
             

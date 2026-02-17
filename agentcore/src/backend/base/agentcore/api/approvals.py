@@ -375,7 +375,7 @@ async def reset_agent_status(agent_id: str):
     POST /api/approvals/{agent_id}/reset-status
     
     Reset agent status back to pending (for testing/demo purposes).
-    Useful for demo/testing the approval flow multiple times.
+    Useful for demo/testing the approval agent multiple times.
     """
     try:
         logger.info(f"Resetting agent status: {agent_id}")

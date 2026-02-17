@@ -83,40 +83,40 @@ async def list_project_tools(
             if not project:
                 raise HTTPException(status_code=404, detail="Project not found")
 
-            # Query flows in the project
-            flows_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
+            # Query agents in the project
+            agents_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
 
-            # Optionally filter for MCP-enabled flows only
+            # Optionally filter for MCP-enabled agents only
             if mcp_enabled:
-                flows_query = flows_query.where(Agent.mcp_enabled == True)  # noqa: E712
+                agents_query = agents_query.where(Agent.mcp_enabled == True)  # noqa: E712
 
-            flows = (await session.exec(flows_query)).all()
+            agents = (await session.exec(agents_query)).all()
 
-            for flow in flows:
-                if flow.user_id is None:
+            for agent in agents:
+                if agent.user_id is None:
                     continue
 
-                # Format the flow name according to MCP conventions (snake_case)
-                flow_name = sanitize_mcp_name(flow.name)
+                # Format the agent name according to MCP conventions (snake_case)
+                agent_name = sanitize_mcp_name(agent.name)
 
                 # Use action_name and action_description if available, otherwise use defaults
-                name = sanitize_mcp_name(flow.action_name) if flow.action_name else flow_name
-                description = flow.action_description or (
-                    flow.description if flow.description else f"Tool generated from flow: {flow_name}"
+                name = sanitize_mcp_name(agent.action_name) if agent.action_name else agent_name
+                description = agent.action_description or (
+                    agent.description if agent.description else f"Tool generated from agent: {agent_name}"
                 )
                 try:
                     tool = MCPSettings(
-                        id=str(flow.id),
+                        id=str(agent.id),
                         action_name=name,
                         action_description=description,
-                        mcp_enabled=flow.mcp_enabled,
-                        # inputSchema=json_schema_from_agent(flow),
-                        name=flow.name,
-                        description=flow.description,
+                        mcp_enabled=agent.mcp_enabled,
+                        # inputSchema=json_schema_from_agent(agent),
+                        name=agent.name,
+                        description=agent.description,
                     )
                     tools.append(tool)
                 except Exception as e:  # noqa: BLE001
-                    msg = f"Error in listing project tools: {e!s} from flow: {name}"
+                    msg = f"Error in listing project tools: {e!s} from agent: {name}"
                     logger.warning(msg)
                     continue
 
@@ -234,7 +234,7 @@ async def update_project_mcp_settings(
     request: MCPProjectUpdateRequest,
     current_user: CurrentActiveMCPUser,
 ):
-    """Update the MCP settings of all flows in a project and project-level auth settings."""
+    """Update the MCP settings of all agents in a project and project-level auth settings."""
     try:
         async with session_scope() as session:
             # Fetch the project first to verify it exists and belongs to the current user
@@ -256,27 +256,27 @@ async def update_project_mcp_settings(
                 project.auth_settings = None
             session.add(project)
 
-            # Query flows in the project
-            flows = (await session.exec(select(Agent).where(Agent.folder_id == project_id))).all()
-            flows_to_update = {x.id: x for x in request.settings}
+            # Query agents in the project
+            agents = (await session.exec(select(Agent).where(Agent.folder_id == project_id))).all()
+            agents_to_update = {x.id: x for x in request.settings}
 
-            updated_flows = []
-            for flow in flows:
-                if flow.user_id is None or flow.user_id != current_user.id:
+            updated_agents = []
+            for agent in agents:
+                if agent.user_id is None or agent.user_id != current_user.id:
                     continue
 
-                if flow.id in flows_to_update:
-                    settings_to_update = flows_to_update[flow.id]
-                    flow.mcp_enabled = settings_to_update.mcp_enabled
-                    flow.action_name = settings_to_update.action_name
-                    flow.action_description = settings_to_update.action_description
-                    flow.updated_at = datetime.now(timezone.utc)
-                    session.add(flow)
-                    updated_flows.append(flow)
+                if agent.id in agents_to_update:
+                    settings_to_update = agents_to_update[agent.id]
+                    agent.mcp_enabled = settings_to_update.mcp_enabled
+                    agent.action_name = settings_to_update.action_name
+                    agent.action_description = settings_to_update.action_description
+                    agent.updated_at = datetime.now(timezone.utc)
+                    session.add(agent)
+                    updated_agents.append(agent)
 
             await session.commit()
 
-            return {"message": f"Updated MCP settings for {len(updated_flows)} flows and project auth settings"}
+            return {"message": f"Updated MCP settings for {len(updated_agents)} agents and project auth settings"}
 
     except Exception as e:
         msg = f"Error updating project MCP settings: {e!s}"

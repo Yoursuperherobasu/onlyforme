@@ -19,7 +19,7 @@ from agentcore.graph_langgraph.utils import (
     build_in_degree_map,
     find_cycle_vertices,
     has_cycle,
-    process_flow,
+    process_agent,
 )
 from agentcore.graph_langgraph.vertex_wrapper import LangGraphVertex
 
@@ -34,13 +34,13 @@ class LangGraphAdapter:
     """Adapter to convert AgentCore Graph to LangGraph StateGraph.
     
     This class replaces the custom Graph implementation with LangGraph,
-    while maintaining all the same functionality for drag-and-drop flows.
+    while maintaining all the same functionality for drag-and-drop agents.
     """
     
     def __init__(
         self,
         agent_id: str | UUID | None = None,
-        flow_name: str | None = None,
+        agent_name: str | None = None,
         user_id: str | None = None,
         project_id: str | None = None,
         project_name: str | None = None,
@@ -48,14 +48,14 @@ class LangGraphAdapter:
         """Initialize the LangGraph adapter.
 
         Args:
-            agent_id: The ID of the flow
-            flow_name: The name of the flow
+            agent_id: The ID of the agent
+            agent_name: The name of the agent
             user_id: The user ID
             project_id: The project/folder ID for observability grouping
             project_name: The project/folder name for observability display
         """
         self.agent_id = str(agent_id) if agent_id else None
-        self.flow_name = flow_name
+        self.agent_name = agent_name
         self.user_id = user_id
         self.project_id = project_id
         self.project_name = project_name
@@ -119,7 +119,7 @@ class LangGraphAdapter:
         cls,
         payload: dict,
         agent_id: str | None = None,
-        flow_name: str | None = None,
+        agent_name: str | None = None,
         user_id: str | None = None,
         project_id: str | None = None,
         project_name: str | None = None,
@@ -128,8 +128,8 @@ class LangGraphAdapter:
 
         Args:
             payload: The JSON payload with nodes and edges
-            agent_id: The flow ID
-            flow_name: The flow name
+            agent_id: The agent ID
+            agent_name: The agent name
             user_id: The user ID
             project_id: The project/folder ID for observability grouping
             project_name: The project/folder name for observability display
@@ -146,7 +146,7 @@ class LangGraphAdapter:
 
             adapter = cls(
                 agent_id=agent_id,
-                flow_name=flow_name,
+                agent_name=agent_name,
                 user_id=user_id,
                 project_id=project_id,
                 project_name=project_name,
@@ -173,8 +173,8 @@ class LangGraphAdapter:
         """
         self.raw_graph_data = {"nodes": nodes, "edges": edges}
         
-        # Process flow (handles group nodes, etc.)
-        processed_data = process_flow(self.raw_graph_data)
+        # Process agent (handles group nodes, etc.)
+        processed_data = process_agent(self.raw_graph_data)
         
         vertices_data = processed_data["nodes"]
         edges_data = processed_data["edges"]
@@ -366,7 +366,7 @@ class LangGraphAdapter:
             List of vertex IDs in the first layer (vertices with no dependencies in the filtered set)
             
         Example:
-            Given flow: ChatInput -> Agent -> TextInput -> ChatOutput
+            Given agent: ChatInput -> Agent -> TextInput -> ChatOutput
             
             If stop_component_id = "Agent-xxx":
                 - Only ChatInput and Agent will be included
@@ -492,21 +492,21 @@ class LangGraphAdapter:
         logger.info(f"🔍 TRACING INIT: service={self.tracing_service}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
         if self.tracing_service and not self.tracing_service.deactivated:
             from uuid import UUID
-            run_name = f"{self.flow_name} - {self.agent_id}"
+            run_name = f"{self.agent_name} - {self.agent_id}"
             # Use the run_id we just set (converted to UUID)
             run_id = UUID(self._run_id) if self._run_id else uuid4()
-            logger.info(f"🚀 STARTING TRACERS: flow={self.flow_name}, user={self.user_id}, session={self._session_id}, run_id={run_id}")
+            logger.info(f"🚀 STARTING TRACERS: agent={self.agent_name}, user={self.user_id}, session={self._session_id}, run_id={run_id}")
             await self.tracing_service.start_tracers(
                 run_id=run_id,
                 run_name=run_name,
                 user_id=self.user_id,
                 session_id=self._session_id,
                 agent_id=self.agent_id,
-                flow_name=self.flow_name,
+                agent_name=self.agent_name,
                 observability_project_id=self.project_id,
                 observability_project_name=self.project_name,
             )
-            logger.info(f"✅ TRACERS STARTED: flow={self.flow_name}")
+            logger.info(f"✅ TRACERS STARTED: agent={self.agent_name}")
         else:
             logger.warning(f"⚠️ TRACING DISABLED: service_exists={self.tracing_service is not None}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
     
@@ -556,8 +556,8 @@ class LangGraphAdapter:
             outputs = {}
             if self.agent_id:
                 outputs["agent_id"] = self.agent_id
-            if self.flow_name:
-                outputs["flow_name"] = self.flow_name
+            if self.agent_name:
+                outputs["agent_name"] = self.agent_name
             outputs["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             
             await self.tracing_service.end_tracers(outputs=outputs, error=error)
@@ -663,10 +663,10 @@ class LangGraphAdapter:
             msg = f"Vertex {vertex_id} not found"
             raise ValueError(msg)
         
-        # Note: We do NOT start a new trace here. The flow-level trace is started 
+        # Note: We do NOT start a new trace here. The agent-level trace is started 
         # in initialize_run(). Each vertex build creates child spans via the 
         # component's trace_component() call in build_results().
-        # This ensures all vertex builds appear as spans under a single flow trace.
+        # This ensures all vertex builds appear as spans under a single agent trace.
         
         user_id = kwargs.get("user_id")
         inputs_dict = kwargs.get("inputs_dict", {})
@@ -965,7 +965,7 @@ class LangGraphAdapter:
         
         new_adapter = type(self)(
             agent_id=copy.deepcopy(self.agent_id, memo),
-            flow_name=copy.deepcopy(self.flow_name, memo),
+            agent_name=copy.deepcopy(self.agent_name, memo),
             user_id=copy.deepcopy(self.user_id, memo),
         )
     
@@ -1646,7 +1646,7 @@ class LangGraphAdapter:
         
         new_adapter = type(self)(
             agent_id=copy.deepcopy(self.agent_id, memo),
-            flow_name=copy.deepcopy(self.flow_name, memo),
+            agent_name=copy.deepcopy(self.agent_name, memo),
             user_id=copy.deepcopy(self.user_id, memo),
         )
         

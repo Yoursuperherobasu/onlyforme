@@ -17,8 +17,8 @@ class InputValue(BaseModel):
 
 class Tweaks(RootModel):
     root: dict[str, str | dict[str, Any]] = Field(
-        description="A dictionary of tweaks to adjust the flow's execution. "
-        "Allows customizing flow behavior dynamically. "
+        description="A dictionary of tweaks to adjust the agent's execution. "
+        "Allows customizing agent behavior dynamically. "
         "All tweaks are overridden by the input values.",
     )
     model_config = {

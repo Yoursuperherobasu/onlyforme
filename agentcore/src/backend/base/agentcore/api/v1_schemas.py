@@ -463,7 +463,7 @@ class AuthSettings(BaseModel):
 
 
 class MCPSettings(BaseModel):
-    """Model representing MCP settings for a flow."""
+    """Model representing MCP settings for a agent."""
 
     id: UUID
     mcp_enabled: bool | None = None

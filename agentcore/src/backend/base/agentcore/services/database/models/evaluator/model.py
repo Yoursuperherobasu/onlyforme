@@ -14,11 +14,11 @@ class EvaluatorBase(SQLModel):
     ground_truth: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     target: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
     trace_id: Optional[str] = None
-    flow_id: Optional[str] = None
-    flow_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
-    agent_id: Optional[str] = None  # Alias for flow_id (agents are flows)
-    agent_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))  # Alias for flow_ids
-    flow_name: Optional[str] = None
+    agent_id: Optional[str] = None
+    agent_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    agent_id: Optional[str] = None  # Alias for agent_id (agents are agents)
+    agent_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))  # Alias for agent_ids
+    agent_name: Optional[str] = None
     session_id: Optional[str] = None
     project_name: Optional[str] = None
     ts_from: Optional[datetime] = None
@@ -39,14 +39,14 @@ class Evaluator(EvaluatorBase, table=True):
             "model": self.model,
             "user_id": str(self.user_id) if self.user_id else None,
             "preset_id": self.preset_id,
-            "flow_ids": self.flow_ids,
+            "agent_ids": self.agent_ids,
             "agent_id": self.agent_id,
             "agent_ids": self.agent_ids,
             "target": self.target,
             "ground_truth": self.ground_truth,
             "trace_id": self.trace_id,
-            "flow_id": self.flow_id,
-            "flow_name": self.flow_name,
+            "agent_id": self.agent_id,
+            "agent_name": self.agent_name,
             "session_id": self.session_id,
             "project_name": self.project_name,
             "ts_from": self.ts_from.isoformat() if self.ts_from else None,

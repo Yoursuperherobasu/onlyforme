@@ -15,7 +15,7 @@ from agentcore.utils.util import update_settings
 
 
 async def aload_agent_from_json(
-    flow: Path | str | dict,
+    agent: Path | str | dict,
     *,
     tweaks: dict | None = None,
     log_level: str | None = None,
@@ -25,22 +25,22 @@ async def aload_agent_from_json(
     cache: str | None = None,
     disable_logs: bool | None = True,
 ) -> Graph:
-    """Load a flow graph from a JSON file or a JSON object.
+    """Load a agent graph from a JSON file or a JSON object.
 
     Args:
-        flow (Union[Path, str, dict]): The flow to load. It can be a file path (str or Path object)
+        agent (Union[Path, str, dict]): The agent to load. It can be a file path (str or Path object)
             or a JSON object (dict).
-        tweaks (Optional[dict]): Optional tweaks to apply to the loaded flow graph.
-        log_level (Optional[str]): Optional log level to configure for the flow processing.
-        log_file (Optional[str]): Optional log file to configure for the flow processing.
-        log_rotation (Optional[str]): Optional log rotation(Time/Size) to configure for the flow processing.
+        tweaks (Optional[dict]): Optional tweaks to apply to the loaded agent graph.
+        log_level (Optional[str]): Optional log level to configure for the agent processing.
+        log_file (Optional[str]): Optional log file to configure for the agent processing.
+        log_rotation (Optional[str]): Optional log rotation(Time/Size) to configure for the agent processing.
         env_file (Optional[str]): Optional .env file to override environment variables.
-        cache (Optional[str]): Optional cache path to update the flow settings.
-        disable_logs (Optional[bool], default=True): Optional flag to disable logs during flow processing.
+        cache (Optional[str]): Optional cache path to update the agent settings.
+        disable_logs (Optional[bool], default=True): Optional flag to disable logs during agent processing.
             If log_level or log_file are set, disable_logs is not used.
 
     Returns:
-        Graph: The loaded flow graph as a Graph object.
+        Graph: The loaded agent graph as a Graph object.
 
     Raises:
         TypeError: If the input is neither a file path (str or Path object) nor a JSON object (dict).
@@ -62,18 +62,18 @@ async def aload_agent_from_json(
     # Update settings with cache and components path
     await update_settings(cache=cache)
 
-    if isinstance(flow, str | Path):
-        async with async_open(Path(flow), encoding="utf-8") as f:
+    if isinstance(agent, str | Path):
+        async with async_open(Path(agent), encoding="utf-8") as f:
             content = await f.read()
-            flow_graph = json.loads(content)
+            agent_graph = json.loads(content)
     # If input is a dictionary, assume it's a JSON object
-    elif isinstance(flow, dict):
-        flow_graph = flow
+    elif isinstance(agent, dict):
+        agent_graph = agent
     else:
         msg = "Input must be either a file path (str) or a JSON object (dict)"
         raise TypeError(msg)
 
-    graph_data = flow_graph["data"]
+    graph_data = agent_graph["data"]
     if tweaks is not None:
         graph_data = process_tweaks(graph_data, tweaks)
 
@@ -81,7 +81,7 @@ async def aload_agent_from_json(
 
 
 def load_agent_from_json(
-    flow: Path | str | dict,
+    agent: Path | str | dict,
     *,
     tweaks: dict | None = None,
     log_level: str | None = None,
@@ -91,22 +91,22 @@ def load_agent_from_json(
     cache: str | None = None,
     disable_logs: bool | None = True,
 ) -> Graph:
-    """Load a flow graph from a JSON file or a JSON object.
+    """Load a agent graph from a JSON file or a JSON object.
 
     Args:
-        flow (Union[Path, str, dict]): The flow to load. It can be a file path (str or Path object)
+        agent (Union[Path, str, dict]): The agent to load. It can be a file path (str or Path object)
             or a JSON object (dict).
-        tweaks (Optional[dict]): Optional tweaks to apply to the loaded flow graph.
-        log_level (Optional[str]): Optional log level to configure for the flow processing.
-        log_file (Optional[str]): Optional log file to configure for the flow processing.
-        log_rotation (Optional[str]): Optional log rotation(Time/Size) to configure for the flow processing.
+        tweaks (Optional[dict]): Optional tweaks to apply to the loaded agent graph.
+        log_level (Optional[str]): Optional log level to configure for the agent processing.
+        log_file (Optional[str]): Optional log file to configure for the agent processing.
+        log_rotation (Optional[str]): Optional log rotation(Time/Size) to configure for the agent processing.
         env_file (Optional[str]): Optional .env file to override environment variables.
-        cache (Optional[str]): Optional cache path to update the flow settings.
-        disable_logs (Optional[bool], default=True): Optional flag to disable logs during flow processing.
+        cache (Optional[str]): Optional cache path to update the agent settings.
+        disable_logs (Optional[bool], default=True): Optional flag to disable logs during agent processing.
             If log_level or log_file are set, disable_logs is not used.
 
     Returns:
-        Graph: The loaded flow graph as a Graph object.
+        Graph: The loaded agent graph as a Graph object.
 
     Raises:
         TypeError: If the input is neither a file path (str or Path object) nor a JSON object (dict).
@@ -114,7 +114,7 @@ def load_agent_from_json(
     """
     return run_until_complete(
         aload_agent_from_json(
-            flow,
+            agent,
             tweaks=tweaks,
             log_level=log_level,
             log_file=log_file,
@@ -127,7 +127,7 @@ def load_agent_from_json(
 
 
 async def arun_agent_from_json(
-    flow: Path | str | dict,
+    agent: Path | str | dict,
     input_value: str,
     *,
     session_id: str | None = None,
@@ -143,13 +143,13 @@ async def arun_agent_from_json(
     disable_logs: bool | None = True,
     fallback_to_env_vars: bool = False,
 ) -> list[RunOutputs]:
-    """Run a flow from a JSON file or dictionary.
+    """Run a agent from a JSON file or dictionary.
 
     Args:
-        flow (Union[Path, str, dict]): The path to the JSON file or the JSON dictionary representing the flow.
-        input_value (str): The input value to be processed by the flow.
-        session_id (str | None, optional): The session ID to be used for the flow. Defaults to None.
-        tweaks (Optional[dict], optional): Optional tweaks to be applied to the flow. Defaults to None.
+        agent (Union[Path, str, dict]): The path to the JSON file or the JSON dictionary representing the agent.
+        input_value (str): The input value to be processed by the agent.
+        session_id (str | None, optional): The session ID to be used for the agent. Defaults to None.
+        tweaks (Optional[dict], optional): Optional tweaks to be applied to the agent. Defaults to None.
         input_type (str, optional): The type of the input value. Defaults to "chat".
         output_type (str, optional): The type of the output value. Defaults to "chat".
         output_component (Optional[str], optional): The specific component to output. Defaults to None.
@@ -163,13 +163,13 @@ async def arun_agent_from_json(
             not found. Defaults to False.
 
     Returns:
-        List[RunOutputs]: A list of RunOutputs objects representing the results of running the flow.
+        List[RunOutputs]: A list of RunOutputs objects representing the results of running the agent.
     """
     if tweaks is None:
         tweaks = {}
     tweaks["stream"] = False
     graph = await aload_agent_from_json(
-        flow=flow,
+        agent=agent,
         tweaks=tweaks,
         log_level=log_level,
         log_file=log_file,
@@ -192,7 +192,7 @@ async def arun_agent_from_json(
 
 
 def run_agent_from_json(
-    flow: Path | str | dict,
+    agent: Path | str | dict,
     input_value: str,
     *,
     session_id: str | None = None,
@@ -208,17 +208,17 @@ def run_agent_from_json(
     disable_logs: bool | None = True,
     fallback_to_env_vars: bool = False,
 ) -> list[RunOutputs]:
-    """Run a flow from a JSON file or dictionary.
+    """Run a agent from a JSON file or dictionary.
 
     Note:
         This function is a synchronous wrapper around `arun_agent_from_json`.
-        It creates an event loop if one does not exist and runs the flow.
+        It creates an event loop if one does not exist and runs the agent.
 
     Args:
-        flow (Union[Path, str, dict]): The path to the JSON file or the JSON dictionary representing the flow.
-        input_value (str): The input value to be processed by the flow.
-        session_id (str | None, optional): The session ID to be used for the flow. Defaults to None.
-        tweaks (Optional[dict], optional): Optional tweaks to be applied to the flow. Defaults to None.
+        agent (Union[Path, str, dict]): The path to the JSON file or the JSON dictionary representing the agent.
+        input_value (str): The input value to be processed by the agent.
+        session_id (str | None, optional): The session ID to be used for the agent. Defaults to None.
+        tweaks (Optional[dict], optional): Optional tweaks to be applied to the agent. Defaults to None.
         input_type (str, optional): The type of the input value. Defaults to "chat".
         output_type (str, optional): The type of the output value. Defaults to "chat".
         output_component (Optional[str], optional): The specific component to output. Defaults to None.
@@ -232,11 +232,11 @@ def run_agent_from_json(
             not found. Defaults to False.
 
     Returns:
-        List[RunOutputs]: A list of RunOutputs objects representing the results of running the flow.
+        List[RunOutputs]: A list of RunOutputs objects representing the results of running the agent.
     """
     return run_until_complete(
         arun_agent_from_json(
-            flow,
+            agent,
             input_value,
             session_id=session_id,
             tweaks=tweaks,

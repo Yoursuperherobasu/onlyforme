@@ -153,7 +153,7 @@ class MCPToolsNode(NodeWithCache):
 
         try:
             async for db in get_session():
-                # Use component's user_id from flow context
+                # Use component's user_id from agent context
                 user_id = self.user_id
                 if not user_id:
                     logger.warning("No user_id available in component context for MCP server lookup")

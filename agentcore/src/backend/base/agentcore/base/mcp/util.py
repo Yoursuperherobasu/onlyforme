@@ -264,19 +264,19 @@ def get_unique_name(base_name, max_length, existing_names):
         i += 1
 
 
-async def get_flow_snake_case(flow_name: str, user_id: str, session, is_action: bool | None = None) -> Agent | None:
+async def get_agent_snake_case(agent_name: str, user_id: str, session, is_action: bool | None = None) -> Agent | None:
     uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
     stmt = select(Agent).where(Agent.user_id == uuid_user_id).where(Agent.is_component == False)  # noqa: E712
-    flows = (await session.exec(stmt)).all()
+    agents = (await session.exec(stmt)).all()
 
-    for flow in flows:
-        if is_action and flow.action_name:
-            this_flow_name = sanitize_mcp_name(flow.action_name)
+    for agent in agents:
+        if is_action and agent.action_name:
+            this_agent_name = sanitize_mcp_name(agent.action_name)
         else:
-            this_flow_name = sanitize_mcp_name(flow.name)
+            this_agent_name = sanitize_mcp_name(agent.name)
 
-        if this_flow_name == flow_name:
-            return flow
+        if this_agent_name == agent_name:
+            return agent
     return None
 
 

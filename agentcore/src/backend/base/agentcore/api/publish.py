@@ -15,9 +15,9 @@ router = APIRouter(prefix="/publish", tags=["Publish"])
 # ── Stub schemas ──────────────────────────────────────────────────────────────
 
 class PublishRequest(BaseModel):
-    """Request schema for publishing a flow."""
+    """Request schema for publishing a agent."""
 
-    agent_id: UUID = Field(..., description="UUID of the flow to publish")
+    agent_id: UUID = Field(..., description="UUID of the agent to publish")
 
 
 class PublishResponse(BaseModel):
@@ -27,28 +27,28 @@ class PublishResponse(BaseModel):
 
 
 class UnpublishRequest(BaseModel):
-    """Request schema for unpublishing a flow."""
+    """Request schema for unpublishing a agent."""
 
-    agent_id: UUID = Field(..., description="UUID of the flow to unpublish")
+    agent_id: UUID = Field(..., description="UUID of the agent to unpublish")
 
 
 # ── Stub routes ───────────────────────────────────────────────────────────────
 
-@router.get("/flows")
-async def get_published_flows() -> list[dict]:
-    """Get all published flows. [PUBLISH STUBBED]"""
+@router.get("/agents")
+async def get_published_agents() -> list[dict]:
+    """Get all published agents. [PUBLISH STUBBED]"""
     return []
 
 
 @router.post("/", status_code=501, response_model=PublishResponse)
-async def publish_flow(request: PublishRequest) -> PublishResponse:
-    """Publish a flow. [PUBLISH STUBBED] — migrating to internal portal."""
+async def publish_agent(request: PublishRequest) -> PublishResponse:
+    """Publish a agent. [PUBLISH STUBBED] — migrating to internal portal."""
     raise HTTPException(status_code=501, detail="Publish API not implemented — migrating to internal portal.")
 
 
 @router.delete("/", status_code=501, response_model=PublishResponse)
-async def unpublish_flow(request: UnpublishRequest) -> PublishResponse:
-    """Unpublish a flow. [PUBLISH STUBBED] — migrating to internal portal."""
+async def unpublish_agent(request: UnpublishRequest) -> PublishResponse:
+    """Unpublish a agent. [PUBLISH STUBBED] — migrating to internal portal."""
     raise HTTPException(status_code=501, detail="Unpublish API not implemented — migrating to internal portal.")
 
 

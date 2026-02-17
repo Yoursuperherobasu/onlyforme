@@ -174,7 +174,7 @@ class ComponentToolkit:
         tool_name: str | None = None,
         tool_description: str | None = None,
         callbacks: Callbacks | None = None,
-        flow_mode_inputs: list[dotdict] | None = None,
+        agent_mode_inputs: list[dotdict] | None = None,
     ) -> list[BaseTool]:
         tools = []
         for output in self.component.outputs:
@@ -188,10 +188,10 @@ class ComponentToolkit:
             output_method: Callable = getattr(self.component, output.method)
             args_schema = None
             tool_mode_inputs = [_input for _input in self.component.inputs if getattr(_input, "tool_mode", False)]
-            if flow_mode_inputs:
+            if agent_mode_inputs:
                 args_schema = create_input_schema_from_dict(
-                    inputs=flow_mode_inputs,
-                    param_key="flow_tweak_data",
+                    inputs=agent_mode_inputs,
+                    param_key="agent_tweak_data",
                 )
             elif tool_mode_inputs:
                 args_schema = create_input_schema(tool_mode_inputs)
@@ -263,7 +263,7 @@ class ComponentToolkit:
             tool.name = _format_tool_name(str(tool_name)) or tool.name
             tool.description = tool_description or tool.description
             tool.tags = [tool.name]
-        elif flow_mode_inputs and (tool_name or tool_description):
+        elif agent_mode_inputs and (tool_name or tool_description):
             for tool in tools:
                 tool.name = _format_tool_name(str(tool_name) + "_" + str(tool.name)) or tool.name
                 tool.description = (
