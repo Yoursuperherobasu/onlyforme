@@ -32,8 +32,69 @@ from agentcore.services.database.models.folder.model import (
     FolderUpdate,
 )
 from agentcore.services.database.models.folder.pagination_model import FolderWithPaginatedAgents
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
+
+
+def _is_admin_role(role: str | None) -> bool:
+    return role in {"super_admin", "department_admin", "root"}
+
+
+async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set[UUID], set[UUID]]:
+    org_rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+            )
+        )
+    ).all()
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    return set(org_rows), set(dept_rows)
+
+
+async def _build_project_visibility_statement(session: DbSession, current_user: CurrentActiveUser):
+    own_condition = or_(Folder.user_id == current_user.id, Folder.owner_user_id == current_user.id)
+    role = getattr(current_user, "role", None)
+
+    if role in {"super_admin", "root"}:
+        org_ids, _ = await _get_scope_memberships(session, current_user.id)
+        if org_ids:
+            return select(Folder).where(or_(own_condition, Folder.org_id.in_(list(org_ids))))
+        return select(Folder).where(own_condition)
+
+    if role == "department_admin":
+        _, dept_ids = await _get_scope_memberships(session, current_user.id)
+        if dept_ids:
+            return select(Folder).where(or_(own_condition, Folder.dept_id.in_(list(dept_ids))))
+        return select(Folder).where(own_condition)
+
+    return select(Folder).where(own_condition)
+
+
+async def _can_access_project(session: DbSession, current_user: CurrentActiveUser, project: Folder) -> bool:
+    role = getattr(current_user, "role", None)
+    if project.user_id == current_user.id or project.owner_user_id == current_user.id:
+        return True
+
+    if role in {"super_admin", "root"} and project.org_id:
+        org_ids, _ = await _get_scope_memberships(session, current_user.id)
+        return project.org_id in org_ids
+
+    if role == "department_admin" and project.dept_id:
+        _, dept_ids = await _get_scope_memberships(session, current_user.id)
+        return project.dept_id in dept_ids
+
+    return False
 
 
 @router.post("/", response_model=FolderRead, status_code=201)
@@ -46,6 +107,14 @@ async def create_project(
     try:
         new_project = Folder.model_validate(project, from_attributes=True)
         new_project.user_id = current_user.id
+        new_project.owner_user_id = current_user.id
+
+        # Default project tenancy scope from user's memberships.
+        org_ids, dept_ids = await _get_scope_memberships(session, current_user.id)
+        if new_project.org_id is None and org_ids:
+            new_project.org_id = sorted(org_ids, key=str)[0]
+        if new_project.dept_id is None and dept_ids:
+            new_project.dept_id = sorted(dept_ids, key=str)[0]
         # First check if the project.name is unique
         # there might be agents with name like: "Myagent", "Myagent (1)", "Myagent (2)"
         # so we need to check if the name is unique with `like` operator
@@ -101,13 +170,8 @@ async def read_projects(
     current_user: CurrentActiveUser,
 ):
     try:
-        projects = (
-            await session.exec(
-                select(Folder).where(
-                    or_(Folder.user_id == current_user.id, Folder.user_id == None)  # noqa: E711
-                )
-            )
-        ).all()
+        statement = await _build_project_visibility_statement(session, current_user)
+        projects = (await session.exec(statement)).all()
         projects = [project for project in projects if project.name != STARTER_FOLDER_NAME]
         return sorted(projects, key=lambda x: x.name != DEFAULT_FOLDER_NAME)
     except Exception as e:
@@ -130,7 +194,7 @@ async def read_project(
             await session.exec(
                 select(Folder)
                 .options(selectinload(Folder.agents))
-                .where(Folder.id == project_id, Folder.user_id == current_user.id)
+                .where(Folder.id == project_id)
             )
         ).first()
     except Exception as e:
@@ -138,7 +202,7 @@ async def read_project(
             raise HTTPException(status_code=404, detail="Project not found") from e
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    if not project:
+    if not project or not await _can_access_project(session, current_user, project):
         raise HTTPException(status_code=404, detail="Project not found")
 
     try:
@@ -147,6 +211,8 @@ async def read_project(
 
             if Agent.updated_at is not None:
                 stmt = stmt.order_by(Agent.updated_at.desc())  # type: ignore[attr-defined]
+            if not _is_admin_role(getattr(current_user, "role", None)):
+                stmt = stmt.where(Agent.user_id == current_user.id)
             if is_component:
                 stmt = stmt.where(Agent.is_component == True)  # noqa: E712
             if is_agent:
@@ -166,8 +232,9 @@ async def read_project(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    agents_from_current_user_in_project = [agent for agent in project.agents if agent.user_id == current_user.id]
-    project.agents = agents_from_current_user_in_project
+    if not _is_admin_role(getattr(current_user, "role", None)):
+        agents_from_current_user_in_project = [agent for agent in project.agents if agent.user_id == current_user.id]
+        project.agents = agents_from_current_user_in_project
     return project
 
 
@@ -180,13 +247,11 @@ async def update_project(
     current_user: CurrentActiveUser,
 ):
     try:
-        existing_project = (
-            await session.exec(select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id))
-        ).first()
+        existing_project = (await session.exec(select(Folder).where(Folder.id == project_id))).first()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    if not existing_project:
+    if not existing_project or not await _can_access_project(session, current_user, existing_project):
         raise HTTPException(status_code=404, detail="Project not found")
 
     try:
@@ -240,21 +305,21 @@ async def delete_project(
     current_user: CurrentActiveUser,
 ):
     try:
-        agents = (
-            await session.exec(select(Agent).where(Agent.folder_id == project_id, Agent.user_id == current_user.id))
-        ).all()
+        project = (await session.exec(select(Folder).where(Folder.id == project_id))).first()
+        if not project or not await _can_access_project(session, current_user, project):
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if _is_admin_role(getattr(current_user, "role", None)):
+            agents = (await session.exec(select(Agent).where(Agent.folder_id == project_id))).all()
+        else:
+            agents = (
+                await session.exec(select(Agent).where(Agent.folder_id == project_id, Agent.user_id == current_user.id))
+            ).all()
         if len(agents) > 0:
             for agent in agents:
                 await cascade_delete_agent(session, agent.id)
-
-        project = (
-            await session.exec(select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id))
-        ).first()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
 
     try:
         await session.delete(project)
@@ -273,11 +338,11 @@ async def download_file(
 ):
     """Download all agents from project as a zip file."""
     try:
-        query = select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id)
+        query = select(Folder).where(Folder.id == project_id)
         result = await session.exec(query)
         project = result.first()
 
-        if not project:
+        if not project or not await _can_access_project(session, current_user, project):
             raise HTTPException(status_code=404, detail="Project not found")
 
         agents_query = select(Agent).where(Agent.folder_id == project_id)

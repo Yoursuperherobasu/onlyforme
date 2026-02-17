@@ -216,25 +216,36 @@ class PermissionReadResponse(BaseModel):
     key: str
     name: str
     description: str | None = None
+    category: str | None = None
+    is_system: bool = False
 
 
 class RoleReadResponse(BaseModel):
     id: UUID
     name: str
+    display_name: str | None = None
     description: str | None = None
+    parent_role_id: UUID | None = None
     is_system: bool
+    is_active: bool = True
     permissions: list[str] = []
 
 
 class RoleCreateRequest(BaseModel):
     name: str
+    display_name: str | None = None
     description: str | None = None
+    parent_role_id: UUID | None = None
+    is_active: bool | None = None
     permissions: list[str] = []
 
 
 class RoleUpdateRequest(BaseModel):
     name: str | None = None
+    display_name: str | None = None
     description: str | None = None
+    parent_role_id: UUID | None = None
+    is_active: bool | None = None
     permissions: list[str] | None = None
 
 

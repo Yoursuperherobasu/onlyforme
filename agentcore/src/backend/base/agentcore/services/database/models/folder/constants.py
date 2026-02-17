@@ -1,2 +1,1 @@
-DEFAULT_FOLDER_DESCRIPTION = "Manage your own Agents"
-DEFAULT_FOLDER_NAME = "Starter Project"
+from agentcore.services.database.models.project.constants import *  # noqa: F403

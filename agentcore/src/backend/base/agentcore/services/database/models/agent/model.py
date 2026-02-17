@@ -22,7 +22,7 @@ from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 from agentcore.schema.data import Data
 
 if TYPE_CHECKING:
-    from agentcore.services.database.models.folder.model import Folder
+    from agentcore.services.database.models.project.model import Project
     from agentcore.services.database.models.publish_record.model import PublishRecord
     from agentcore.services.database.models.user.model import User
 
@@ -198,9 +198,9 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
     icon: str | None = Field(default=None, nullable=True)
     tags: list[str] | None = Field(sa_column=Column(JSON), default=[])
     locked: bool | None = Field(default=False, nullable=True)
-    folder_id: UUID | None = Field(default=None, foreign_key="folder.id", nullable=True, index=True)
+    folder_id: UUID | None = Field(default=None, foreign_key="project.id", nullable=True, index=True)
     fs_path: str | None = Field(default=None, nullable=True)
-    folder: Optional["Folder"] = Relationship(back_populates="agents")
+    folder: Optional["Project"] = Relationship(back_populates="agents")
     publish_records: list["PublishRecord"] = Relationship(back_populates="agent")
 
     def to_data(self):

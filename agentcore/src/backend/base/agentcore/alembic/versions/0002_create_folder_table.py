@@ -1,4 +1,4 @@
-"""Create folder table
+"""Create project table (legacy folder model)
 
 Revision ID: 0002
 Revises: 0001
@@ -20,21 +20,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.create_table(
-        "folder",
+        "project",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("name", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("auth_settings", sa.JSON(), nullable=True),
-        sa.Column("parent_id", sa.Uuid(), nullable=True),
         sa.Column("user_id", sa.Uuid(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
-        sa.ForeignKeyConstraint(["parent_id"], ["folder.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["user.id"]),
-        sa.UniqueConstraint("user_id", "name", name="unique_folder_name"),
+        sa.UniqueConstraint("user_id", "name", name="unique_project_name"),
     )
-    op.create_index(op.f("ix_folder_name"), "folder", ["name"], unique=False)
+    op.create_index(op.f("ix_project_name"), "project", ["name"], unique=False)
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_folder_name"), table_name="folder")
-    op.drop_table("folder")
+    op.drop_index(op.f("ix_project_name"), table_name="project")
+    op.drop_table("project")

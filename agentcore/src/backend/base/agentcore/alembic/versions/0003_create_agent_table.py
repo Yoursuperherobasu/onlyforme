@@ -52,7 +52,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("id"),
         sa.ForeignKeyConstraint(["user_id"], ["user.id"]),
-        sa.ForeignKeyConstraint(["folder_id"], ["folder.id"]),
+        sa.ForeignKeyConstraint(["folder_id"], ["project.id"]),
         sa.UniqueConstraint("user_id", "name", name="unique_agent_name"),
         sa.UniqueConstraint("user_id", "endpoint_name", name="unique_agent_endpoint_name"),
     )

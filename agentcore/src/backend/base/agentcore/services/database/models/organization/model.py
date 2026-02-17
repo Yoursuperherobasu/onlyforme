@@ -1,16 +1,16 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, DateTime, UniqueConstraint
+from sqlalchemy import Column, DateTime, String, Text
 from sqlmodel import Field, SQLModel
 
 
-class RolePermission(SQLModel, table=True):  # type: ignore[call-arg]
-    __tablename__ = "role_permission"
-
+class Organization(SQLModel, table=True):  # type: ignore[call-arg]
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    role_id: UUID = Field(foreign_key="role.id", index=True)
-    permission_id: UUID = Field(foreign_key="permission.id", index=True)
+    name: str = Field(sa_column=Column(String(255), nullable=False))
+    description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    status: str = Field(default="active", sa_column=Column(String(50), nullable=False))
+    owner_user_id: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     created_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -21,5 +21,5 @@ class RolePermission(SQLModel, table=True):  # type: ignore[call-arg]
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-
-    __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission_pair"),)
+    deleted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    deleted_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)

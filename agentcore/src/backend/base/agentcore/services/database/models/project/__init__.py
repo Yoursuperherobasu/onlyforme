@@ -1,11 +1,9 @@
-from agentcore.services.database.models.project.model import (
-    ProjectBase,
+from .model import (
     Project,
     ProjectCreate,
     ProjectRead,
     ProjectReadWithAgents,
     ProjectUpdate,
-    FolderBase,
     Folder,
     FolderCreate,
     FolderRead,
@@ -14,13 +12,11 @@ from agentcore.services.database.models.project.model import (
 )
 
 __all__ = [
-    "ProjectBase",
     "Project",
     "ProjectCreate",
     "ProjectRead",
     "ProjectReadWithAgents",
     "ProjectUpdate",
-    "FolderBase",
     "Folder",
     "FolderCreate",
     "FolderRead",

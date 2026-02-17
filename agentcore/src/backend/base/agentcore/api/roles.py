@@ -58,8 +58,11 @@ async def list_roles(session: DbSession) -> list[RoleReadResponse]:
             RoleReadResponse(
                 id=role.id,
                 name=role.name,
+                display_name=role.display_name,
                 description=role.description,
+                parent_role_id=role.parent_role_id,
                 is_system=role.is_system,
+                is_active=role.is_active,
                 permissions=[p for p in perms_by_role.get(role.id, []) if p],
             )
         )
@@ -77,7 +80,14 @@ async def create_role(payload: RoleCreateRequest, session: DbSession) -> RoleRea
     if existing:
         raise HTTPException(status_code=409, detail="Role name already exists")
 
-    role = Role(name=name, description=payload.description, is_system=False)
+    role = Role(
+        name=name,
+        display_name=payload.display_name or payload.name,
+        description=payload.description,
+        parent_role_id=payload.parent_role_id,
+        is_system=False,
+        is_active=True if payload.is_active is None else payload.is_active,
+    )
     session.add(role)
     await session.commit()
     await session.refresh(role)
@@ -89,8 +99,11 @@ async def create_role(payload: RoleCreateRequest, session: DbSession) -> RoleRea
     return RoleReadResponse(
         id=role.id,
         name=role.name,
+        display_name=role.display_name,
         description=role.description,
+        parent_role_id=role.parent_role_id,
         is_system=role.is_system,
+        is_active=role.is_active,
         permissions=payload.permissions or [],
     )
 
@@ -109,8 +122,14 @@ async def update_role(role_id: UUID, payload: RoleUpdateRequest, session: DbSess
 
     if payload.name:
         role.name = _normalize_role_name(payload.name)
+    if payload.display_name is not None:
+        role.display_name = payload.display_name
     if payload.description is not None:
         role.description = payload.description
+    if payload.parent_role_id is not None:
+        role.parent_role_id = payload.parent_role_id
+    if payload.is_active is not None:
+        role.is_active = payload.is_active
 
     session.add(role)
     await session.commit()
@@ -127,8 +146,11 @@ async def update_role(role_id: UUID, payload: RoleUpdateRequest, session: DbSess
     return RoleReadResponse(
         id=role.id,
         name=role.name,
+        display_name=role.display_name,
         description=role.description,
+        parent_role_id=role.parent_role_id,
         is_system=role.is_system,
+        is_active=role.is_active,
         permissions=permissions,
     )
 
@@ -148,8 +170,11 @@ async def replace_role_permissions(role_id: UUID, permissions: list[str], sessio
     return RoleReadResponse(
         id=role.id,
         name=role.name,
+        display_name=role.display_name,
         description=role.description,
+        parent_role_id=role.parent_role_id,
         is_system=role.is_system,
+        is_active=role.is_active,
         permissions=permissions,
     )
 
