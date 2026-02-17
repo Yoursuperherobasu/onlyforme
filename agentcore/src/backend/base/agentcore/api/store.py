@@ -1,7 +1,4 @@
-"""
-Store routes - Currently dummy implementations.
-TODO: Migrate to a proper store backend in the future.
-"""
+
 from fastapi import APIRouter
 
 router = APIRouter(tags=["Store"], prefix="/store")

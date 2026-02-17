@@ -1,4 +1,3 @@
-"""Constants for LangGraph adapter - independent from old Graph implementation."""
 
 from __future__ import annotations
 

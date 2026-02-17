@@ -247,7 +247,6 @@ class LCModelNode(Node):
         inputs: list | dict = messages or {}
         lf_message = None
         try:
-            # TODO: Depreciated Feature to be removed in upcoming release
             if hasattr(self, "output_parser") and self.output_parser is not None:
                 runnable |= self.output_parser
 

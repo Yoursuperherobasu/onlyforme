@@ -171,7 +171,6 @@ class AgentNode(ToolCallingAgentNode):
             return Data(data={"content": content, "error": "Could not parse as JSON"})
 
     async def get_memory_data(self):
-        # TODO: This is a temporary fix to avoid message duplication. We should develop a function for this.
         messages = (
             await MemoryNode(**self.get_base_args())
             .set(session_id=self.graph.session_id, order="Ascending", n_messages=self.n_messages)
@@ -222,7 +221,6 @@ class AgentNode(ToolCallingAgentNode):
         component_toolkit = _get_component_toolkit()
         tools_names = self._build_tools_names()
         agent_description = self.get_tool_description()
-        # TODO: Agent Description Depreciated Feature to be removed
         description = f"{agent_description}{tools_names}"
         tools = component_toolkit(component=self).get_tools(
             tool_name="Call_Agent", tool_description=description, callbacks=self.get_langchain_callbacks()

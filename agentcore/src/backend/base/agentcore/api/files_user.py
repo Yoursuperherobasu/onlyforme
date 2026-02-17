@@ -247,10 +247,7 @@ async def list_files(
 ) -> list[UserFile]:
     """List the files available to the current user."""
     try:
-        # Load sample files if they don't exist
-        # TODO: Pending further testing
-        # await load_sample_files(current_user, session, get_storage_service())
-        # Fetch from the UserFile table
+
         stmt = select(UserFile).where(UserFile.user_id == current_user.id)
         results = await session.exec(stmt)
 

@@ -314,7 +314,6 @@ class BaseFileNode(Node, ABC):
             rows = self.load_files_structured_helper(file_path)
         else:
             # Convert Data objects to a list of dictionaries
-            # TODO: Parse according to docling standards
             rows = [data_list[0].data]
 
         self.status = DataFrame(rows)

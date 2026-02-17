@@ -1,4 +1,3 @@
-"""Parameter handler for processing vertex parameters."""
 
 from __future__ import annotations
 

@@ -1,4 +1,3 @@
-"""State management for LangGraph-based execution."""
 
 from __future__ import annotations
 

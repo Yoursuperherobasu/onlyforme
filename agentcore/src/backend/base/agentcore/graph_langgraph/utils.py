@@ -1,4 +1,3 @@
-"""Utility functions for LangGraph - independent of old graph folder."""
 
 from __future__ import annotations
 

@@ -1,4 +1,3 @@
-"""Runnable vertices manager for LangGraph execution."""
 
 from collections import defaultdict
 

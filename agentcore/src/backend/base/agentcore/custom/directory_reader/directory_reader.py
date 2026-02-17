@@ -190,8 +190,7 @@ class NodeDirectoryScanner:
                 type_hint_name, code
             )
         except SyntaxError:
-            # Returns True if there's something wrong with the code
-            # TODO : Find a better way to handle this
+
             return True
 
     def process_file(self, file_path):

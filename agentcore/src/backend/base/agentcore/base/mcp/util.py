@@ -551,7 +551,6 @@ class MCPSessionManager:
             return f"sse_{hash(key_input)}"
 
         # Fallback to a generic key
-        # TODO: add option for streamable HTTP in future.
         return f"{transport_type}_{hash(str(connection_params))}"
 
     async def _validate_session_connectivity(self, session) -> bool:

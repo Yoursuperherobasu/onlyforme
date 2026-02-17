@@ -1,4 +1,3 @@
-"""Schema definitions for LangGraph adapter - independent from old graph folder."""
 
 from __future__ import annotations
 

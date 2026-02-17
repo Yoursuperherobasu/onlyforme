@@ -433,7 +433,6 @@ def build_class_constructor(compiled_class, exec_globals, class_name):
     return build_custom_class()
 
 
-# TODO: Remove this function
 def get_default_imports(code_string):
     """Returns a dictionary of default imports for the dynamic class constructor."""
     default_imports = {
@@ -489,9 +488,6 @@ def extract_class_name(code: str) -> str:
         for node in module.body:
             if not isinstance(node, ast.ClassDef):
                 continue
-
-            # Check bases for Component inheritance
-            # TODO: Build a more robust check for Component inheritance
             for base in node.bases:
                 if isinstance(base, ast.Name) and any(pattern in base.id for pattern in ["Node", "LC", "Component"]):
                     return node.name

@@ -1,4 +1,3 @@
-"""Edge handling for LangGraph implementation - fully independent."""
 
 from __future__ import annotations
 

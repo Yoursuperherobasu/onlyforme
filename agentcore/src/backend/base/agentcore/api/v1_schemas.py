@@ -240,7 +240,7 @@ class ApiKeysResponse(BaseModel):
     """API Keys response - returns empty list ( Azure Key Vault)."""
     total_count: int
     user_id: UUID
-    api_keys: list = []  # TODO: Use Azure Key Vault
+    api_keys: list = []  
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -327,7 +327,6 @@ class VertexBuildResponse(BaseModel):
         Returns:
             dict: The serialized representation of the data with truncation applied.
         """
-        # return serialize(data, max_length=get_max_text_length())  TODO: Safe?
         return serialize(data, max_length=get_max_text_length(), max_items=get_max_items_length())
 
 

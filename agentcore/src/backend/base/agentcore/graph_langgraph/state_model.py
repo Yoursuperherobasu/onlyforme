@@ -1,4 +1,3 @@
-"""State model utilities for dynamic Pydantic model creation."""
 
 from collections.abc import Callable
 from typing import Any, get_type_hints

@@ -1,7 +1,4 @@
-"""
-API Key routes - Currently dummy implementations.
-TODO: Migrate to Azure Key Vault for secure API key storage.
-"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response

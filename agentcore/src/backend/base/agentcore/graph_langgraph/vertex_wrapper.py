@@ -1,4 +1,3 @@
-"""Lightweight vertex wrapper for LangGraph - no dependencies on old graph folder."""
 
 from __future__ import annotations
 

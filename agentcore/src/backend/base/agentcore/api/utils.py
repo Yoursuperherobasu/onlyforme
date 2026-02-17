@@ -369,10 +369,7 @@ def parse_value(value: Any, input_type: str) -> Any:
 
 async def cascade_delete_agent(session: AsyncSession, agent_id: uuid.UUID) -> None:
     try:
-        # TODO: Verify if deleting messages is safe in terms of session id relevance
-        # If we delete messages directly, rather than setting agent_id to null,
-        # it might cause unexpected behaviors because the session id could still be
-        # used elsewhere to search for these messages.
+
         await session.exec(delete(ConversationTable).where(ConversationTable.agent_id == agent_id))
         await session.exec(delete(TransactionTable).where(TransactionTable.agent_id == agent_id))
         await session.exec(delete(VertexBuildTable).where(VertexBuildTable.agent_id == agent_id))
@@ -391,61 +388,3 @@ def custom_params(
     return Params(page=page or MIN_PAGE_SIZE, size=size or MAX_PAGE_SIZE)
 
 
-async def verify_public_agent_and_get_user(agent_id: uuid.UUID, client_id: str | None) -> tuple[User, uuid.UUID]:
-    """Verify a public  request and generate a deterministic agent ID.
-
-    This utility function:
-    1. Checks that a client_id cookie is provided
-    2. Verifies the agent exists and is marked as PUBLIC
-    3. Creates a deterministic UUID based on client_id and original agent_id
-    4. Retrieves the agent owner user for permission purposes
-
-    This function is used to support public agent endpoints that don't require
-    authentication but still need to operate within the permission model.
-
-    Args:
-        agent_id: The original agent ID to verify
-        client_id: The client ID from the request cookie
-
-    Returns:
-        tuple: (agent owner user, deterministic agent ID for tracking)
-
-    Raises:
-        HTTPException:
-            - 400 if no client_id is provided
-            - 403 if agent doesn't exist or isn't public
-            - 403 if unable to retrieve the agent owner user
-            - 403 if user is not found for public agent
-    """
-    if not client_id:
-        raise HTTPException(status_code=400, detail="No client_id cookie found")
-
-    # Check if the agent is public
-    async with session_scope() as session:
-        from sqlmodel import select
-
-        from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent
-
-        agent = (await session.exec(select(Agent).where(Agent.id == agent_id))).first()
-        if not agent or agent.access_type is not AccessTypeEnum.PUBLIC:
-            raise HTTPException(status_code=403, detail="agent is not public")
-
-    # Create a new agent ID using the client_id and agent_id
-    new_id = f"{client_id}_{agent_id}"
-    new_agent_id = uuid.uuid5(uuid.NAMESPACE_DNS, new_id)
-
-    # Get the user associated with the agent
-    try:
-        from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
-
-        user = await get_user_by_agent_id_or_endpoint_name(str(agent_id))
-
-    except Exception as exc:
-        logger.exception(f"Error getting user for public agent {agent_id}")
-        raise HTTPException(status_code=403, detail="agent is not accessible") from exc
-
-    if not user:
-        msg = f"User not found for public agent {agent_id}"
-        raise HTTPException(status_code=403, detail=msg)
-
-    return user, new_agent_id

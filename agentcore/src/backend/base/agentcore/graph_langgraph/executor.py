@@ -1,4 +1,3 @@
-"""Executor for LangGraph-based execution."""
 
 from __future__ import annotations
 

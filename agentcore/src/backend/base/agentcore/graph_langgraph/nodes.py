@@ -1,4 +1,3 @@
-"""Node function creation for LangGraph vertices - fully independent implementation."""
 
 from __future__ import annotations
 

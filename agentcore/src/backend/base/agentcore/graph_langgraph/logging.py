@@ -1,4 +1,3 @@
-"""Logging utilities for LangGraph - fully independent implementation."""
 
 from __future__ import annotations
 

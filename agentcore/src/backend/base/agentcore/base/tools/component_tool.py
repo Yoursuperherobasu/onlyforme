@@ -204,7 +204,6 @@ class ComponentToolkit:
                 # If any of the required inputs are not in tool mode, this means
                 # that when the tool is called it will raise an error.
                 # so we should raise an error here.
-                # TODO: This logic might need to be improved, example if the required is an api key.
                 if not all(getattr(_input, "tool_mode", False) for _input in inputs):
                     non_tool_mode_inputs = [
                         input_.name

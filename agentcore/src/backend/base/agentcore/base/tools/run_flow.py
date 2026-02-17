@@ -112,7 +112,6 @@ class RunAgentBaseNode(Node):
         return Message(text=message_result.data["text"])
 
     async def get_agent_names(self) -> list[str]:
-        # TODO: get flfow ID with agent name
         agent_data = await self.alist_agents()
         return [agent_data.data["name"] for agent_data in agent_data]
 

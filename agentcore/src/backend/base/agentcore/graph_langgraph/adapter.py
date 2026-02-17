@@ -1,4 +1,3 @@
-"""Main LangGraph adapter for AgentCore - fully independent implementation."""
 
 from __future__ import annotations
 

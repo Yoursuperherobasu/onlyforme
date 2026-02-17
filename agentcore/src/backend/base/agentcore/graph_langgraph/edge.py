@@ -1,4 +1,3 @@
-"""Lightweight edge class for LangGraph - independent from old graph folder."""
 
 from __future__ import annotations
 

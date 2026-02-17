@@ -1,4 +1,3 @@
-"""Event streaming for LangGraph execution."""
 
 from __future__ import annotations
 

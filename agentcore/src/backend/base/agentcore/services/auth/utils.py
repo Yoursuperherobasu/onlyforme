@@ -63,7 +63,6 @@ async def ws_api_key_security(
     api_key: str | None,
 ) -> UserRead:
     """WebSocket API key security - currently disabled, migrating to Azure Key Vault."""
-    # TODO: API key authentication disabled - migrating to Azure Key Vault
     raise WebSocketException(
         code=status.WS_1008_POLICY_VIOLATION,
         reason="API key authentication is currently disabled. Will be migrated to Azure Key Vault.",
