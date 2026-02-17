@@ -139,9 +139,9 @@ async def _new_agent(
         db_agent = Agent.model_validate(agent, from_attributes=True)
         db_agent.updated_at = datetime.now(timezone.utc)
 
-        # Strip sensitive values (API keys, secrets) from agent data before saving to DB
+        # Strip sensitive values (API keys, secrets) and guarantee JSON-safe payload.
         if db_agent.data:
-            db_agent.data = strip_sensitive_values_from_agent_data(db_agent.data)
+            db_agent.data = jsonable_encoder(strip_sensitive_values_from_agent_data(db_agent.data))
 
         if db_agent.folder_id is None:
             # Make sure agents always have a folder
@@ -178,6 +178,7 @@ async def create_agent(
         await _save_agent_to_fs(db_agent)
 
     except Exception as e:
+        logger.exception("Failed to update agent {}", agent_id)
         if "UNIQUE constraint failed" in str(e):
             # Get the name of the column that failed
             columns = str(e).split("UNIQUE constraint failed: ")[1].split(".")[1].split("\n")[0]
@@ -192,7 +193,7 @@ async def create_agent(
         if isinstance(e, HTTPException):
             raise
         raise HTTPException(status_code=500, detail=str(e)) from e
-    return db_agent
+    return AgentRead.model_validate(db_agent, from_attributes=True)
 
 
 @router.get("/", response_model=list[AgentRead] | Page[AgentRead] | list[AgentHeader], status_code=200)
@@ -302,7 +303,7 @@ async def read_agent(
 ):
     """Read a agent."""
     if user_agent := await _read_agent(session, agent_id, current_user.id):
-        return user_agent
+        return AgentRead.model_validate(user_agent, from_attributes=True)
     raise HTTPException(status_code=404, detail="agent not found")
 
 
@@ -343,13 +344,18 @@ async def update_agent(
 
         update_data = agent.model_dump(exclude_unset=True, exclude_none=True)
 
+        # Legacy payload compatibility: accept folder_id, persist as project_id only.
+        if "project_id" not in update_data and "folder_id" in update_data:
+            update_data["project_id"] = update_data["folder_id"]
+        update_data.pop("folder_id", None)
+
         # Specifically handle endpoint_name when it's explicitly set to null or empty string
         if agent.endpoint_name is None or agent.endpoint_name == "":
             update_data["endpoint_name"] = None
 
-        # Always strip sensitive values (API keys, secrets) from agent data before saving to DB
-        if "data" in update_data and update_data["data"]:
-            update_data["data"] = strip_sensitive_values_from_agent_data(update_data["data"])
+        # Always strip sensitive values (API keys, secrets) and normalize to JSON-safe payload.
+        if "data" in update_data and update_data["data"] is not None:
+            update_data["data"] = jsonable_encoder(strip_sensitive_values_from_agent_data(update_data["data"]))
 
         if settings_service.settings.remove_api_keys:
             update_data = remove_api_keys(update_data)
@@ -390,7 +396,7 @@ async def update_agent(
             raise HTTPException(status_code=e.status_code, detail=str(e)) from e
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return db_agent
+    return AgentRead.model_validate(db_agent, from_attributes=True)
 
 
 @router.delete("/{agent_id}", status_code=200)

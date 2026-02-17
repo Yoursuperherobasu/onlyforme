@@ -2,7 +2,7 @@
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 from uuid import UUID, uuid4
 
 import emoji
@@ -202,7 +202,7 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
     locked: bool | None = Field(default=False, nullable=True)
     project_id: UUID | None = Field(default=None, foreign_key="project.id", nullable=True, index=True)
     # Backward-compatible alias. Keep until all call sites migrate to project_id.
-    folder_id = synonym("project_id")
+    folder_id: ClassVar[Any] = synonym("project_id")
     fs_path: str | None = Field(default=None, nullable=True)
     folder: Optional["Project"] = Relationship(back_populates="agents")
     publish_records: list["PublishRecord"] = Relationship(back_populates="agent")
@@ -314,3 +314,4 @@ class AgentUpdate(SQLModel):
                     detail="Endpoint name must contain only letters, numbers, hyphens, and underscores",
                 )
         return v
+
