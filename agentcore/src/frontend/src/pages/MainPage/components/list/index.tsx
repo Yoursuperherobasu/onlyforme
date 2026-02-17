@@ -142,7 +142,7 @@ const ListComponent = ({
             <div
               className={cn(
                 "flex items-center justify-center rounded-lg p-1.5",
-                index % 2 === 0 ? "bg-muted" : "bg-[var(--info-foreground)]",
+                index % 2 === 0 ? "bg-muted-foreground/30" : "bg-[var(--info-foreground)]",
               )}
             >
               <ForwardedIconComponent
