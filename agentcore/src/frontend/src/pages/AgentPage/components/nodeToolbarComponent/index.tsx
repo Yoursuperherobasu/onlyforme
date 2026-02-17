@@ -34,7 +34,7 @@ import {
   downloadNode,
   expandGroupNode,
   updateAgentPosition,
-} from "../../../../utils/reactFlowUtils";
+} from "../../../../utils/reactflowUtils";
 import { cn, getNodeLength } from "../../../../utils/utils";
 import { ToolbarButton } from "./components/toolbar-button";
 import ToolbarModals from "./components/toolbar-modals";
@@ -771,3 +771,4 @@ const NodeToolbarComponent = memo(
 NodeToolbarComponent.displayName = "NodeToolbarComponent";
 
 export default NodeToolbarComponent;
+

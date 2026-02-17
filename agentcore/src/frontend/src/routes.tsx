@@ -25,7 +25,7 @@ import { CustomRoutesStorePages } from "./customization/utils/custom-routes-stor
 import { AppAuthenticatedPage } from "./pages/AppAuthenticatedPage";
 import { AppInitPage } from "./pages/AppInitPage";
 import { AppWrapperPage } from "./pages/AppWrapperPage";
-import agentPage from "./pages/agentPage";
+import AgentPage from "./pages/AgentPage";
 import LoginPage from "./pages/LoginPage";
 import FilesPage from "./pages/MainPage/pages/filesPage";
 import HomePage from "./pages/MainPage/pages/homePage";
@@ -44,9 +44,9 @@ import ApprovalPage from "./pages/ApprovalPage";
 import ModelCatalogue from "./pages/ModelCatalogue";
 import AgentOrchestrator from "./pages/OrchestratorChat";
 import AgentCatalogueView from "./pages/AgentCatalogue";
-import { Workagent } from "lucide-react";
-import WorkagentCatalogueView from "./pages/WorkagentPage";
-import workflowsView from "./pages/WorkagentPage";
+import { Workflow } from "lucide-react";
+import WorkagentCatalogueView from "./pages/WorkflowPage";
+import workflowsView from "./pages/WorkflowPage";
 import Dashboard from "./pages/DashboardPage";
 import DashboardAdmin from "./pages/DashboardPage";
 import TimeoutSettings from "./pages/TimeoutSettings";
@@ -307,7 +307,7 @@ const router = createBrowserRouter(
                     path="folder/:folderId/"
                     element={
                      
-                        <agentPage />
+                        <AgentPage />
                      
                     }
                   />
@@ -315,7 +315,7 @@ const router = createBrowserRouter(
                     path=""
                     element={
                      
-                        <agentPage />
+                        <AgentPage />
                  
                     }
                   />

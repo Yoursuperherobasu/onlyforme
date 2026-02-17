@@ -1,8 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { FaDiscord, FaGithub } from "react-icons/fa";
 import { useShallow } from "zustand/react/shallow";
-import logoDarkPng from "@/assets/mothersonLogo.svg?react";
-import logoLightPng from "@/assets/mothersonLogo.svg?react";
+import MothersonLogo from "@/assets/mothersonLogo.svg?react";
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
 import CardsWrapComponent from "@/components/core/cardsWrapComponent";
 import { Button } from "@/components/ui/button";
@@ -22,9 +21,9 @@ const EMPTY_PAGE_GITHUB_DESCRIPTION =
 const EMPTY_PAGE_DISCORD_DESCRIPTION =
   "Join builders, ask questions, and show off your agents";
 const EMPTY_PAGE_DRAG_AND_DROP_TEXT =
-  "Already have a agent? Drag and drop to upload.";
+  "Already have a flow? Drag and drop to upload.";
 const EMPTY_PAGE_FOLDER_DESCRIPTION = "Empty folder";
-const EMPTY_PAGE_CREATE_FIRST_FLOW_BUTTON_TEXT = "Create first agent";
+const EMPTY_PAGE_CREATE_FIRST_FLOW_BUTTON_TEXT = "Create first flow";
 
 const EXTERNAL_LINK_ICON_CLASS =
   "absolute right-6 top-[35px] h-4 w-4 shrink-0 translate-x-0 opacity-0 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100";
@@ -61,26 +60,17 @@ export const EmptyPageCommunity = ({
   return (
     <DotBackgroundDemo>
       <CardsWrapComponent
-        dragMessage={`Drop your agents or components here`}
+        dragMessage={`Drop your flows or components here`}
         onFileDrop={handleFileDrop}
       >
         <div className="m-0 h-full w-full bg-background p-0">
           <div className="z-50 flex h-full w-full flex-col items-center justify-center gap-5">
             <div className="z-50 flex flex-col items-center gap-2">
-              <div className="z-50 dark:hidden">
-                <img
-                  src={logoLightPng}
-                  alt="AgentCore Logo Light"
-                  data-testid="empty_page_logo_light"
-                  className="relative top-3"
-                />
-              </div>
-              <div className="z-50 hidden dark:block">
-                <img
-                  src={logoDarkPng}
-                  alt="AgentCore Logo Dark"
-                  data-testid="empty_page_logo_dark"
-                  className="relative top-3"
+              <div className="z-50">
+                <MothersonLogo
+                  title="AgentCore Logo"
+                  data-testid="empty_page_logo"
+                  className="relative top-2 h-14 w-auto"
                 />
               </div>
               <span
@@ -134,3 +124,5 @@ export const EmptyPageCommunity = ({
 };
 
 export default EmptyPageCommunity;
+
+

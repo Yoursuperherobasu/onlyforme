@@ -23,7 +23,7 @@ jest.mock("@/stores/agentStore", () => ({
   ),
 }));
 
-jest.mock("@/utils/reactFlowUtils", () => ({
+jest.mock("@/utils/reactflowUtils", () => ({
   checkChatInput: jest.fn((nodes) =>
     nodes.some((node: any) => node.type === "ChatInput"),
   ),
@@ -608,10 +608,10 @@ describe("SidebarItemsList", () => {
       // Verify all mocked functions were called
       expect(require("@/stores/agentStore").default).toHaveBeenCalled();
       expect(
-        require("@/utils/reactFlowUtils").checkChatInput,
+        require("@/utils/reactflowUtils").checkChatInput,
       ).toHaveBeenCalled();
       expect(
-        require("@/utils/reactFlowUtils").checkWebhookInput,
+        require("@/utils/reactflowUtils").checkWebhookInput,
       ).toHaveBeenCalled();
       expect(
         require("../../helpers/disable-item").disableItem,

@@ -151,14 +151,14 @@ export default function AgentBuildingComponent() {
                         {buildingContent ? (
                           buildingContent
                         ) : buildInfo?.success ? (
-                          "agent built successfully"
+                          "Agent built successfully"
                         ) : (
                           <div className="flex items-center gap-2">
                             <ForwardedIconComponent
                               name="CircleAlert"
                               className="h-5 w-5"
                             />
-                            {t("agent build failed")}
+                            {t("Agent build failed")}
                           </div>
                         )}
                       </div>

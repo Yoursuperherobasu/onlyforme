@@ -10,7 +10,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { SaveChangesModal } from "@/modals/saveChangesModal";
 import useAlertStore from "@/stores/alertStore";
 import { useTypesStore } from "@/stores/typesStore";
-import { customStringify } from "@/utils/reactFlowUtils";
+import { customStringify } from "@/utils/reactflowUtils";
 import useAgentStore from "../../stores/agentStore";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useTranslation } from 'react-i18next';
@@ -45,7 +45,6 @@ export default function AgentPage({ view }: { view?: boolean }): JSX.Element {
   const navigate = useCustomNavigate();
   const saveAgent = useSaveAgent();
 
-  const agents = useAgentsManagerStore((state) => state.agents);
   const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
 
   const updatedAt = currentSavedAgent?.updated_at;
@@ -105,21 +104,17 @@ export default function AgentPage({ view }: { view?: boolean }): JSX.Element {
   // Set agent tab id
   useEffect(() => {
     const awaitgetTypes = async () => {
-      if (agents && currentAgentId === "" && Object.keys(types).length > 0) {
-        const isAnExistingAgent = agents.find((agent) => agent.id === id);
+      if (!id || Object.keys(types).length === 0) {
+        return;
+      }
 
-        if (!isAnExistingAgent) {
-          navigate("/all");
-          return;
-        }
-
-        const isAnExistingAgentId = isAnExistingAgent.id;
-
-        await getAgentToAddToCanvas(isAnExistingAgentId);
+      // Route id is the source of truth. If store has stale state, reload.
+      if (currentAgentId !== id || !currentAgent) {
+        await getAgentToAddToCanvas(id);
       }
     };
     awaitgetTypes();
-  }, [id, agents, currentAgentId, types]);
+  }, [id, currentAgentId, currentAgent, types]);
 
   useEffect(() => {
     setOnAgentPage(true);

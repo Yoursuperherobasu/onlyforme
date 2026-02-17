@@ -20,7 +20,7 @@ const ERROR_MESSAGE_UPDATING_COMPONENTS_LIST = [
   "If the error persists, please report it on our Discord or GitHub.",
 ];
 const ERROR_MESSAGE_EDGES_LOST =
-  "Some edges were lost after updating the components. Please review the agent and reconnect them.";
+  "Some edges were lost after updating the components. Please review the flow and reconnect them.";
 
 const CONTAINER_VARIANTS = {
   hidden: { opacity: 0, y: 20 },
@@ -259,3 +259,4 @@ export default function UpdateAllComponents() {
     </AnimatePresence>
   );
 }
+

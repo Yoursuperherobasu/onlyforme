@@ -5,7 +5,7 @@ import ShadTooltip from "../../../../components/common/shadTooltipComponent";
 import { Button } from "../../../../components/ui/button";
 import { GradientGroup } from "../../../../icons/GradientSparkles";
 import useAgentStore from "../../../../stores/agentStore";
-import { validateSelection } from "../../../../utils/reactFlowUtils";
+import { validateSelection } from "../../../../utils/reactflowUtils";
 export default function SelectionMenu({
   onClick,
   nodes,

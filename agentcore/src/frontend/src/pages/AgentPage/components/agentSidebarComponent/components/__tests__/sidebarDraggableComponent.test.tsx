@@ -211,13 +211,13 @@ jest.mock("@/stores/agentsManagerStore", () => ({
   ) =>
     selector({
       agents: [
-        { id: "agent1", name: "Test agent" },
-        { id: "agent2", name: "Another agent" },
+        { id: "agent1", name: "Test Agent" },
+        { id: "agent2", name: "Another Agent" },
       ],
     }),
 }));
 
-jest.mock("@/utils/reactFlowUtils", () => ({
+jest.mock("@/utils/reactflowUtils", () => ({
   createAgentComponent: jest.fn(),
   downloadNode: jest.fn(),
   getNodeId: jest.fn().mockReturnValue("test-node-id"),
@@ -886,7 +886,7 @@ describe("SidebarDraggableComponent", () => {
         ...defaultProps,
         onDelete: mockOnDelete,
         official: false,
-        display_name: "Test agent", // This exists in the mocked agents
+        display_name: "Test Agent", // This exists in the mocked agents
       };
 
       render(<SidebarDraggableComponent {...propsWithOnDelete} />);
@@ -909,7 +909,7 @@ describe("SidebarDraggableComponent", () => {
         ...defaultProps,
         onDelete: undefined,
         official: false,
-        display_name: "Test agent", // This exists in the mocked agents
+        display_name: "Test Agent", // This exists in the mocked agents
       };
 
       render(<SidebarDraggableComponent {...propsWithoutOnDelete} />);
@@ -932,7 +932,7 @@ describe("SidebarDraggableComponent", () => {
         ...defaultProps,
         onDelete: undefined,
         official: false,
-        display_name: "Non-existent agent", // This doesn't exist in our mocked agents
+        display_name: "Non-existent Agent", // This doesn't exist in our mocked agents
       };
 
       render(<SidebarDraggableComponent {...propsWithNonExistentAgent} />);
@@ -950,3 +950,4 @@ describe("SidebarDraggableComponent", () => {
     });
   });
 });
+

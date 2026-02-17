@@ -440,7 +440,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
 
     const insidePosition = position.paneX
       ? { x: position.paneX + position.x, y: position.paneY! + position.y }
-      : get().reactFlowInstance!.screenToAgentPosition({
+      : get().reactFlowInstance!.screenToFlowPosition({
           x: position.x,
           y: position.y,
         });

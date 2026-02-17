@@ -53,7 +53,7 @@ export const MemoizedCanvasControls = memo(
             )}
           />
           {isLocked && (
-            <span className="text-xs text-destructive">agent Locked</span>
+            <span className="text-xs text-destructive">Agent Locked</span>
           )}
         </Button>
       </CanvasControls>
@@ -75,6 +75,7 @@ export const MemoizedSidebarTrigger = memo(() => {
       >
         {NAV_ITEMS.map((item) => (
           <CanvasControlButton
+            key={item.id}
             data-testid={`sidebar-trigger-${item.id}`}
             iconName={item.icon}
             iconClasses={item.id === "mcp" ? "h-8 w-8" : ""}

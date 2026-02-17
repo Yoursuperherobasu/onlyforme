@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { reactFlowProvider } from "@xyflow/react";
+import { ReactFlowProvider } from "@xyflow/react";
 import type { ReactNode } from "react";
 import { GradientWrapper } from "@/components/common/GradientWrapper";
 import { CustomWrapper } from "@/customization/custom-wrapper";
@@ -17,10 +17,10 @@ export default function ContextWrapper({ children }: { children: ReactNode }) {
           <QueryClientProvider client={queryClient}>
             <AuthProvider>
               <TooltipProvider skipDelayDuration={0}>
-                <reactFlowProvider>
+                <ReactFlowProvider>
                   <ApiInterceptor />
                   {children}
-                </reactFlowProvider>
+                </ReactFlowProvider>
               </TooltipProvider>
             </AuthProvider>
           </QueryClientProvider>

@@ -22,7 +22,7 @@ import {
   createAgentComponent,
   downloadNode,
   getNodeId,
-} from "@/utils/reactFlowUtils";
+} from "@/utils/reactflowUtils";
 import { cn, removeCountFromString } from "@/utils/utils";
 
 export const SidebarDraggableComponent = forwardRef(
@@ -96,8 +96,8 @@ export const SidebarDraggableComponent = forwardRef(
             onDelete();
             break;
           }
-          const agentId = agents?.find((f) => f.name === display_name);
-          if (agentId) deleteAgent({ id: agentId.id });
+          const flowId = agents?.find((f) => f.name === display_name);
+          if (flowId) deleteAgent({ id: flowId.id });
           break;
         }
       }

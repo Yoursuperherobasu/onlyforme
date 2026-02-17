@@ -12,8 +12,6 @@ import { useFolderStore } from "../../../../stores/foldersStore";
 import type { TemplateContentProps } from "../../../../types/templates/types";
 import { updateIds } from "../../../../utils/reactFlowUtils";
 import { TemplateCategoryComponent } from "../TemplateCategoryComponent";
-import { useContext } from "react";
-import { AuthContext } from "@/contexts/authContext";
 
 export default function TemplateContentComponent({
   currentTab,
@@ -21,24 +19,24 @@ export default function TemplateContentComponent({
 }: TemplateContentProps) {
   const allExamples = useAgentsManagerStore((state) => state.examples);
 
-  const { permissions, role } = useContext(AuthContext);
-  const can = (permissionKey: string) => permissions?.includes(permissionKey);
-
-  const examples = allExamples
-    .filter((example) => {
-      if (!ENABLE_KNOWLEDGE_BASES && example.name?.includes("Knowledge")) {
-        return false;
-      }
-      return true;
-    })
-    .filter(
-      (example) =>
-        example.tags?.includes(currentTab ?? "") ||
-        currentTab === "all-templates",
-    );
+  const examples = useMemo(
+    () =>
+      allExamples
+        .filter((example) => {
+          if (!ENABLE_KNOWLEDGE_BASES && example.name?.includes("Knowledge")) {
+            return false;
+          }
+          return true;
+        })
+        .filter(
+          (example) =>
+            example.tags?.includes(currentTab ?? "") ||
+            currentTab === "all-templates",
+        ),
+    [allExamples, currentTab],
+  );
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [filteredExamples, setFilteredExamples] = useState(examples);
   const addAgent = useAddAgent();
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
@@ -57,18 +55,20 @@ export default function TemplateContentComponent({
     setSearchQuery("");
   }, [currentTab]);
 
-  useEffect(() => {
+  const filteredExamples = useMemo(() => {
     if (searchQuery === "") {
-      setFilteredExamples(examples);
-    } else {
-      const searchResults = fuse.search(searchQuery);
-      setFilteredExamples(searchResults.map((result) => result.item));
+      return examples;
     }
-    // Scroll to the top when search query changes
+    const searchResults = fuse.search(searchQuery);
+    return searchResults.map((result) => result.item);
+  }, [searchQuery, examples, fuse]);
+
+  useEffect(() => {
+    // Scroll to the top when filters change
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
-  }, [searchQuery, currentTab, examples, fuse]);
+  }, [searchQuery, currentTab]);
 
   const handleCardClick = (example) => {
     updateIds(example.data);

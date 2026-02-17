@@ -4,7 +4,7 @@ import {
   type NodeChange,
   type OnNodeDrag,
   type OnSelectionChangeParams,
-  ReactFlow ,
+  ReactFlow,
   reconnectEdge,
   type SelectionDragHandler,
 } from "@xyflow/react";
@@ -61,7 +61,7 @@ import {
   scapeJSONParse,
   updateIds,
   validateSelection,
-} from "../../../../utils/reactFlowUtils";
+} from "../../../../utils/reactflowUtils";
 import ConnectionLineComponent from "../ConnectionLineComponent";
 import AgentBuildingComponent from "../agentBuildingComponent";
 import SelectionMenu from "../SelectionMenuComponent";
@@ -108,7 +108,7 @@ export default function Page({
     (state) => state.setPositionDictionary,
   );
   const reactFlowInstance = useAgentStore((state) => state.reactFlowInstance);
-  const setreactFlowInstance = useAgentStore(
+  const setReactFlowInstance = useAgentStore(
     (state) => state.setreactFlowInstance,
   );
   const nodes = useAgentStore((state) => state.nodes);
@@ -589,7 +589,7 @@ export default function Page({
         if (shadowBox) {
           shadowBox.style.display = "none";
         }
-        const position = reactFlowInstance?.screenToAgentPosition({
+        const position = reactFlowInstance?.screenToFlowPosition({
           x: event.clientX - shadowBoxWidth / 2,
           y: event.clientY - shadowBoxHeight / 2,
         });
@@ -697,7 +697,7 @@ export default function Page({
     <div className="h-full w-full bg-canvas" ref={reactFlowWrapper}>
       {showCanvas ? (
         <>
-          <div id="react-flow-id" className="h-full w-full bg-canvas relative">
+          <div id="react-agent-id" className="h-full w-full bg-canvas relative">
             {!view && (
               <>
                 <MemoizedLogCanvasControls />
@@ -716,7 +716,7 @@ export default function Page({
               nodes={lastSelection?.nodes}
               onClick={handleGroupNode}
             />
-            <reactFlow<AllNodeType, EdgeType>
+            <ReactFlow<AllNodeType, EdgeType>
               nodes={nodes}
               edges={edges}
               onNodesChange={onNodesChangeWithHelperLines}
@@ -725,7 +725,7 @@ export default function Page({
               disableKeyboardA11y={true}
               nodesFocusable={!isLocked}
               edgesFocusable={!isLocked}
-              onInit={setreactFlowInstance}
+              onInit={setReactFlowInstance}
               nodeTypes={nodeTypes}
               onReconnect={isLocked ? undefined : onEdgeUpdate}
               onReconnectStart={isLocked ? undefined : onEdgeUpdateStart}
@@ -763,7 +763,7 @@ export default function Page({
               <UpdateAllComponents />
               <MemoizedBackground />
               {helperLineEnabled && <HelperLines helperLines={helperLines} />}
-            </reactFlow>
+            </ReactFlow>
           </div>
           <div
             id="shadow-box"

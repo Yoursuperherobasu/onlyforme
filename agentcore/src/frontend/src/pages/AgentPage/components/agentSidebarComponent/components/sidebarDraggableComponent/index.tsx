@@ -21,7 +21,7 @@ import {
   createAgentComponent,
   downloadNode,
   getNodeId,
-} from "../../../../../../utils/reactFlowUtils";
+} from "../../../../../../utils/reactflowUtils";
 import { cn, removeCountFromString } from "../../../../../../utils/utils";
 import { useTranslation } from 'react-i18next';
 
@@ -250,3 +250,4 @@ export const SidebarDraggableComponent = forwardRef(
 );
 
 export default SidebarDraggableComponent;
+
