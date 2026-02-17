@@ -16,6 +16,11 @@ ROLE_ALIASES = {
     "business user": "business_user",
 }
 
+PERMISSION_ALIASES = {
+    # Keep old permission checks working while roles move to assets-based keys.
+    "view_assets_files_tab": ["view_files_tab"],
+}
+
 
 def _normalize_role(role: str) -> str:
     normalized = role.strip().lower().replace(" ", "_")
@@ -24,6 +29,17 @@ def _normalize_role(role: str) -> str:
 
 def normalize_role(role: str) -> str:
     return _normalize_role(role)
+
+
+def _expand_permissions(perms: List[str]) -> List[str]:
+    expanded: list[str] = []
+    for perm in perms:
+        if perm not in expanded:
+            expanded.append(perm)
+        for alias in PERMISSION_ALIASES.get(perm, []):
+            if alias not in expanded:
+                expanded.append(alias)
+    return expanded
 
 
 ACTIONS = {
@@ -149,13 +165,14 @@ class PermissionCacheService:
                 cached = cached.decode("utf-8")
             cached = str(cached)
             if cached.strip():
-                perms = cached.split(",")
+                perms = _expand_permissions(cached.split(","))
                 if perms != [""]:
                     return perms
 
         perms = await _get_permissions_for_role_db(role)
         if not perms:
             perms = ROLE_PERMISSIONS.get(role, [])
+        perms = _expand_permissions(perms)
         await self.redis.set(key, ",".join(perms), ex=self.ttl)
 
         logger.info(f"RBAC cached → {key} = {perms}")
@@ -170,15 +187,15 @@ async def get_permissions_for_role(role: str) -> List[str]:
         # 🔥 fallback (no Redis)
         perms = await _get_permissions_for_role_db(_normalize_role(role))
         if perms:
-            return perms
+            return _expand_permissions(perms)
         normalized = _normalize_role(role)
-        return ROLE_PERMISSIONS.get(normalized, [])
+        return _expand_permissions(ROLE_PERMISSIONS.get(normalized, []))
 
     perms = await permission_cache.get_permissions_for_role(role)
     if perms:
-        return perms
+        return _expand_permissions(perms)
     normalized = _normalize_role(role)
-    return ROLE_PERMISSIONS.get(normalized, [])
+    return _expand_permissions(ROLE_PERMISSIONS.get(normalized, []))
 
 
 async def _get_permissions_for_role_db(role: str) -> List[str]:

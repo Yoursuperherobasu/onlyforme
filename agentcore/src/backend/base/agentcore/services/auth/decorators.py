@@ -26,6 +26,11 @@ class PermissionChecker:
             user_permissions = await permission_cache.get_permissions_for_role(current_user.role)
         else:
             user_permissions = await get_permissions_for_role(current_user.role)
+
+        # Backward compatibility: legacy guards may still check "view_files_tab"
+        # while roles now store "view_assets_files_tab".
+        if "view_assets_files_tab" in user_permissions and "view_files_tab" not in user_permissions:
+            user_permissions = [*user_permissions, "view_files_tab"]
         print("User permissions:", user_permissions)
         if self.all_required:
             has_access = all(

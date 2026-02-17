@@ -1,6 +1,6 @@
 import {
   Search,
-  Workagent,
+  Workflow,
   X
 } from "lucide-react";
 import { useContext } from "react";
@@ -20,17 +20,17 @@ interface WorkagentType {
   enabled: boolean;
 }
 
-interface workflowsViewProps {
+interface WorkflowsViewProps {
   workflows?: WorkagentType[];
   setSearch: (search: string) => void;
   onWorkagentClick?: (workflow: WorkagentType) => void;
 }
 
-export default function workflowsView({
+export default function WorkflowsView({
   workflows,
   setSearch,
   onWorkagentClick,
-}: workflowsViewProps): JSX.Element {
+}: WorkflowsViewProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [workflowStates, setWorkagentStates] = useState<{
     [key: string]: { status: boolean; enabled: boolean };

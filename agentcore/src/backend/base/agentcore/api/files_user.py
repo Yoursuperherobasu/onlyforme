@@ -83,14 +83,14 @@ async def save_file_routine(file, storage_service, current_user: CurrentActiveUs
 
 @router.post("", status_code=HTTPStatus.CREATED)
 @router.post("/", status_code=HTTPStatus.CREATED)
-# @verify_permissions(["view_files_tab"], all_req=True) # type: ignore noqa
 async def upload_user_file(
     file: Annotated[UploadFile, File(...)],
     session: DbSession,
-    current_user: Annotated[CurrentActiveUser, Depends(PermissionChecker(["view_files_tab"]))],
+    current_user: CurrentActiveUser,
     storage_service=Depends(get_storage_service),
     settings_service=Depends(get_settings_service),
 ) -> UploadFileResponse:
+
     """Upload a file for the current user and track it in the database."""
     # Get the max allowed file size from settings (in MB)
     try:
@@ -522,4 +522,3 @@ async def delete_all_files(
         raise HTTPException(status_code=500, detail=f"Error deleting files: {e}") from e
 
     return {"message": "All files deleted successfully"}
-

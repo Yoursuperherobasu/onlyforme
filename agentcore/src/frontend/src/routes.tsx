@@ -45,8 +45,7 @@ import ModelCatalogue from "./pages/ModelCatalogue";
 import AgentOrchestrator from "./pages/OrchestratorChat";
 import AgentCatalogueView from "./pages/AgentCatalogue";
 import { Workflow } from "lucide-react";
-import WorkagentCatalogueView from "./pages/WorkflowPage";
-import workflowsView from "./pages/WorkflowPage";
+import WorkflowsView from "./pages/WorkflowPage";
 import Dashboard from "./pages/DashboardPage";
 import DashboardAdmin from "./pages/DashboardPage";
 import TimeoutSettings from "./pages/TimeoutSettings";
@@ -188,7 +187,7 @@ const router = createBrowserRouter(
                     path="workflows"
                     element={
                      
-                        <workflowsView />
+                        <WorkflowsView />
                 
                     }
                   />
