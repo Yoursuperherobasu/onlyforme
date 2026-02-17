@@ -38,10 +38,10 @@ const AgentToolbarOptions = ({
         />
         
       </div>
-      <PublishDropdown
+      {/* <PublishDropdown
         openApiModal={openApiModal}
         setOpenApiModal={setOpenApiModal}
-      />
+      /> */}
     </div>
   );
 };
