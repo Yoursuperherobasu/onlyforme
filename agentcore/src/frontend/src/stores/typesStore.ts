@@ -5,7 +5,7 @@ import {
   extractSecretFieldsFromComponents,
   templatesGenerator,
   typesGenerator,
-} from "../utils/reactflowUtils";
+} from "../utils/reactFlowUtils";
 
 export const useTypesStore = create<TypesStoreType>((set, get) => ({
   ComponentFields: new Set(),

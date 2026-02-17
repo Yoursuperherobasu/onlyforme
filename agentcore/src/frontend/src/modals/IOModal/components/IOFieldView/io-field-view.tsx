@@ -2,7 +2,7 @@ import { cloneDeep } from "lodash";
 import { useState } from "react";
 import useHandleNewValue from "@/CustomNodes/hooks/use-handle-new-value";
 import CustomIOFileInput from "@/customization/components/custom-file-input";
-import type { AllNodeType } from "@/types/flow";
+import type { AllNodeType } from "@/types/agent";
 import ImageViewer from "../../../../components/common/ImageViewer";
 import CsvOutputComponent from "../../../../components/core/csvOutputComponent";
 import DataOutputComponent from "../../../../components/core/dataOutputComponent";
@@ -16,12 +16,12 @@ import {
   IOOutputTypes,
 } from "../../../../constants/enums";
 import TextOutputView from "../../../../shared/components/textOutputView";
-import useFlowStore from "../../../../stores/flowStore";
+import useAgentStore from "../../../../stores/agentStore";
 import type { IOFieldViewProps } from "../../../../types/components";
 import {
   convertValuesToNumbers,
   hasDuplicateKeys,
-} from "../../../../utils/reactflowUtils";
+} from "../../../../utils/reactFlowUtils";
 import CsvSelect from "./components/csv-selected";
 import IOFileInput from "./components/file-input";
 import IoJsonInput from "./components/json-input";
@@ -33,14 +33,14 @@ export default function IOFieldView({
   fieldId,
   left,
 }: IOFieldViewProps): JSX.Element | undefined {
-  const nodes = useFlowStore((state) => state.nodes);
-  const setNode = useFlowStore((state) => state.setNode);
-  const flowPool = useFlowStore((state) => state.flowPool);
+  const nodes = useAgentStore((state) => state.nodes);
+  const setNode = useAgentStore((state) => state.setNode);
+  const agentPool = useAgentStore((state) => state.agentPool);
   const node: AllNodeType | undefined = nodes.find(
     (node) => node.id === fieldId,
   );
-  const flowPoolNode = (flowPool[node!.id] ?? [])[
-    (flowPool[node!.id]?.length ?? 1) - 1
+  const agentPoolNode = (agentPool[node!.id] ?? [])[
+    (agentPool[node!.id]?.length ?? 1) - 1
   ];
   const handleChangeSelect = (e) => {
     if (node) {
@@ -55,7 +55,7 @@ export default function IOFieldView({
   const [errorDuplicateKey, setErrorDuplicateKey] = useState(false);
 
   const textOutputValue =
-    (flowPool[node!.id] ?? [])[(flowPool[node!.id]?.length ?? 1) - 1]?.data
+    (agentPool[node!.id] ?? [])[(agentPool[node!.id]?.length ?? 1) - 1]?.data
       .results.text ?? "";
 
   const { handleOnNewValue } = node?.data.node
@@ -179,7 +179,7 @@ export default function IOFieldView({
             return left ? (
               <div>{PDFViewConstant}</div>
             ) : (
-              <PdfViewer pdf={flowPoolNode?.params ?? ""} />
+              <PdfViewer pdf={agentPoolNode?.params ?? ""} />
             );
           case IOOutputTypes.CSV:
             return left ? (
@@ -191,7 +191,7 @@ export default function IOFieldView({
               </>
             ) : (
               <>
-                <CsvOutputComponent csvNode={node} flowPool={flowPoolNode} />
+                <CsvOutputComponent csvNode={node} agentPool={agentPoolNode} />
               </>
             );
           case IOOutputTypes.IMAGE:
@@ -200,8 +200,8 @@ export default function IOFieldView({
             ) : (
               <ImageViewer
                 image={
-                  (flowPool[node.id] ?? [])[
-                    (flowPool[node.id]?.length ?? 1) - 1
+                  (agentPool[node.id] ?? [])[
+                    (agentPool[node.id]?.length ?? 1) - 1
                   ]?.params ?? ""
                 }
               />
@@ -259,11 +259,11 @@ export default function IOFieldView({
                 <DataOutputComponent
                   pagination={!left}
                   rows={
-                    Array.isArray(flowPoolNode?.data?.artifacts)
-                      ? (flowPoolNode?.data?.artifacts?.map(
+                    Array.isArray(agentPoolNode?.data?.artifacts)
+                      ? (agentPoolNode?.data?.artifacts?.map(
                           (artifact) => artifact.data,
                         ) ?? [])
-                      : [flowPoolNode?.data?.artifacts]
+                      : [agentPoolNode?.data?.artifacts]
                   }
                   columnMode="union"
                 />
@@ -277,10 +277,10 @@ export default function IOFieldView({
                   left ? "min-h-32" : "h-full"
                 }`}
                 placeholder={"Empty"}
-                // update to real value on flowPool
+                // update to real value on agentPool
                 value={
-                  (flowPool[node.id] ?? [])[
-                    (flowPool[node.id]?.length ?? 1) - 1
+                  (agentPool[node.id] ?? [])[
+                    (agentPool[node.id]?.length ?? 1) - 1
                   ]?.data.results.result ?? ""
                 }
                 readOnly

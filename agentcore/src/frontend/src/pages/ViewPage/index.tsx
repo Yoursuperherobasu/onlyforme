@@ -1,37 +1,37 @@
 import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
-import useFlowsManagerStore from "../../stores/flowsManagerStore";
-import Page from "../FlowPage/components/PageComponent";
+import useAgentsManagerStore from "../../stores/agentsManagerStore";
+import Page from "../AgentPage/components/PageComponent";
 
 export default function ViewPage() {
-  const setCurrentFlow = useFlowsManagerStore((state) => state.setCurrentFlow);
+  const setCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);
 
   const { id } = useParams();
   const navigate = useCustomNavigate();
 
-  const flows = useFlowsManagerStore((state) => state.flows);
-  const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
+  const agents = useAgentsManagerStore((state) => state.agents);
+  const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
 
-  // Set flow tab id
+  // Set agent tab id
   useEffect(() => {
     const awaitgetTypes = async () => {
-      if (flows && currentFlowId === "") {
-        const isAnExistingFlow = flows.find((flow) => flow.id === id);
+      if (agents && currentAgentId === "") {
+        const isAnExistingAgent = agents.find((agent) => agent.id === id);
 
-        if (!isAnExistingFlow) {
+        if (!isAnExistingAgent) {
           navigate("/all");
           return;
         }
 
-        setCurrentFlow(isAnExistingFlow);
+        setCurrentAgent(isAnExistingAgent);
       }
     };
     awaitgetTypes();
-  }, [id, flows]);
+  }, [id, agents]);
 
   return (
-    <div className="flow-page-positioning">
+    <div className="agent-page-positioning">
       <Page view />
     </div>
   );

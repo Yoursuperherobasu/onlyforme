@@ -1,13 +1,13 @@
-import type { FlowType } from "../../flow";
+import type { AgentType } from "../../agent";
 
-export type FlowsManagerStoreType = {
+export type AgentsManagerStoreType = {
   autoSaving: boolean;
   setAutoSaving: (autoSaving: boolean) => void;
-  getFlowById: (id: string) => FlowType | undefined;
-  flows: Array<FlowType> | undefined;
-  setFlows: (flows: FlowType[]) => void;
-  currentFlow: FlowType | undefined;
-  currentFlowId: string;
+  getAgentById: (id: string) => AgentType | undefined;
+  agents: Array<AgentType> | undefined;
+  setAgents: (agents: AgentType[]) => void;
+  currentAgent: AgentType | undefined;
+  currentAgentId: string;
   saveLoading: boolean;
   setSaveLoading: (saveLoading: boolean) => void;
   isLoading: boolean;
@@ -15,13 +15,13 @@ export type FlowsManagerStoreType = {
   undo: () => void;
   redo: () => void;
   takeSnapshot: () => void;
-  examples: Array<FlowType>;
-  setExamples: (examples: FlowType[]) => void;
-  setCurrentFlow: (flow?: FlowType) => void;
-  setSearchFlowsComponents: (search: string) => void;
-  searchFlowsComponents: string;
-  selectedFlowsComponentsCards: string[];
-  setSelectedFlowsComponentsCards: (selected: string[]) => void;
+  examples: Array<AgentType>;
+  setExamples: (examples: AgentType[]) => void;
+  setCurrentAgent: (agent?: AgentType) => void;
+  setSearchAgentsComponents: (search: string) => void;
+  searchAgentsComponents: string;
+  selectedAgentsComponentsCards: string[];
+  setSelectedAgentsComponentsCards: (selected: string[]) => void;
   autoSavingInterval: number;
   setAutoSavingInterval: (autoSavingInterval: number) => void;
   healthCheckMaxRetries: number;

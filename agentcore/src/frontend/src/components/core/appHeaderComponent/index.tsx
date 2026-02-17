@@ -13,7 +13,7 @@ import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useTheme from "@/customization/hooks/use-custom-theme";
 import useAlertStore from "@/stores/alertStore";
-import FlowMenu from "./components/FlowMenu";
+import AgentMenu from "./components/AgentMenu";
 
 import FullLogo from "@/assets/agentcore.svg?react";
 import IconLogo from "@/assets/mothersonLogo.svg?react";
@@ -120,7 +120,7 @@ export default function AppHeader(): JSX.Element {
 
       {/* Middle Section */}
       <div className="absolute left-1/2 -translate-x-1/2">
-        <FlowMenu />
+        <AgentMenu />
       </div>
 
       {/* Right Section */}

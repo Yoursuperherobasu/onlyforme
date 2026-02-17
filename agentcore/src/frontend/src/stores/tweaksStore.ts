@@ -1,10 +1,10 @@
 import { create } from "zustand";
 import { getChangesType } from "@/modals/apiModal/utils/get-changes-types";
 import { getNodesWithDefaultValue } from "@/modals/apiModal/utils/get-nodes-with-default-value";
-import type { AllNodeType, NodeDataType } from "@/types/flow";
+import type { AllNodeType, NodeDataType } from "@/types/agent";
 import { getLocalStorage, setLocalStorage } from "@/utils/local-storage-util";
 import type { TweaksStoreType } from "../types/zustand/tweaks";
-import useFlowStore from "./flowStore";
+import useAgentStore from "./agentStore";
 
 export const useTweaksStore = create<TweaksStoreType>((set, get) => ({
   tweaks: {},
@@ -38,13 +38,13 @@ export const useTweaksStore = create<TweaksStoreType>((set, get) => ({
   getNode: (id: string) => {
     return get().nodes.find((node) => node.id === id);
   },
-  currentFlowId: "",
-  initialSetup: (nodes: AllNodeType[], flowId: string) => {
-    useFlowStore.getState().unselectAll();
+  currentAgentId: "",
+  initialSetup: (nodes: AllNodeType[], agentId: string) => {
+    useAgentStore.getState().unselectAll();
     set({
-      currentFlowId: flowId,
+      currentAgentId: agentId,
     });
-    const tweaks = JSON.parse(getLocalStorage(`lf_tweaks_${flowId}`) || "{}");
+    const tweaks = JSON.parse(getLocalStorage(`lf_tweaks_${agentId}`) || "{}");
     set({
       nodes: getNodesWithDefaultValue(nodes, tweaks),
     });
@@ -53,7 +53,7 @@ export const useTweaksStore = create<TweaksStoreType>((set, get) => ({
   updateTweaks: () => {
     const nodes = get().nodes;
     const tweak = {};
-    const flowId = get().currentFlowId;
+    const agentId = get().currentAgentId;
     nodes.forEach((node) => {
       const nodeTemplate = node.data?.node?.template;
       if (nodeTemplate && node.type === "genericNode") {
@@ -71,7 +71,7 @@ export const useTweaksStore = create<TweaksStoreType>((set, get) => ({
         }
       }
     });
-    setLocalStorage(`lf_tweaks_${flowId}`, JSON.stringify(tweak));
+    setLocalStorage(`lf_tweaks_${agentId}`, JSON.stringify(tweak));
     set({
       tweaks: tweak,
     });

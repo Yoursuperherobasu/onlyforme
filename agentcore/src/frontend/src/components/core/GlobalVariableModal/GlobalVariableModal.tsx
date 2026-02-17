@@ -3,7 +3,7 @@ import { ForwardedIconComponent } from "@/components/common/genericIconComponent
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs-button";
-import { useGetTypes } from "@/controllers/API/queries/flows/use-get-types";
+import { useGetTypes } from "@/controllers/API/queries/agents/use-get-types";
 import {
   useGetGlobalVariables,
   usePatchGlobalVariables,
@@ -135,7 +135,7 @@ export default function GlobalVariableModal({
       onSubmit={submitForm}
       disable={disabled}
     >
-      <BaseModal.Header description="This variable will be available for use across your flows.">
+      <BaseModal.Header description="This variable will be available for use across your agents.">
         <ForwardedIconComponent
           name="Globe"
           className="h-6 w-6 pr-1 text-primary"

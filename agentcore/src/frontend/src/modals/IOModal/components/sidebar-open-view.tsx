@@ -1,6 +1,6 @@
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useVoiceStore } from "@/stores/voiceStore";
 import IconComponent from "../../../components/common/genericIconComponent";
 import type { SidebarOpenViewProps } from "../types/sidebar-open-view";
@@ -20,7 +20,7 @@ export const SidebarOpenView = ({
     (state) => state.setNewSessionCloseVoiceAssistant,
   );
 
-  const setNewChatOnPlayground = useFlowStore(
+  const setNewChatOnPlayground = useAgentStore(
     (state) => state.setNewChatOnPlayground,
   );
 

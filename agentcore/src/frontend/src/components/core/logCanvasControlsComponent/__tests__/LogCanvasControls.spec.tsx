@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import LogCanvasControls from "../index";
 
-jest.mock("@/modals/flowLogsModal", () => ({
+jest.mock("@/modals/agentLogsModal", () => ({
   __esModule: true,
   default: ({ children }) => <div data-testid="logs-modal">{children}</div>,
 }));

@@ -84,7 +84,7 @@ describe("API Snippet Generation Utilities", () => {
 
   describe("API Code Generation", () => {
     const baseOptions = {
-      flowId: "test-flow-id",
+      agentId: "test-agent-id",
       endpointName: "test-endpoint",
       processedPayload: {
         output_type: "chat",
@@ -368,7 +368,7 @@ describe("API Snippet Generation Utilities", () => {
         expect(result.steps[0].code).toContain('--form "file=@');
         expect(result.steps[0].code).toContain("x-api-key: YOUR_API_KEY_HERE");
 
-        // Check step 2 (execute flow)
+        // Check step 2 (execute agent)
         expect(result.steps[1]).toHaveProperty("title");
         expect(result.steps[1].title).toContain("Execute");
         expect(result.steps[1]).toHaveProperty("code");
@@ -409,7 +409,7 @@ describe("API Snippet Generation Utilities", () => {
           "x-api-key: YOUR_API_KEY_HERE",
         );
 
-        // Check step 2 (execute flow) - should not contain API key
+        // Check step 2 (execute agent) - should not contain API key
         expect(result.steps[1]).toHaveProperty("title");
         expect(result.steps[1].title).toContain("Execute");
         expect(result.steps[1]).toHaveProperty("code");

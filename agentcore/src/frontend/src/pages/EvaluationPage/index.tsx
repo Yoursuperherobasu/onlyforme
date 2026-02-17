@@ -36,7 +36,7 @@ import {
   runLLMJudge,
   createEvaluationScore,
   createEvaluator,
-  getFlows,
+  getAgents,
   getEvaluationPresets,
   getEvaluationDatasets,
   createEvaluationDataset,
@@ -125,7 +125,7 @@ export default function EvaluationPage() {
 
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [modelApiKey, setModelApiKey] = useState<string>("");
-  const [flowList, setFlowList] = useState<any[]>([]);
+  const [agentList, setAgentList] = useState<any[]>([]);
   const storeModels = useModelStore((s) => s.models);
   const [savedModelKeys, setSavedModelKeys] = useState<Record<string, string>>({});
   const loadSavedModelKeys = () => {
@@ -145,7 +145,7 @@ export default function EvaluationPage() {
     try { localStorage.setItem('evaluation_model_keys', JSON.stringify(next)); } catch (e) { console.debug(e); }
   };
   
-  const [selectedFlowIds, setSelectedFlowIds] = useState<string[]>([]);
+  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [filterSessionId, setFilterSessionId] = useState<string>('');
   const [filterTraceId, setFilterTraceId] = useState<string>('');
   const [runOnNew, setRunOnNew] = useState<boolean>(true);
@@ -168,7 +168,7 @@ export default function EvaluationPage() {
   const resetForms = () => {
     setJudgeForm({ trace_id: "", criteria: "", model: "gpt-4o", name: "", preset_id: "", saved_evaluator_id: "", model_name: "" });
     setGroundTruth("");
-    setSelectedFlowIds([]);
+    setSelectedAgentIds([]);
     setFilterSessionId("");
     setFilterTraceId("");
     setRunOnNew(true);
@@ -320,10 +320,10 @@ export default function EvaluationPage() {
       .catch(() => {
         setSavedEvaluators([]);
       });
-    getFlows()
-      .then((flows) => {
-        const normalized = flows && Array.isArray(flows.data) ? flows.data : Array.isArray(flows) ? flows : [];
-        setFlowList(normalized);
+    getAgents()
+      .then((agents) => {
+        const normalized = agents && Array.isArray(agents.data) ? agents.data : Array.isArray(agents) ? agents : [];
+        setAgentList(normalized);
         if (normalized.length > 0) {
           setAvailableModels(normalized);
         } else if (storeModels?.length) {
@@ -331,7 +331,7 @@ export default function EvaluationPage() {
         }
       })
       .catch(() => {
-        setFlowList([]);
+        setAgentList([]);
       });
   }, []);
 
@@ -356,12 +356,12 @@ export default function EvaluationPage() {
         } else {
           setPendingTraces([]);
         }
-        // Load flows (also used as model catalogue). Fetch only once to avoid duplicate requests.
+        // Load agents (also used as model catalogue). Fetch only once to avoid duplicate requests.
         try {
-          const flows = await getFlows();
-          const normalized = flows && Array.isArray(flows.data) ? flows.data : Array.isArray(flows) ? flows : [];
-          setFlowList(normalized);
-          // For availableModels, prefer storeModels fallback; if flows look like models, expose them too
+          const agents = await getAgents();
+          const normalized = agents && Array.isArray(agents.data) ? agents.data : Array.isArray(agents) ? agents : [];
+          setAgentList(normalized);
+          // For availableModels, prefer storeModels fallback; if agents look like models, expose them too
           if (normalized.length > 0) {
             setAvailableModels(normalized);
           } else if (storeModels?.length) {
@@ -370,8 +370,8 @@ export default function EvaluationPage() {
             setAvailableModels([]);
           }
         } catch (e) {
-          console.debug("Failed to load flows/models", e);
-          setFlowList([]);
+          console.debug("Failed to load agents/models", e);
+          setAgentList([]);
           setAvailableModels(storeModels?.length ? storeModels : []);
         }
         // load saved model API keys and prefill if available
@@ -473,7 +473,7 @@ export default function EvaluationPage() {
         // persist locally under the chosen model name
         if (modelName) saveModelKey(modelName, modelApiKey);
       }
-      if (selectedFlowIds && selectedFlowIds.length) payload.agent_ids = selectedFlowIds;
+      if (selectedAgentIds && selectedAgentIds.length) payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
 
@@ -546,7 +546,7 @@ export default function EvaluationPage() {
       else if (targets.length > 1) payload.target = targets;
       if (judgeForm.preset_id) payload.preset_id = judgeForm.preset_id;
       if (groundTruth.trim()) payload.ground_truth = groundTruth.trim();
-      if (selectedFlowIds && selectedFlowIds.length) payload.agent_ids = selectedFlowIds;
+      if (selectedAgentIds && selectedAgentIds.length) payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
       if (modelApiKey && modelName) {
@@ -598,9 +598,9 @@ export default function EvaluationPage() {
       setRunOnExisting(target.includes("existing"));
       setRunOnNew(target.includes("new"));
     }
-    // Load from agent_ids (new) or flow_ids (old) for backward compatibility
-    const flowIds = Array.isArray(s.agent_ids) ? s.agent_ids : (Array.isArray(s.flow_ids) ? s.flow_ids : []);
-    setSelectedFlowIds(flowIds);
+    // Load from agent_ids (new) or agent_ids (old) for backward compatibility
+    const agentIds = Array.isArray(s.agent_ids) ? s.agent_ids : (Array.isArray(s.agent_ids) ? s.agent_ids : []);
+    setSelectedAgentIds(agentIds);
     setFilterSessionId(s.session_id || "");
     setFilterTraceId(s.trace_id || "");
     try {
@@ -964,13 +964,13 @@ export default function EvaluationPage() {
   };
 
   const renderDatasets = () => {
-    const flowOptions = (flowList || [])
-      .map((flow: any) => {
-        const id = flow?.metadata?.agent_id || flow?.metadata?.flow_id || flow?.id;
+    const agentOptions = (agentList || [])
+      .map((agent: any) => {
+        const id = agent?.metadata?.agent_id || agent?.metadata?.agent_id || agent?.id;
         if (!id) return null;
         return {
           id: String(id),
-          label: flow?.metadata?.display_name || flow?.name || String(id),
+          label: agent?.metadata?.display_name || agent?.name || String(id),
         };
       })
       .filter(Boolean) as Array<{ id: string; label: string }>;
@@ -1174,7 +1174,7 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Agent (Flow)</label>
+              <label className="text-sm font-medium">Agent (agent)</label>
               <Select
                 value={datasetExperimentForm.agent_id || "__none__"}
                 onValueChange={(value) => setDatasetExperimentForm({ ...datasetExperimentForm, agent_id: value === "__none__" ? "" : value })}
@@ -1184,9 +1184,9 @@ export default function EvaluationPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">No agent (use dataset values)</SelectItem>
-                  {flowOptions.map((flow) => (
-                    <SelectItem key={flow.id} value={flow.id}>
-                      {flow.label}
+                  {agentOptions.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1440,9 +1440,9 @@ export default function EvaluationPage() {
                                       // Run evaluator immediately by creating a config that targets existing traces
                                       try {
                                         const payload: any = { name: ev.name, criteria: ev.criteria, model: ev.model, target: 'existing' };
-                                        if ((ev as any).flow_ids) payload.flow_ids = (ev as any).flow_ids;
-                                        if ((ev as any).flow_id) payload.flow_id = (ev as any).flow_id;
-                                        if ((ev as any).flow_name) payload.flow_name = (ev as any).flow_name;
+                                        if ((ev as any).agent_ids) payload.agent_ids = (ev as any).agent_ids;
+                                        if ((ev as any).agent_id) payload.agent_id = (ev as any).agent_id;
+                                        if ((ev as any).agent_name) payload.agent_name = (ev as any).agent_name;
                                         if ((ev as any).session_id) payload.session_id = (ev as any).session_id;
                                         if ((ev as any).trace_id) payload.trace_id = (ev as any).trace_id;
                                         if ((ev as any).preset_id) payload.preset_id = (ev as any).preset_id;
@@ -1475,7 +1475,7 @@ export default function EvaluationPage() {
                           <tr>
                             <th className="px-6 py-3">Trace ID</th>
                             <th className="px-6 py-3">Name</th>
-                            <th className="px-6 py-3">Flow</th>
+                            <th className="px-6 py-3">agent</th>
                             <th className="px-6 py-3">Scores</th>
                             <th className="px-6 py-3">Action</th>
                           </tr>
@@ -1487,7 +1487,7 @@ export default function EvaluationPage() {
                                 {shortId(trace.id)}
                               </td>
                               <td className="px-6 py-4">{trace.name || "-"}</td>
-                              <td className="px-6 py-4">{trace.flow_name || "-"}</td>
+                              <td className="px-6 py-4">{trace.agent_name || "-"}</td>
                               <td className="px-6 py-4">
                                 {trace.has_scores ? `${trace.score_count} scores` : "No scores"}
                               </td>
@@ -1570,14 +1570,14 @@ export default function EvaluationPage() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Flows</label>
+                <label className="text-sm font-medium">Agents</label>
                 <div className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm max-h-44 overflow-y-auto">
-                  {flowList && flowList.length > 0 ? (
-                    flowList.map((f: any) => {
-                      const fid = f.metadata?.flow_id || f.metadata?.agent_id || f.id || f.metadata?.endpoint_name || "";
+                  {agentList && agentList.length > 0 ? (
+                    agentList.map((f: any) => {
+                      const fid = f.metadata?.agent_id || f.metadata?.agent_id || f.id || f.metadata?.endpoint_name || "";
                       if (!fid) return null;
                       const label = f.metadata?.display_name || f.name || f.metadata?.endpoint_name || f.id || fid;
-                      const checked = selectedFlowIds.includes(fid);
+                      const checked = selectedAgentIds.includes(fid);
                       return (
                         <label key={fid} className="flex items-center gap-2 py-1">
                           <input
@@ -1585,9 +1585,9 @@ export default function EvaluationPage() {
                             checked={checked}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setSelectedFlowIds((s) => Array.from(new Set([...s, fid])));
+                                setSelectedAgentIds((s) => Array.from(new Set([...s, fid])));
                               } else {
-                                setSelectedFlowIds((s) => s.filter((x) => x !== fid));
+                                setSelectedAgentIds((s) => s.filter((x) => x !== fid));
                               }
                             }}
                             className="form-checkbox"
@@ -1597,10 +1597,10 @@ export default function EvaluationPage() {
                       );
                     })
                   ) : (
-                    <div className="text-sm text-gray-500 py-2">No flows available</div>
+                    <div className="text-sm text-gray-500 py-2">No agents available</div>
                   )}
                 </div>
-                <p className="text-xs text-gray-500">Select one or more flows (agents) to target.</p>
+                <p className="text-xs text-gray-500">Select one or more agents (agents) to target.</p>
               </div>
             </div>
 

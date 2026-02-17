@@ -7,9 +7,9 @@ import LoadingTextComponent from "@/components/common/loadingTextComponent";
 import { RECEIVING_INPUT_VALUE, SELECT_AN_OPTION } from "@/constants/constants";
 import { usePostTemplateValue } from "@/controllers/API/queries/nodes/use-post-template-value";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useTypesStore } from "@/stores/typesStore";
-import { scapedJSONStringfy } from "@/utils/reactflowUtils";
+import { scapedJSONStringfy } from "@/utils/reactFlowUtils";
 import {
   convertStringToHTML,
   getStatusColor,
@@ -71,7 +71,7 @@ export default function Dropdown({
   const [openDialog, setOpenDialog] = useState(false);
   const [waitingForResponse, setWaitingForResponse] = useState(false);
   const [customValue, setCustomValue] = useState("");
-  const nodes = useFlowStore((state) => state.nodes);
+  const nodes = useAgentStore((state) => state.nodes);
 
   const [filteredOptions, setFilteredOptions] = useState(() => {
     // Include the current value in filteredOptions if it's a custom value not in validOptions
@@ -199,7 +199,7 @@ export default function Dropdown({
     // we should find a better way to do this
     try {
       if (value === "connect_other_models") {
-        const store = useFlowStore.getState();
+        const store = useAgentStore.getState();
         const node = store.getNode(nodeId!);
         const templateField = node?.data?.node?.template?.[name!];
         if (!templateField) return;

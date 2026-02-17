@@ -1,5 +1,5 @@
 import type { OutputFieldType } from "../../types/api";
-import type { NodeDataType } from "../../types/flow";
+import type { NodeDataType } from "../../types/agent";
 import { nodeColorsName } from "../../utils/styleUtils";
 
 export function getNodeOutputColorsName(

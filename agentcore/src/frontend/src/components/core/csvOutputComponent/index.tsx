@@ -1,4 +1,4 @@
-import type { AllNodeType } from "@/types/flow";
+import type { AllNodeType } from "@/types/agent";
 import "ag-grid-community/styles/ag-grid.css"; // Mandatory CSS required by the grid
 import "ag-grid-community/styles/ag-theme-balham.css"; // Optional Theme applied to the grid
 import { useEffect, useMemo, useState } from "react";
@@ -16,12 +16,12 @@ import { convertCSVToData } from "./helpers/convert-data-function";
 
 function CsvOutputComponent({
   csvNode,
-  flowPool,
+  agentPool,
 }: {
   csvNode: AllNodeType;
-  flowPool: VertexBuildTypeAPI;
+  agentPool: VertexBuildTypeAPI;
 }) {
-  const csvNodeArtifacts = flowPool?.data?.artifacts?.repr;
+  const csvNodeArtifacts = agentPool?.data?.artifacts?.repr;
   const jsonString = csvNodeArtifacts?.replace(/'/g, '"');
   let file = null;
   try {

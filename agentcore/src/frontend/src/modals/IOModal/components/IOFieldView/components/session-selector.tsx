@@ -10,8 +10,8 @@ import {
   SelectTrigger,
 } from "@/components/ui/select-custom";
 import { useUpdateSessionName } from "@/controllers/API/queries/messages/use-rename-session";
-import { useGetFlowId } from "@/modals/IOModal/hooks/useGetFlowId";
-import useFlowStore from "@/stores/flowStore";
+import { useGetAgentId } from "@/modals/IOModal/hooks/useGetAgentId";
+import useAgentStore from "@/stores/agentStore";
 import { useVoiceStore } from "@/stores/voiceStore";
 import { cn } from "@/utils/utils";
 
@@ -38,12 +38,12 @@ export default function SessionSelector({
   playgroundPage: boolean;
   setActiveSession: (session: string) => void;
 }) {
-  const currentFlowId = useGetFlowId();
+  const currentAgentId = useGetAgentId();
   const [isEditing, setIsEditing] = useState(false);
   const [editedSession, setEditedSession] = useState(session);
   const { mutate: updateSessionName } = useUpdateSessionName();
   const inputRef = useRef<HTMLInputElement>(null);
-  const _setNewChatOnPlayground = useFlowStore(
+  const _setNewChatOnPlayground = useAgentStore(
     (state) => state.setNewChatOnPlayground,
   );
 
@@ -174,7 +174,7 @@ export default function SessionSelector({
             <ShadTooltip styleClasses="z-50" content={session}>
               <div className="relative w-full overflow-hidden">
                 <span className="w-full truncate text-sm">
-                  {session === currentFlowId ? "Default Session" : session}
+                  {session === currentAgentId ? "Default Session" : session}
                 </span>
                 <div
                   className={cn(

@@ -74,7 +74,7 @@ export default function MCPServersPage() {
             <h1 className="text-2xl font-semibold">MCP Servers</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Manage MCP Servers for use in your flows
+            Manage MCP Servers for use in your agents
           </p>
         </div>
 

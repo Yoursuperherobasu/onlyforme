@@ -1,5 +1,5 @@
 import {
-  PDFCheckFlow,
+  PDFCheckAgent,
   PDFLoadErrorTitle,
 } from "../../../../constants/constants";
 import IconComponent from "../../../common/genericIconComponent";
@@ -14,7 +14,7 @@ export default function ErrorComponent(): JSX.Element {
         </span>
         <br />
         <div className="agentcore-chat-desc">
-          <span className="agentcore-chat-desc-span">{PDFCheckFlow} </span>
+          <span className="agentcore-chat-desc-span">{PDFCheckAgent} </span>
         </div>
       </div>
     </div>

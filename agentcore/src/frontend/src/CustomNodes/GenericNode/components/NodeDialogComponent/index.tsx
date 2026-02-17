@@ -15,7 +15,7 @@ import { usePostTemplateValue } from "@/controllers/API/queries/nodes/use-post-t
 import { getCustomParameterTitle } from "@/customization/components/custom-parameter";
 import { track } from "@/customization/utils/analytics";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import type { APIClassType, InputFieldType } from "@/types/api";
 
 interface NodeDialogProps {
@@ -38,8 +38,8 @@ export const NodeDialog: React.FC<NodeDialogProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
 
-  const nodes = useFlowStore((state) => state.nodes);
-  const setNode = useFlowStore((state) => state.setNode);
+  const nodes = useAgentStore((state) => state.nodes);
+  const setNode = useAgentStore((state) => state.setNode);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
 

@@ -6,7 +6,7 @@ import {
   convertObjToArray,
   convertValuesToNumbers,
   hasDuplicateKeys,
-} from "@/utils/reactflowUtils";
+} from "@/utils/reactFlowUtils";
 import { cn } from "@/utils/utils";
 import IconComponent from "../../../../common/genericIconComponent";
 

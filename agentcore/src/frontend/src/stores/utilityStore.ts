@@ -30,11 +30,11 @@ export const useUtilityStore = create<UtilityStoreType>((set, get) => ({
   serializationMaxItemsLength: 100,
   setSerializationMaxItemsLength: (serializationMaxItemsLength: number) =>
     set({ serializationMaxItemsLength }),
-  flowsPagination: {
+  agentsPagination: {
     page: 1,
     size: 10,
   },
-  setFlowsPagination: (flowsPagination: Pagination) => set({ flowsPagination }),
+  setAgentsPagination: (agentsPagination: Pagination) => set({ agentsPagination }),
   tags: [],
   setTags: (tags: Tag[]) => set({ tags }),
   featureFlags: {},

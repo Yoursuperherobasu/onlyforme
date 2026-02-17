@@ -97,7 +97,7 @@
     --chat-user-icon: #aface9;
 
     --component-icon: #d8598a;
-    --flow-icon: #2f67d0;
+    --agent-icon: #2f67d0;
     --hover: #f2f4f5;
     --disabled-run: #6366f1;
     
@@ -384,7 +384,7 @@
     --low-indigo: #e0e7ff;
 
     --component-icon: #c35f85;
-    --flow-icon: #2467e4;
+    --agent-icon: #2467e4;
 
     --build-trigger: #dc735b;
     --chat-trigger: #5c8be1;

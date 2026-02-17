@@ -1,6 +1,6 @@
-import type { FlowType } from "../flow";
+import type { AgentType } from "../agent";
 
-export type ChatType = { flow: FlowType };
+export type ChatType = { agent: AgentType };
 export type ChatMessageType = {
   message: string | Object;
   template?: string;
@@ -56,7 +56,7 @@ export type ChatInputType = {
   files?: Array<{ path: string; type: string; name: string }>;
 };
 
-export type FlowPoolObjectType = {
+export type AgentPoolObjectType = {
   timestamp: string;
   valid: boolean;
   // list of chat outputs or list of chat inputs
@@ -147,7 +147,7 @@ export interface PlaygroundEvent {
   timestamp?: string;
   token?: string;
   id?: string;
-  flow_id?: string;
+  agent_id?: string;
   sender?: string;
   session_id?: string;
   edit?: boolean;

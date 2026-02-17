@@ -11,7 +11,7 @@ import {
 } from "../../../../../../components/ui/alert";
 import { Case } from "../../../../../../shared/components/caseComponent";
 import TextOutputView from "../../../../../../shared/components/textOutputView";
-import useFlowStore from "../../../../../../stores/flowStore";
+import useAgentStore from "../../../../../../stores/agentStore";
 import ErrorOutput from "./components";
 
 // Define the props type
@@ -26,16 +26,16 @@ const SwitchOutputView: React.FC<SwitchOutputViewProps> = ({
   outputName,
   type,
 }) => {
-  const flowPool = useFlowStore((state) => state.flowPool);
+  const agentPool = useAgentStore((state) => state.agentPool);
 
-  const flowPoolNode = (flowPool[nodeId] ?? [])[
-    (flowPool[nodeId]?.length ?? 1) - 1
+  const agentPoolNode = (agentPool[nodeId] ?? [])[
+    (agentPool[nodeId]?.length ?? 1) - 1
   ];
 
   const results: OutputLogType | LogsLogType =
     (type === "Outputs"
-      ? flowPoolNode?.data?.outputs?.[outputName]
-      : flowPoolNode?.data?.logs?.[outputName]) ?? {};
+      ? agentPoolNode?.data?.outputs?.[outputName]
+      : agentPoolNode?.data?.logs?.[outputName]) ?? {};
   const resultType = results?.type;
   let resultMessage = results?.message ?? {};
   const RECORD_TYPES = ["array", "message"];

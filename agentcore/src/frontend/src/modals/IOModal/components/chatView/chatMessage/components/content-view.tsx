@@ -36,7 +36,7 @@ export const ErrorView = ({
               <LogoIcon />
               <div className="flex items-center">
                 <TextShimmer className="" duration={1}>
-                  Flow running...
+                  agent running...
                 </TextShimmer>
               </div>
             </motion.div>
@@ -80,7 +80,7 @@ export const ErrorView = ({
                                   >
                                     <strong>{content.component}</strong>
                                   </span>{" "}
-                                  Component, stopping your flow. See below for
+                                  Component, stopping your agent. See below for
                                   more details.
                                 </span>
                               </>
@@ -176,7 +176,7 @@ export const ErrorView = ({
                                 <ol className="list-decimal pl-5">
                                   <li>Check the component settings</li>
                                   <li>Ensure all required fields are filled</li>
-                                  <li>Re-run your flow</li>
+                                  <li>Re-run your agent</li>
                                 </ol>
                               </div>
                             )}

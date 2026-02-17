@@ -2,13 +2,13 @@ import { type Connection, Handle, Position } from "@xyflow/react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useDarkStore } from "@/stores/darkStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { nodeColorsName } from "@/utils/styleUtils";
 import ShadTooltip from "../../../../components/common/shadTooltipComponent";
 import {
   isValidConnection,
   scapedJSONStringfy,
-} from "../../../../utils/reactflowUtils";
+} from "../../../../utils/reactFlowUtils";
 import { cn, groupByFamily } from "../../../../utils/utils";
 import HandleTooltipComponent from "../HandleTooltipComponent";
 
@@ -180,11 +180,11 @@ const HandleRenderComponent = memo(function HandleRenderComponent({
   const [isHovered, setIsHovered] = useState(false);
   const [openTooltip, setOpenTooltip] = useState(false);
 
-  const isLocked = useFlowStore(
-    useShallow((state) => state.currentFlow?.locked),
+  const isLocked = useAgentStore(
+    useShallow((state) => state.currentAgent?.locked),
   );
 
-  const edges = useFlowStore((state) => state.edges);
+  const edges = useAgentStore((state) => state.edges);
 
   const {
     setHandleDragging,
@@ -193,7 +193,7 @@ const HandleRenderComponent = memo(function HandleRenderComponent({
     handleDragging,
     filterType,
     onConnect,
-  } = useFlowStore(
+  } = useAgentStore(
     useCallback(
       (state) => ({
         setHandleDragging: state.setHandleDragging,
@@ -364,7 +364,7 @@ const HandleRenderComponent = memo(function HandleRenderComponent({
   );
 
   const handleClick = useCallback(() => {
-    const nodes = useFlowStore.getState().nodes;
+    const nodes = useAgentStore.getState().nodes;
     setFilterEdge(groupByFamily(myData, tooltipTitle!, left, nodes!));
     setFilterType(currentFilter);
     setFilterComponent("");

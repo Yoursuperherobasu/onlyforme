@@ -1,6 +1,6 @@
 import { usePostValidateCode } from "@/controllers/API/queries/nodes/use-post-validate-code";
 import { usePostValidateComponentCode } from "@/controllers/API/queries/nodes/use-post-validate-component-code";
-import { clearHandlesFromAdvancedFields } from "@/utils/reactflowUtils";
+import { clearHandlesFromAdvancedFields } from "@/utils/reactFlowUtils";
 import "ace-builds/src-noconflict/ace";
 import "ace-builds/src-noconflict/ext-language_tools";
 import "ace-builds/src-noconflict/ext-searchbox";

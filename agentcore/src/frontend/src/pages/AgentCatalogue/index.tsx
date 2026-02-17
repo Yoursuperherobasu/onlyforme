@@ -86,7 +86,7 @@ export default function AgentCatalogueView({
     },
     {
       id: "4",
-      name: "Email Automation Flow",
+      name: "Email Automation agent",
       description:
         "Scalp email campaigns with personalization and A/B testing.",
       provider: "MarketingAI",
@@ -264,7 +264,7 @@ export default function AgentCatalogueView({
                   <div className="flex items-center gap-2">
                     <ShadTooltip
                       content={
-                        !can("view_only_flow")
+                        !can("view_only_agent")
                           ? "You don't have permission to view"
                           : ""
                       }

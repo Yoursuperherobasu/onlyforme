@@ -1,4 +1,4 @@
-import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
+import type { Edge, Node, reactFlowJsonObject } from "@xyflow/react";
 import type { AxiosRequestConfig, AxiosResponse } from "axios";
 import {
   customGetAppVersions,
@@ -10,7 +10,7 @@ import type {
   VertexBuildTypeAPI,
   VerticesOrderTypeAPI,
 } from "../../types/api/index";
-import type { FlowStyleType, FlowType } from "../../types/flow";
+import type { AgentStyleType, AgentType } from "../../types/agent";
 import type { StoreComponentResponse } from "../../types/store";
 
 const GITHUB_API_URL = "https://api.github.com";
@@ -62,34 +62,34 @@ export async function createApiKey(name: string) {
 /**
  * Saves a new agent to the database.
  *
- * @param {FlowType} newFlow - The flow data to save.
- * @returns {Promise<any>} The saved flow data.
+ * @param {AgentType} newAgent - The agent data to save.
+ * @returns {Promise<any>} The saved agent data.
  * @throws Will throw an error if saving fails.
  */
-export async function saveFlowStore(
-  newFlow: {
+export async function saveAgentStore(
+  newAgent: {
     name?: string;
-    data: ReactFlowJsonObject | null;
+    data: reactFlowJsonObject | null;
     description?: string;
-    style?: FlowStyleType;
+    style?: AgentStyleType;
     is_component?: boolean;
     parent?: string;
     last_tested_version?: string;
   },
   tags: string[],
-  publicFlow = false,
-): Promise<FlowType> {
+  publicAgent = false,
+): Promise<AgentType> {
   try {
     const response = await api.post(`${BASE_URL_API}store/components/`, {
-      name: newFlow.name,
-      data: newFlow.data,
-      description: newFlow.description,
-      is_component: newFlow.is_component,
-      parent: newFlow.parent,
+      name: newAgent.name,
+      data: newAgent.data,
+      description: newAgent.description,
+      is_component: newAgent.is_component,
+      parent: newAgent.parent,
       tags: tags,
-      private: !publicFlow,
-      status: publicFlow ? "Public" : "Private",
-      last_tested_version: newFlow.last_tested_version,
+      private: !publicAgent,
+      status: publicAgent ? "Public" : "Private",
+      last_tested_version: newAgent.last_tested_version,
     });
 
     if (response.status !== 201) {
@@ -219,36 +219,36 @@ export async function checkHasStore() {
 }
 
 /**
- * Updates an existing flow in the Store.
+ * Updates an existing agent in the Store.
  *
- * @param {FlowType} updatedFlow - The updated flow data.
- * @returns {Promise<any>} The updated flow data.
+ * @param {AgentType} updatedAgent - The updated agent data.
+ * @returns {Promise<any>} The updated agent data.
  * @throws Will throw an error if the update fails.
  */
-export async function updateFlowStore(
-  newFlow: {
+export async function updateAgentStore(
+  newAgent: {
     name?: string;
-    data: ReactFlowJsonObject | null;
+    data: reactFlowJsonObject | null;
     description?: string;
-    style?: FlowStyleType;
+    style?: AgentStyleType;
     is_component?: boolean;
     parent?: string;
     last_tested_version?: string;
   },
   tags: string[],
-  publicFlow = false,
+  publicAgent = false,
   id: string,
-): Promise<FlowType> {
+): Promise<AgentType> {
   try {
     const response = await api.patch(`${BASE_URL_API}store/components/${id}`, {
-      name: newFlow.name,
-      data: newFlow.data,
-      description: newFlow.description,
-      is_component: newFlow.is_component,
-      parent: newFlow.parent,
+      name: newAgent.name,
+      data: newAgent.data,
+      description: newAgent.description,
+      is_component: newAgent.is_component,
+      parent: newAgent.parent,
       tags: tags,
-      private: !publicFlow,
-      last_tested_version: newFlow.last_tested_version,
+      private: !publicAgent,
+      last_tested_version: newAgent.last_tested_version,
     });
 
     if (response.status !== 201) {
@@ -262,7 +262,7 @@ export async function updateFlowStore(
 }
 
 export async function getVerticesOrder(
-  flowId: string,
+  agentId: string,
   startNodeId?: string | null,
   stopNodeId?: string | null,
   nodes?: Node[],
@@ -284,14 +284,14 @@ export async function getVerticesOrder(
     data["data"]["edges"] = Edges;
   }
   return await api.post(
-    `${BASE_URL_API}build/${flowId}/vertices`,
+    `${BASE_URL_API}build/${agentId}/vertices`,
     data,
     config,
   );
 }
 
 export async function postBuildVertex(
-  flowId: string,
+  agentId: string,
   vertexId: string,
   input_value: string,
   files?: string[],
@@ -305,7 +305,7 @@ export async function postBuildVertex(
     data["files"] = files;
   }
   return await api.post(
-    `${BASE_URL_API}build/${flowId}/vertices/${vertexId}`,
+    `${BASE_URL_API}build/${agentId}/vertices/${vertexId}`,
     data,
   );
 }

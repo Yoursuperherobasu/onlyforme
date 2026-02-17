@@ -5,10 +5,10 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { CustomAPIGenerator } from "@/customization/components/custom-api-generator";
 import { CustomLink } from "@/customization/components/custom-link";
-import useSaveFlow from "@/hooks/flows/use-save-flow";
+import useSaveAgent from "@/hooks/agents/use-save-agent";
 import useAuthStore from "@/stores/authStore";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { isEndpointNameValid } from "@/utils/utils";
 import "ace-builds/src-noconflict/ext-language_tools";
 import "ace-builds/src-noconflict/mode-python";
@@ -35,7 +35,7 @@ export default function ApiModal({
   setOpen?: (a: boolean | ((o?: boolean) => boolean)) => void;
 }) {
   const _autoLogin = useAuthStore((state) => state.autoLogin);
-  const nodes = useFlowStore((state) => state.nodes);
+  const nodes = useAgentStore((state) => state.nodes);
   const [openTweaks, setOpenTweaks] = useState(false);
   const tweaks = useTweaksStore((state) => state.tweaks);
   const [open, setOpen] =
@@ -44,15 +44,15 @@ export default function ApiModal({
       : useState(false);
   const initialSetup = useTweaksStore((state) => state.initialSetup);
 
-  const flowEndpointName = useFlowStore(
-    useShallow((state) => state.currentFlow?.endpoint_name),
+  const agentEndpointName = useAgentStore(
+    useShallow((state) => state.currentAgent?.endpoint_name),
   );
 
-  const currentFlowId = useFlowStore(
-    useShallow((state) => state.currentFlow?.id),
+  const currentAgentId = useAgentStore(
+    useShallow((state) => state.currentAgent?.id),
   );
 
-  const [endpointName, setEndpointName] = useState(flowEndpointName ?? "");
+  const [endpointName, setEndpointName] = useState(agentEndpointName ?? "");
   const [validEndpointName, setValidEndpointName] = useState(true);
 
   const handleEndpointNameChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -72,30 +72,30 @@ export default function ApiModal({
   };
 
   useEffect(() => {
-    if (open && currentFlowId) initialSetup(nodes, currentFlowId);
+    if (open && currentAgentId) initialSetup(nodes, currentAgentId);
   }, [open]);
 
-  const autoSaving = useFlowsManagerStore((state) => state.autoSaving);
-  const saveFlow = useSaveFlow();
-  const setCurrentFlow = useFlowStore((state) => state.setCurrentFlow);
+  const autoSaving = useAgentsManagerStore((state) => state.autoSaving);
+  const saveAgent = useSaveAgent();
+  const setCurrentAgent = useAgentStore((state) => state.setCurrentAgent);
 
   function handleSave(): void {
-    const newFlow = cloneDeep(useFlowStore.getState().currentFlow);
-    if (!newFlow) return;
-    newFlow.endpoint_name =
+    const newAgent = cloneDeep(useAgentStore.getState().currentAgent);
+    if (!newAgent) return;
+    newAgent.endpoint_name =
       endpointName && endpointName.length > 0 ? endpointName : null;
 
     if (autoSaving) {
-      saveFlow(newFlow);
+      saveAgent(newAgent);
     } else {
-      setCurrentFlow(newFlow);
+      setCurrentAgent(newAgent);
     }
   }
 
   useEffect(() => {
-    if (!openTweaks && endpointName !== flowEndpointName) handleSave();
+    if (!openTweaks && endpointName !== agentEndpointName) handleSave();
     else if (openTweaks) {
-      setEndpointName(flowEndpointName ?? "");
+      setEndpointName(agentEndpointName ?? "");
     }
   }, [openTweaks]);
 
@@ -171,12 +171,12 @@ export default function ApiModal({
         <BaseModal.Content overflowHidden className="flex flex-col gap-4">
           {true && (
             <Label>
-              <div className="edit-flow-arrangement mt-2">
+              <div className="edit-agent-arrangement mt-2">
                 <span className="shrink-0 text-mmd font-medium">
                   Endpoint Name
                 </span>
                 {!validEndpointName && (
-                  <span className="edit-flow-span">
+                  <span className="edit-agent-span">
                     Use only letters, numbers, hyphens, and underscores (
                     {MAX_LENGTH} characters max).
                   </span>
@@ -199,7 +199,7 @@ export default function ApiModal({
             <div className="flex flex-col gap-1">
               <span className="shrink-0 text-sm font-medium">Expose API</span>
               <span className="text-mmd text-muted-foreground">
-                Select which component fields to expose as inputs in this flow's
+                Select which component fields to expose as inputs in this agent's
                 API schema.
               </span>
             </div>

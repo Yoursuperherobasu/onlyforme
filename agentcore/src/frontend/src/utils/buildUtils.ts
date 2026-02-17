@@ -16,14 +16,14 @@ import { useMessagesStore } from "@/stores/messagesStore";
 import { BuildStatus, EventDeliveryType } from "../constants/enums";
 import { getVerticesOrder, postBuildVertex } from "../controllers/API";
 import useAlertStore from "../stores/alertStore";
-import useFlowStore from "../stores/flowStore";
+import useAgentStore from "../stores/agentStore";
 import type { VertexBuildTypeAPI } from "../types/api";
 import { isErrorLogType } from "../types/utils/typeCheckingUtils";
-import type { VertexLayerElementType } from "../types/zustand/flow";
+import type { VertexLayerElementType } from "../types/zustand/agent";
 import { isStringArray, tryParseJson } from "./utils";
 
 type BuildVerticesParams = {
-  flowId: string; // Assuming FlowType is the type for your flow
+  agentId: string; // Assuming AgentType is the type for your agent
   input_value?: any; // Replace any with the actual type if it's not any
   files?: string[];
   startNodeId?: string | null; // Assuming nodeId is of type string, and it's optional
@@ -74,12 +74,12 @@ function getInactiveVertexData(vertexId: string): VertexBuildTypeAPI {
   return inactiveVertexData;
 }
 
-function logFlowLoad(message: string, data?: any) {
-  console.warn(`[FlowLoad] ${message}`, data || "");
+function logAgentLoad(message: string, data?: any) {
+  console.warn(`[AgentLoad] ${message}`, data || "");
 }
 
 export async function updateVerticesOrder(
-  flowId: string,
+  agentId: string,
   startNodeId?: string | null,
   stopNodeId?: string | null,
   nodes?: Node[],
@@ -90,26 +90,26 @@ export async function updateVerticesOrder(
   runId?: string;
   verticesToRun: string[];
 }> {
-  logFlowLoad("Updating vertices order");
+  logAgentLoad("Updating vertices order");
   return new Promise(async (resolve, reject) => {
     const setErrorData = useAlertStore.getState().setErrorData;
     let orderResponse;
     try {
       orderResponse = await getVerticesOrder(
-        flowId,
+        agentId,
         startNodeId,
         stopNodeId,
         nodes,
         edges,
       );
-      logFlowLoad("Got vertices order response:", orderResponse);
+      logAgentLoad("Got vertices order response:", orderResponse);
     } catch (error: any) {
-      logFlowLoad("Error getting vertices order:", error);
+      logAgentLoad("Error getting vertices order:", error);
       setErrorData({
         title: MISSED_ERROR_ALERT,
         list: [error.response?.data?.detail ?? "Unknown Error"],
       });
-      useFlowStore.getState().setIsBuilding(false);
+      useAgentStore.getState().setIsBuilding(false);
       throw new Error("Invalid components");
     }
     // orderResponse.data.ids,
@@ -123,12 +123,12 @@ export async function updateVerticesOrder(
     const runId = orderResponse.data.run_id;
     const verticesToRun = orderResponse.data.vertices_to_run;
 
-    useFlowStore
+    useAgentStore
       .getState()
       .updateBuildStatus(verticesToRun, BuildStatus.TO_BUILD);
 
     const verticesIds = orderResponse.data.ids;
-    useFlowStore.getState().updateVerticesBuild({
+    useAgentStore.getState().updateVerticesBuild({
       verticesLayers,
       verticesIds,
       runId,
@@ -138,20 +138,20 @@ export async function updateVerticesOrder(
   });
 }
 
-export async function buildFlowVerticesWithFallback(
+export async function buildAgentVerticesWithFallback(
   params: BuildVerticesParams,
 ) {
-  logFlowLoad("Starting flow load");
+  logAgentLoad("Starting agent load");
   try {
     // Use the event_delivery parameter directly
-    return await buildFlowVertices({ ...params });
+    return await buildAgentVertices({ ...params });
   } catch (e: any) {
     if (
       e.message === POLLING_MESSAGES.ENDPOINT_NOT_AVAILABLE ||
       e.message === POLLING_MESSAGES.STREAMING_NOT_SUPPORTED
     ) {
       // Fallback to polling
-      return await buildFlowVertices({
+      return await buildAgentVertices({
         ...params,
         eventDelivery: EventDeliveryType.POLLING,
       });
@@ -250,8 +250,8 @@ async function pollBuildEvents(
   }
 }
 
-export async function buildFlowVertices({
-  flowId,
+export async function buildAgentVertices({
+  agentId,
   input_value,
   files,
   startNodeId,
@@ -272,7 +272,7 @@ export async function buildFlowVertices({
 }: BuildVerticesParams) {
   const inputs = {};
 
-  let buildUrl = customBuildUrl(flowId, playgroundPage);
+  let buildUrl = customBuildUrl(agentId, playgroundPage);
 
   const queryParams = new URLSearchParams();
 
@@ -322,7 +322,7 @@ export async function buildFlowVertices({
       buildController.signal.addEventListener("abort", () => {
         onBuildStopped && onBuildStopped();
       });
-      useFlowStore.getState().setBuildController(buildController);
+      useAgentStore.getState().setBuildController(buildController);
 
       const buildResults: Array<boolean> = [];
       const verticesStartTimeMs: Map<string, number> = new Map();
@@ -345,7 +345,7 @@ export async function buildFlowVertices({
         },
         onError: (statusCode) => {
           if (statusCode === 404) {
-            throw new Error("Flow not found");
+            throw new Error("agent not found");
           }
           throw new Error("Error processing build events");
         },
@@ -378,7 +378,7 @@ export async function buildFlowVertices({
 
     if (!buildResponse.ok) {
       if (buildResponse.status === 404) {
-        throw new Error("Flow not found");
+        throw new Error("agent not found");
       }
       throw new Error("Error starting build process");
     }
@@ -387,7 +387,7 @@ export async function buildFlowVertices({
 
     const cancelBuildUrl = customCancelBuildUrl(job_id);
 
-    // Get the buildController from flowStore
+    // Get the buildController from agentStore
     const buildController = new AbortController();
     buildController.signal.addEventListener("abort", () => {
       try {
@@ -401,7 +401,7 @@ export async function buildFlowVertices({
         console.error("Error canceling build:", error);
       }
     });
-    useFlowStore.getState().setBuildController(buildController);
+    useAgentStore.getState().setBuildController(buildController);
     // Then stream the events
     const eventsUrl = customEventsUrl(job_id);
     const buildResults: Array<boolean> = [];
@@ -463,7 +463,7 @@ export async function buildFlowVertices({
       onBuildStopped && onBuildStopped();
       return;
     }
-    onBuildError!("Error Building Flow", [
+    onBuildError!("Error Building agent", [
       (error as Error).message ||
         "AgentCore was not able to connect to the server. Please make sure your connection is working properly.",
     ]);
@@ -516,7 +516,7 @@ async function onEvent(
 
   // Helper to update status and register start times for an array of vertex IDs.
   const onStartVertices = (ids: Array<string>) => {
-    useFlowStore.getState().updateBuildStatus(ids, BuildStatus.TO_BUILD);
+    useAgentStore.getState().updateBuildStatus(ids, BuildStatus.TO_BUILD);
     if (onBuildStart) {
       onBuildStart(ids.map((id) => ({ id: id, reference: id })));
     }
@@ -533,7 +533,7 @@ async function onEvent(
       const verticesLayers: Array<Array<VertexLayerElementType>> =
         verticesIds.map((id: string) => [{ id: id, reference: id }]);
 
-      useFlowStore.getState().updateVerticesBuild({
+      useAgentStore.getState().updateVerticesBuild({
         verticesLayers,
         verticesIds,
         verticesToRun,
@@ -542,10 +542,10 @@ async function onEvent(
         try {
           onValidateNodes(data.to_run);
           if (onGetOrderSuccess) onGetOrderSuccess();
-          useFlowStore.getState().setIsBuilding(true);
+          useAgentStore.getState().setIsBuilding(true);
           return true;
         } catch (_e) {
-          useFlowStore.getState().setIsBuilding(false);
+          useAgentStore.getState().setIsBuilding(false);
           return false;
         }
       }
@@ -594,14 +594,14 @@ async function onEvent(
         }
       }
 
-      await useFlowStore.getState().clearEdgesRunningByNodes();
+      await useAgentStore.getState().clearEdgesRunningByNodes();
 
       if (buildData.next_vertices_ids) {
         if (isStringArray(buildData.next_vertices_ids)) {
-          useFlowStore
+          useAgentStore
             .getState()
             .setCurrentBuildingNodeId(buildData.next_vertices_ids ?? []);
-          useFlowStore
+          useAgentStore
             .getState()
             .updateEdgesRunningByNodes(buildData.next_vertices_ids ?? [], true);
         }
@@ -633,7 +633,7 @@ async function onEvent(
     case "end": {
       const allNodesValid = buildResults.every((result) => result);
       onBuildComplete && onBuildComplete(allNodesValid);
-      useFlowStore.getState().setIsBuilding(false);
+      useAgentStore.getState().setIsBuilding(false);
       return true;
     }
     case "error": {
@@ -641,19 +641,19 @@ async function onEvent(
         useMessagesStore.getState().addMessage(data);
         // Use a falsy check to correctly determine if the source ID is missing.
         if (!data?.properties?.source?.id) {
-          onBuildError && onBuildError("Error Building Flow", [data.text]);
+          onBuildError && onBuildError("Error Building agent", [data.text]);
         }
       }
       buildResults.push(false);
       return true;
     }
     case "build_start":
-      useFlowStore
+      useAgentStore
         .getState()
         .updateBuildStatus([data.id], BuildStatus.BUILDING);
       break;
     case "build_end":
-      useFlowStore.getState().updateBuildStatus([data.id], BuildStatus.BUILT);
+      useAgentStore.getState().updateBuildStatus([data.id], BuildStatus.BUILT);
       break;
     default:
       return true;
@@ -662,7 +662,7 @@ async function onEvent(
 }
 
 export async function buildVertices({
-  flowId,
+  agentId,
   input_value,
   files,
   startNodeId,
@@ -682,7 +682,7 @@ export async function buildVertices({
     return;
   }
   const verticesOrderResponse = await updateVerticesOrder(
-    flowId,
+    agentId,
     startNodeId,
     stopNodeId,
     nodes,
@@ -692,20 +692,20 @@ export async function buildVertices({
     try {
       onValidateNodes(verticesOrderResponse.verticesToRun);
     } catch (_e) {
-      useFlowStore.getState().setIsBuilding(false);
+      useAgentStore.getState().setIsBuilding(false);
       return;
     }
   }
   if (onGetOrderSuccess) onGetOrderSuccess();
-  const verticesBuild = useFlowStore.getState().verticesBuild;
+  const verticesBuild = useAgentStore.getState().verticesBuild;
 
   const verticesIds = verticesBuild?.verticesIds!;
   const _verticesLayers = verticesBuild?.verticesLayers!;
   const runId = verticesBuild?.runId!;
   let stop = false;
 
-  useFlowStore.getState().updateBuildStatus(verticesIds, BuildStatus.TO_BUILD);
-  useFlowStore.getState().setIsBuilding(true);
+  useAgentStore.getState().updateBuildStatus(verticesIds, BuildStatus.TO_BUILD);
+  useAgentStore.getState().setIsBuilding(true);
   let currentLayerIndex = 0; // Start with the first layer
   // Set each vertex state to building
   const buildResults: Array<boolean> = [];
@@ -713,17 +713,17 @@ export async function buildVertices({
   // Build each layer
   while (
     currentLayerIndex <
-    (useFlowStore.getState().verticesBuild?.verticesLayers! || []).length
+    (useAgentStore.getState().verticesBuild?.verticesLayers! || []).length
   ) {
     // Get the current layer
     const currentLayer =
-      useFlowStore.getState().verticesBuild?.verticesLayers![currentLayerIndex];
+      useAgentStore.getState().verticesBuild?.verticesLayers![currentLayerIndex];
     // If there are no more layers, we are done
     if (!currentLayer) {
       if (onBuildComplete) {
         const allNodesValid = buildResults.every((result) => result);
         onBuildComplete(allNodesValid);
-        useFlowStore.getState().setIsBuilding(false);
+        useAgentStore.getState().setIsBuilding(false);
       }
       return;
     }
@@ -734,10 +734,10 @@ export async function buildVertices({
       currentLayer.map(async (element) => {
         // Check if id is in the list of inactive nodes
         if (
-          !useFlowStore
+          !useAgentStore
             .getState()
             .verticesBuild?.verticesIds.includes(element.id) &&
-          !useFlowStore
+          !useAgentStore
             .getState()
             .verticesBuild?.verticesIds.includes(element.reference ?? "") &&
           onBuildUpdate
@@ -763,7 +763,7 @@ export async function buildVertices({
 
         // Build the vertex
         await buildVertex({
-          flowId,
+          agentId,
           id: element.id,
           input_value,
           files,
@@ -792,12 +792,12 @@ export async function buildVertices({
   if (onBuildComplete) {
     const allNodesValid = buildResults.every((result) => result);
     onBuildComplete(allNodesValid);
-    useFlowStore.getState().setIsBuilding(false);
+    useAgentStore.getState().setIsBuilding(false);
   }
 }
 
 async function buildVertex({
-  flowId,
+  agentId,
   id,
   input_value,
   files,
@@ -807,7 +807,7 @@ async function buildVertex({
   buildResults,
   stopBuild,
 }: {
-  flowId: string;
+  agentId: string;
   id: string;
   input_value: string;
   files?: string[];
@@ -818,7 +818,7 @@ async function buildVertex({
   stopBuild: () => void;
 }) {
   try {
-    const buildRes = await postBuildVertex(flowId, id, input_value, files);
+    const buildRes = await postBuildVertex(agentId, id, input_value, files);
 
     const buildData: VertexBuildTypeAPI = buildRes.data;
     if (onBuildUpdate) {

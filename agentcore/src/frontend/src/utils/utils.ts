@@ -25,8 +25,8 @@ import type {
   nodeGroupedObjType,
   tweakType,
 } from "../types/components";
-import type { AllNodeType, NodeDataType } from "../types/flow";
-import type { FlowState } from "../types/tabs";
+import type { AllNodeType, NodeDataType } from "../types/agent";
+import type { AgentState } from "../types/tabs";
 import { isErrorLog } from "../types/utils/typeCheckingUtils";
 import { getLocalStorage } from "./local-storage-util";
 import { parseString } from "./stringManipulation";
@@ -156,20 +156,20 @@ export function buildTweakObject(tweak: tweakType) {
 
 /**
  * Function to get Chat Input Field
- * @param {FlowsState} tabsState - The current tabs state.
+ * @param {AgentsState} tabsState - The current tabs state.
  * @returns {string} - The chat input field
  */
-export function getChatInputField(flowState?: FlowState) {
+export function getChatInputField(agentState?: AgentState) {
   let chat_input_field = "text";
 
-  if (flowState && flowState.input_keys) {
-    chat_input_field = Object.keys(flowState.input_keys!)[0];
+  if (agentState && agentState.input_keys) {
+    chat_input_field = Object.keys(agentState.input_keys!)[0];
   }
   return chat_input_field;
 }
 
-export function getOutputIds(flow) {
-  const nodes = flow.data!.nodes;
+export function getOutputIds(agent) {
+  const nodes = agent.data!.nodes;
 
   const arrayOfOutputs = nodes.reduce((acc: string[], node) => {
     if (node.data.type.toLowerCase().includes("output")) {
@@ -249,7 +249,7 @@ export function groupByFamily(
   data: APIDataType,
   baseClasses: string,
   left: boolean,
-  flow?: AllNodeType[],
+  agent?: AllNodeType[],
 ): groupedObjType[] {
   const baseClassesSet = new Set(baseClasses.split("\n"));
   const arrOfPossibleInputs: Array<{
@@ -281,13 +281,13 @@ export function groupByFamily(
     );
   };
 
-  if (flow) {
-    // se existir o flow
-    for (const node of flow) {
-      // para cada node do flow
+  if (agent) {
+    // se existir o agent
+    for (const node of agent) {
+      // para cada node do agent
       if (
         node!.type !== "genericNode" ||
-        !node!.data!.node!.flow ||
+        !node!.data!.node!.agent ||
         !node!.data!.node!.template
       )
         break; // não faz nada se o node for um group

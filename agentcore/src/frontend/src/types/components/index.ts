@@ -1,4 +1,4 @@
-import type { ReactFlowJsonObject } from "@xyflow/react";
+import type { reactFlowJsonObject } from "@xyflow/react";
 import type { ReactElement, ReactNode } from "react";
 import type { handleOnNewValueType } from "@/CustomNodes/hooks/use-handle-new-value";
 import type { InputOutput } from "../../constants/enums";
@@ -9,13 +9,13 @@ import type {
   OutputFieldProxyType,
 } from "../api";
 import type { ChatMessageType } from "../chat";
-import type { sourceHandleType, targetHandleType } from "./../flow/index";
+import type { sourceHandleType, targetHandleType } from "./../agent/index";
 import type {
   AllNodeType,
-  FlowStyleType,
-  FlowType,
+  AgentStyleType,
+  AgentType,
   NodeDataType,
-} from "../flow/index";
+} from "../agent/index";
 export type InputComponentType = {
   name?: string;
   autoFocus?: boolean;
@@ -485,13 +485,13 @@ export type nodeGroupedObjType = {
 export type tweakType = Array<{
   [key: string]: {
     [char: string]: string;
-  } & FlowStyleType;
+  } & AgentStyleType;
 }>;
 
 export type uniqueTweakType = {
   [key: string]: {
     [char: string]: string;
-  } & FlowStyleType;
+  } & AgentStyleType;
 };
 
 export type apiModalTweakType = {
@@ -527,12 +527,12 @@ export type chatTriggerPropType = {
   setOpen: (can: boolean) => void;
 };
 
-export type headerFlowsType = {
-  data: ReactFlowJsonObject | null;
+export type headerAgentsType = {
+  data: reactFlowJsonObject | null;
   description: string;
   id: string;
   name: string;
-  style?: FlowStyleType;
+  style?: AgentStyleType;
 };
 
 export type ChatInputType = {
@@ -713,7 +713,7 @@ export type queryModalPropsType = {
   setOpen?: (open: boolean) => void;
 };
 
-export type newFlowModalPropsType = {
+export type newAgentModalPropsType = {
   open: boolean;
   setOpen: (open: boolean) => void;
 };
@@ -740,10 +740,10 @@ export type buttonBoxPropsType = {
   size: "small" | "medium" | "big";
 };
 
-export type FlowSettingsPropsType = {
+export type AgentSettingsPropsType = {
   open: boolean;
   setOpen: (open: boolean) => void;
-  flowData?: FlowType;
+  agentData?: AgentType;
 };
 
 export type groupDataType = {
@@ -751,7 +751,7 @@ export type groupDataType = {
 };
 
 export type cardComponentPropsType = {
-  data: FlowType;
+  data: AgentType;
   onDelete?: () => void;
   button?: JSX.Element;
 };
@@ -830,7 +830,7 @@ export type IOFieldViewProps = {
   left?: boolean;
 };
 
-export type UndrawCardComponentProps = { flow: FlowType };
+export type UndrawCardComponentProps = { agent: AgentType };
 
 export type chatViewProps = {
   sidebarOpen: boolean;

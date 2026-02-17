@@ -13,7 +13,7 @@ export default function ImageViewer({ image }: { image: string }) {
   const viewerRef = useRef(null);
   const [_errorDownloading, _setErrordownloading] = useState(false);
   const setErrorList = useAlertStore((state) => state.setErrorData);
-  const [_initialMsg, _setInicialMsg] = useState("Please build your flow");
+  const [_initialMsg, _setInicialMsg] = useState("Please build your agent");
 
   useEffect(() => {
     try {

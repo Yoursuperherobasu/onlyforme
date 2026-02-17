@@ -1,41 +1,41 @@
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import useAlertStore from "@/stores/alertStore";
-import type { FlowType } from "@/types/flow";
-import useDuplicateFlow from "../../hooks/use-handle-duplicate";
+import type { AgentType } from "@/types/agent";
+import useDuplicateAgent from "../../hooks/use-handle-duplicate";
 import useSelectOptionsChange from "../../hooks/use-select-options-change";
 
 type DropdownComponentProps = {
-  flowData: FlowType;
+  agentData: AgentType;
   setOpenDelete: (open: boolean) => void;
   handleExport: () => void;
   handleEdit: () => void;
 };
 
 const DropdownComponent = ({
-  flowData,
+  agentData,
   setOpenDelete,
   handleExport,
   handleEdit,
 }: DropdownComponentProps) => {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
-  const { handleDuplicate } = useDuplicateFlow({ flow: flowData });
+  const { handleDuplicate } = useDuplicateAgent({ agent: agentData });
 
-  const duplicateFlow = () => {
+  const duplicateAgent = () => {
     handleDuplicate().then(() =>
       setSuccessData({
-        title: `${flowData.is_component ? "Component" : "Flow"} duplicated successfully`,
+        title: `${agentData.is_component ? "Component" : "agent"} duplicated successfully`,
       }),
     );
   };
 
   const { handleSelectOptionsChange } = useSelectOptionsChange(
-    [flowData.id],
+    [agentData.id],
     setErrorData,
     setOpenDelete,
     handleExport,
-    duplicateFlow,
+    duplicateAgent,
     handleEdit,
   );
 
@@ -47,7 +47,7 @@ const DropdownComponent = ({
           handleSelectOptionsChange("edit");
         }}
         className="cursor-pointer"
-        data-testid="btn-edit-flow"
+        data-testid="btn-edit-agent"
       >
         <ForwardedIconComponent
           name="SquarePen"
@@ -77,7 +77,7 @@ const DropdownComponent = ({
           handleSelectOptionsChange("duplicate");
         }}
         className="cursor-pointer"
-        data-testid="btn-duplicate-flow"
+        data-testid="btn-duplicate-agent"
       >
         <ForwardedIconComponent
           name="CopyPlus"

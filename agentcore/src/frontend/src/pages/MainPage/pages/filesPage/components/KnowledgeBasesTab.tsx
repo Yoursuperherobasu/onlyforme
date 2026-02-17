@@ -14,12 +14,12 @@ import {
 } from "@/controllers/API/queries/knowledge-bases/use-get-knowledge-bases";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
-import useAddFlow from "@/hooks/flows/use-add-flow";
+import useAddAgent from "@/hooks/agents/use-add-agent";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import useAlertStore from "@/stores/alertStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useFolderStore } from "@/stores/foldersStore";
-import { updateIds } from "@/utils/reactflowUtils";
+import { updateIds } from "@/utils/reactFlowUtils";
 import { cn } from "@/utils/utils";
 import { createKnowledgeBaseColumns } from "../config/knowledgeBaseColumns";
 import KnowledgeBaseEmptyState from "./KnowledgeBaseEmptyState";
@@ -54,8 +54,8 @@ const KnowledgeBasesTab = ({
     setSuccessData: state.setSuccessData,
   }));
 
-  const examples = useFlowsManagerStore((state) => state.examples);
-  const addFlow = useAddFlow();
+  const examples = useAgentsManagerStore((state) => state.examples);
+  const addAgent = useAddAgent();
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
@@ -138,8 +138,8 @@ const KnowledgeBasesTab = ({
 
     if (knowledgeBasesExample && knowledgeBasesExample.data) {
       updateIds(knowledgeBasesExample.data);
-      addFlow({ flow: knowledgeBasesExample }).then((id) => {
-        navigate(`/flow/${id}/folder/${folderIdUrl}`);
+      addAgent({ agent: knowledgeBasesExample }).then((id) => {
+        navigate(`/agent/${id}/folder/${folderIdUrl}`);
       });
       track("New Agent Created", {
         template: `${knowledgeBasesExample.name} Template`,

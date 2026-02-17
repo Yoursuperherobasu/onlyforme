@@ -1,4 +1,4 @@
-import type { Node } from "reactflow";
+import type { Node } from "reactFlow";
 export type SelectedViewFieldProps = {
   selectedViewField: { type: string; id: string } | undefined;
   setSelectedViewField: (
@@ -16,6 +16,6 @@ export type SelectedViewFieldProps = {
     displayName: string;
   }>;
   sessions: string[];
-  currentFlowId: string;
+  currentAgentId: string;
   nodes: Node[];
 };

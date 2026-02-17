@@ -23,7 +23,7 @@ export type shortcutsStoreType = {
   updateUniqueShortcut: (name: string, combination: string) => void;
   outputInspection: string;
   play: string;
-  flow: string;
+  agent: string;
   group: string;
   cut: string;
   paste: string;

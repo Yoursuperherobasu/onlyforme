@@ -1,5 +1,5 @@
 import type { UseMutationResult } from "@tanstack/react-query";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import type {
   APIClassType,
   ResponseErrorDetailAPI,
@@ -27,7 +27,7 @@ export const usePostTemplateValue: useMutationFunctionType<
   ResponseErrorDetailAPI
 > = ({ parameterId, nodeId, node }, options?) => {
   const { mutate } = UseRequestProcessor();
-  const getNode = useFlowStore((state) => state.getNode);
+  const getNode = useAgentStore((state) => state.getNode);
 
   const postTemplateValueFn = async (
     payload: IPostTemplateValue,

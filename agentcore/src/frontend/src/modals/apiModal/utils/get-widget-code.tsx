@@ -3,12 +3,12 @@ import type { GetCodeType } from "@/types/tweaks";
 
 /**
  * Function to get the widget code for the API
- * @param {string} flow - The current flow.
+ * @param {string} agent - The current agent.
  * @returns {string} - The widget code
  */
 export default function getWidgetCode({
-  flowId,
-  flowName,
+  agentId,
+  agentName,
   isAuth,
   copy = false,
 }: GetCodeType): string {
@@ -25,8 +25,8 @@ build/static/js/bundle.min.js">
 
   return `${source}
   <agentcore-chat
-    window_title="${flowName}"
-    flow_id="${flowId}"
+    window_title="${agentName}"
+    agent_id="${agentId}"
     host_url="${protocol}//${host}"${
       !isAuth
         ? `

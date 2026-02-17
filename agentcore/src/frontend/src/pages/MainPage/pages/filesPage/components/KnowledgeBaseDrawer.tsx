@@ -54,9 +54,9 @@ const KnowledgeBaseDrawer = ({
           </div>
 
           <div className="space-y-3 px-4">
-            <h4 className="text-sm font-medium">Linked Flows</h4>
+            <h4 className="text-sm font-medium">Linked Agents</h4>
             <div className="text-sm text-muted-foreground">
-              No linked flows available.
+              No linked agents available.
             </div>
           </div>
         </div>

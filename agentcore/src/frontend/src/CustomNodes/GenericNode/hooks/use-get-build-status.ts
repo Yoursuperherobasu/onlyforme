@@ -1,22 +1,22 @@
 import { BuildStatus } from "@/constants/enums";
-import useFlowStore from "@/stores/flowStore";
-import type { NodeDataType } from "@/types/flow";
+import useAgentStore from "@/stores/agentStore";
+import type { NodeDataType } from "@/types/agent";
 
 export const useBuildStatus = (data: NodeDataType, nodeId: string) => {
-  return useFlowStore((state) => {
-    // Early return if no flow data
-    if (!data.node?.flow?.data?.nodes) {
-      return state.flowBuildStatus[nodeId]?.status;
+  return useAgentStore((state) => {
+    // Early return if no agent data
+    if (!data.node?.agent?.data?.nodes) {
+      return state.agentBuildStatus[nodeId]?.status;
     }
 
-    const nodes = data.node.flow.data.nodes;
+    const nodes = data.node.agent.data.nodes;
     const buildStatuses = nodes
-      .map((node) => state.flowBuildStatus[node.id]?.status)
+      .map((node) => state.agentBuildStatus[node.id]?.status)
       .filter(Boolean);
 
     // If no build statuses found, return the single node status
     if (buildStatuses.length === 0) {
-      return state.flowBuildStatus[nodeId]?.status;
+      return state.agentBuildStatus[nodeId]?.status;
     }
 
     // Check statuses in order of priority

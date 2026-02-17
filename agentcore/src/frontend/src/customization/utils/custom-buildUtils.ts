@@ -1,7 +1,7 @@
 import { BASE_URL_API } from "@/constants/constants";
 
-export const customBuildUrl = (flowId: string, playgroundPage?: boolean) => {
-  return `${BASE_URL_API}${playgroundPage ? "build_public_tmp" : "build"}/${flowId}/flow`;
+export const customBuildUrl = (agentId: string, playgroundPage?: boolean) => {
+  return `${BASE_URL_API}${playgroundPage ? "build_public_tmp" : "build"}/${agentId}/agent`;
 };
 
 export const customCancelBuildUrl = (jobId: string) => {

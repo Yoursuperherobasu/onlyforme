@@ -10,12 +10,12 @@ import {
   ALLOWED_IMAGE_INPUT_EXTENSIONS,
   BASE_URL_API,
 } from "../../../../../constants/constants";
-import useFlowsManagerStore from "../../../../../stores/flowsManagerStore";
+import useAgentsManagerStore from "../../../../../stores/agentsManagerStore";
 import type { IOFileInputProps } from "../../../../../types/components";
 
 export default function IOFileInput({ field, updateValue }: IOFileInputProps) {
   //component to handle file upload from chatIO
-  const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
+  const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
 
   const [isDragging, setIsDragging] = useState(false);
   const [filePath, setFilePath] = useState("");
@@ -32,8 +32,8 @@ export default function IOFileInput({ field, updateValue }: IOFileInputProps) {
   useEffect(() => {
     if (field) {
       const fileName = field.split("/")[1];
-      const flowFileId = currentFlowId.toString();
-      setImage(`${BASE_URL_API}files/images/${flowFileId}/${fileName}`);
+      const agentFileId = currentAgentId.toString();
+      setImage(`${BASE_URL_API}files/images/${agentFileId}/${fileName}`);
     }
   }, []);
 
@@ -101,7 +101,7 @@ export default function IOFileInput({ field, updateValue }: IOFileInputProps) {
       };
       fileReader.readAsDataURL(file);
       mutate(
-        { file, id: currentFlowId },
+        { file, id: currentAgentId },
         {
           onSuccess: (data) => {
             const { file_path } = data;

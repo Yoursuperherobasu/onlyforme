@@ -9,7 +9,7 @@ import { MinusIcon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ICON_STROKE_WIDTH } from "@/constants/constants";
 import { cn } from "@/utils/utils";
-import { handleKeyDown } from "../../../../../utils/reactflowUtils";
+import { handleKeyDown } from "../../../../../utils/reactFlowUtils";
 import type { InputProps, IntComponentType } from "../../types";
 
 export default function IntComponent({

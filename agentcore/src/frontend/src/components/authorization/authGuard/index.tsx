@@ -38,7 +38,7 @@ export const ProtectedRoute = ({ children }) => {
 
   if (shouldRedirect || testMockAutoLogin) {
     const currentPath = window.location.pathname;
-    const isHomePath = currentPath === "/" || currentPath === "/flows";
+    const isHomePath = currentPath === "/" || currentPath === "/agents";
     const isLoginPage = location.pathname.includes("login");
     return (
       <CustomNavigate

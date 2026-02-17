@@ -4,13 +4,13 @@ import { useParams } from "react-router-dom";
 import { ENABLE_KNOWLEDGE_BASES } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
-import useAddFlow from "@/hooks/flows/use-add-flow";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAddAgent from "@/hooks/agents/use-add-agent";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { ForwardedIconComponent } from "../../../../components/common/genericIconComponent";
 import { Input } from "../../../../components/ui/input";
 import { useFolderStore } from "../../../../stores/foldersStore";
 import type { TemplateContentProps } from "../../../../types/templates/types";
-import { updateIds } from "../../../../utils/reactflowUtils";
+import { updateIds } from "../../../../utils/reactFlowUtils";
 import { TemplateCategoryComponent } from "../TemplateCategoryComponent";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
@@ -19,7 +19,7 @@ export default function TemplateContentComponent({
   currentTab,
   categories,
 }: TemplateContentProps) {
-  const allExamples = useFlowsManagerStore((state) => state.examples);
+  const allExamples = useAgentsManagerStore((state) => state.examples);
 
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -39,7 +39,7 @@ export default function TemplateContentComponent({
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredExamples, setFilteredExamples] = useState(examples);
-  const addFlow = useAddFlow();
+  const addAgent = useAddAgent();
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
@@ -72,8 +72,8 @@ export default function TemplateContentComponent({
 
   const handleCardClick = (example) => {
     updateIds(example.data);
-    addFlow({ flow: example }).then((id) => {
-      navigate(`/flow/${id}/folder/${folderIdUrl}`);
+    addAgent({ agent: example }).then((id) => {
+      navigate(`/agent/${id}/folder/${folderIdUrl}`);
     });
     track("New Agent Created", { template: `${example.name} Template` });
   };

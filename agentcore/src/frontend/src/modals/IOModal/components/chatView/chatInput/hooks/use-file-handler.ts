@@ -12,7 +12,7 @@ import { useUtilityStore } from "@/stores/utilityStore";
 import type { FilePreviewType } from "@/types/components";
 import { formatFileSize } from "@/utils/stringManipulation";
 
-export const useFileHandler = (currentFlowId: string) => {
+export const useFileHandler = (currentAgentId: string) => {
   const [files, setFiles] = useState<FilePreviewType[]>([]);
   const { mutate } = usePostUploadFile();
   const { setErrorData } = useAlertStore();
@@ -52,7 +52,7 @@ export const useFileHandler = (currentFlowId: string) => {
       ]);
 
       mutate(
-        { file: blob, id: currentFlowId },
+        { file: blob, id: currentAgentId },
         {
           onSuccess: (data) => {
             setFiles((prev) => {

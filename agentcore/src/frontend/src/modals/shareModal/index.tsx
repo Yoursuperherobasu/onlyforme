@@ -1,26 +1,26 @@
 import { cloneDeep } from "lodash";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import useSaveFlow from "@/hooks/flows/use-save-flow";
+import useSaveAgent from "@/hooks/agents/use-save-agent";
 import { useUtilityStore } from "@/stores/utilityStore";
 import IconComponent from "../../components/common/genericIconComponent";
 import { TagsSelector } from "../../components/common/tagsSelectorComponent";
-import EditFlowSettings from "../../components/core/editFlowSettingsComponent";
+import EditAgentSettings from "../../components/core/editAgentSettingsComponent";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import {
   getStoreComponents,
-  saveFlowStore,
-  updateFlowStore,
+  saveAgentStore,
+  updateAgentStore,
 } from "../../controllers/API";
 import useAlertStore from "../../stores/alertStore";
 import { useDarkStore } from "../../stores/darkStore";
 import { useStoreStore } from "../../stores/storeStore";
-import type { FlowType } from "../../types/flow";
+import type { AgentType } from "../../types/agent";
 import {
   downloadNode,
   removeApiKeys,
   removeFileNameFromComponents,
-} from "../../utils/reactflowUtils";
+} from "../../utils/reactFlowUtils";
 import BaseModal from "../baseModal";
 import ConfirmationModal from "../confirmationModal";
 import ExportModal from "../exportModal";
@@ -36,7 +36,7 @@ export default function ShareModal({
 }: {
   children?: ReactNode;
   is_component: boolean;
-  component: FlowType;
+  component: AgentType;
   open?: boolean;
   setOpen?: (open: boolean) => void;
   disabled?: boolean;
@@ -58,7 +58,7 @@ export default function ShareModal({
   const [unavaliableNames, setUnavaliableNames] = useState<
     { id: string; name: string }[]
   >([]);
-  const saveFlow = useSaveFlow();
+  const saveAgent = useSaveAgent();
   const tags = useUtilityStore((state) => state.tags);
 
   const [loadingNames, setLoadingNames] = useState(false);
@@ -91,9 +91,9 @@ export default function ShareModal({
   }
 
   const handleShareComponent = async (update = false) => {
-    //remove file names from flows before sharing
+    //remove file names from agents before sharing
     removeFileNameFromComponents(component);
-    const flow: FlowType = removeApiKeys({
+    const agent: AgentType = removeApiKeys({
       id: component!.id,
       data: component!.data,
       description,
@@ -104,33 +104,33 @@ export default function ShareModal({
 
     function successShare() {
       if (!is_component) {
-        saveFlow(flow);
+        saveAgent(agent);
       }
       setSuccessData({
-        title: `${is_component ? "Component" : "Flow"} shared successfully!`,
+        title: `${is_component ? "Component" : "agent"} shared successfully!`,
       });
     }
 
     if (!update)
-      saveFlowStore(
-        flow!,
+      saveAgentStore(
+        agent!,
         getTagsIds(selectedTags, cloneDeep(tags) ?? []),
         sharePublic,
       ).then(successShare, (err) => {
         setErrorData({
-          title: "Error sharing " + (is_component ? "component" : "flow"),
+          title: "Error sharing " + (is_component ? "component" : "agent"),
           list: [err["response"]["data"]["detail"]],
         });
       });
     else
-      updateFlowStore(
-        flow!,
+      updateAgentStore(
+        agent!,
         getTagsIds(selectedTags, cloneDeep(tags) ?? []),
         sharePublic,
         unavaliableNames.find((e) => e.name === name)!.id,
       ).then(successShare, (err) => {
         setErrorData({
-          title: "Error sharing " + is_component ? "component" : "flow",
+          title: "Error sharing " + is_component ? "component" : "agent",
           list: [err["response"]["data"]["detail"]],
         });
       });
@@ -224,7 +224,7 @@ export default function ShareModal({
           {open && (
             <>
               <div className="w-full rounded-lg border border-border p-4">
-                <EditFlowSettings name={name} description={description} />
+                <EditAgentSettings name={name} description={description} />
               </div>
               <div className="mt-3 flex h-8 w-full">
                 <TagsSelector
@@ -261,9 +261,9 @@ export default function ShareModal({
 
         <BaseModal.Footer
           submit={{
-            label: `Share ${is_component ? "Component" : "Flow"}`,
+            label: `Share ${is_component ? "Component" : "agent"}`,
             loading: loadingNames,
-            dataTestId: "share-modal-button-flow",
+            dataTestId: "share-modal-button-agent",
           }}
         >
           <>

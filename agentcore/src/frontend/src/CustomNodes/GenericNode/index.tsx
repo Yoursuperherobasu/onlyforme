@@ -9,23 +9,23 @@ import { usePostValidateComponentCode } from "@/controllers/API/queries/nodes/us
 import { CustomNodeStatus } from "@/customization/components/custom-NodeStatus";
 import UpdateComponentModal from "@/modals/updateComponentModal";
 import { useAlternate } from "@/shared/hooks/use-alternate";
-import type { FlowStoreType } from "@/types/zustand/flow";
+import type { AgentStoreType } from "@/types/zustand/agent";
 import { Button } from "../../components/ui/button";
 import {
   ICON_STROKE_WIDTH,
   TOOLTIP_HIDDEN_OUTPUTS,
   TOOLTIP_OPEN_HIDDEN_OUTPUTS,
 } from "../../constants/constants";
-import NodeToolbarComponent from "../../pages/FlowPage/components/nodeToolbarComponent";
+import NodeToolbarComponent from "../../pages/AgentPage/components/nodeToolbarComponent";
 import { useChangeOnUnfocus } from "../../shared/hooks/use-change-on-unfocus";
 import useAlertStore from "../../stores/alertStore";
-import useFlowStore from "../../stores/flowStore";
-import useFlowsManagerStore from "../../stores/flowsManagerStore";
+import useAgentStore from "../../stores/agentStore";
+import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useShortcutsStore } from "../../stores/shortcuts";
 import { useTypesStore } from "../../stores/typesStore";
 import type { OutputFieldType, VertexBuildTypeAPI } from "../../types/api";
-import type { NodeDataType } from "../../types/flow";
-import { scapedJSONStringfy } from "../../utils/reactflowUtils";
+import type { NodeDataType } from "../../types/agent";
+import { scapedJSONStringfy } from "../../utils/reactFlowUtils";
 import { classNames, cn } from "../../utils/utils";
 import { processNodeAdvancedFields } from "../helpers/process-node-advanced-fields";
 import useUpdateNodeCode from "../hooks/use-update-node-code";
@@ -84,25 +84,25 @@ function GenericNode({
 
   const types = useTypesStore((state) => state.types);
   const templates = useTypesStore((state) => state.templates);
-  const deleteNode = useFlowStore((state) => state.deleteNode);
-  const setNode = useFlowStore((state) => state.setNode);
+  const deleteNode = useAgentStore((state) => state.deleteNode);
+  const setNode = useAgentStore((state) => state.setNode);
   const updateNodeInternals = useUpdateNodeInternals();
   const setErrorData = useAlertStore((state) => state.setErrorData);
-  const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
-  const edges = useFlowStore((state) => state.edges);
-  const setEdges = useFlowStore((state) => state.setEdges);
+  const takeSnapshot = useAgentsManagerStore((state) => state.takeSnapshot);
+  const edges = useAgentStore((state) => state.edges);
+  const setEdges = useAgentStore((state) => state.setEdges);
   const shortcuts = useShortcutsStore((state) => state.shortcuts);
   const buildStatus = useBuildStatus(data, data.id);
-  const dismissedNodes = useFlowStore((state) => state.dismissedNodes);
-  const addDismissedNodes = useFlowStore((state) => state.addDismissedNodes);
-  const removeDismissedNodes = useFlowStore(
+  const dismissedNodes = useAgentStore((state) => state.dismissedNodes);
+  const addDismissedNodes = useAgentStore((state) => state.addDismissedNodes);
+  const removeDismissedNodes = useAgentStore(
     (state) => state.removeDismissedNodes,
   );
 
-  const dismissedNodesLegacy = useFlowStore(
+  const dismissedNodesLegacy = useAgentStore(
     (state) => state.dismissedNodesLegacy,
   );
-  const addDismissedNodesLegacy = useFlowStore(
+  const addDismissedNodesLegacy = useAgentStore(
     (state) => state.addDismissedNodesLegacy,
   );
 
@@ -127,8 +127,8 @@ function GenericNode({
   const [editNameDescription, toggleEditNameDescription, set] =
     useAlternate(false);
 
-  const componentUpdate = useFlowStore(
-    useShallow((state: FlowStoreType) =>
+  const componentUpdate = useAgentStore(
+    useShallow((state: AgentStoreType) =>
       state.componentsToUpdate.find((component) => component.id === data.id),
     ),
   );
@@ -374,7 +374,7 @@ function GenericNode({
   }, [data.node?.description]);
 
   const selectedNodesCount = useMemo(() => {
-    return useFlowStore.getState().nodes.filter((node) => node.selected).length;
+    return useAgentStore.getState().nodes.filter((node) => node.selected).length;
   }, [selected]);
 
   const shouldShowUpdateComponent = useMemo(
@@ -550,7 +550,7 @@ function GenericNode({
               <MemoizedNodeIcon
                 dataType={data.type}
                 icon={data.node?.icon}
-                isGroup={!!data.node?.flow}
+                isGroup={!!data.node?.agent}
               />
               <div className="ml-3 flex flex-1 overflow-hidden">
                 <MemoizedNodeName

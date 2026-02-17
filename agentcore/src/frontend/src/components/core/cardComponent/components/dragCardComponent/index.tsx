@@ -1,9 +1,9 @@
-import type { FlowType } from "@/types/flow";
+import type { AgentType } from "@/types/agent";
 import { cn } from "../../../../../utils/utils";
 import ForwardedIconComponent from "../../../../common/genericIconComponent";
 import { Card, CardHeader, CardTitle } from "../../../../ui/card";
 
-export default function DragCardComponent({ data }: { data: FlowType }) {
+export default function DragCardComponent({ data }: { data: AgentType }) {
   return (
     <>
       <Card
@@ -22,7 +22,7 @@ export default function DragCardComponent({ data }: { data: FlowType }) {
                     "visible flex-shrink-0",
                     data.is_component
                       ? "mx-0.5 h-6 w-6 text-component-icon"
-                      : "h-7 w-7 flex-shrink-0 text-flow-icon",
+                      : "h-7 w-7 flex-shrink-0 text-agent-icon",
                   )}
                   name={data.is_component ? "ToyBrick" : "Group"}
                 />

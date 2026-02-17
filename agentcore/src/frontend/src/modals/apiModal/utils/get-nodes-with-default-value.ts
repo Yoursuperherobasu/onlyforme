@@ -1,5 +1,5 @@
 import { cloneDeep } from "lodash";
-import type { AllNodeType } from "@/types/flow";
+import type { AllNodeType } from "@/types/agent";
 import { AGENTCORE_SUPPORTED_TYPES } from "../../../constants/constants";
 
 export const getNodesWithDefaultValue = (

@@ -1,9 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import { Textarea } from "@/components/ui/textarea";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
-import { handleKeyDown } from "@/utils/reactflowUtils";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
+import { handleKeyDown } from "@/utils/reactFlowUtils";
 import { cn } from "@/utils/utils";
 
 export default function NodeDescription({
@@ -38,8 +38,8 @@ export default function NodeDescription({
   const [nodeDescription, setNodeDescription] = useState<string>(
     description ?? "",
   );
-  const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
-  const setNode = useFlowStore((state) => state.setNode);
+  const takeSnapshot = useAgentsManagerStore((state) => state.takeSnapshot);
+  const setNode = useAgentStore((state) => state.setNode);
   const overflowRef = useRef<HTMLDivElement>(null);
   const [hasScroll, sethasScroll] = useState(false);
 

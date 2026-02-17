@@ -1,14 +1,14 @@
-import type { FlowType } from "@/types/flow";
+import type { AgentType } from "@/types/agent";
 
-export const customDownloadFlow = (
-  flow: FlowType,
+export const customDownloadAgent = (
+  agent: AgentType,
   sortedJsonString: string,
-  flowName: string,
+  agentName: string,
 ) => {
   const dataUri = `data:text/json;chatset=utf-8,${encodeURIComponent(sortedJsonString)}`;
   const downloadLink = document.createElement("a");
   downloadLink.href = dataUri;
-  downloadLink.download = `${flowName || flow.name}.json`;
+  downloadLink.download = `${agentName || agent.name}.json`;
 
   downloadLink.click();
 };

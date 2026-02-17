@@ -4,7 +4,7 @@ import buildQueryStringUrl from "@/controllers/utils/create-query-param-string";
 import type { PaginatedFolderType } from "@/pages/MainPage/entities";
 import { useFolderStore } from "@/stores/foldersStore";
 import type { useQueryFunctionType } from "@/types/api";
-import { processFlows } from "@/utils/reactflowUtils";
+import { processAgents } from "@/utils/reactFlowUtils";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
@@ -14,7 +14,7 @@ interface IGetFolder {
   page?: number;
   size?: number;
   is_component?: boolean;
-  is_flow?: boolean;
+  is_agent?: boolean;
   search?: string;
 }
 
@@ -49,10 +49,10 @@ export const useGetFolderQuery: useQueryFunctionType<
     const url = addQueryParams(`${getURL("PROJECTS")}/${params.id}`, params);
     const { data } = await api.get<PaginatedFolderType>(url);
 
-    const { flows } = processFlows(data.flows.items);
+    const { agents } = processAgents(data.agents.items);
 
     const dataProcessed = cloneDeep(data);
-    dataProcessed.flows.items = flows;
+    dataProcessed.agents.items = agents;
 
     return dataProcessed;
   };
@@ -65,7 +65,7 @@ export const useGetFolderQuery: useQueryFunctionType<
         page: params.page,
         size: params.size,
         is_component: params.is_component,
-        is_flow: params.is_flow,
+        is_agent: params.is_agent,
         search: params.search,
       },
     ],

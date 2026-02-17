@@ -1,7 +1,7 @@
 import { getLocalStorage } from "@/utils/local-storage-util";
 
 export const useStartConversation = (
-  flowId: string,
+  agentId: string,
   wsRef: React.MutableRefObject<WebSocket | null>,
   setStatus: (status: string) => void,
   startRecording: () => void,
@@ -12,8 +12,8 @@ export const useStartConversation = (
   const currentHost = window.location.hostname;
   const currentPort = window.location.port;
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${protocol}//${currentHost}:${currentPort}/api/v1/voice/ws/flow_tts/${flowId}/${currentSessionId?.toString()}`;
-  //const url = `${protocol}//${currentHost}:${currentPort}/api/v1/voice/ws/flow_as_tool/${flowId}/${currentSessionId?.toString()}`;
+  const url = `${protocol}//${currentHost}:${currentPort}/api/v1/voice/ws/agent_tts/${agentId}/${currentSessionId?.toString()}`;
+  //const url = `${protocol}//${currentHost}:${currentPort}/api/v1/voice/ws/agent_as_tool/${agentId}/${currentSessionId?.toString()}`;
 
   try {
     if (wsRef.current?.readyState === WebSocket.CONNECTING) {
@@ -46,7 +46,7 @@ export const useStartConversation = (
           }),
         );
 
-        // For flow_tts endpoint, we need to use the proper session update format
+        // For agent_tts endpoint, we need to use the proper session update format
         if (audioSettings.provider !== "elevenlabs") {
           wsRef.current.send(
             JSON.stringify({

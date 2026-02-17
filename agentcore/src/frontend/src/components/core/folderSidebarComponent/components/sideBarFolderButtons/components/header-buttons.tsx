@@ -8,12 +8,12 @@ import { AddFolderButton } from "./add-folder-button";
 import { UploadFolderButton } from "./upload-folder-button";
 
 export const HeaderButtons = ({
-  handleUploadFlowsToFolder,
+  handleUploadAgentsToFolder,
   isUpdatingFolder,
   isPending,
   addNewFolder,
 }: {
-  handleUploadFlowsToFolder: () => void;
+  handleUploadAgentsToFolder: () => void;
   isUpdatingFolder: boolean;
   isPending: boolean;
   addNewFolder: () => void;
@@ -78,7 +78,7 @@ export const HeaderButtons = ({
         <div className="flex-1 text-sm font-medium">Projects</div>
         <div className="flex items-center gap-1">
           <UploadFolderButton
-            onClick={handleUploadFlowsToFolder}
+            onClick={handleUploadAgentsToFolder}
             disabled={isUpdatingFolder}
           />
           <AddFolderButton

@@ -1,7 +1,7 @@
-import useAddFlow from "@/hooks/flows/use-add-flow";
+import useAddAgent from "@/hooks/agents/use-add-agent";
 import { getComponent } from "../../../../controllers/API";
 import type { storeComponent } from "../../../../types/store";
-import cloneFlowWithParent from "../../../../utils/storeUtils";
+import cloneAgentWithParent from "../../../../utils/storeUtils";
 
 const useInstallComponent = (
   data: storeComponent,
@@ -12,7 +12,7 @@ const useInstallComponent = (
   setSuccessData: (value: { title: string }) => void,
   setErrorData: (value: { title: string; list: string[] }) => void,
 ) => {
-  const addFlow = useAddFlow();
+  const addAgent = useAddAgent();
 
   const handleInstall = () => {
     const temp = downloadsCount;
@@ -21,8 +21,8 @@ const useInstallComponent = (
 
     getComponent(data.id)
       .then((res) => {
-        const newFlow = cloneFlowWithParent(res, res.id, data.is_component);
-        addFlow({ flow: newFlow })
+        const newAgent = cloneAgentWithParent(res, res.id, data.is_component);
+        addAgent({ agentt: newAgent })
           .then((id) => {
             setSuccessData({
               title: `${name} Installed Successfully.`,

@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Input } from "@/components/ui/input";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { cn } from "@/utils/utils";
 
 export default function NodeName({
@@ -28,8 +28,8 @@ export default function NodeName({
   setHasChangedNodeDescription: (hasChanged: boolean) => void;
 }) {
   const [nodeName, setNodeName] = useState<string>(display_name ?? "");
-  const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
-  const setNode = useFlowStore((state) => state.setNode);
+  const takeSnapshot = useAgentsManagerStore((state) => state.takeSnapshot);
+  const setNode = useAgentStore((state) => state.setNode);
 
   useEffect(() => {
     if (selected && editNameDescription) {

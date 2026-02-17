@@ -5,7 +5,7 @@ import type {
   UseQueryResult,
 } from "@tanstack/react-query";
 import type { ChatInputType, ChatOutputType } from "../chat";
-import type { FlowType } from "../flow";
+import type { AgentType } from "../agent";
 //kind and class are just representative names to represent the actual structure of the object received by the API
 export type APIDataType = { [key: string]: APIKindType };
 export type APIObjectType = { [key: string]: APIKindType };
@@ -50,7 +50,7 @@ export type APIClassType = {
   outputs?: Array<OutputFieldType>;
   frozen?: boolean;
   lf_version?: string;
-  flow?: FlowType;
+  agent?: AgentType;
   field_order?: string[];
   tool_mode?: boolean;
   type?: string;
@@ -60,7 +60,7 @@ export type APIClassType = {
     | string
     | APITemplateType
     | boolean
-    | FlowType
+    | AgentType
     | CustomFieldsType
     | boolean
     | undefined
@@ -128,12 +128,12 @@ export type BuildStatusTypeAPI = {
 };
 
 export type InitTypeAPI = {
-  flowId: string;
+  agentId: string;
 };
 
 export type UploadFileTypeAPI = {
   file_path: string;
-  flowId: string;
+  agentId: string;
 };
 
 export type ProfilePicturesTypeAPI = {

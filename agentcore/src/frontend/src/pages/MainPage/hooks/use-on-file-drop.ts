@@ -1,12 +1,12 @@
 import { useCallback, useRef } from "react";
-import useUploadFlow from "@/hooks/flows/use-upload-flow";
+import useUploadAgent from "@/hooks/agents/use-upload-agent";
 import { CONSOLE_ERROR_MSG } from "../../../constants/alerts_constants";
 import useAlertStore from "../../../stores/alertStore";
 
 const useFileDrop = (type?: string) => {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
-  const uploadFlow = useUploadFlow();
+  const uploadAgent = useUploadAgent();
 
   const lastUploadTime = useRef<number>(0);
   const DEBOUNCE_INTERVAL = 1000;
@@ -23,12 +23,12 @@ const useFileDrop = (type?: string) => {
 
           const files: File[] = Array.from(e.dataTransfer.files);
 
-          uploadFlow({
+          uploadAgent({
             files,
             isComponent:
               type === "components"
                 ? true
-                : type === "flows"
+                : type === "agents"
                   ? false
                   : undefined,
           })
@@ -47,7 +47,7 @@ const useFileDrop = (type?: string) => {
         }
       }
     },
-    [type, uploadFlow, setSuccessData, setErrorData],
+    [type, uploadAgent, setSuccessData, setErrorData],
   );
 
   return handleFileDrop;

@@ -37,7 +37,7 @@ export default function WebhookFieldComponent({
     if (getBuilds) {
       hasInitialized.current = true;
       getBuildsMutation({
-        flowId: nodeInformationMetadata?.flowId!,
+        agentId: nodeInformationMetadata?.agentId!,
       });
     }
   }, []);

@@ -2,34 +2,34 @@ import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { v4 as uuid } from "uuid";
 import { useGetConfig } from "@/controllers/API/queries/config/use-get-config";
-import { useGetFlow } from "@/controllers/API/queries/flows/use-get-flow";
+import { useGetAgent } from "@/controllers/API/queries/agents/use-get-agent";
 import { CustomIOModal } from "@/customization/components/custom-new-modal";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 import { type CookieOptions, getCookie, setCookie } from "@/utils/utils";
-import useFlowsManagerStore from "../../stores/flowsManagerStore";
+import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { getInputsAndOutputs } from "../../utils/storeUtils";
 export default function PlaygroundPage() {
   useGetConfig();
-  const setCurrentFlow = useFlowsManagerStore((state) => state.setCurrentFlow);
-  const currentSavedFlow = useFlowsManagerStore((state) => state.currentFlow);
+  const setCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);
+  const currentSavedAgent = useAgentsManagerStore((state) => state.currentAgent);
   const setClientId = useUtilityStore((state) => state.setClientId);
 
   const { id } = useParams();
-  const { mutateAsync: getFlow } = useGetFlow();
+  const { mutateAsync: getAgent } = useGetAgent();
 
   const navigate = useCustomNavigate();
 
-  const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
-  const setIsLoading = useFlowsManagerStore((state) => state.setIsLoading);
-  const setPlaygroundPage = useFlowStore((state) => state.setPlaygroundPage);
+  const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
+  const setIsLoading = useAgentsManagerStore((state) => state.setIsLoading);
+  const setPlaygroundPage = useAgentStore((state) => state.setPlaygroundPage);
 
-  async function getFlowData() {
+  async function getAgentData() {
     try {
-      const flow = await getFlow({ id: id!, public: true });
-      return flow;
+      const agent = await getAgent({ id: id!, public: true });
+      return agent;
     } catch (error: any) {
       console.error(error);
       navigate("/");
@@ -37,42 +37,42 @@ export default function PlaygroundPage() {
   }
 
   useEffect(() => {
-    const initializeFlow = async () => {
+    const initializeAgent = async () => {
       setIsLoading(true);
-      if (currentFlowId === "") {
-        const flow = await getFlowData();
-        if (flow) {
-          setCurrentFlow(flow);
+      if (currentAgentId === "") {
+        const agent = await getAgentData();
+        if (agent) {
+          setCurrentAgent(agent);
         } else {
           navigate("/");
         }
       }
     };
 
-    initializeFlow();
+    initializeAgent();
     setIsLoading(false);
   }, [id]);
 
   useEffect(() => {
-    if (id) track("Playground Page Loaded", { flowId: id });
+    if (id) track("Playground Page Loaded", { agentId: id });
     setPlaygroundPage(true);
   }, []);
 
   useEffect(() => {
-    document.title = currentSavedFlow?.name || "AgentCore";
-    if (currentSavedFlow?.data) {
+    document.title = currentSavedAgent?.name || "AgentCore";
+    if (currentSavedAgent?.data) {
       const { inputs, outputs } = getInputsAndOutputs(
-        currentSavedFlow?.data?.nodes || [],
+        currentSavedAgent?.data?.nodes || [],
       );
       if (
         (inputs.length === 0 && outputs.length === 0) ||
-        currentSavedFlow?.access_type !== "PUBLIC"
+        currentSavedAgent?.access_type !== "PUBLIC"
       ) {
         // redirect to the home page
         navigate("/");
       }
     }
-  }, [currentSavedFlow]);
+  }, [currentSavedAgent]);
 
   useEffect(() => {
     // Get client ID from cookie or create new one
@@ -92,7 +92,7 @@ export default function PlaygroundPage() {
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center align-middle">
-      {currentSavedFlow && (
+      {currentSavedAgent && (
         <CustomIOModal
           open={true}
           setOpen={() => {}}

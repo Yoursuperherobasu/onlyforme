@@ -1,17 +1,17 @@
 import { useEffect } from "react";
 import type { VertexBuildTypeAPI } from "@/types/api";
-import type { FlowPoolType } from "../../types/zustand/flow";
+import type { AgentPoolType } from "../../types/zustand/agent";
 
 const useUpdateValidationStatus = (
   dataId: string,
-  flowPool: FlowPoolType,
+  agentPool: AgentPoolType,
   setValidationStatus: (value: any) => void,
   getValidationStatus: (data) => VertexBuildTypeAPI | null,
 ) => {
   useEffect(() => {
     const relevantData =
-      flowPool[dataId] && flowPool[dataId]?.length > 0
-        ? flowPool[dataId][flowPool[dataId].length - 1]
+      agentPool[dataId] && agentPool[dataId]?.length > 0
+        ? agentPool[dataId][agentPool[dataId].length - 1]
         : null;
     if (relevantData) {
       // Extract validation information from relevantData and update the validationStatus state
@@ -20,7 +20,7 @@ const useUpdateValidationStatus = (
       setValidationStatus(null);
     }
     getValidationStatus(relevantData);
-  }, [flowPool[dataId], dataId, setValidationStatus]);
+  }, [agentPool[dataId], dataId, setValidationStatus]);
 };
 
 export default useUpdateValidationStatus;

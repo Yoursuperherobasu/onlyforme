@@ -4,11 +4,11 @@ import {
 } from "@/modals/IOModal/components/chatView/chatInput/components/voice-assistant/voice-assistant";
 
 export function CustomVoiceAssistant({
-  flowId,
+  agentId,
   setShowAudioInput,
 }: VoiceAssistantProps) {
   return (
-    <VoiceAssistant flowId={flowId} setShowAudioInput={setShowAudioInput} />
+    <VoiceAssistant agentId={agentId} setShowAudioInput={setShowAudioInput} />
   );
 }
 

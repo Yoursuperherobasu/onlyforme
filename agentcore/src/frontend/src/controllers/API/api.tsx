@@ -14,7 +14,7 @@ import { customGetAccessToken } from "@/customization/utils/custom-get-access-to
 import useAuthStore from "@/stores/authStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 
 import { BuildStatus, type EventDeliveryType } from "../../constants/enums";
 import { checkDuplicateRequestAndStoreRequest } from "./helpers/check-duplicate-requests";
@@ -214,11 +214,11 @@ function ApiInterceptor() {
 
   async function clearBuildVerticesState(error) {
     if (error?.response?.status === 500) {
-      const vertices = useFlowStore.getState().verticesBuild;
-      useFlowStore
+      const vertices = useAgentStore.getState().verticesBuild;
+      useAgentStore
         .getState()
         .updateBuildStatus(vertices?.verticesIds ?? [], BuildStatus.BUILT);
-      useFlowStore.getState().setIsBuilding(false);
+      useAgentStore.getState().setIsBuilding(false);
     }
   }
 

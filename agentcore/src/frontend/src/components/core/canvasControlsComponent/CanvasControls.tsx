@@ -2,23 +2,23 @@ import { Panel, useStoreApi } from "@xyflow/react";
 import { type ReactNode, useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Separator } from "@/components/ui/separator";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import CanvasControlsDropdown from "./CanvasControlsDropdown";
 import HelpDropdown from "./HelpDropdown";
 
 const CanvasControls = ({ children }: { children?: ReactNode }) => {
   const reactFlowStoreApi = useStoreApi();
-  const isFlowLocked = useFlowStore(
-    useShallow((state) => state.currentFlow?.locked),
+  const isAgentLocked = useAgentStore(
+    useShallow((state) => state.currentAgent?.locked),
   );
 
   useEffect(() => {
     reactFlowStoreApi.setState({
-      nodesDraggable: !isFlowLocked,
-      nodesConnectable: !isFlowLocked,
-      elementsSelectable: !isFlowLocked,
+      nodesDraggable: !isAgentLocked,
+      nodesConnectable: !isAgentLocked,
+      elementsSelectable: !isAgentLocked,
     });
-  }, [isFlowLocked, reactFlowStoreApi]);
+  }, [isAgentLocked, reactFlowStoreApi]);
 
   return (
     <Panel

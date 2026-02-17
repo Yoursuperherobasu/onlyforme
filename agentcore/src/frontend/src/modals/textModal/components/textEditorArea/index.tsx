@@ -23,7 +23,7 @@ const TextEditorArea = ({
         resizable ? "resize-y" : "resize-none"
       }`}
       placeholder={"Empty"}
-      // update to real value on flowPool
+      // update to real value on agentPool
       value={value}
       onChange={(e) => {
         if (onChange) onChange(e.target.value);

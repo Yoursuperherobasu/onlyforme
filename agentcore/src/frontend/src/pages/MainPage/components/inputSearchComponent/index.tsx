@@ -22,7 +22,7 @@ const InputSearchComponent = ({
   const pagePath = window.location.pathname;
 
   const getSearchPlaceholder = () => {
-    if (pagePath.includes("flows")) {
+    if (pagePath.includes("agents")) {
       return "Search Agents";
     } else if (pagePath.includes("components")) {
       return "Search Components";

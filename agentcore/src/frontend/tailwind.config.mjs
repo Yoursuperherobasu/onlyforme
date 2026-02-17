@@ -112,7 +112,7 @@ const config = {
         "frozen-blue": "rgba(128, 190, 219, 0.86)", // Custom blue color for the frozen effect
         "frosted-glass": "rgba(255, 255, 255, 0.8)", // Custom frosted glass effect
         "component-icon": "var(--component-icon)",
-        "flow-icon": "var(--flow-icon)",
+        "agent-icon": "var(--agent-icon)",
         "low-indigo": "var(--low-indigo)",
         "chat-send": "var(--chat-send)",
         connection: "var(--connection)",

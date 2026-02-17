@@ -1,6 +1,6 @@
 import type { UseMutationResult } from "@tanstack/react-query";
-import { useGetFlowId } from "@/modals/IOModal/hooks/useGetFlowId";
-import useFlowStore from "@/stores/flowStore";
+import { useGetAgentId } from "@/modals/IOModal/hooks/useGetAgentId";
+import useAgentStore from "@/stores/agentStore";
 import type { useMutationFunctionType } from "@/types/api";
 import type { Message } from "@/types/messages";
 import { api } from "../../api";
@@ -18,25 +18,25 @@ export const useUpdateMessage: useMutationFunctionType<
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 
-  const flowId = useGetFlowId();
+  const agentId = useGetAgentId();
 
   const updateMessageApi = async (data: UpdateMessageParams) => {
-    const isPlayground = useFlowStore.getState().playgroundPage;
+    const isPlayground = useAgentStore.getState().playgroundPage;
     const message = data.message;
     if (message.files && typeof message.files === "string") {
       message.files = JSON.parse(message.files);
     }
-    if (isPlayground && flowId) {
-      const messages = JSON.parse(sessionStorage.getItem(flowId) || "");
+    if (isPlayground && agentId) {
+      const messages = JSON.parse(sessionStorage.getItem(agentId) || "");
       const messageIndex = messages.findIndex(
         (m: Message) => m.id === message.id,
       );
       messages[messageIndex] = {
         ...messages[messageIndex],
         ...message,
-        flow_id: flowId,
+        agent_id: agentId,
       };
-      sessionStorage.setItem(flowId, JSON.stringify(messages));
+      sessionStorage.setItem(agentId, JSON.stringify(messages));
     } else {
       const result = await api.put(
         `${getURL("MESSAGES")}/${message.id}`,
@@ -53,9 +53,9 @@ export const useUpdateMessage: useMutationFunctionType<
       ...options,
       onSettled: (_, __, params, ___) => {
         //@ts-ignore
-        if (params?.refetch && flowId) {
+        if (params?.refetch && agentId) {
           queryClient.refetchQueries({
-            queryKey: ["useGetMessagesQuery", { id: flowId }],
+            queryKey: ["useGetMessagesQuery", { id: agentId }],
             exact: true,
           });
         }

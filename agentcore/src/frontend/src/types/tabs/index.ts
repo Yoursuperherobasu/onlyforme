@@ -1,34 +1,34 @@
 import type { XYPosition } from "@xyflow/react";
-import type { FlowType, NodeDataType } from "../flow";
+import type { AgentType, NodeDataType } from "../agent";
 
-export type FlowsContextType = {
+export type AgentsContextType = {
   //keep
-  saveFlow: (flow?: FlowType, silent?: boolean) => Promise<void>;
+  saveAgent: (agent?: AgentType, silent?: boolean) => Promise<void>;
   tabId: string;
   //keep
   isLoading: boolean;
   setTabId: (index: string) => void;
   //keep
-  removeFlow: (id: string) => void;
-  refreshFlows: () => void;
+  removeAgent: (id: string) => void;
+  refreshAgents: () => void;
   //keep
-  addFlow: (
+  addAgent: (
     newProject: boolean,
-    flow?: FlowType,
+    agent?: AgentType,
     override?: boolean,
     position?: XYPosition,
   ) => Promise<string | undefined>;
-  downloadFlow: (
-    flow: FlowType,
-    flowName: string,
-    flowDescription?: string,
+  downloadAgent: (
+    agent: AgentType,
+    agentName: string,
+    agentDescription?: string,
   ) => void;
   //keep
-  downloadFlows: () => void;
+  downloadAgents: () => void;
   //keep
-  uploadFlows: () => void;
+  uploadAgents: () => void;
   setVersion: (version: string) => void;
-  uploadFlow: ({
+  uploadAgent: ({
     newProject,
     file,
     isComponent,
@@ -39,9 +39,9 @@ export type FlowsContextType = {
     isComponent?: boolean;
     position?: XYPosition;
   }) => Promise<string | never>;
-  tabsState: FlowsState;
+  tabsState: AgentsState;
   setTabsState: (
-    update: FlowsState | ((oldState: FlowsState) => FlowsState),
+    update: AgentsState | ((oldState: AgentsState) => AgentsState),
   ) => void;
   saveComponent: (
     component: NodeDataType,
@@ -49,14 +49,14 @@ export type FlowsContextType = {
   ) => Promise<string | undefined>;
   deleteComponent: (key: string) => void;
   version: string;
-  flows: Array<FlowType>;
+  agents: Array<AgentType>;
 };
 
-export type FlowsState = {
-  [key: string]: FlowState | undefined;
+export type AgentsState = {
+  [key: string]: AgentState | undefined;
 };
 
-export type FlowState = {
+export type AgentState = {
   template?: string;
   input_keys?: Object;
   memory_keys?: Array<string>;

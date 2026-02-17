@@ -53,7 +53,7 @@ export default function AddMcpServerModal({
   );
   const [jsonValue, setJsonValue] = useState("");
   const [error, setError] = useState<string | null>(
-    "Error downloading file: File _mcp_servers.json not found in flow 7e93e2c5-b979-49c0-b01b-4f4111d9230d",
+    "Error downloading file: File _mcp_servers.json not found in agent 7e93e2c5-b979-49c0-b01b-4f4111d9230d",
   );
   const { mutateAsync: addMCPServer, isPending: isAddPending } =
     useAddMCPServer();

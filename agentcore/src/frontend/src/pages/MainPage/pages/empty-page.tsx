@@ -22,9 +22,9 @@ const EMPTY_PAGE_GITHUB_DESCRIPTION =
 const EMPTY_PAGE_DISCORD_DESCRIPTION =
   "Join builders, ask questions, and show off your agents";
 const EMPTY_PAGE_DRAG_AND_DROP_TEXT =
-  "Already have a flow? Drag and drop to upload.";
+  "Already have a agent? Drag and drop to upload.";
 const EMPTY_PAGE_FOLDER_DESCRIPTION = "Empty folder";
-const EMPTY_PAGE_CREATE_FIRST_FLOW_BUTTON_TEXT = "Create first flow";
+const EMPTY_PAGE_CREATE_FIRST_FLOW_BUTTON_TEXT = "Create first agent";
 
 const EXTERNAL_LINK_ICON_CLASS =
   "absolute right-6 top-[35px] h-4 w-4 shrink-0 translate-x-0 opacity-0 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100";
@@ -61,7 +61,7 @@ export const EmptyPageCommunity = ({
   return (
     <DotBackgroundDemo>
       <CardsWrapComponent
-        dragMessage={`Drop your flows or components here`}
+        dragMessage={`Drop your agents or components here`}
         onFileDrop={handleFileDrop}
       >
         <div className="m-0 h-full w-full bg-background p-0">

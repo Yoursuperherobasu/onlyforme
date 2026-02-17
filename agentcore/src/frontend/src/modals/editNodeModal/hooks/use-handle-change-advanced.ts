@@ -1,5 +1,5 @@
 import { cloneDeep } from "lodash";
-import type { NodeDataType } from "../../../types/flow";
+import type { NodeDataType } from "../../../types/agent";
 
 const useHandleChangeAdvanced = (
   data: NodeDataType,

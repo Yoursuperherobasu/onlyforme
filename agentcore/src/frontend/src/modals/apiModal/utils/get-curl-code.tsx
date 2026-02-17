@@ -12,20 +12,20 @@ import {
  * Generates a cURL command for making a POST request to a webhook endpoint.
  *
  * @param {Object} options - The options for generating the cURL command.
- * @param {string} options.flowId - The ID of the flow.
+ * @param {string} options.agentId - The ID of the agent.
  * @param {boolean} options.isAuth - Indicates whether authentication is required.
  * @param {string} options.endpointName - The name of the webhook endpoint.
  * @returns {string} The cURL command.
  */
 export function getCurlWebhookCode({
-  flowId,
+  agentId,
   isAuth,
   endpointName,
   format = "multiline",
 }: GetCodeType & { format?: "multiline" | "singleline" }) {
   const { protocol, host } = customGetHostProtocol();
   const baseUrl = `${protocol}//${host}/api/webhook/${
-    endpointName || flowId
+    endpointName || agentId
   }`;
   const authHeader = !isAuth ? `-H 'x-api-key: <your api key>'` : "";
 
@@ -48,13 +48,13 @@ export function getCurlWebhookCode({
 
 /** Generates Curl command for API calls, handling multi-step file uploads (v1 API for ChatInput files, v2 for File/VideoFile) before execution if tweaks contain files. Supports Unix/PowerShell and optional auth. */
 export function getNewCurlCode({
-  flowId,
+  agentId,
   endpointName,
   processedPayload,
   platform,
   shouldDisplayApiKey,
 }: {
-  flowId: string;
+  agentId: string;
   endpointName: string;
   processedPayload: any;
   platform?: "unix" | "powershell";
@@ -62,7 +62,7 @@ export function getNewCurlCode({
 }): { steps: { title: string; code: string }[] } | string {
   const { protocol, host } = customGetHostProtocol();
   const baseUrl = `${protocol}//${host}`;
-  const apiUrl = `${baseUrl}/api/run/${endpointName || flowId}`;
+  const apiUrl = `${baseUrl}/api/run/${endpointName || agentId}`;
 
   // Auto-detect if no platform specified
   const detectedPlatform =
@@ -137,14 +137,14 @@ curl.exe --request POST \`
     if (detectedPlatform === "powershell") {
       uploadCommands.push(
         `curl.exe --request POST \`
-     --url "${baseUrl}/api/files/upload/${flowId}" \`
+     --url "${baseUrl}/api/files/upload/${agentId}" \`
      ${shouldDisplayApiKey ? '--header "x-api-key: YOUR_API_KEY_HERE" \\' : ""}
      --form "file=@your_image_${uploadCounter}.jpg"`,
       );
     } else {
       uploadCommands.push(
         `curl --request POST \\
-     --url "${baseUrl}/api/files/upload/${flowId}" \\
+     --url "${baseUrl}/api/files/upload/${agentId}" \\
      ${shouldDisplayApiKey ? '--header "x-api-key: YOUR_API_KEY_HERE" \\' : ""}
      --form "file=@your_image_${uploadCounter}.jpg"`,
       );
@@ -233,7 +233,7 @@ ${allTweaks}
     return {
       steps: [
         { title: "Upload files to the server", code: uploadStep },
-        { title: "Execute the flow with uploaded files", code: executeStep },
+        { title: "Execute the agent with uploaded files", code: executeStep },
       ],
     };
   } else {
@@ -259,7 +259,7 @@ ${allTweaks}
     return {
       steps: [
         { title: "Upload files to the server", code: uploadStep },
-        { title: "Execute the flow with uploaded files", code: executeStep },
+        { title: "Execute the agent with uploaded files", code: executeStep },
       ],
     };
   }

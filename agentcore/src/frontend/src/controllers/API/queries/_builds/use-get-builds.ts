@@ -1,46 +1,46 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import type { AxiosResponse } from "axios";
 import { useParams } from "react-router-dom";
-import useFlowStore from "@/stores/flowStore";
-import type { FlowPoolType } from "@/types/zustand/flow";
+import useAgentStore from "@/stores/agentStore";
+import type { AgentPoolType } from "@/types/zustand/agent";
 import type { useQueryFunctionType } from "../../../../types/api";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 interface BuildsQueryParams {
-  flowId?: string;
+  agentId?: string;
 }
 
 export const useGetBuildsQuery: useQueryFunctionType<
   BuildsQueryParams,
-  AxiosResponse<{ vertex_builds: FlowPoolType }>
+  AxiosResponse<{ vertex_builds: AgentPoolType }>
 > = (params) => {
   const { query } = UseRequestProcessor();
-  const { id: routeFlowId } = useParams();
+  const { id: routeAgentId } = useParams();
 
-  const setFlowPool = useFlowStore((state) => state.setFlowPool);
-  const currentFlow = useFlowStore((state) => state.currentFlow);
+  const setAgentPool = useAgentStore((state) => state.setAgentPool);
+  const currentAgent = useAgentStore((state) => state.currentAgent);
 
   const responseFn = async () => {
     const config = {};
     config["params"] = {
-      flow_id:
-        !params.flowId || params.flowId === "" ? routeFlowId : params.flowId,
+      agent_id:
+        !params.agentId || params.agentId === "" ? routeAgentId : params.agentId,
     };
 
     const response = await api.get<any>(`${getURL("BUILDS")}`, config);
 
-    if (currentFlow) {
-      const flowPool = response.data.vertex_builds;
-      setFlowPool(flowPool);
+    if (currentAgent) {
+      const agentPool = response.data.vertex_builds;
+      setAgentPool(agentPool);
     }
 
     return response;
   };
 
   const queryResult = query(
-    ["useGetBuildsQuery", { key: params.flowId }],
+    ["useGetBuildsQuery", { key: params.agentId }],
     responseFn,
     {
       placeholderData: keepPreviousData,

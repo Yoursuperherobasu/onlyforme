@@ -12,7 +12,7 @@ import {
   PopoverContentWithoutPortal,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import ShadTooltip from "../../../../components/common/shadTooltipComponent";
 import type { outputComponentType } from "../../../../types/components";
 import { cn } from "../../../../utils/utils";
@@ -30,7 +30,7 @@ export default function OutputComponent({
   handleSelectOutput,
   outputName,
 }: outputComponentType) {
-  const nodeType = useFlowStore(
+  const nodeType = useAgentStore(
     (state) => state.nodes.find((node) => node.id === nodeId)?.data?.type,
   );
 

@@ -104,7 +104,7 @@ export default function FilesContextMenuComponent({
                 handleSelectOptionsChange("duplicate");
               }}
               className="cursor-pointer"
-              data-testid="btn-duplicate-flow"
+              data-testid="btn-duplicate-agent"
             >
               <ForwardedIconComponent
                 name="CopyPlus"

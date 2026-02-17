@@ -2,12 +2,12 @@ import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
 import { useEffect, useState } from "react";
 import { useGetHealthQuery } from "@/controllers/API/queries/health";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 
 export function useHealthCheck() {
-  const healthCheckMaxRetries = useFlowsManagerStore(
+  const healthCheckMaxRetries = useAgentsManagerStore(
     (state) => state.healthCheckMaxRetries,
   );
 
@@ -19,7 +19,7 @@ export function useHealthCheck() {
   const isFetching = useIsFetching({
     predicate: (query) => query.queryKey[0] !== "useGetHealthQuery",
   });
-  const isBuilding = useFlowStore((state) => state.isBuilding);
+  const isBuilding = useAgentStore((state) => state.isBuilding);
 
   const disabled = isMutating || isFetching || isBuilding;
 

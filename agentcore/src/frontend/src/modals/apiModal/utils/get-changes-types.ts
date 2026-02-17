@@ -1,5 +1,5 @@
 import type { InputFieldType } from "@/types/api";
-import { convertArrayToObj } from "../../../utils/reactflowUtils";
+import { convertArrayToObj } from "../../../utils/reactFlowUtils";
 
 export const getChangesType = (
   changes: string | string[] | boolean | number | Object[] | Object,

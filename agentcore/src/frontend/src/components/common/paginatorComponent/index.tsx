@@ -53,7 +53,7 @@ export default function PaginatorComponent({
             ? "items"
             : isComponent
               ? "components"
-              : "flows"}
+              : "agents"}
         </span>
       </div>
       <div className={"flex items-center gap-2"}>

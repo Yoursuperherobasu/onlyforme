@@ -28,7 +28,7 @@ const ModalsComponent = ({
           setOpenDeleteFolderModal(false);
         }}
         description="folder"
-        note={"and all associated flows and components"}
+        note={"and all associated agents and components"}
       >
         <></>
       </DeleteConfirmationModal>

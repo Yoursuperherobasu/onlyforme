@@ -1,2 +1,2 @@
-export * from "./use-get-flows-mcp";
-export * from "./use-patch-flows-mcp";
+export * from "./use-get-agents-mcp";
+export * from "./use-patch-agents-mcp";

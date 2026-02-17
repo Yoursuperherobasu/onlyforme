@@ -40,7 +40,7 @@ export interface TraceForReview {
   input?: unknown;
   output?: unknown;
   session_id?: string | null;
-  flow_name?: string | null;
+  agent_name?: string | null;
   has_scores: boolean;
   score_count: number;
 }
@@ -170,7 +170,7 @@ export const getEvaluationStatus = async () => {
 export const getPendingReviews = async (params: {
   limit?: number;
   trace_id?: string;
-  flow_name?: string;
+  agent_name?: string;
   session_id?: string;
   user_id_filter?: string;
   ts_from?: string;
@@ -307,9 +307,9 @@ export interface EvaluatorConfig {
   trace_id?: string;
   agent_id?: string;
   agent_ids?: string[];
-  flow_id?: string;
-  flow_ids?: string[];
-  flow_name?: string;
+  agent_id?: string;
+  agent_ids?: string[];
+  agent_name?: string;
   session_id?: string;
   project_name?: string;
   ts_from?: string;
@@ -329,7 +329,7 @@ export const createEvaluator = async (data: any) => {
   return response.data as EvaluatorConfig;
 };
 
-export const getFlows = async () => {
+export const getAgents = async () => {
   const response = await api.get("/api/evaluation/models");
   return response.data;
 };

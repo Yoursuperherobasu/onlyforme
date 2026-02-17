@@ -17,7 +17,7 @@ import {
   getOutgoers,
   type Node,
   type OnSelectionChangeParams,
-  type ReactFlowJsonObject,
+  type reactFlowJsonObject,
   type XYPosition,
 } from "@xyflow/react";
 import { cloneDeep } from "lodash";
@@ -27,8 +27,8 @@ import {
   getRightHandleId,
 } from "@/CustomNodes/utils/get-handle-id";
 import { INCOMPLETE_LOOP_ERROR_ALERT } from "@/constants/alerts_constants";
-import { customDownloadFlow } from "@/customization/utils/custom-reactFlowUtils";
-import useFlowStore from "@/stores/flowStore";
+import { customDownloadAgent } from "@/customization/utils/custom-reactFlowUtils";
+import useAgentStore from "@/stores/agentStore";
 import getFieldTitle from "../CustomNodes/utils/get-field-title";
 import {
   INPUT_TYPES,
@@ -38,7 +38,7 @@ import {
   SUCCESS_BUILD,
   specialCharsRegex,
 } from "../constants/constants";
-import { DESCRIPTIONS } from "../flow_constants";
+import { DESCRIPTIONS } from "../agent_constants";
 import type {
   APIClassType,
   APIKindType,
@@ -50,17 +50,17 @@ import type {
 import type {
   AllNodeType,
   EdgeType,
-  FlowType,
+  AgentType,
   NodeDataType,
   sourceHandleType,
   targetHandleType,
-} from "../types/flow";
+} from "../types/agent";
 import type {
   addEscapedHandleIdsToEdgesType,
   findLastNodeType,
-  generateFlowType,
+  generateAgentType,
   updateEdgesHandleIdsType,
-} from "../types/utils/reactflowUtils";
+} from "../types/utils/reactFlowUtils";
 import { getLayoutedNodes } from "./layoutUtils";
 import { createRandomKey, toTitleCase } from "./utils";
 
@@ -182,8 +182,8 @@ export function clearHandlesFromAdvancedFields(
   }
 
   try {
-    const flowStore = useFlowStore.getState();
-    const { edges, deleteEdge } = flowStore;
+    const agentStore = useAgentStore.getState();
+    const { edges, deleteEdge } = agentStore;
 
     const connectedEdges = edges.filter((edge) => edge.target === componentId);
 
@@ -374,8 +374,8 @@ export function isValidConnection(
     return false;
   }
 
-  const nodesArray = nodes || useFlowStore.getState().nodes;
-  const edgesArray = edges || useFlowStore.getState().edges;
+  const nodesArray = nodes || useAgentStore.getState().nodes;
+  const edgesArray = edges || useAgentStore.getState().edges;
 
   const targetHandleObject: targetHandleType = scapeJSONParse(targetHandle!);
   const sourceHandleObject: sourceHandleType = scapeJSONParse(sourceHandle!);
@@ -466,8 +466,8 @@ export function isValidConnection(
   return false;
 }
 
-export function removeApiKeys(flow: FlowType): FlowType {
-  const cleanFLow = cloneDeep(flow);
+export function removeApiKeys(agent: AgentType): AgentType {
+  const cleanFLow = cloneDeep(agent);
   cleanFLow.data!.nodes.forEach((node) => {
     if (node.type !== "genericNode") return;
     for (const key in node.data.node!.template) {
@@ -502,47 +502,47 @@ export function updateTemplate(
   return clonedObject;
 }
 
-export const processFlows = (DbData: FlowType[], skipUpdate = true) => {
+export const processAgents = (DbData: AgentType[], skipUpdate = true) => {
   const savedComponents: { [key: string]: APIClassType } = {};
-  DbData.forEach(async (flow: FlowType) => {
+  DbData.forEach(async (agent: AgentType) => {
     try {
-      if (!flow.data) {
+      if (!agent.data) {
         return;
       }
-      if (flow.data && flow.is_component) {
-        (flow.data.nodes[0].data as NodeDataType).node!.display_name =
-          flow.name;
+      if (agent.data && agent.is_component) {
+        (agent.data.nodes[0].data as NodeDataType).node!.display_name =
+          agent.name;
         savedComponents[
           createRandomKey(
-            (flow.data.nodes[0].data as NodeDataType).type,
+            (agent.data.nodes[0].data as NodeDataType).type,
             uid.randomUUID(5),
           )
-        ] = cloneDeep((flow.data.nodes[0].data as NodeDataType).node!);
+        ] = cloneDeep((agent.data.nodes[0].data as NodeDataType).node!);
         return;
       }
-      await processDataFromFlow(flow, !skipUpdate).catch((e) => {
+      await processDataFromAgent(agent, !skipUpdate).catch((e) => {
         console.error(e);
       });
     } catch (e) {
       console.error(e);
     }
   });
-  return { data: savedComponents, flows: DbData };
+  return { data: savedComponents, agents: DbData };
 };
 
 export const needsLayout = (nodes: AllNodeType[]) => {
   return nodes.some((node) => !node.position);
 };
 
-export async function processDataFromFlow(
-  flow: FlowType,
+export async function processDataFromAgent(
+  agent: AgentType,
   refreshIds = true,
-): Promise<ReactFlowJsonObject<AllNodeType, EdgeType> | null> {
-  const data = flow?.data ? flow.data : null;
+): Promise<reactFlowJsonObject<AllNodeType, EdgeType> | null> {
+  const data = agent?.data ? agent.data : null;
   if (data) {
-    processFlowEdges(flow);
+    processAgentEdges(agent);
     //add dropdown option to nodeOutputs
-    processFlowNodes(flow);
+    processAgentNodes(agent);
     //add animation to text type edges
     updateEdges(data.edges);
     // updateNodes(data.nodes, data.edges);
@@ -609,7 +609,7 @@ export function updateIds(
         edge.data.targetHandle.id = edge.target;
       }
       edge.id =
-        "reactflow__edge-" +
+        "reactFlow__edge-" +
         edge.source +
         edge.sourceHandle +
         "-" +
@@ -622,7 +622,7 @@ export function updateIds(
 export function validateNode(node: AllNodeType, edges: Edge[]): Array<string> {
   if (!node.data?.node?.template || !Object.keys(node.data.node.template)) {
     return [
-      "We've noticed a potential issue with a Component in the flow. Please review it and, if necessary, submit a bug report with your exported flow file. Thank you for your help!",
+      "We've noticed a potential issue with a Component in the agent. Please review it and, if necessary, submit a bug report with your exported agent file. Thank you for your help!",
     ];
   }
 
@@ -690,7 +690,7 @@ Array<{ id: string; errors: Array<string> }> {
       {
         id: "",
         errors: [
-          "No components found in the flow. Please add at least one component to the flow.",
+          "No components found in the agent. Please add at least one component to the agent.",
         ],
       },
     ];
@@ -770,15 +770,15 @@ export function updateEdges(edges: EdgeType[]) {
     });
 }
 
-export function addVersionToDuplicates(flow: FlowType, flows: FlowType[]) {
-  const flowsWithoutUpdatedFlow = flows.filter((f) => f.id !== flow.id);
+export function addVersionToDuplicates(agent: AgentType, agents: AgentType[]) {
+  const agentsWithoutUpdatedAgent = agents.filter((f) => f.id !== agent.id);
 
-  const existingNames = flowsWithoutUpdatedFlow.map((item) => item.name);
-  let newName = flow.name;
+  const existingNames = agentsWithoutUpdatedAgent.map((item) => item.name);
+  let newName = agent.name;
   let count = 1;
 
   while (existingNames.includes(newName)) {
-    newName = `${flow.name} (${count})`;
+    newName = `${agent.name} (${count})`;
     count++;
   }
 
@@ -1019,7 +1019,7 @@ export function convertArrayToObj(arrayOfObjects) {
 
 export function hasDuplicateKeys(array) {
   const keys = {};
-  // Transforms an empty object into an object array without opening the 'editNode' modal to prevent the flow build from breaking.
+  // Transforms an empty object into an object array without opening the 'editNode' modal to prevent the agent build from breaking.
   if (!Array.isArray(array)) array = [{ "": "" }];
   for (const obj of array) {
     for (const key in obj) {
@@ -1033,7 +1033,7 @@ export function hasDuplicateKeys(array) {
 }
 
 export function hasEmptyKey(objArray) {
-  // Transforms an empty object into an array without opening the 'editNode' modal to prevent the flow build from breaking.
+  // Transforms an empty object into an array without opening the 'editNode' modal to prevent the agent build from breaking.
   if (!Array.isArray(objArray)) objArray = [];
   for (const obj of objArray) {
     for (const key in obj) {
@@ -1146,28 +1146,28 @@ export function getHandleId(
   targetHandle: string,
 ) {
   return (
-    "reactflow__edge-" + source + sourceHandle + "-" + target + targetHandle
+    "reactFlow__edge-" + source + sourceHandle + "-" + target + targetHandle
   );
 }
 
-export function generateFlow(
+export function generateAgent(
   selection: OnSelectionChangeParams,
   nodes: AllNodeType[],
   edges: EdgeType[],
   name: string,
-): generateFlowType {
-  const newFlowData = { nodes, edges, viewport: { zoom: 1, x: 0, y: 0 } };
+): generateAgentType {
+  const newAgentData = { nodes, edges, viewport: { zoom: 1, x: 0, y: 0 } };
   /*	remove edges that are not connected to selected nodes on both ends
    */
-  newFlowData.edges = edges.filter(
+  newAgentData.edges = edges.filter(
     (edge) =>
       selection.nodes.some((node) => node.id === edge.target) &&
       selection.nodes.some((node) => node.id === edge.source),
   );
-  newFlowData.nodes = selection.nodes as AllNodeType[];
+  newAgentData.nodes = selection.nodes as AllNodeType[];
 
-  const newFlow: FlowType = {
-    data: newFlowData,
+  const newAgent: AgentType = {
+    data: newAgentData,
     is_component: false,
     name: name,
     description: "",
@@ -1178,12 +1178,12 @@ export function generateFlow(
   // using O(n²) aproach because the number of edges is small
   // in the future we can use a better aproach using a set
   return {
-    newFlow,
+    newAgent,
     removedEdges: edges.filter(
       (edge) =>
         (selection.nodes.some((node) => node.id === edge.target) ||
           selection.nodes.some((node) => node.id === edge.source)) &&
-        newFlowData.edges.every((e) => e.id !== edge.id),
+        newAgentData.edges.every((e) => e.id !== edge.id),
     ),
   };
 }
@@ -1192,10 +1192,10 @@ export function reconnectEdges(
   groupNode: AllNodeType,
   excludedEdges: EdgeType[],
 ) {
-  if (groupNode.type !== "genericNode" || !groupNode.data.node!.flow) return [];
+  if (groupNode.type !== "genericNode" || !groupNode.data.node!.agent) return [];
   let newEdges = cloneDeep(excludedEdges);
-  const { nodes } = groupNode.data.node!.flow!.data!;
-  const lastNode = findLastNode(groupNode.data.node!.flow!.data!);
+  const { nodes } = groupNode.data.node!.agent!.data!;
+  const lastNode = findLastNode(groupNode.data.node!.agent!.data!);
   newEdges = newEdges.filter(
     (e) => !(nodes.some((n) => n.id === e.source) && e.source !== lastNode?.id),
   );
@@ -1231,7 +1231,7 @@ export function reconnectEdges(
   return newEdges;
 }
 
-export function filterFlow(
+export function filterAgent(
   selection: OnSelectionChangeParams,
   setNodes: (update: Node[] | ((oldState: Node[]) => Node[])) => void,
   setEdges: (update: Edge[] | ((oldState: Edge[]) => Edge[])) => void,
@@ -1242,23 +1242,23 @@ export function filterFlow(
 
 export function findLastNode({ nodes, edges }: findLastNodeType) {
   /*
-		this function receives a flow and return the last node
+		this function receives a agent and return the last node
 	*/
   const lastNode = nodes.find((n) => !edges.some((e) => e.source === n.id));
   return lastNode;
 }
 
-export function updateFlowPosition(NewPosition: XYPosition, flow: FlowType) {
-  const middlePoint = getMiddlePoint(flow.data!.nodes);
+export function updateAgentPosition(NewPosition: XYPosition, agent: AgentType) {
+  const middlePoint = getMiddlePoint(agent.data!.nodes);
   const deltaPosition = {
     x: NewPosition.x - middlePoint.x,
     y: NewPosition.y - middlePoint.y,
   };
   return {
-    ...flow,
+    ...agent,
     data: {
-      ...flow.data!,
-      nodes: flow.data!.nodes.map((node) => ({
+      ...agent.data!,
+      nodes: agent.data!.nodes.map((node) => ({
         ...node,
         position: {
           x: node.position.x + deltaPosition.x,
@@ -1269,12 +1269,12 @@ export function updateFlowPosition(NewPosition: XYPosition, flow: FlowType) {
   };
 }
 
-export function concatFlows(
-  flow: FlowType,
+export function concatAgents(
+  agent: AgentType,
   setNodes: (update: Node[] | ((oldState: Node[]) => Node[])) => void,
   setEdges: (update: Edge[] | ((oldState: Edge[]) => Edge[])) => void,
 ) {
-  const { nodes, edges } = flow.data!;
+  const { nodes, edges } = agent.data!;
   setNodes((old) => [...old, ...nodes]);
   setEdges((old) => [...old, ...edges]);
 }
@@ -1362,9 +1362,9 @@ export function mergeNodeTemplates({
   nodes: AllNodeType[];
   edges: Edge[];
 }): APITemplateType {
-  /* this function receives a flow and iterate throw each node
+  /* this function receives a agent and iterate throw each node
 		and merge the templates with only the visible fields
-		if there are two keys with the same name in the flow, we will update the display name of each one
+		if there are two keys with the same name in the agent, we will update the display name of each one
 		to show from which node it came from
 	*/
   const template: APITemplateType = {};
@@ -1381,7 +1381,7 @@ export function mergeNodeTemplates({
           template[key + "_" + node.id].proxy = { id: node.id, field: key };
           if (node.data.type === "GroupNode") {
             template[key + "_" + node.id].display_name =
-              node.data.node!.flow!.name + " - " + nodeTemplate[key].name;
+              node.data.node!.agent!.name + " - " + nodeTemplate[key].name;
           } else {
             template[key + "_" + node.id].display_name =
               //data id already has the node name on it
@@ -1403,7 +1403,7 @@ export function isTargetHandleConnected(
   nodeId: string,
 ) {
   /*
-		this function receives a flow and a handleId and check if there is a connection with this handle
+		this function receives a agent and a handleId and check if there is a connection with this handle
 	*/
   if (!field) return true;
   if (field.proxy) {
@@ -1441,26 +1441,26 @@ export function isTargetHandleConnected(
   return false;
 }
 
-export function generateNodeTemplate(Flow: FlowType) {
+export function generateNodeTemplate(Agent: AgentType) {
   /*
-		this function receives a flow and generate a template for the group node
+		this function receives a agent and generate a template for the group node
 	*/
   const template = mergeNodeTemplates({
-    nodes: Flow.data!.nodes,
-    edges: Flow.data!.edges,
+    nodes: Agent.data!.nodes,
+    edges: Agent.data!.edges,
   });
   updateGroupNodeTemplate(template);
   return template;
 }
 
-export function generateNodeFromFlow(
-  flow: FlowType,
+export function generateNodeFromAgent(
+  agent: AgentType,
   getNodeId: (type: string) => string,
 ): AllNodeType {
-  const { nodes } = flow.data!;
-  const _outputNode = cloneDeep(findLastNode(flow.data!));
+  const { nodes } = agent.data!;
+  const _outputNode = cloneDeep(findLastNode(agent.data!));
   const position = getMiddlePoint(nodes);
-  const data = cloneDeep(flow);
+  const data = cloneDeep(agent);
   const id = getNodeId("groupComponent");
   const newGroupNode: AllNodeType = {
     data: {
@@ -1471,7 +1471,7 @@ export function generateNodeFromFlow(
         documentation: "",
         description: "",
         template: generateNodeTemplate(data),
-        flow: data,
+        agent: data,
         outputs: generateNodeOutputs(data),
       },
     },
@@ -1482,8 +1482,8 @@ export function generateNodeFromFlow(
   return newGroupNode;
 }
 
-function generateNodeOutputs(flow: FlowType) {
-  const { nodes, edges } = flow.data!;
+function generateNodeOutputs(agent: AgentType) {
+  const { nodes, edges } = agent.data!;
   const outputs: Array<OutputFieldType> = [];
   nodes.forEach((node: AllNodeType) => {
     if (node.type === "genericNode" && node.data.node?.outputs) {
@@ -1555,29 +1555,29 @@ export function updateEdgesIds(
   });
 }
 
-export function processFlowEdges(flow: FlowType) {
-  if (!flow.data || !flow.data.edges) return;
-  if (checkEdgeWithoutEscapedHandleIds(flow.data.edges)) {
-    const newEdges = addEscapedHandleIdsToEdges({ edges: flow.data.edges });
-    flow.data.edges = newEdges;
-  } else if (checkOldEdgesHandles(flow.data.edges)) {
-    const newEdges = updateEdgesHandleIds(flow.data);
-    flow.data.edges = newEdges;
+export function processAgentEdges(agent: AgentType) {
+  if (!agent.data || !agent.data.edges) return;
+  if (checkEdgeWithoutEscapedHandleIds(agent.data.edges)) {
+    const newEdges = addEscapedHandleIdsToEdges({ edges: agent.data.edges });
+    agent.data.edges = newEdges;
+  } else if (checkOldEdgesHandles(agent.data.edges)) {
+    const newEdges = updateEdgesHandleIds(agent.data);
+    agent.data.edges = newEdges;
   }
 }
 
-export function processFlowNodes(flow: FlowType) {
-  if (!flow.data || !flow.data.nodes) return;
-  if (checkOldNodesOutput(flow.data.nodes)) {
-    const { nodes, edges } = updateNewOutput(flow.data);
-    flow.data.nodes = nodes;
-    flow.data.edges = edges;
+export function processAgentNodes(agent: AgentType) {
+  if (!agent.data || !agent.data.nodes) return;
+  if (checkOldNodesOutput(agent.data.nodes)) {
+    const { nodes, edges } = updateNewOutput(agent.data);
+    agent.data.nodes = nodes;
+    agent.data.edges = edges;
   }
 }
 
 export function expandGroupNode(
   id: string,
-  flow: FlowType,
+  agent: AgentType,
   template: APITemplateType,
   setNodes: (
     update: AllNodeType[] | ((oldState: AllNodeType[]) => AllNodeType[]),
@@ -1587,15 +1587,15 @@ export function expandGroupNode(
   ) => void,
   outputs?: OutputFieldType[],
 ) {
-  const idsMap = updateIds(flow!.data!);
+  const idsMap = updateIds(agent!.data!);
   updateProxyIdsOnTemplate(template, idsMap);
-  const flowEdges = useFlowStore.getState().edges;
-  updateEdgesIds(flowEdges, idsMap);
-  const gNodes: AllNodeType[] = cloneDeep(flow?.data?.nodes!);
-  const gEdges = cloneDeep(flow!.data!.edges);
+  const agentEdges = useAgentStore.getState().edges;
+  updateEdgesIds(agentEdges, idsMap);
+  const gNodes: AllNodeType[] = cloneDeep(agent?.data?.nodes!);
+  const gEdges = cloneDeep(agent!.data!.edges);
   // //redirect edges to correct proxy node
   // let updatedEdges: Edge[] = [];
-  // flowEdges.forEach((edge) => {
+  // agentEdges.forEach((edge) => {
   //   let newEdge = cloneDeep(edge);
   //   if (newEdge.target === id) {
   //     const targetHandle: targetHandleType = newEdge.data.targetHandle;
@@ -1613,7 +1613,7 @@ export function expandGroupNode(
   //           id: proxyId,
   //           inputTypes: inputTypes,
   //         };
-  //         if (node.data.node?.flow) {
+  //         if (node.data.node?.agent) {
   //           newTargetHandle.proxy = {
   //             field: node.data.node.template[field].proxy?.field!,
   //             id: node.data.node.template[field].proxy?.id!,
@@ -1625,7 +1625,7 @@ export function expandGroupNode(
   //     }
   //   }
   //   if (newEdge.source === id) {
-  //     const lastNode = cloneDeep(findLastNode(flow!.data!));
+  //     const lastNode = cloneDeep(findLastNode(agent!.data!));
   //     newEdge.source = lastNode!.id;
   //     let newSourceHandle: sourceHandleType = scapeJSONParse(
   //       newEdge.sourceHandle!,
@@ -1690,11 +1690,11 @@ export function expandGroupNode(
     }
   });
   const filteredNodes = [
-    ...useFlowStore.getState().nodes.filter((n) => n.id !== id),
+    ...useAgentStore.getState().nodes.filter((n) => n.id !== id),
     ...gNodes,
   ];
   const filteredEdges = [
-    ...flowEdges.filter((e) => e.target !== id && e.source !== id),
+    ...agentEdges.filter((e) => e.target !== id && e.source !== id),
     ...gEdges,
   ];
   setNodes(filteredNodes);
@@ -1702,11 +1702,11 @@ export function expandGroupNode(
 }
 
 export function getGroupStatus(
-  flow: FlowType,
+  agent: AgentType,
   ssData: { [key: string]: { valid: boolean; params: string } },
 ) {
   let status = { valid: true, params: SUCCESS_BUILD };
-  const { nodes } = flow.data!;
+  const { nodes } = agent.data!;
   const ids = nodes.map((n: AllNodeType) => n.data.id);
   ids.forEach((id) => {
     if (!ssData[id]) {
@@ -1720,11 +1720,11 @@ export function getGroupStatus(
   return status;
 }
 
-export function createFlowComponent(
+export function createAgentComponent(
   nodeData: NodeDataType,
   version: string,
-): FlowType {
-  const flowNode: FlowType = {
+): AgentType {
+  const agentNode: AgentType = {
     data: {
       edges: [],
       nodes: [
@@ -1743,10 +1743,10 @@ export function createFlowComponent(
     is_component: true,
     last_tested_version: version,
   };
-  return flowNode;
+  return agentNode;
 }
 
-export function downloadNode(NodeFLow: FlowType) {
+export function downloadNode(NodeFLow: AgentType) {
   const element = document.createElement("a");
   const file = new Blob([JSON.stringify(NodeFLow)], {
     type: "application/json",
@@ -1761,23 +1761,23 @@ export function updateComponentNameAndType(
   component: NodeDataType,
 ) {}
 
-export function removeFileNameFromComponents(flow: FlowType) {
-  flow.data!.nodes.forEach((node: AllNodeType) => {
+export function removeFileNameFromComponents(agent: AgentType) {
+  agent.data!.nodes.forEach((node: AllNodeType) => {
     if (node.type === "genericNode") {
       Object.keys(node.data.node!.template).forEach((field) => {
         if (node.data.node?.template[field].type === "file") {
           node.data.node!.template[field].value = "";
         }
       });
-      if (node.data.node?.flow) {
-        removeFileNameFromComponents(node.data.node.flow);
+      if (node.data.node?.agent) {
+        removeFileNameFromComponents(node.data.node.agent);
       }
     }
   });
 }
 
-export function removeGlobalVariableFromComponents(flow: FlowType) {
-  flow.data!.nodes.forEach((node: AllNodeType) => {
+export function removeGlobalVariableFromComponents(agent: AgentType) {
+  agent.data!.nodes.forEach((node: AllNodeType) => {
     if (node.type === "genericNode") {
       Object.keys(node.data.node!.template).forEach((field) => {
         if (node.data?.node?.template[field]?.load_from_db) {
@@ -1785,8 +1785,8 @@ export function removeGlobalVariableFromComponents(flow: FlowType) {
           node.data.node!.template[field].load_from_db = false;
         }
       });
-      if (node.data.node?.flow) {
-        removeGlobalVariableFromComponents(node.data.node.flow);
+      if (node.data.node?.agent) {
+        removeGlobalVariableFromComponents(node.data.node.agent);
       }
     }
   });
@@ -1811,7 +1811,7 @@ export function templatesGenerator(data: APIObjectType) {
   return Object.keys(data).reduce((acc, curr) => {
     Object.keys(data[curr]).forEach((c: keyof APIKindType) => {
       //prevent wrong overwriting of the component template by a group of the same type
-      if (!data[curr][c].flow) acc[c] = data[curr][c];
+      if (!data[curr][c].agent) acc[c] = data[curr][c];
     });
     return acc;
   }, {});
@@ -1973,33 +1973,33 @@ function sortJsonStructure<T>(obj: T): T {
 }
 
 /**
- * Downloads the flow as a JSON file with sorted keys and arrays
- * @param flow - The flow to download
- * @param flowName - The name to use for the flow
- * @param flowDescription - Optional description for the flow
+ * Downloads the agent as a JSON file with sorted keys and arrays
+ * @param agent - The agent to download
+ * @param agentName - The name to use for the agent
+ * @param agentDescription - Optional description for the agent
  */
-export async function downloadFlow(
-  flow: FlowType,
-  flowName: string,
-  flowDescription?: string,
+export async function downloadAgent(
+  agent: AgentType,
+  agentName: string,
+  agentDescription?: string,
 ): Promise<string | undefined | void> {
   try {
-    const clonedFlow = cloneDeep(flow);
+    const clonedAgent = cloneDeep(agent);
 
-    removeFileNameFromComponents(clonedFlow);
+    removeFileNameFromComponents(clonedAgent);
 
-    const flowData = {
-      ...clonedFlow,
-      name: flowName,
-      description: flowDescription,
+    const agentData = {
+      ...clonedAgent,
+      name: agentName,
+      description: agentDescription,
     };
 
-    const sortedData = sortJsonStructure(flowData);
+    const sortedData = sortJsonStructure(agentData);
     const sortedJsonString = JSON.stringify(sortedData, null, 2);
 
-    return await customDownloadFlow(flow, sortedJsonString, flowName);
+    return await customDownloadAgent(agent, sortedJsonString, agentName);
   } catch (error) {
-    console.error("Error downloading flow:", error);
+    console.error("Error downloading agent:", error);
     throw error;
   }
 }
@@ -2012,22 +2012,22 @@ export function getRandomDescription(): string {
   return getRandomElement(DESCRIPTIONS);
 }
 
-export const createNewFlow = (
-  flowData: ReactFlowJsonObject<AllNodeType, EdgeType>,
+export const createNewAgent = (
+  agentData: reactFlowJsonObject<AllNodeType, EdgeType>,
   folderId: string,
-  flow?: FlowType,
+  agent?: AgentType,
 ) => {
   return {
-    description: flow?.description ?? getRandomDescription(),
-    name: flow?.name ? flow.name : "New Agent",
-    data: flowData,
+    description: agent?.description ?? getRandomDescription(),
+    name: agent?.name ? agent.name : "New Agent",
+    data: agentData,
     id: "",
-    icon: flow?.icon ?? undefined,
-    gradient: flow?.gradient ?? undefined,
-    is_component: flow?.is_component ?? false,
+    icon: agent?.icon ?? undefined,
+    gradient: agent?.gradient ?? undefined,
+    is_component: agent?.is_component ?? false,
     folder_id: folderId,
-    endpoint_name: flow?.endpoint_name ?? undefined,
-    tags: flow?.tags ?? [],
+    endpoint_name: agent?.endpoint_name ?? undefined,
+    tags: agent?.tags ?? [],
     mcp_enabled: true,
   };
 };
@@ -2064,25 +2064,25 @@ export function updateGroupRecursion(
       unavailableFields,
       globalVariablesEntries,
     );
-    if (groupNode.data.node?.flow) {
-      groupNode.data.node.flow.data!.nodes.forEach((node) => {
+    if (groupNode.data.node?.agent) {
+      groupNode.data.node.agent.data!.nodes.forEach((node) => {
         if (node.type === "genericNode") {
-          if (node.data.node?.flow) {
+          if (node.data.node?.agent) {
             updateGroupRecursion(
               node,
-              node.data.node.flow.data!.edges,
+              node.data.node.agent.data!.edges,
               unavailableFields,
               globalVariablesEntries,
             );
           }
         }
       });
-      const newFlow = groupNode.data.node!.flow;
-      const idsMap = updateIds(newFlow.data!);
+      const newAgent = groupNode.data.node!.agent;
+      const idsMap = updateIds(newAgent.data!);
       updateProxyIdsOnTemplate(groupNode.data.node!.template, idsMap);
       updateProxyIdsOnOutputs(groupNode.data.node.outputs, idsMap);
-      const flowEdges = edges;
-      updateEdgesIds(flowEdges, idsMap);
+      const agentEdges = edges;
+      updateEdgesIds(agentEdges, idsMap);
     }
   }
 }
@@ -2122,19 +2122,19 @@ export function updateGlobalVariables(
 }
 
 export function getGroupOutputNodeId(
-  flow: FlowType,
+  agent: AgentType,
   p_name: string,
   p_node_id: string,
 ) {
-  const node: AllNodeType | undefined = flow.data?.nodes.find(
+  const node: AllNodeType | undefined = agent.data?.nodes.find(
     (n) => n.id === p_node_id,
   );
   if (!node || node.type !== "genericNode") return;
-  if (node.data.node?.flow) {
+  if (node.data.node?.agent) {
     const output = node.data.node.outputs?.find((o) => o.name === p_name);
     if (output && output.proxy) {
       return getGroupOutputNodeId(
-        node.data.node.flow,
+        node.data.node.agent,
         output.proxy.name,
         output.proxy.id,
       );
@@ -2153,7 +2153,7 @@ export function checkOldComponents({ nodes }: { nodes: any[] }) {
   );
 }
 
-export function someFlowTemplateFields(
+export function someAgentTemplateFields(
   { nodes }: { nodes: AllNodeType[] },
   validateFn: (field: InputFieldType) => boolean,
 ): boolean {

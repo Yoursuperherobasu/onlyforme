@@ -1,4 +1,4 @@
-import type { NodeDataType } from "@/types/flow";
+import type { NodeDataType } from "@/types/agent";
 import { OutputParameter } from ".";
 import {
   getDisplayOutput,

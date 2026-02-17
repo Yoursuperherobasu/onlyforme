@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { DISCORD_URL, GITHUB_URL } from "@/constants/constants";
 import { useGetUserData, useUpdateUser } from "@/controllers/API/queries/auth";
 import ModalsComponent from "@/pages/MainPage/components/modalsComponent";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import type { Users } from "@/types/api";
 import { cn } from "@/utils/utils";
 
@@ -21,7 +21,7 @@ export const GetStartedProgress: FC<{
     useState(isDiscordJoined);
   const [newProjectModal, setNewProjectModal] = useState(false);
 
-  const flows = useFlowsManagerStore((state) => state.flows);
+  const agents = useAgentsManagerStore((state) => state.agents);
 
   const { mutate: mutateLoggedUser } = useGetUserData();
   const { mutate: updateUser } = useUpdateUser();
@@ -32,7 +32,7 @@ export const GetStartedProgress: FC<{
     }
   }, [userData, mutateLoggedUser]);
 
-  const hasFlows = flows && flows?.length > 0;
+  const hasAgents = agents && agents?.length > 0;
 
   const percentageGetStarted = useMemo(() => {
     const stepValue = 33;
@@ -46,7 +46,7 @@ export const GetStartedProgress: FC<{
       totalPercentage += stepValue;
     }
 
-    if (hasFlows) {
+    if (hasAgents) {
       totalPercentage += stepValue;
     }
 
@@ -55,7 +55,7 @@ export const GetStartedProgress: FC<{
     }
 
     return Math.min(totalPercentage, 100);
-  }, [userData?.optins, hasFlows]);
+  }, [userData?.optins, hasAgents]);
 
   const handleUserTrack = (key: string) => {
     const optins = userData?.optins ?? {};
@@ -209,27 +209,27 @@ export const GetStartedProgress: FC<{
 
         <Button
           unstyled
-          className={cn("w-full", hasFlows && "pointer-events-none")}
+          className={cn("w-full", hasAgents && "pointer-events-none")}
           onClick={() => setNewProjectModal(true)}
         >
           <div
             className={cn(
               "flex items-center gap-2 rounded-md p-2 py-[10px] hover:bg-muted",
-              hasFlows && "pointer-events-none text-muted-foreground",
+              hasAgents && "pointer-events-none text-muted-foreground",
             )}
-            data-testid="create_flow_btn_get_started"
+            data-testid="create_agent_btn_get_started"
           >
-            <span data-testid="create_flow_icon_get_started">
+            <span data-testid="create_agent_icon_get_started">
               <IconComponent
-                name={hasFlows ? "Check" : "Plus"}
+                name={hasAgents ? "Check" : "Plus"}
                 className={cn(
                   "h-4 w-4 text-primary",
-                  hasFlows && "text-accent-emerald-foreground",
+                  hasAgents && "text-accent-emerald-foreground",
                 )}
               />
             </span>
-            <span className={cn("text-sm", hasFlows && "line-through")}>
-              Create a flow
+            <span className={cn("text-sm", hasAgents && "line-through")}>
+              Create a agent
             </span>
           </div>
         </Button>

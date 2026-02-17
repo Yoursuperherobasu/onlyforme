@@ -1,5 +1,5 @@
 import Loading from "@/components/ui/loading";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { Button } from "../../../../../../components/ui/button";
 import { Case } from "../../../../../../shared/components/caseComponent";
 import type { FilePreviewType } from "../../../../../../types/components";
@@ -27,9 +27,9 @@ const ButtonSendWrapper = ({
   chatValue,
   files,
 }: ButtonSendWrapperProps) => {
-  const stopBuilding = useFlowStore((state) => state.stopBuilding);
+  const stopBuilding = useAgentStore((state) => state.stopBuilding);
 
-  const isBuilding = useFlowStore((state) => state.isBuilding);
+  const isBuilding = useAgentStore((state) => state.isBuilding);
   const showStopButton = isBuilding || files.some((file) => file.loading);
   const showSendButton =
     !(isBuilding || files.some((file) => file.loading)) && !noInput;

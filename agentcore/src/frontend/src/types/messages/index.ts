@@ -1,7 +1,7 @@
 import type { ContentBlock } from "../chat";
 
 type Message = {
-  flow_id: string;
+  agent_id: string;
   text: string;
   sender: string;
   sender_name: string;

@@ -16,7 +16,7 @@ export const useHandleWebsocketMessage = (
   setStatus: React.Dispatch<React.SetStateAction<string>>,
   messagesStore,
   setEdges,
-  addDataToFlowPool: (data: any, nodeId: string) => void,
+  addDataToAgentPool: (data: any, nodeId: string) => void,
   updateEdgesRunningByNodes: (nodeIds: string[], isRunning: boolean) => void,
   updateBuildStatus: (nodeIds: string[], status: BuildStatus) => void,
   hasOpenAIAPIKey: boolean,
@@ -67,7 +67,7 @@ export const useHandleWebsocketMessage = (
       }
       break;
 
-    case "flow.build.progress": {
+    case "agent.build.progress": {
       const buildData = data.data;
       switch (buildData.event) {
         case "start":
@@ -89,7 +89,7 @@ export const useHandleWebsocketMessage = (
 
         case "end_vertex":
           updateBuildStatus([buildData.vertex_id], BuildStatus.BUILT);
-          addDataToFlowPool(
+          addDataToAgentPool(
             {
               ...buildData.data.build_data,
               run_id: buildData.run_id,

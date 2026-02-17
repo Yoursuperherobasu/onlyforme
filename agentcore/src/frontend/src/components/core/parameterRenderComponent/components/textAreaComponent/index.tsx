@@ -89,9 +89,9 @@ export default function TextAreaComponent({
   useEffect(() => {
     if (isWebhook && value === WEBHOOK_VALUE) {
       const curlWebhookCode = getCurlWebhookCode({
-        flowId: nodeInformationMetadata?.flowId!,
+        agentId: nodeInformationMetadata?.agentId!,
         isAuth: nodeInformationMetadata?.isAuth!,
-        flowName: nodeInformationMetadata?.flowName!,
+        agentName: nodeInformationMetadata?.agentName!,
         format: "singleline",
       });
       handleOnNewValue({ value: curlWebhookCode });
@@ -126,9 +126,9 @@ export default function TextAreaComponent({
   const changeWebhookFormat = (format: "multiline" | "singleline") => {
     if (isWebhook) {
       const curlWebhookCode = getCurlWebhookCode({
-        flowId: nodeInformationMetadata?.flowId!,
+        agentId: nodeInformationMetadata?.agentId!,
         isAuth: nodeInformationMetadata?.isAuth!,
-        flowName: nodeInformationMetadata?.flowName!,
+        agentName: nodeInformationMetadata?.agentName!,
         format,
       });
       handleOnNewValue({ value: curlWebhookCode });

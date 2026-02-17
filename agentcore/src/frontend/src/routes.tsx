@@ -25,7 +25,7 @@ import { CustomRoutesStorePages } from "./customization/utils/custom-routes-stor
 import { AppAuthenticatedPage } from "./pages/AppAuthenticatedPage";
 import { AppInitPage } from "./pages/AppInitPage";
 import { AppWrapperPage } from "./pages/AppWrapperPage";
-import FlowPage from "./pages/FlowPage";
+import agentPage from "./pages/agentPage";
 import LoginPage from "./pages/LoginPage";
 import FilesPage from "./pages/MainPage/pages/filesPage";
 import HomePage from "./pages/MainPage/pages/homePage";
@@ -44,9 +44,9 @@ import ApprovalPage from "./pages/ApprovalPage";
 import ModelCatalogue from "./pages/ModelCatalogue";
 import AgentOrchestrator from "./pages/OrchestratorChat";
 import AgentCatalogueView from "./pages/AgentCatalogue";
-import { Workflow } from "lucide-react";
-import WorkflowCatalogueView from "./pages/WorkflowPage";
-import WorkflowsView from "./pages/WorkflowPage";
+import { Workagent } from "lucide-react";
+import WorkagentCatalogueView from "./pages/WorkagentPage";
+import workflowsView from "./pages/WorkagentPage";
 import Dashboard from "./pages/DashboardPage";
 import DashboardAdmin from "./pages/DashboardPage";
 import TimeoutSettings from "./pages/TimeoutSettings";
@@ -188,7 +188,7 @@ const router = createBrowserRouter(
                     path="workflows"
                     element={
                      
-                        <WorkflowsView />
+                        <workflowsView />
                 
                     }
                   />
@@ -222,11 +222,11 @@ const router = createBrowserRouter(
                       
                     </Route>
                   )}
-                  <Route path="flows/">
+                  <Route path="agents/">
                     <Route index element={<CollectionPage />} />
                     <Route
                       path="folder/:folderId"
-                      element={<HomePage type="flows" />}
+                      element={<HomePage type="agents" />}
                     />
                   </Route>
                   <Route
@@ -240,11 +240,11 @@ const router = createBrowserRouter(
                   </Route>
                   <Route
                     path="all/"
-                    element={<HomePage key="flows" type="flows" />}
+                    element={<HomePage key="agents" type="agents" />}
                   >
                     <Route
                       path="folder/:folderId"
-                      element={<HomePage key="flows" type="flows" />}
+                      element={<HomePage key="agents" type="agents" />}
                     />
                   </Route>
                   <Route
@@ -301,13 +301,13 @@ const router = createBrowserRouter(
                   }
                 />
               </Route>
-              <Route path="flow/:id/">
+              <Route path="agent/:id/">
                 <Route path="" element={<CustomDashboardWrapperPage />}>
                   <Route
                     path="folder/:folderId/"
                     element={
                      
-                        <FlowPage />
+                        <agentPage />
                      
                     }
                   />
@@ -315,7 +315,7 @@ const router = createBrowserRouter(
                     path=""
                     element={
                      
-                        <FlowPage />
+                        <agentPage />
                  
                     }
                   />

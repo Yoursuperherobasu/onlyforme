@@ -4,12 +4,12 @@ import React from "react";
 import { BrowserRouter } from "react-router-dom";
 
 // Mock all the dependencies to avoid complex imports
-jest.mock("@/stores/flowsManagerStore", () => ({
+jest.mock("@/stores/agentsManagerStore", () => ({
   __esModule: true,
   default: jest.fn(),
 }));
 
-jest.mock("@/hooks/flows/use-add-flow", () => ({
+jest.mock("@/hooks/agents/use-add-agent", () => ({
   __esModule: true,
   default: jest.fn(),
 }));
@@ -26,7 +26,7 @@ jest.mock("@/customization/utils/analytics", () => ({
   track: jest.fn(),
 }));
 
-jest.mock("@/utils/reactflowUtils", () => ({
+jest.mock("@/utils/reactFlowUtils", () => ({
   updateIds: jest.fn(),
 }));
 

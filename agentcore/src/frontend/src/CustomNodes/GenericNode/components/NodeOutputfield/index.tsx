@@ -13,20 +13,20 @@ import { useHotkeys } from "react-hotkeys-hook";
 import { Badge } from "@/components/ui/badge";
 import { ICON_STROKE_WIDTH } from "@/constants/constants";
 import { useShortcutsStore } from "@/stores/shortcuts";
-import type { targetHandleType } from "@/types/flow";
+import type { targetHandleType } from "@/types/agent";
 import ForwardedIconComponent, {
   default as IconComponent,
 } from "../../../../components/common/genericIconComponent";
 import ShadTooltip from "../../../../components/common/shadTooltipComponent";
 import { Button } from "../../../../components/ui/button";
-import useFlowStore from "../../../../stores/flowStore";
+import useAgentStore from "../../../../stores/agentStore";
 import { useTypesStore } from "../../../../stores/typesStore";
 import type { NodeOutputFieldComponentType } from "../../../../types/components";
 import {
   getGroupOutputNodeId,
   scapedJSONStringfy,
   scapeJSONParse,
-} from "../../../../utils/reactflowUtils";
+} from "../../../../utils/reactFlowUtils";
 import {
   cn,
   logFirstMessage,
@@ -129,50 +129,50 @@ function NodeOutputField({
   const ref = useRef<HTMLDivElement>(null);
   const updateNodeInternals = useUpdateNodeInternals();
 
-  const edges = useFlowStore((state) => state.edges);
-  const setNode = useFlowStore((state) => state.setNode);
-  const setFilterEdge = useFlowStore((state) => state.setFilterEdge);
-  const flowPool = useFlowStore((state) => state.flowPool);
+  const edges = useAgentStore((state) => state.edges);
+  const setNode = useAgentStore((state) => state.setNode);
+  const setFilterEdge = useAgentStore((state) => state.setFilterEdge);
+  const agentPool = useAgentStore((state) => state.agentPool);
   const myData = useTypesStore((state) => state.data);
 
-  const { flowPoolId, internalOutputName } = useMemo(() => {
-    if (data.node?.flow && outputProxy) {
+  const { agentPoolId, internalOutputName } = useMemo(() => {
+    if (data.node?.agent && outputProxy) {
       const realOutput = getGroupOutputNodeId(
-        data.node.flow,
+        data.node.agent,
         outputProxy.name,
         outputProxy.id,
       );
       if (realOutput) {
         return {
-          flowPoolId: realOutput.id,
+          agentPoolId: realOutput.id,
           internalOutputName: realOutput.outputName,
         };
       }
     }
-    return { flowPoolId: data.id, internalOutputName: outputName };
-  }, [data.id, data.node?.flow, outputProxy, outputName]);
+    return { agentPoolId: data.id, internalOutputName: outputName };
+  }, [data.id, data.node?.agent, outputProxy, outputName]);
 
-  const flowPoolNode = useMemo(() => {
-    const pool = flowPool[flowPoolId] ?? [];
+  const agentPoolNode = useMemo(() => {
+    const pool = agentPool[agentPoolId] ?? [];
     return pool[pool.length - 1];
-  }, [flowPool, flowPoolId]);
+  }, [agentPool, agentPoolId]);
 
   const { displayOutputPreview, unknownOutput, errorOutput } = useMemo(
     () => ({
       displayOutputPreview:
-        !!flowPool[flowPoolId] &&
-        logHasMessage(flowPoolNode?.data, internalOutputName),
-      unknownOutput: logTypeIsUnknown(flowPoolNode?.data, internalOutputName),
-      errorOutput: logTypeIsError(flowPoolNode?.data, internalOutputName),
+        !!agentPool[agentPoolId] &&
+        logHasMessage(agentPoolNode?.data, internalOutputName),
+      unknownOutput: logTypeIsUnknown(agentPoolNode?.data, internalOutputName),
+      errorOutput: logTypeIsError(agentPoolNode?.data, internalOutputName),
     }),
-    [flowPool, flowPoolId, flowPoolNode?.data, internalOutputName],
+    [agentPool, agentPoolId, agentPoolNode?.data, internalOutputName],
   );
 
   const emptyOutput = useMemo(() => {
-    return Object.keys(flowPoolNode?.data?.outputs ?? {})?.every(
-      (key) => flowPoolNode?.data?.outputs[key]?.message?.length === 0,
+    return Object.keys(agentPoolNode?.data?.outputs ?? {})?.every(
+      (key) => agentPoolNode?.data?.outputs[key]?.message?.length === 0,
     );
-  }, [flowPoolNode?.data?.outputs]);
+  }, [agentPoolNode?.data?.outputs]);
 
   const disabledOutput = useMemo(
     () => edges.some((edge) => edge.sourceHandle === scapedJSONStringfy(id)),
@@ -253,7 +253,7 @@ function NodeOutputField({
       sortedEdges[0]?.sourceHandle === scapedJSONStringfy(id);
     const hasNoEdges = !edges.some((edge) => edge.source === data.id);
     const isValidFirstMessage =
-      hasNoEdges && logFirstMessage(flowPoolNode?.data, internalOutputName);
+      hasNoEdges && logFirstMessage(agentPoolNode?.data, internalOutputName);
 
     if (isFirstOutput || isValidFirstMessage) {
       return true;
@@ -398,7 +398,7 @@ function NodeOutputField({
                 open={openOutputModal}
                 setOpen={setOpenOutputModal}
                 disabled={disabledInspectButton}
-                nodeId={flowPoolId}
+                nodeId={agentPoolId}
                 outputName={internalOutputName}
               >
                 <InspectButton

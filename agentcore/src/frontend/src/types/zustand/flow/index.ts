@@ -3,16 +3,16 @@ import type {
   Node,
   OnEdgesChange,
   OnNodesChange,
-  ReactFlowInstance,
+  reactFlowInstance,
   Viewport,
 } from "@xyflow/react";
-import type { AllNodeType, EdgeType, FlowType } from "@/types/flow";
+import type { AllNodeType, EdgeType, AgentType } from "@/types/agent";
 import type { BuildStatus, EventDeliveryType } from "../../../constants/enums";
 import type { VertexBuildTypeAPI } from "../../api";
 import type { ChatInputType, ChatOutputType } from "../../chat";
-import type { FlowState } from "../../tabs";
+import type { AgentState } from "../../tabs";
 
-export type FlowPoolObjectType = {
+export type AgentPoolObjectType = {
   timestamp: string;
   valid: boolean;
   messages: Array<ChatOutputType | ChatInputType> | [];
@@ -26,7 +26,7 @@ export type FlowPoolObjectType = {
   buildId: string;
 };
 
-export type FlowPoolObjectTypeNew = {
+export type AgentPoolObjectTypeNew = {
   //build
   //1 - error->logs
   //2 - success-> result
@@ -48,7 +48,7 @@ export type VertexLayerElementType = {
   reference?: string;
 };
 
-export type FlowPoolType = {
+export type AgentPoolType = {
   [key: string]: Array<VertexBuildTypeAPI>;
 };
 
@@ -61,7 +61,7 @@ export type ComponentsToUpdateType = {
   userEdited: boolean;
 };
 
-export type FlowStoreType = {
+export type AgentStoreType = {
   dismissedNodes: string[];
   addDismissedNodes: (dismissedNodes: string[]) => void;
   removeDismissedNodes: (dismissedNodes: string[]) => void;
@@ -74,7 +74,7 @@ export type FlowStoreType = {
     [key: number]: number;
   }) => void;
   fitViewNode: (nodeId: string) => void;
-  autoSaveFlow: (() => void) | undefined;
+  autoSaveAgent: (() => void) | undefined;
   componentsToUpdate: ComponentsToUpdateType[];
   setComponentsToUpdate: (
     update:
@@ -82,9 +82,9 @@ export type FlowStoreType = {
       | ((oldState: ComponentsToUpdateType[]) => ComponentsToUpdateType[]),
   ) => void;
   updateComponentsToUpdate: (nodes: AllNodeType[]) => void;
-  onFlowPage: boolean;
-  setOnFlowPage: (onFlowPage: boolean) => void;
-  flowPool: FlowPoolType;
+  onAgentPage: boolean;
+  setOnAgentPage: (onAgentPage: boolean) => void;
+  agentPool: AgentPoolType;
   setHasIO: (hasIO: boolean) => void;
   setInputs: (
     inputs: Array<{ type: string; id: string; displayName: string }>,
@@ -103,25 +103,25 @@ export type FlowStoreType = {
     displayName: string;
   }>;
   hasIO: boolean;
-  setFlowPool: (flowPool: FlowPoolType) => void;
-  addDataToFlowPool: (data: VertexBuildTypeAPI, nodeId: string) => void;
-  CleanFlowPool: () => void;
+  setAgentPool: (agentPool: AgentPoolType) => void;
+  addDataToAgentPool: (data: VertexBuildTypeAPI, nodeId: string) => void;
+  CleanAgentPool: () => void;
   isBuilding: boolean;
   isPending: boolean;
   setIsBuilding: (isBuilding: boolean) => void;
   setPending: (isPending: boolean) => void;
-  resetFlow: (flow: FlowType | undefined) => void;
-  resetFlowState: () => void;
-  reactFlowInstance: ReactFlowInstance<AllNodeType, EdgeType> | null;
-  setReactFlowInstance: (
-    newState: ReactFlowInstance<AllNodeType, EdgeType>,
+  resetAgent: (agent: AgentType | undefined) => void;
+  resetAgentState: () => void;
+  reactFlowInstance: reactFlowInstance<AllNodeType, EdgeType> | null;
+  setreactFlowInstance: (
+    newState: reactFlowInstance<AllNodeType, EdgeType>,
   ) => void;
-  flowState: FlowState | undefined;
-  setFlowState: (
+  agentState: AgentState | undefined;
+  setAgentState: (
     state:
-      | FlowState
+      | AgentState
       | undefined
-      | ((oldState: FlowState | undefined) => FlowState),
+      | ((oldState: AgentState | undefined) => AgentState),
   ) => void;
   nodes: AllNodeType[];
   edges: EdgeType[];
@@ -151,7 +151,7 @@ export type FlowStoreType = {
     newSelection: { nodes: any; edges: any } | null,
     isCrop?: boolean,
   ) => void;
-  cleanFlow: () => void;
+  cleanAgent: () => void;
   setFilterEdge: (newState) => void;
   getFilterEdge: any[];
   setFilterComponent: (newState) => void;
@@ -164,7 +164,7 @@ export type FlowStoreType = {
   setBuildInfo: (
     buildInfo: { error?: string[]; success?: boolean } | null,
   ) => void;
-  pastBuildFlowParams: {
+  pastBuildAgentParams: {
     startNodeId?: string;
     stopNodeId?: string;
     input_value?: string;
@@ -174,7 +174,7 @@ export type FlowStoreType = {
     stream?: boolean;
     eventDelivery?: EventDeliveryType;
   } | null;
-  buildFlow: ({
+  buildAgent: ({
     startNodeId,
     stopNodeId,
     input_value,
@@ -193,7 +193,7 @@ export type FlowStoreType = {
     stream?: boolean;
     eventDelivery?: EventDeliveryType;
   }) => Promise<void>;
-  getFlow: () => { nodes: Node[]; edges: EdgeType[]; viewport: Viewport };
+  getAgent: () => { nodes: Node[]; edges: EdgeType[]; viewport: Viewport };
   updateVerticesBuild: (
     vertices: {
       verticesIds: string[];
@@ -212,22 +212,22 @@ export type FlowStoreType = {
   } | null;
   updateBuildStatus: (nodeIdList: string[], status: BuildStatus) => void;
   revertBuiltStatusFromBuilding: () => void;
-  flowBuildStatus: {
+  agentBuildStatus: {
     [key: string]: {
       status: BuildStatus;
       timestamp?: string;
     };
   };
-  updateFlowPool: (
+  updateAgentPool: (
     nodeId: string,
     data: VertexBuildTypeAPI | ChatOutputType | ChatInputType,
     buildId?: string,
   ) => void;
   getNodePosition: (nodeId: string) => { x: number; y: number };
   updateFreezeStatus: (nodeIds: string[], freeze: boolean) => void;
-  currentFlow: FlowType | undefined;
-  setCurrentFlow: (flow: FlowType | undefined) => void;
-  updateCurrentFlow: ({
+  currentAgent: AgentType | undefined;
+  setCurrentAgent: (agent: AgentType | undefined) => void;
+  updateCurrentAgent: ({
     nodes,
     edges,
     viewport,

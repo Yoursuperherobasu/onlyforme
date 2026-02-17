@@ -21,7 +21,7 @@ import {
 } from "../../constants/constants";
 import useAlertStore from "../../stores/alertStore";
 import type { PromptModalType } from "../../types/components";
-import { handleKeyDown } from "../../utils/reactflowUtils";
+import { handleKeyDown } from "../../utils/reactFlowUtils";
 import { classNames } from "../../utils/utils";
 import BaseModal from "../baseModal";
 import varHighlightHTML from "./utils/var-highlight-html";

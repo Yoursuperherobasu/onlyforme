@@ -1,4 +1,4 @@
-import type { Edge, Node, ReactFlowJsonObject } from "@xyflow/react";
+import type { Edge, Node, reactFlowJsonObject } from "@xyflow/react";
 import type { AxiosRequestConfig } from "axios";
 import type { useMutationFunctionType } from "@/types/api";
 import { api } from "../../api";
@@ -6,8 +6,8 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 interface retrieveGetVerticesOrder {
-  flowId: string;
-  data?: ReactFlowJsonObject;
+  agentId: string;
+  data?: reactFlowJsonObject;
   stopNodeId?: string;
   startNodeId?: string;
 }
@@ -27,8 +27,8 @@ export const usePostRetrieveVertexOrder: useMutationFunctionType<
   const { mutate } = UseRequestProcessor();
 
   const postRetrieveVertexOrder = async ({
-    flowId,
-    data: flow,
+    agentId,
+    data: agent,
     startNodeId,
     stopNodeId,
   }: retrieveGetVerticesOrder): Promise<retrieveGetVerticesOrderResponse> => {
@@ -43,15 +43,15 @@ export const usePostRetrieveVertexOrder: useMutationFunctionType<
       };
     }
     let requestBody: { nodes: Node[]; edges: Edge[] } | null = null;
-    if (flow && flow.nodes && flow.edges) {
-      const { nodes, edges } = flow;
+    if (agent && agent.nodes && agent.edges) {
+      const { nodes, edges } = agent;
       requestBody = {
         nodes,
         edges,
       };
     }
     const response = await api.post(
-      `${getURL("BUILD")}/${flowId}/vertices`,
+      `${getURL("BUILD")}/${agentId}/vertices`,
       requestBody,
       config,
     );

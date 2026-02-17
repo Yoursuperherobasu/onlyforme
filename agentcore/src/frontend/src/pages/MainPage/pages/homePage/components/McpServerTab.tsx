@@ -10,8 +10,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs-button";
 import { MAX_MCP_SERVER_NAME_LENGTH } from "@/constants/constants";
 import { createApiKey } from "@/controllers/API";
 import {
-  useGetFlowsMCP,
-  usePatchFlowsMCP,
+  useGetAgentsMCP,
+  usePatchAgentsMCP,
 } from "@/controllers/API/queries/mcp";
 import { useGetProjectComposerUrl } from "@/controllers/API/queries/mcp/use-get-composer-url";
 import { useGetInstalledMCP } from "@/controllers/API/queries/mcp/use-get-installed-mcp";
@@ -160,19 +160,19 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
   const { data: mcpProjectData, isLoading: isLoadingMCPProjectData } =
-    useGetFlowsMCP({ projectId });
-  const { mutate: patchFlowsMCP, isPending: isPatchingFlowsMCP } =
-    usePatchFlowsMCP({ project_id: projectId });
+    useGetAgentsMCP({ projectId });
+  const { mutate: patchAgentsMCP, isPending: isPatchingAgentsMCP } =
+    usePatchAgentsMCP({ project_id: projectId });
 
   // Extract tools and auth_settings from the response
-  const flowsMCP = mcpProjectData?.tools || [];
+  const agentsMCP = mcpProjectData?.tools || [];
   const currentAuthSettings = mcpProjectData?.auth_settings;
 
   // Only get composer URL for OAuth projects
   // Disable the query during mutations to prevent stale auth state issues
   const isOAuthProject =
     currentAuthSettings?.auth_type === "oauth" && ENABLE_MCP_COMPOSER;
-  const shouldQueryComposerUrl = isOAuthProject && !isPatchingFlowsMCP;
+  const shouldQueryComposerUrl = isOAuthProject && !isPatchingAgentsMCP;
 
   const { data: composerUrlData } = useGetProjectComposerUrl(
     {
@@ -211,11 +211,11 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
   );
 
   const handleOnNewValue = (value: any) => {
-    const flowsMCPData: MCPSettingsType[] = value.value.map((flow: any) => ({
-      id: flow.id,
-      action_name: flow.name,
-      action_description: flow.description,
-      mcp_enabled: flow.status,
+    const agentsMCPData: MCPSettingsType[] = value.value.map((agent: any) => ({
+      id: agent.id,
+      action_name: agent.name,
+      action_description: agent.description,
+      mcp_enabled: agent.status,
     }));
 
     // Prepare the request with both settings and auth_settings
@@ -225,39 +225,39 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
       : { auth_type: "none" };
 
     const requestData = {
-      settings: flowsMCPData,
+      settings: agentsMCPData,
       auth_settings: finalAuthSettings,
     };
 
-    patchFlowsMCP(requestData);
+    patchAgentsMCP(requestData);
   };
 
   const handleAuthSave = (authSettings: AuthSettingsType) => {
-    // Update the current flows with the new auth settings
-    const flowsMCPData: MCPSettingsType[] =
-      flowsMCP?.map((flow) => ({
-        id: flow.id,
-        action_name: flow.action_name,
-        action_description: flow.action_description,
-        mcp_enabled: flow.mcp_enabled,
+    // Update the current agents with the new auth settings
+    const agentsMCPData: MCPSettingsType[] =
+      agentsMCP?.map((agent) => ({
+        id: agent.id,
+        action_name: agent.action_name,
+        action_description: agent.action_description,
+        mcp_enabled: agent.mcp_enabled,
       })) || [];
 
     const requestData = {
-      settings: flowsMCPData,
+      settings: agentsMCPData,
       auth_settings: authSettings,
     };
 
-    patchFlowsMCP(requestData);
+    patchAgentsMCP(requestData);
   };
 
-  const flowsMCPData = flowsMCP?.map((flow) => ({
-    id: flow.id,
-    name: flow.action_name,
-    description: flow.action_description,
-    display_name: flow.name,
-    display_description: flow.description,
-    status: flow.mcp_enabled,
-    tags: [flow.name],
+  const agentsMCPData = agentsMCP?.map((agent) => ({
+    id: agent.id,
+    name: agent.action_name,
+    description: agent.action_description,
+    display_name: agent.name,
+    display_description: agent.description,
+    status: agent.mcp_enabled,
+    tags: [agent.name],
   }));
 
   const syntaxHighlighterStyle = {
@@ -383,7 +383,7 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
   const hasAuthentication =
     currentAuthSettings?.auth_type && currentAuthSettings.auth_type !== "none";
 
-  const isLoadingMCPProjectAuth = isLoadingMCPProjectData || isPatchingFlowsMCP;
+  const isLoadingMCPProjectAuth = isLoadingMCPProjectData || isPatchingAgentsMCP;
 
   return (
     <div>
@@ -398,11 +398,11 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
         <div className="w-full xl:w-2/5">
           <div className="flex flex-row justify-between pt-1">
             <ShadTooltip
-              content="Flows in this project can be exposed as callable MCP tools."
+              content="Agents in this project can be exposed as callable MCP tools."
               side="right"
             >
               <div className="flex items-center text-sm font-medium hover:cursor-help">
-                Flows/Tools
+                Agents/Tools
                 <ForwardedIconComponent
                   name="info"
                   className="ml-1.5 h-4 w-4 text-muted-foreground"
@@ -413,7 +413,7 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
           </div>
           <div className="flex flex-row flex-wrap gap-2 pt-2">
             <ToolsComponent
-              value={flowsMCPData}
+              value={agentsMCPData}
               title="MCP Server Tools"
               description="Select tools to add to this server"
               handleOnNewValue={handleOnNewValue}

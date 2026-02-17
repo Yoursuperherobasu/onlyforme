@@ -1,14 +1,14 @@
-import useFlowStore from "../stores/flowStore";
-import useFlowsManagerStore from "../stores/flowsManagerStore";
-import { customStringify } from "../utils/reactflowUtils";
+import useAgentStore from "../stores/agentStore";
+import useAgentsManagerStore from "../stores/agentsManagerStore";
+import { customStringify } from "../utils/reactFlowUtils";
 
 export function useUnsavedChanges() {
-  const currentFlow = useFlowStore((state) => state.currentFlow);
-  const savedFlow = useFlowsManagerStore((state) => state.currentFlow);
+  const currentAgent = useAgentStore((state) => state.currentAgent);
+  const savedAgent = useAgentsManagerStore((state) => state.currentAgent);
 
-  if (!currentFlow || !savedFlow) {
+  if (!currentAgent || !savedAgent) {
     return false;
   }
 
-  return customStringify(currentFlow) !== customStringify(savedFlow);
+  return customStringify(currentAgent) !== customStringify(savedAgent);
 }

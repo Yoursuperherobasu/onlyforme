@@ -3,8 +3,8 @@ import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
-import useAddFlow from "@/hooks/flows/use-add-flow";
-import type { newFlowModalPropsType } from "../../types/components";
+import useAddAgent from "@/hooks/agents/use-add-agent";
+import type { newAgentModalPropsType } from "../../types/components";
 import BaseModal from "../baseModal";
 import TemplateContentComponent from "./components/TemplateContentComponent";
 import { useContext } from "react";
@@ -13,8 +13,8 @@ import { AuthContext } from "@/contexts/authContext";
 export default function TemplatesModal({
   open,
   setOpen,
-}: newFlowModalPropsType): JSX.Element {
-  const addFlow = useAddFlow();
+}: newAgentModalPropsType): JSX.Element {
+  const addAgent = useAddAgent();
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
 
@@ -42,21 +42,21 @@ export default function TemplatesModal({
                 <div className="flex flex-col items-start justify-center">
                   <div className="font-semibold">Start from scratch</div>
                   <div className="text-sm text-muted-foreground">
-                    Begin with a fresh flow to build from scratch.
+                    Begin with a fresh agent to build from scratch.
                   </div>
                 </div>
-                 {can("edit_flows") && (
+                 {can("edit_agents") && (
                 <Button
                   onClick={() => {
-                    addFlow().then((id) => {
+                    addAgent().then((id) => {
                       navigate(
-                        `/flow/${id}${folderId ? `/folder/${folderId}` : ""}`,
+                        `/agent/${id}${folderId ? `/folder/${folderId}` : ""}`,
                       );
                     });
                     track("New Agent Created", { template: "Blank Agent" });
                   }}
                   size="sm"
-                  data-testid="blank-flow"
+                  data-testid="blank-agent"
                   className="shrink-0"
                 >
                   <ForwardedIconComponent

@@ -1,11 +1,11 @@
 import { useCallback } from "react";
 import { createRoot } from "react-dom/client";
-import type { FlowType } from "@/types/flow";
-import useFlowsManagerStore from "../../../../stores/flowsManagerStore";
+import type { AgentType } from "@/types/agent";
+import useAgentsManagerStore from "../../../../stores/agentsManagerStore";
 import DragCardComponent from "../components/dragCardComponent";
 
-const useDragStart = (data: FlowType) => {
-  const getFlowById = useFlowsManagerStore((state) => state.getFlowById);
+const useDragStart = (data: AgentType) => {
+  const getAgentById = useAgentsManagerStore((state) => state.getAgentById);
 
   const onDragStart = useCallback(
     (event) => {
@@ -20,9 +20,9 @@ const useDragStart = (data: FlowType) => {
       const root = createRoot(ghost);
       root.render(image);
 
-      const flow = getFlowById(data.id);
-      if (flow) {
-        event.dataTransfer.setData("flow", JSON.stringify(data));
+      const agent = getAgentById(data.id);
+      if (agent) {
+        event.dataTransfer.setData("agent", JSON.stringify(data));
       }
     },
     [data],

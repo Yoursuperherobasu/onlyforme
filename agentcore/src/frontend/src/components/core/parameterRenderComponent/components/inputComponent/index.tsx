@@ -4,7 +4,7 @@ import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Input } from "@/components/ui/input";
 import { ICON_STROKE_WIDTH } from "@/constants/constants";
 import type { InputComponentType } from "@/types/components";
-import { handleKeyDown } from "@/utils/reactflowUtils";
+import { handleKeyDown } from "@/utils/reactFlowUtils";
 import { classNames, cn } from "@/utils/utils";
 import { getIconName } from "./components/helpers/get-icon-name";
 import CustomInputPopover from "./components/popover";

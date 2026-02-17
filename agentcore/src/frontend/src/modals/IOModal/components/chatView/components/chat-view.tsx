@@ -6,17 +6,17 @@ import CustomChatInput from "@/customization/components/custom-chat-input";
 import { ENABLE_IMAGE_ON_PLAYGROUND } from "@/customization/feature-flags";
 import useCustomUseFileHandler from "@/customization/hooks/use-custom-use-file-handler";
 import { track } from "@/customization/utils/analytics";
-import { useGetFlowId } from "@/modals/IOModal/hooks/useGetFlowId";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import { useGetAgentId } from "@/modals/IOModal/hooks/useGetAgentId";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useMessagesStore } from "@/stores/messagesStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 import { useVoiceStore } from "@/stores/voiceStore";
 import { cn } from "@/utils/utils";
 import useTabVisibility from "../../../../../shared/hooks/use-tab-visibility";
-import useFlowStore from "../../../../../stores/flowStore";
+import useAgentStore from "../../../../../stores/agentStore";
 import type { ChatMessageType } from "../../../../../types/chat";
 import type { chatViewProps } from "../../../../../types/components";
-import FlowRunningSqueleton from "../../flow-running-squeleton";
+import AgentRunningSqueleton from "../../agent-running-squeleton";
 import useDragAndDrop from "../chatInput/hooks/use-drag-and-drop";
 import ChatMessage from "../chatMessage/chat-message";
 import sortSenderMessages from "../helpers/sort-sender-messages";
@@ -40,24 +40,24 @@ export default function ChatView({
   playgroundPage,
   sidebarOpen,
 }: chatViewProps): JSX.Element {
-  const inputs = useFlowStore((state) => state.inputs);
-  const realFlowId = useFlowsManagerStore((state) => state.currentFlowId);
-  const currentFlowId = useGetFlowId();
+  const inputs = useAgentStore((state) => state.inputs);
+  const realAgentId = useAgentsManagerStore((state) => state.currentAgentId);
+  const currentAgentId = useGetAgentId();
   const [chatHistory, setChatHistory] = useState<ChatMessageType[] | undefined>(
     undefined,
   );
   const messages = useMessagesStore((state) => state.messages);
-  const nodes = useFlowStore((state) => state.nodes);
+  const nodes = useAgentStore((state) => state.nodes);
   const chatInput = inputs.find((input) => input.type === "ChatInput");
   const chatInputNode = nodes.find((node) => node.id === chatInput?.id);
   const displayLoadingMessage = useMessagesStore(
     (state) => state.displayLoadingMessage,
   );
 
-  const isBuilding = useFlowStore((state) => state.isBuilding);
+  const isBuilding = useAgentStore((state) => state.isBuilding);
 
   const inputTypes = inputs.map((obj) => obj.type);
-  const updateFlowPool = useFlowStore((state) => state.updateFlowPool);
+  const updateAgentPool = useAgentStore((state) => state.updateAgentPool);
   const setChatValueStore = useUtilityStore((state) => state.setChatValueStore);
   const isTabHidden = useTabVisibility();
 
@@ -66,7 +66,7 @@ export default function ChatView({
     const messagesFromMessagesStore: ChatMessageType[] = messages
       .filter(
         (message) =>
-          message.agent_id === currentFlowId &&
+          message.agent_id === currentAgentId &&
           (visibleSession === message.session_id || visibleSession === null),
       )
       .map((message) => {
@@ -126,14 +126,14 @@ export default function ChatView({
   function updateChat(chat: ChatMessageType, message: string) {
     chat.message = message;
     if (chat.componentId)
-      updateFlowPool(chat.componentId, {
+      updateAgentPool(chat.componentId, {
         message,
         sender_name: chat.sender_name ?? "Bot",
         sender: chat.isSend ? "User" : "Machine",
       });
   }
 
-  const { files, setFiles, handleFiles } = useCustomUseFileHandler(realFlowId);
+  const { files, setFiles, handleFiles } = useCustomUseFileHandler(realAgentId);
   const [isDragging, setIsDragging] = useState(false);
 
   const { dragOver, dragEnter, dragLeave } = useDragAndDrop(
@@ -155,7 +155,7 @@ export default function ChatView({
     setIsDragging(false);
   };
 
-  const flowRunningSkeletonMemo = useMemo(() => <FlowRunningSqueleton />, []);
+  const agentRunningSkeletonMemo = useMemo(() => <AgentRunningSqueleton />, []);
   const isVoiceAssistantActive = useVoiceStore(
     (state) => state.isVoiceAssistantActive,
   );
@@ -207,7 +207,7 @@ export default function ChatView({
                       data-testid="new-chat-text"
                     >
                       <TextEffectPerChar>
-                        Test your flow with a chat prompt
+                        Test your agent with a chat prompt
                       </TextEffectPerChar>
                     </p>
                   </div>
@@ -226,7 +226,7 @@ export default function ChatView({
         >
           {displayLoadingMessage &&
             !(chatHistory?.[chatHistory.length - 1]?.category === "error") &&
-            flowRunningSkeletonMemo}
+            agentRunningSkeletonMemo}
         </div>
       </StickToBottom.Content>
 

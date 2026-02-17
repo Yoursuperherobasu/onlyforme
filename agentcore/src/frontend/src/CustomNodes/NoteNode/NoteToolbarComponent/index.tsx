@@ -10,10 +10,10 @@ import { Select, SelectTrigger } from "@/components/ui/select-custom";
 import { COLOR_OPTIONS } from "@/constants/constants";
 import { customOpenNewTab } from "@/customization/utils/custom-open-new-tab";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useShortcutsStore } from "@/stores/shortcuts";
-import type { NoteDataType } from "@/types/flow";
+import type { NoteDataType } from "@/types/agent";
 import { classNames, cn } from "@/utils/utils";
 import IconComponent from "../../../components/common/genericIconComponent";
 import { ColorPickerButtons } from "../components/color-picker-buttons";
@@ -30,7 +30,7 @@ const NoteToolbarComponent = memo(function NoteToolbarComponent({
 
   // Combine multiple store selectors into one to reduce re-renders
   const { nodes, setLastCopiedSelection, paste, setNode, deleteNode } =
-    useFlowStore(
+    useAgentStore(
       useCallback(
         (state) => ({
           nodes: state.nodes,
@@ -43,7 +43,7 @@ const NoteToolbarComponent = memo(function NoteToolbarComponent({
       ),
     );
 
-  const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
+  const takeSnapshot = useAgentsManagerStore((state) => state.takeSnapshot);
   const shortcuts = useShortcutsStore((state) => state.shortcuts);
 
   const openDocs = useCallback(() => {

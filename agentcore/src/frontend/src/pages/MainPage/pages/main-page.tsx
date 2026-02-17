@@ -9,7 +9,7 @@ import CustomLoader from "@/customization/components/custom-loader";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 
 import useAlertStore from "@/stores/alertStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useFolderStore } from "@/stores/foldersStore";
 
 import ModalsComponent from "../components/modalsComponent";
@@ -34,8 +34,8 @@ export default function CollectionPage(): JSX.Element {
 
   /* ================= STORES ================= */
 
-  const flows = useFlowsManagerStore((s) => s.flows);
-  const examples = useFlowsManagerStore((s) => s.examples);
+  const agents = useAgentsManagerStore((s) => s.agents);
+  const examples = useAgentsManagerStore((s) => s.examples);
 
   const folders = useFolderStore((s) => s.folders);
   const folderToEdit = useFolderStore((s) => s.folderToEdit);
@@ -46,10 +46,10 @@ export default function CollectionPage(): JSX.Element {
 
   /* ================= ROUTE DETECTION ================= */
 
-  const isFlowsRoute =
-    location.pathname === "/flows" || location.pathname === "/flows/";
+  const isAgentsRoute =
+    location.pathname === "/agents" || location.pathname === "/agents/";
 
-  const isInFlowsFolder = location.pathname.includes("/flows/folder/");
+  const isInAgentsFolder = location.pathname.includes("/agents/folder/");
 
   /* ================= CLEANUP ================= */
 
@@ -72,7 +72,7 @@ export default function CollectionPage(): JSX.Element {
       {
         onSuccess: () => {
           setSuccessData({ title: "Project deleted successfully." });
-          navigate("/flows");
+          navigate("/agents");
         },
         onError: () => {
           setErrorData({ title: "Error deleting project." });
@@ -90,7 +90,7 @@ export default function CollectionPage(): JSX.Element {
         data: {
           ...folderToEdit,
           name: newName.trim(),
-          flows: folderToEdit.flows ?? [],
+          agents: folderToEdit.agents ?? [],
           components: folderToEdit.components ?? [],
         },
       },
@@ -109,11 +109,11 @@ export default function CollectionPage(): JSX.Element {
 
   /* ================= DERIVED STATE ================= */
 
-  const hasContent = Boolean(flows && examples && folders);
+  const hasContent = Boolean(agents && examples && folders);
 
   const showEmptyState =
     hasContent &&
-    flows.length === examples.length &&
+    agents.length === examples.length &&
     folders.length <= 1;
 
   const showSidebar = Boolean(hasContent && folders.length > 0);
@@ -123,7 +123,7 @@ export default function CollectionPage(): JSX.Element {
   const Sidebar = showSidebar ? (
     <SideBarFoldersButtonsComponent
       handleChangeFolder={(id: string) => {
-        navigate(`/flows/folder/${id}`);
+        navigate(`/agents/folder/${id}`);
       }}
       handleDeleteFolder={(folder) => {
         setFolderToEdit(folder);
@@ -146,7 +146,7 @@ export default function CollectionPage(): JSX.Element {
           <div className="flex h-full w-full items-center justify-center">
             <CustomLoader remSize={30} />
           </div>
-        ) : isFlowsRoute ? (
+        ) : isAgentsRoute ? (
           <div className="relative mx-auto flex h-full w-full flex-col overflow-hidden">
             {showEmptyState ? (
               <CustomEmptyPageCommunity setOpenModal={setOpenModal} />
@@ -154,7 +154,7 @@ export default function CollectionPage(): JSX.Element {
               <FolderCardsView
                 setOpenModal={setOpenModal}
                 onFolderClick={(folderId: string) => {
-                  navigate(`/flows/folder/${folderId}`);
+                  navigate(`/agents/folder/${folderId}`);
                 }}
                 onRenameFolder={(folder) => {
                   setFolderToEdit(folder);

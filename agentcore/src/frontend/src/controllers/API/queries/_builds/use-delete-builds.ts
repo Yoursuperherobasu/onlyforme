@@ -4,7 +4,7 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 interface IDeleteBuilds {
-  flowId: string;
+  agentId: string;
 }
 
 // add types for error handling and success
@@ -16,7 +16,7 @@ export const useDeleteBuilds: useMutationFunctionType<
 
   const deleteBuildsFn = async (payload: IDeleteBuilds): Promise<any> => {
     const config = {};
-    config["params"] = { flow_id: payload.flowId };
+    config["params"] = { agent_id: payload.agentId };
     const res = await api.delete<any>(`${getURL("BUILDS")}`, config);
     return res.data;
   };

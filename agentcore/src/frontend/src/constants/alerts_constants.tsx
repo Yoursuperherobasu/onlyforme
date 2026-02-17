@@ -1,7 +1,7 @@
 // ERROR
 export const MISSED_ERROR_ALERT = "Oops! Looks like you missed something";
 export const INCOMPLETE_LOOP_ERROR_ALERT =
-  "The flow has an incomplete loop. Check your connections and try again.";
+  "The agent has an incomplete loop. Check your connections and try again.";
 export const INVALID_FILE_ALERT =
   "Please select a valid file. Only these file types are allowed:";
 export const CONSOLE_ERROR_MSG = "Error occurred while uploading file";
@@ -14,7 +14,7 @@ export const BUG_ALERT = "Something went wrong, please try again";
 export const CODE_ERROR_ALERT =
   "There is something wrong with this code, please review it";
 export const CHAT_ERROR_ALERT =
-  "Please build the flow again before using the chat.";
+  "Please build the agent again before using the chat.";
 export const MSG_ERROR_ALERT = "There was an error sending the message";
 export const PROMPT_ERROR_ALERT =
   "There is something wrong with this prompt, please review it";
@@ -45,7 +45,7 @@ export const COMPONENTS_ERROR_ALERT = "Error getting components.";
 
 // NOTICE
 export const NOCHATOUTPUT_NOTICE_ALERT =
-  "There is no ChatOutput Component in the flow.";
+  "There is no ChatOutput Component in the agent.";
 export const API_WARNING_NOTICE_ALERT =
   "Warning: Critical data, JSON file may include API keys.";
 export const COPIED_NOTICE_ALERT = "API Key copied!";
@@ -60,7 +60,7 @@ export const USER_EDIT_SUCCESS_ALERT = "Success! User edited!";
 export const USER_ADD_SUCCESS_ALERT = "Success! New user added!";
 export const DEL_KEY_SUCCESS_ALERT = "Success! Key deleted!";
 export const DEL_KEY_SUCCESS_ALERT_PLURAL = "Success! Keys deleted!";
-export const FLOW_BUILD_SUCCESS_ALERT = `Flow built successfully`;
+export const FLOW_BUILD_SUCCESS_ALERT = `agent built successfully`;
 export const SAVE_SUCCESS_ALERT = "Changes saved successfully!";
 export const INVALID_FILE_SIZE_ALERT = (maxSizeMB) => {
   return `The file size is too large. Please select a file smaller than ${maxSizeMB}.`;

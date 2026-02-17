@@ -5,8 +5,8 @@ import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { useDeleteDeleteFlows } from "@/controllers/API/queries/flows/use-delete-delete-flows";
-import { useGetDownloadFlows } from "@/controllers/API/queries/flows/use-get-download-flows";
+import { useDeleteDeleteAgents } from "@/controllers/API/queries/agents/use-delete-delete-agents";
+import { useGetDownloadAgents } from "@/controllers/API/queries/agents/use-get-download-agents";
 import { ENABLE_MCP } from "@/customization/feature-flags";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import useAlertStore from "@/stores/alertStore";
@@ -15,27 +15,27 @@ import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 
 interface HeaderComponentProps {
-  flowType: "flows" | "components" | "mcp";
-  setFlowType: (flowType: "flows" | "components" | "mcp") => void;
+  agentType: "agents" | "components" | "mcp";
+  setAgentType: (agentType: "agents" | "components" | "mcp") => void;
   view: "list" | "grid";
   setView: (view: "list" | "grid") => void;
   setNewProjectModal: (newProjectModal: boolean) => void;
   folderName?: string;
   setSearch: (search: string) => void;
   isEmptyFolder: boolean;
-  selectedFlows: string[];
+  selectedAgents: string[];
 }
 
 const HeaderComponent = ({
   folderName = "",
-  flowType,
-  setFlowType,
+  agentType,
+  setAgentType,
   view,
   setView,
   setNewProjectModal,
   setSearch,
   isEmptyFolder,
-  selectedFlows,
+  selectedAgents,
 }: HeaderComponentProps) => {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const isMCPEnabled = ENABLE_MCP;
@@ -48,9 +48,9 @@ const HeaderComponent = ({
     [setSearch],
   );
 
-  const { mutate: downloadFlows, isPending: isDownloading } =
-    useGetDownloadFlows();
-  const { mutate: deleteFlows, isPending: isDeleting } = useDeleteDeleteFlows();
+  const { mutate: downloadAgents, isPending: isDownloading } =
+    useGetDownloadAgents();
+  const { mutate: deleteAgents, isPending: isDeleting } = useDeleteDeleteAgents();
 
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -63,34 +63,34 @@ const HeaderComponent = ({
     };
   }, [debouncedSearch, debouncedSetSearch]);
 
-  // If current flowType is not available based on feature flag, switch to flows
+  // If current agentType is not available based on feature flag, switch to agents
   useEffect(() => {
     if (
-      (flowType === "mcp" && !isMCPEnabled) ||
-      (flowType === "components" && isMCPEnabled)
+      (agentType === "mcp" && !isMCPEnabled) ||
+      (agentType === "components" && isMCPEnabled)
     ) {
-      setFlowType("flows");
+      setAgentType("agents");
     }
-  }, [flowType, isMCPEnabled, setFlowType]);
+  }, [agentType, isMCPEnabled, setAgentType]);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setDebouncedSearch(e.target.value);
   };
 
   // Determine which tabs to show based on feature flag
-  const tabTypes = isMCPEnabled ? ["mcp", "flows"] : ["components", "flows"];
+  const tabTypes = isMCPEnabled ? ["mcp", "agents"] : ["components", "agents"];
 
   const handleDownload = () => {
-    downloadFlows({ ids: selectedFlows });
-    setSuccessData({ title: "Flows downloaded successfully" });
+    downloadAgents({ ids: selectedAgents });
+    setSuccessData({ title: "Agents downloaded successfully" });
   };
 
   const handleDelete = () => {
-    deleteFlows(
-      { flow_ids: selectedFlows },
+    deleteAgents(
+      { agent_ids: selectedAgents },
       {
         onSuccess: () => {
-          setSuccessData({ title: "Flows deleted successfully" });
+          setSuccessData({ title: "Agents deleted successfully" });
         },
       },
     );
@@ -122,14 +122,14 @@ const HeaderComponent = ({
             
           </div>
           {/* Search and filters */}
-          {flowType !== "mcp" && (
+          {agentType !== "mcp" && (
             <div className="flex justify-between">
               <div className="flex w-full xl:w-5/12">
                 <Input
                   icon="Search"
                   data-testid="search-store-input"
                   type="text"
-                  placeholder={`Search ${flowType}...`}
+                  placeholder={`Search ${agentType}...`}
                   className="mr-2 !text-mmd"
                   inputClassName="!text-mmd"
                   value={debouncedSearch}
@@ -171,7 +171,7 @@ const HeaderComponent = ({
                 <div
                   className={cn(
                     "flex w-0 items-center gap-2 overflow-hidden opacity-0 transition-all duration-300",
-                    selectedFlows.length > 0 && "w-36 opacity-100",
+                    selectedAgents.length > 0 && "w-36 opacity-100",
                   )}
                 >
                   <Button
@@ -187,10 +187,10 @@ const HeaderComponent = ({
 
                   <DeleteConfirmationModal
                     onConfirm={handleDelete}
-                    description={"flow" + (selectedFlows.length > 1 ? "s" : "")}
+                    description={"agent" + (selectedAgents.length > 1 ? "s" : "")}
                     note={
                       "and " +
-                      (selectedFlows.length > 1 ? "their" : "its") +
+                      (selectedAgents.length > 1 ? "their" : "its") +
                       " message history"
                     }
                   >
@@ -206,7 +206,7 @@ const HeaderComponent = ({
                     </Button>
                   </DeleteConfirmationModal>
                 </div>
-                {can("edit_flows") && (
+                {can("edit_agents") && (
                 <ShadTooltip content="New Agent" side="bottom">
                   <Button
                     variant="default"

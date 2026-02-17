@@ -1,5 +1,5 @@
-import type { NodeDataType } from "@/types/flow";
-import { scapeJSONParse } from "../../../../utils/reactflowUtils";
+import type { NodeDataType } from "@/types/agent";
+import { scapeJSONParse } from "../../../../utils/reactFlowUtils";
 import {
   logFirstMessage,
   logHasMessage,
@@ -53,14 +53,14 @@ export const getDisplayOutput = (
  * Determines the output status (preview, unknown, error)
  */
 export const determineOutputStatus = (
-  flowPool: any,
-  flowPoolId: string,
+  agentPool: any,
+  agentPoolId: string,
   internalOutputName: string,
 ) => {
-  const pool = flowPool[flowPoolId] ?? [];
-  const flowPoolNode = pool[pool.length - 1];
+  const pool = agentPool[agentPoolId] ?? [];
+  const agentPoolNode = pool[pool.length - 1];
 
-  if (!flowPoolNode) {
+  if (!agentPoolNode) {
     return {
       displayOutputPreview: false,
       unknownOutput: false,
@@ -69,13 +69,13 @@ export const determineOutputStatus = (
   }
 
   const displayOutputPreview =
-    !!flowPool[flowPoolId] &&
-    logHasMessage(flowPoolNode?.data, internalOutputName);
+    !!agentPool[agentPoolId] &&
+    logHasMessage(agentPoolNode?.data, internalOutputName);
   const unknownOutput = logTypeIsUnknown(
-    flowPoolNode?.data,
+    agentPoolNode?.data,
     internalOutputName,
   );
-  const errorOutput = logTypeIsError(flowPoolNode?.data, internalOutputName);
+  const errorOutput = logTypeIsError(agentPoolNode?.data, internalOutputName);
 
   return {
     displayOutputPreview,
@@ -120,7 +120,7 @@ export const isOutputShortcutOpenable = ({
   edges,
   nodeData,
   id,
-  flowPoolNode,
+  agentPoolNode,
   internalOutputName,
 }: {
   displayOutputPreview: boolean;
@@ -128,7 +128,7 @@ export const isOutputShortcutOpenable = ({
   edges: any[];
   nodeData: any;
   id: string;
-  flowPoolNode: any;
+  agentPoolNode: any;
   internalOutputName: string;
 }): boolean => {
   if (!displayOutputPreview || !selected) return false;
@@ -154,7 +154,7 @@ export const isOutputShortcutOpenable = ({
   const isFirstOutput = sortedEdges[0]?.sourceHandle === id;
   const hasNoEdges = !edges.some((edge) => edge.source === nodeData.id);
   const isValidFirstMessage =
-    hasNoEdges && logFirstMessage(flowPoolNode?.data, internalOutputName);
+    hasNoEdges && logFirstMessage(agentPoolNode?.data, internalOutputName);
 
   return isFirstOutput || isValidFirstMessage;
 };

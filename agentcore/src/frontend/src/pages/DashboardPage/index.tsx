@@ -11,7 +11,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 interface DashboardProps {
-  onNewFlow?: () => void;
+  onNewAgent?: () => void;
 }
 
 export default function DashboardAdmin(): JSX.Element {
@@ -366,11 +366,11 @@ export default function DashboardAdmin(): JSX.Element {
             </div>
           </div>
 
-          {/* Workflow Executions Bar Chart */}
+          {/* Workagent Executions Bar Chart */}
           <div className="rounded-xl border bg-card p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-lg font-semibold mb-1">Workflow Executions</h3>
+                <h3 className="text-lg font-semibold mb-1">Workagent Executions</h3>
                 <p className="text-sm text-muted-foreground">
                   Completed workflows over time
                 </p>

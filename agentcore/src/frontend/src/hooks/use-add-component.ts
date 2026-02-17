@@ -2,17 +2,17 @@ import { useStoreApi } from "@xyflow/react";
 import { useCallback } from "react";
 import { NODE_WIDTH } from "@/constants/constants";
 import { track } from "@/customization/utils/analytics";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import type { APIClassType } from "@/types/api";
-import type { AllNodeType } from "@/types/flow";
-import { getNodeId } from "@/utils/reactflowUtils";
+import type { AllNodeType } from "@/types/agent";
+import { getNodeId } from "@/utils/reactFlowUtils";
 import { getNodeRenderType } from "@/utils/utils";
 
 export function useAddComponent() {
   const store = useStoreApi();
-  const paste = useFlowStore((state) => state.paste);
-  const filterEdge = useFlowStore((state) => state.getFilterEdge);
-  const filterType = useFlowStore((state) => state.filterType);
+  const paste = useAgentStore((state) => state.paste);
+  const filterEdge = useAgentStore((state) => state.getFilterEdge);
+  const filterType = useAgentStore((state) => state.filterType);
 
   const addComponent = useCallback(
     (

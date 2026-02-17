@@ -3,9 +3,9 @@ import { usePostLikeComponent } from "@/controllers/API/queries/store";
 import { getComponent } from "../../../controllers/API";
 import useAlertStore from "../../../stores/alertStore";
 import { useStoreStore } from "../../../stores/storeStore";
-import type { FlowType } from "../../../types/flow";
+import type { AgentType } from "../../../types/agent";
 import type { storeComponent } from "../../../types/store";
-import cloneFLowWithParent, {
+import cloneagentWithParent, {
   getInputsAndOutputs,
 } from "../../../utils/storeUtils";
 import { cn } from "../../../utils/utils";
@@ -42,19 +42,19 @@ export default function StoreCardComponent({
     data?.downloads_count ?? 0,
   );
 
-  const name = data.is_component ? "Component" : "Flow";
+  const name = data.is_component ? "Component" : "agent";
 
-  async function _getFlowData() {
+  async function _getagentData() {
     const res = await getComponent(data.id);
-    const newFlow = cloneFLowWithParent(res, res.id, data.is_component, true);
-    return newFlow;
+    const newagent = cloneagentWithParent(res, res.id, data.is_component, true);
+    return newagent;
   }
 
-  function _hasPlayground(flow?: FlowType) {
-    if (!flow) {
+  function _hasPlayground(agent?: AgentType) {
+    if (!agent) {
       return false;
     }
-    const { inputs, outputs } = getInputsAndOutputs(flow?.data?.nodes ?? []);
+    const { inputs, outputs } = getInputsAndOutputs(agent?.data?.nodes ?? []);
     return inputs.length > 0 || outputs.length > 0;
   }
 
@@ -123,7 +123,7 @@ export default function StoreCardComponent({
                     "visible flex-shrink-0",
                     data.is_component
                       ? "mx-0.5 h-6 w-6 text-component-icon"
-                      : "h-7 w-7 flex-shrink-0 text-flow-icon",
+                      : "h-7 w-7 flex-shrink-0 text-agent-icon",
                   )}
                   name={data.is_component ? "ToyBrick" : "Group"}
                 />

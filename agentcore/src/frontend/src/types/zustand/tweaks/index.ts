@@ -1,8 +1,8 @@
-import type { AllNodeType } from "@/types/flow";
+import type { AllNodeType } from "@/types/agent";
 
 export type TweaksStoreType = {
   nodes: AllNodeType[];
-  currentFlowId: string;
+  currentAgentId: string;
   setNodes: (
     update: AllNodeType[] | ((oldState: AllNodeType[]) => AllNodeType[]),
     skipSave?: boolean,
@@ -12,7 +12,7 @@ export type TweaksStoreType = {
     update: AllNodeType | ((oldState: AllNodeType) => AllNodeType),
   ) => void;
   getNode: (id: string) => AllNodeType | undefined;
-  initialSetup: (nodes: AllNodeType[], flowId: string) => void;
+  initialSetup: (nodes: AllNodeType[], agentId: string) => void;
   updateTweaks: () => void;
   tweaks: {
     [key: string]: {

@@ -39,14 +39,14 @@ import { track } from "@/customization/utils/analytics";
 import { customGetDownloadFolderBlob } from "@/customization/utils/custom-get-download-folders";
 import { createFileUpload } from "@/helpers/create-file-upload";
 import { getObjectsFromFilelist } from "@/helpers/get-objects-from-filelist";
-import useUploadFlow from "@/hooks/flows/use-upload-flow";
+import useUploadAgent from "@/hooks/agents/use-upload-agent";
 import { useIsMobile } from "@/hooks/use-mobile";
 import useAuthStore from "@/stores/authStore";
 import type { FolderType } from "../../../../../pages/MainPage/entities";
 import useAlertStore from "../../../../../stores/alertStore";
-import useFlowsManagerStore from "../../../../../stores/flowsManagerStore";
+import useAgentsManagerStore from "../../../../../stores/agentsManagerStore";
 import { useFolderStore } from "../../../../../stores/foldersStore";
-import { handleKeyDown } from "../../../../../utils/reactflowUtils";
+import { handleKeyDown } from "../../../../../utils/reactFlowUtils";
 import { cn } from "../../../../../utils/utils";
 import useFileDrop from "../../hooks/use-on-file-drop";
 import { SidebarFolderSkeleton } from "../sidebarFolderSkeleton";
@@ -97,13 +97,13 @@ const SideBarFoldersButtonsComponent = ({
   const isMobile = useIsMobile({ maxWidth: 1024 });
   const folderIdDragging = useFolderStore((state) => state.folderIdDragging);
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
-  const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
+  const takeSnapshot = useAgentsManagerStore((state) => state.takeSnapshot);
   const { permissions, role } = useContext(AuthContext);
 
   const folderId = useParams().folderId ?? myCollectionId ?? "";
 
   const { dragOver, dragEnter, dragLeave, onDrop } = useFileDrop(folderId);
-  const uploadFlow = useUploadFlow();
+  const uploadAgent = useUploadAgent();
   const [foldersNames, setFoldersNames] = useState({});
   const [editFolders, setEditFolderName] = useState(
     folders.map((obj) => ({ name: obj.name, edit: false })) ?? [],
@@ -141,15 +141,15 @@ const SideBarFoldersButtonsComponent = ({
     loading ||
     isDeletingFolder;
 
-  const handleUploadFlowsToFolder = () => {
+  const handleUploadAgentsToFolder = () => {
     createFileUpload().then((files: File[]) => {
       if (files?.length === 0) {
         return;
       }
 
       getObjectsFromFilelist<any>(files).then((objects) => {
-        if (objects.every((flow) => flow.data?.nodes)) {
-          uploadFlow({ files }).then(() => {
+        if (objects.every((agent) => agent.data?.nodes)) {
+          uploadAgent({ files }).then(() => {
             setSuccessData({
               title: "Uploaded successfully",
             });
@@ -251,7 +251,7 @@ const SideBarFoldersButtonsComponent = ({
       const body = {
         ...item,
         name: foldersNames[item.name],
-        flows: item.flows?.length > 0 ? item.flows : [],
+        agents: item.agents?.length > 0 ? item.agents : [],
         components: item.components?.length > 0 ? item.components : [],
       };
 
@@ -434,8 +434,8 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
-              isActive={pathname.startsWith("/flows")}
-              onClick={() => _navigate("/flows")}
+              isActive={pathname.startsWith("/agents")}
+              onClick={() => _navigate("/agents")}
               className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
             >
               <ForwardedIconComponent

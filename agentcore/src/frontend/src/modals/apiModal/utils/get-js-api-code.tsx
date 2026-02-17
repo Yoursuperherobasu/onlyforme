@@ -9,14 +9,14 @@ import {
   hasFileTweaks,
 } from "./detect-file-tweaks";
 
-/** Generates Node.js code for API calls, with multi-step file uploads (v1 for ChatInput, v2 for File/VideoFile) using http module, then flow execution. Handles auth. */
+/** Generates Node.js code for API calls, with multi-step file uploads (v1 for ChatInput, v2 for File/VideoFile) using http module, then agent execution. Handles auth. */
 export function getNewJsApiCode({
-  flowId,
+  agentId,
   endpointName,
   processedPayload,
   shouldDisplayApiKey,
 }: {
-  flowId: string;
+  agentId: string;
   endpointName: string;
   processedPayload: any;
   shouldDisplayApiKey: boolean;
@@ -36,7 +36,7 @@ export function getNewJsApiCode({
 
   // If no file uploads, use existing logic
   if (!hasFiles) {
-    const apiUrl = `${baseUrl}/api/run/${endpointName || flowId}`;
+    const apiUrl = `${baseUrl}/api/run/${endpointName || agentId}`;
 
     const payloadString = JSON.stringify(processedPayload, null, 4);
 
@@ -75,7 +75,7 @@ fetch('${apiUrl}', options)
 
   if (chatInputNodeIds.length === 0 && fileNodeIds.length === 0) {
     return getNewJsApiCode({
-      flowId,
+      agentId,
       endpointName,
       processedPayload: { ...processedPayload, tweaks: nonFileTweaks },
       shouldDisplayApiKey,
@@ -204,7 +204,7 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE_URL = "${baseUrl}";
-const FLOW_ID = "${flowId}";
+const FLOW_ID = "${agentId}";
 const protocol = new URL(BASE_URL).protocol;
 const httpModule = protocol === 'https:' ? require('https') : require('http');
 
@@ -257,7 +257,7 @@ function makeRequest(options, data) {
     });
 }
 
-async function uploadAndExecuteFlow() {
+async function uploadAndExecuteAgent() {
     try {${
       shouldDisplayApiKey
         ? `
@@ -269,7 +269,7 @@ async function uploadAndExecuteFlow() {
 
 ${uploadSteps.join("\n\n")}
 
-        // Step ${uploadSteps.length + 1}: Execute flow with all file paths
+        // Step ${uploadSteps.length + 1}: Execute agent with all file paths
         const executePayload = JSON.stringify({
             "output_type": "${processedPayload.output_type || "chat"}",
             "input_type": "${processedPayload.input_type || "chat"}",
@@ -285,7 +285,7 @@ ${allTweaks}
         const executeOptions = {
             hostname: '${hostname}',
             port: ${port},
-            path: \`/api/run/${endpointName || flowId}\`,
+            path: \`/api/run/${endpointName || agentId}\`,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -295,7 +295,7 @@ ${allTweaks}
         };
 
         const result = await makeRequest(executeOptions, executePayload);
-        console.log('Flow execution successful!');
+        console.log('agent execution successful!');
         console.log(result);
 
     } catch (error) {
@@ -303,5 +303,5 @@ ${allTweaks}
     }
 }
 
-uploadAndExecuteFlow();`;
+uploadAndExecuteAgent();`;
 }

@@ -24,7 +24,7 @@ import useAlertStore from "@/stores/alertStore";
 import { formatFileSize } from "@/utils/stringManipulation";
 import { FILE_ICONS } from "@/utils/styleUtils";
 import { cn } from "@/utils/utils";
-import { sortByDate } from "../../../utils/sort-flows";
+import { sortByDate } from "../../../utils/sort-agents";
 import DragWrapComponent from "./dragWrapComponent";
 
 interface FilesTabProps {

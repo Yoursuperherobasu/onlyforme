@@ -5,10 +5,10 @@ import { DEBOUNCE_FIELD_LIST } from "@/constants/constants";
 import { usePostTemplateValue } from "@/controllers/API/queries/nodes/use-post-template-value";
 import { track } from "@/customization/utils/analytics";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import type { APIClassType, InputFieldType } from "@/types/api";
-import type { AllNodeType } from "@/types/flow";
+import type { AllNodeType } from "@/types/agent";
 import { mutateTemplate } from "../helpers/mutate-template";
 
 const DEBOUNCE_TIME_1_SECOND = 1000;
@@ -35,8 +35,8 @@ const useHandleOnNewValue = ({
     update: AllNodeType | ((oldState: AllNodeType) => AllNodeType),
   ) => void;
 }) => {
-  const takeSnapshot = useFlowsManagerStore((state) => state.takeSnapshot);
-  const setNode = setNodeExternal ?? useFlowStore((state) => state.setNode);
+  const takeSnapshot = useAgentsManagerStore((state) => state.takeSnapshot);
+  const setNode = setNodeExternal ?? useAgentStore((state) => state.setNode);
   const updateNodeInternals = useUpdateNodeInternals();
   const setErrorData = useAlertStore((state) => state.setErrorData);
 

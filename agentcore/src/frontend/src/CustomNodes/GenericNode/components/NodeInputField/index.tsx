@@ -18,7 +18,7 @@ import {
   ICON_STROKE_WIDTH,
   AGENTCORE_SUPPORTED_TYPES,
 } from "../../../../constants/constants";
-import useFlowStore from "../../../../stores/flowStore";
+import useAgentStore from "../../../../stores/agentStore";
 import { useTypesStore } from "../../../../stores/typesStore";
 import type { NodeInputFieldComponentType } from "../../../../types/components";
 import useFetchDataOnMount from "../../../hooks/use-fetch-data-on-mount";
@@ -48,10 +48,10 @@ export default function NodeInputField({
 
   const shouldDisplayApiKey = isAuthenticated;
 
-  const { currentFlowId, currentFlowName } = useFlowStore(
+  const { currentAgentId, currentAgentName } = useAgentStore(
     useShallow((state) => ({
-      currentFlowId: state.currentFlow?.id,
-      currentFlowName: state.currentFlow?.name,
+      currentAgentId: state.currentAgent?.id,
+      currentAgentName: state.currentAgent?.name,
     })),
   );
 
@@ -61,7 +61,7 @@ export default function NodeInputField({
     nodeId: data.id,
     parameterId: name,
   });
-  const setFilterEdge = useFlowStore((state) => state.setFilterEdge);
+  const setFilterEdge = useAgentStore((state) => state.setFilterEdge);
   const { handleNodeClass } = useHandleNodeClass(data.id);
 
   const { handleOnNewValue } = useHandleOnNewValue({
@@ -76,9 +76,9 @@ export default function NodeInputField({
 
   const nodeInformationMetadata: NodeInfoType = useMemo(() => {
     return {
-      flowId: currentFlowId ?? "",
+      agentId: currentAgentId ?? "",
       nodeType: data?.type?.toLowerCase() ?? "",
-      flowName: currentFlowName ?? "",
+      agentName: currentAgentName ?? "",
       isAuth: shouldDisplayApiKey!,
       variableName: name,
     };

@@ -8,7 +8,7 @@ import CustomEmptyPageCommunity from "@/customization/components/custom-empty-pa
 import CustomLoader from "@/customization/components/custom-loader";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useAlertStore from "@/stores/alertStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useFolderStore } from "@/stores/foldersStore";
 import ModalsComponent from "../components/modalsComponent";
 import EmptyPageCommunity from "./empty-page";
@@ -18,8 +18,8 @@ export default function CollectionPage(): JSX.Element {
   const [openDeleteFolderModal, setOpenDeleteFolderModal] = useState(false);
   const setFolderToEdit = useFolderStore((state) => state.setFolderToEdit);
   const navigate = useCustomNavigate();
-  const flows = useFlowsManagerStore((state) => state.flows);
-  const examples = useFlowsManagerStore((state) => state.examples);
+  const agents = useAgentsManagerStore((state) => state.agents);
+  const examples = useAgentsManagerStore((state) => state.examples);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const folderToEdit = useFolderStore((state) => state.folderToEdit);
@@ -56,10 +56,10 @@ export default function CollectionPage(): JSX.Element {
 
   return (
     <SidebarProvider width="280px">
-      {flows &&
+      {agents &&
         examples &&
         folders &&
-        (flows?.length !== examples?.length || folders?.length > 1) && (
+        (agents?.length !== examples?.length || folders?.length > 1) && (
           <SideBarFoldersButtonsComponent
             handleChangeFolder={(id: string) => {
               navigate(`all/folder/${id}`);
@@ -74,11 +74,11 @@ export default function CollectionPage(): JSX.Element {
           />
         )}
       <main className="flex h-full w-full overflow-hidden">
-        {flows && examples && folders ? (
+        {agents && examples && folders ? (
           <div
             className={`relative mx-auto flex h-full w-full flex-col overflow-hidden`}
           >
-            {flows?.length !== examples?.length || folders?.length > 1 ? (
+            {agents?.length !== examples?.length || folders?.length > 1 ? (
               <Outlet />
             ) : (
               <CustomEmptyPageCommunity setOpenModal={setOpenModal} />

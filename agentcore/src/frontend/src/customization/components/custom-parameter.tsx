@@ -1,10 +1,10 @@
 import type { handleOnNewValueType } from "@/CustomNodes/hooks/use-handle-new-value";
 import { ParameterRenderComponent } from "@/components/core/parameterRenderComponent";
 import type { NodeInfoType } from "@/components/core/parameterRenderComponent/types";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import type { APIClassType, InputFieldType } from "@/types/api";
-import type { targetHandleType } from "@/types/flow";
-import { scapedJSONStringfy } from "@/utils/reactflowUtils";
+import type { targetHandleType } from "@/types/agent";
+import { scapedJSONStringfy } from "@/utils/reactFlowUtils";
 import { cn } from "@/utils/utils";
 
 export function CustomParameterComponent({
@@ -36,7 +36,7 @@ export function CustomParameterComponent({
   nodeInformationMetadata?: NodeInfoType;
   proxy: { field: string; id: string } | undefined;
 }) {
-  const edges = useFlowStore((state) => state.edges);
+  const edges = useAgentStore((state) => state.edges);
 
   const disabled =
     edges.some(

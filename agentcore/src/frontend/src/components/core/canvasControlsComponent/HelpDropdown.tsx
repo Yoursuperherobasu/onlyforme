@@ -8,13 +8,13 @@ import {
   DOCS_URL,
 } from "@/constants/constants";
 import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 
 const HelpDropdown = () => {
   const navigate = useNavigate();
   const [isHelpMenuOpen, setIsHelpMenuOpen] = useState(false);
-  const helperLineEnabled = useFlowStore((state) => state.helperLineEnabled);
-  const setHelperLineEnabled = useFlowStore(
+  const helperLineEnabled = useAgentStore((state) => state.helperLineEnabled);
+  const setHelperLineEnabled = useAgentStore(
     (state) => state.setHelperLineEnabled,
   );
 

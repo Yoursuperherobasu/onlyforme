@@ -24,7 +24,7 @@ const parseTimestampAsUTC = (timestamp: string | undefined): number => {
  * Primary sort: By timestamp (chronological order)
  * Secondary sort: When timestamps are identical, User messages (isSend=true) come before AI/Machine messages (isSend=false)
  *
- * This ensures proper conversation flow even when backend generates identical timestamps
+ * This ensures proper conversation agent even when backend generates identical timestamps
  * due to streaming, load balancing, or database precision limitations.
  *
  * @param a - First chat message to compare

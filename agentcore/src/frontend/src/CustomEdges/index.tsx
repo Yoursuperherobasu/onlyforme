@@ -4,8 +4,8 @@ import {
   getBezierPath,
   Position,
 } from "@xyflow/react";
-import useFlowStore from "@/stores/flowStore";
-import { scapeJSONParse } from "@/utils/reactflowUtils";
+import useAgentStore from "@/stores/agentStore";
+import { scapeJSONParse } from "@/utils/reactFlowUtils";
 
 export function DefaultEdge({
   sourceHandleId,
@@ -18,7 +18,7 @@ export function DefaultEdge({
   targetY,
   ...props
 }: EdgeProps) {
-  const getNode = useFlowStore((state) => state.getNode);
+  const getNode = useAgentStore((state) => state.getNode);
 
   const sourceNode = getNode(source);
   const targetNode = getNode(target);

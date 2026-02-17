@@ -1,5 +1,5 @@
 import { useTweaksStore } from "@/stores/tweaksStore";
-import type { AllNodeType } from "@/types/flow";
+import type { AllNodeType } from "@/types/agent";
 import { TweakComponent } from "../tweakComponent";
 
 export function TweaksComponent({ open }: { open: boolean }) {

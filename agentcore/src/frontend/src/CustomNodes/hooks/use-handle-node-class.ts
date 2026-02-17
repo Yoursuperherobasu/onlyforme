@@ -1,7 +1,7 @@
 import { useUpdateNodeInternals } from "@xyflow/react";
 import { cloneDeep } from "lodash";
-import useFlowStore from "@/stores/flowStore";
-import type { AllNodeType } from "@/types/flow";
+import useAgentStore from "@/stores/agentStore";
+import type { AllNodeType } from "@/types/agent";
 
 const useHandleNodeClass = (
   nodeId: string,
@@ -10,7 +10,7 @@ const useHandleNodeClass = (
     update: AllNodeType | ((oldState: AllNodeType) => AllNodeType),
   ) => void,
 ) => {
-  const setNode = setMyNode ?? useFlowStore((state) => state.setNode);
+  const setNode = setMyNode ?? useAgentStore((state) => state.setNode);
   const updateNodeInternals = useUpdateNodeInternals();
 
   const handleNodeClass = (newNodeClass, type?: string) => {

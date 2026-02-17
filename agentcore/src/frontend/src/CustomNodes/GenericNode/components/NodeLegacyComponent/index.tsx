@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { cn } from "@/utils/utils";
 import { useGetReplacementComponents } from "../../hooks/use-get-replacement-components";
 
@@ -12,9 +12,9 @@ export default function NodeLegacyComponent({
   replacement?: string[];
   setDismissAll: (value: boolean) => void;
 }) {
-  const setFilterComponent = useFlowStore((state) => state.setFilterComponent);
-  const setFilterType = useFlowStore((state) => state.setFilterType);
-  const setFilterEdge = useFlowStore((state) => state.setFilterEdge);
+  const setFilterComponent = useAgentStore((state) => state.setFilterComponent);
+  const setFilterType = useAgentStore((state) => state.setFilterType);
+  const setFilterEdge = useAgentStore((state) => state.setFilterEdge);
 
   const handleFilterComponent = (component: string) => {
     setFilterComponent(component);

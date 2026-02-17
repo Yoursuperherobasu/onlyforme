@@ -1,13 +1,13 @@
-import { usePostUploadFlowToFolder } from "@/controllers/API/queries/folders/use-post-upload-to-folder";
-import useSaveFlow from "@/hooks/flows/use-save-flow";
+import { usePostUploadAgentToFolder } from "@/controllers/API/queries/folders/use-post-upload-to-folder";
+import useSaveAgent from "@/hooks/agents/use-save-agent";
 import {
   UPLOAD_ALERT_LIST,
   WRONG_FILE_ERROR_ALERT,
 } from "../../../../constants/alerts_constants";
 import useAlertStore from "../../../../stores/alertStore";
-import useFlowsManagerStore from "../../../../stores/flowsManagerStore";
+import useAgentsManagerStore from "../../../../stores/agentsManagerStore";
 import { useFolderStore } from "../../../../stores/foldersStore";
-import { addVersionToDuplicates } from "../../../../utils/reactflowUtils";
+import { addVersionToDuplicates } from "../../../../utils/reactFlowUtils";
 
 const useFileDrop = (folderId: string) => {
   const setFolderDragging = useFolderStore((state) => state.setFolderDragging);
@@ -17,10 +17,10 @@ const useFileDrop = (folderId: string) => {
 
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
   const setErrorData = useAlertStore((state) => state.setErrorData);
-  const saveFlow = useSaveFlow();
-  const flows = useFlowsManagerStore((state) => state.flows);
+  const saveAgent = useSaveAgent();
+  const agents = useAgentsManagerStore((state) => state.agents);
 
-  const { mutate: uploadFlowToFolder } = usePostUploadFlowToFolder();
+  const { mutate: uploadAgentToFolder } = usePostUploadAgentToFolder();
   const handleFileDrop = async (e, folderId) => {
     if (e.dataTransfer.types.some((type) => type === "Files")) {
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -86,8 +86,8 @@ const useFileDrop = (folderId: string) => {
       | React.DragEvent<HTMLAnchorElement>,
     folderId: string,
   ) => {
-    if (e?.dataTransfer?.getData("flow")) {
-      const data = JSON.parse(e?.dataTransfer?.getData("flow"));
+    if (e?.dataTransfer?.getData("agent")) {
+      const data = JSON.parse(e?.dataTransfer?.getData("agent"));
 
       if (data) {
         uploadFromDragCard(data.id, folderId);
@@ -99,29 +99,29 @@ const useFileDrop = (folderId: string) => {
     handleFileDrop(e, folderId);
   };
 
-  const uploadFromDragCard = (flowId, folderId) => {
-    const selectedFlow = flows?.find((flow) => flow.id === flowId);
+  const uploadFromDragCard = (agentId, folderId) => {
+    const selectedAgent = agents?.find((agent) => agent.id === agentId);
 
-    if (!selectedFlow) {
-      throw new Error("Flow not found");
+    if (!selectedAgent) {
+      throw new Error("agent not found");
     }
-    const updatedFlow = { ...selectedFlow, folder_id: folderId };
+    const updatedAgent = { ...selectedAgent, folder_id: folderId };
 
-    const flowsToCheckNames = flows?.filter(
+    const agentsToCheckNames = agents?.filter(
       (f) => f.folder_id === myCollectionId,
     );
 
     const newName = addVersionToDuplicates(
-      updatedFlow,
-      flowsToCheckNames ?? [],
+      updatedAgent,
+      agentsToCheckNames ?? [],
     );
 
-    updatedFlow.name = newName;
+    updatedAgent.name = newName;
 
     setFolderDragging(false);
     setFolderIdDragging("");
 
-    saveFlow(updatedFlow);
+    saveAgent(updatedAgent);
   };
 
   const uploadFormData = (data, folderId) => {
@@ -130,7 +130,7 @@ const useFileDrop = (folderId: string) => {
     setFolderDragging(false);
     setFolderIdDragging("");
 
-    uploadFlowToFolder({ flows: formData, folderId });
+    uploadAgentToFolder({ agents: formData, folderId });
   };
 
   return {

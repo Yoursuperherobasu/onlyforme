@@ -29,7 +29,7 @@ export const customGetDownloadFolderBlob = (
   const filename =
     response.headers?.["content-disposition"]
       ?.split("filename=")[1]
-      ?.replace(/['"]/g, "") ?? `${folderName || "flows"}.zip`;
+      ?.replace(/['"]/g, "") ?? `${folderName || "agents"}.zip`;
 
   link.setAttribute("download", filename);
   document.body.appendChild(link);

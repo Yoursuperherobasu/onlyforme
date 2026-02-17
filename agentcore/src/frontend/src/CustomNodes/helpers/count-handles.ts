@@ -1,4 +1,4 @@
-import type { NodeDataType } from "../../types/flow";
+import type { NodeDataType } from "../../types/agent";
 
 export function countHandlesFn(data: NodeDataType): number {
   const count = Object.keys(data.node!.template)

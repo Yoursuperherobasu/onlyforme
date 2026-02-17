@@ -1,5 +1,5 @@
 import type React from "react";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import type { APIClassType } from "@/types/api";
 import JsonEditor from "../jsonEditor";
 
@@ -17,8 +17,8 @@ const JsonOutputViewComponent: React.FC<JsonOutputViewComponentProps> = ({
   outputName,
 }) => {
   const jsonData = typeof data === "string" ? JSON.parse(data) : data;
-  const setNode = useFlowStore((state) => state.setNode);
-  const node = useFlowStore((state) => state.getNode(nodeId));
+  const setNode = useAgentStore((state) => state.setNode);
+  const node = useAgentStore((state) => state.getNode(nodeId));
   const outputs = (node?.data.node as APIClassType)?.outputs;
   const output = outputs?.find((o) => o.name === outputName);
   const initialFilter = output?.options?.filter;

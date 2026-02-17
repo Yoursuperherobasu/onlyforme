@@ -58,7 +58,7 @@ Specifications
 #7528FC -> #9BFEAA
 #2F10FE -> #98F4FE
 */
-export const flowGradients = [
+export const agentGradients = [
   "linear-gradient(90deg, #FF3276 0%, #F480FF 100%)",
   "linear-gradient(90deg, #1A0250 0%, #2F10FE 100%)",
   "linear-gradient(90deg, #98F4FE 0%, #9BFEAA 100%)",
@@ -456,7 +456,7 @@ export const nodeIconToDisplayIconMap: Record<string, string> = {
   HuggingFaceEmbeddings: "HuggingFace",
   HuggingFaceHub: "HuggingFace",
   IFixitLoader: "IFixIt",
-  ListFlows: "Group",
+  ListAgents: "Group",
   MistralAI: "Mistral",
   MongoDBAtlasVectorSearch: "MongoDB",
   MongoDBChatMessageHistory: "MongoDB",

@@ -4,7 +4,7 @@ import {
   DEFAULT_TIMEOUT,
 } from "@/constants/constants";
 import { EventDeliveryType } from "@/constants/enums";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 import type { useQueryFunctionType } from "../../../../types/api";
 import { api } from "../../api";
@@ -27,11 +27,11 @@ export interface ConfigResponse {
 export const useGetConfig: useQueryFunctionType<undefined, ConfigResponse> = (
   options,
 ) => {
-  const setAutoSaving = useFlowsManagerStore((state) => state.setAutoSaving);
-  const setAutoSavingInterval = useFlowsManagerStore(
+  const setAutoSaving = useAgentsManagerStore((state) => state.setAutoSaving);
+  const setAutoSavingInterval = useAgentsManagerStore(
     (state) => state.setAutoSavingInterval,
   );
-  const setHealthCheckMaxRetries = useFlowsManagerStore(
+  const setHealthCheckMaxRetries = useAgentsManagerStore(
     (state) => state.setHealthCheckMaxRetries,
   );
   const setMaxFileSizeUpload = useUtilityStore(

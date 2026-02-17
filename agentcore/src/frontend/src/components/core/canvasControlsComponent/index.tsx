@@ -1,7 +1,7 @@
 import {
   ControlButton,
   Panel,
-  type ReactFlowState,
+  type reactFlowState,
   useReactFlow,
   useStore,
   useStoreApi,
@@ -12,9 +12,9 @@ import { useShallow } from "zustand/react/shallow";
 import { shallow } from "zustand/shallow";
 import IconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
-import useSaveFlow from "@/hooks/flows/use-save-flow";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useSaveAgent from "@/hooks/agents/use-save-agent";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { cn } from "@/utils/utils";
 
 type CustomControlButtonProps = {
@@ -60,7 +60,7 @@ export const CustomControlButton = ({
   );
 };
 
-const selector = (s: ReactFlowState) => ({
+const selector = (s: reactFlowState) => ({
   isInteractive: s.nodesDraggable || s.nodesConnectable || s.elementsSelectable,
   minZoomReached: s.transform[2] <= s.minZoom,
   maxZoomReached: s.transform[2] >= s.maxZoom,
@@ -73,16 +73,16 @@ const CanvasControls = ({ children }) => {
     selector,
     shallow,
   );
-  const saveFlow = useSaveFlow();
-  const isLocked = useFlowStore(
-    useShallow((state) => state.currentFlow?.locked),
+  const saveAgent = useSaveAgent();
+  const isLocked = useAgentStore(
+    useShallow((state) => state.currentAgent?.locked),
   );
-  const setCurrentFlow = useFlowStore((state) => state.setCurrentFlow);
-  const autoSaving = useFlowsManagerStore((state) => state.autoSaving);
-  const setHelperLineEnabled = useFlowStore(
+  const setCurrentAgent = useAgentStore((state) => state.setCurrentAgent);
+  const autoSaving = useAgentsManagerStore((state) => state.autoSaving);
+  const setHelperLineEnabled = useAgentStore(
     (state) => state.setHelperLineEnabled,
   );
-  const helperLineEnabled = useFlowStore((state) => state.helperLineEnabled);
+  const helperLineEnabled = useAgentStore((state) => state.helperLineEnabled);
 
   useEffect(() => {
     store.setState({
@@ -92,17 +92,17 @@ const CanvasControls = ({ children }) => {
     });
   }, [isLocked]);
 
-  const handleSaveFlow = useCallback(() => {
-    const currentFlow = useFlowStore.getState().currentFlow;
-    if (!currentFlow) return;
-    const newFlow = cloneDeep(currentFlow);
-    newFlow.locked = isInteractive;
+  const handleSaveAgent = useCallback(() => {
+    const currentAgent = useAgentStore.getState().currentAgent;
+    if (!currentAgent) return;
+    const newAgent = cloneDeep(currentAgent);
+    newAgent.locked = isInteractive;
     if (autoSaving) {
-      saveFlow(newFlow);
+      saveAgent(newAgent);
     } else {
-      setCurrentFlow(newFlow);
+      setCurrentAgent(newAgent);
     }
-  }, [isInteractive, autoSaving, saveFlow, setCurrentFlow]);
+  }, [isInteractive, autoSaving, saveAgent, setCurrentAgent]);
 
   const onToggleInteractivity = useCallback(() => {
     store.setState({
@@ -110,8 +110,8 @@ const CanvasControls = ({ children }) => {
       nodesConnectable: !isInteractive,
       elementsSelectable: !isInteractive,
     });
-    handleSaveFlow();
-  }, [isInteractive, store, handleSaveFlow]);
+    handleSaveAgent();
+  }, [isInteractive, store, handleSaveAgent]);
 
   const onToggleHelperLines = useCallback(() => {
     setHelperLineEnabled(!helperLineEnabled);

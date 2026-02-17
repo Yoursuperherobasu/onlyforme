@@ -1,4 +1,4 @@
-import type { FlowType } from "@/types/flow";
+import type { AgentType } from "@/types/agent";
 
 export interface NavItem {
   title: string;
@@ -16,7 +16,7 @@ export interface CardData {
   bgHorizontalImage: string;
   icon: string;
   category: string;
-  flow: FlowType | undefined;
+  agent: AgentType | undefined;
 }
 
 export interface TemplateCategoryProps {

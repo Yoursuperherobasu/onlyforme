@@ -11,9 +11,9 @@ import {
   ENABLE_MCP,
 } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useFolderStore } from "@/stores/foldersStore";
-import { FlowType } from "@/types/flow";
+import { AgentType } from "@/types/agent";
 import HeaderComponent from "../../components/header";
 import ListComponent from "../../components/list";
 import ListSkeleton from "../../components/listSkeleton";
@@ -23,7 +23,7 @@ import EmptyFolder from "../emptyFolder";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 
-const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
+const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
   const [view, setView] = useState<"grid" | "list">(() => {
     const savedView = localStorage.getItem("view");
     return savedView === "grid" || savedView === "list" ? savedView : "list";
@@ -38,7 +38,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
-  const [flowType, setFlowType] = useState<"flows" | "components" | "mcp">(
+  const [agentType, setAgentType] = useState<"agents" | "components" | "mcp">(
     type,
   );
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
@@ -47,7 +47,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
     folders.find((folder) => folder.id === folderId)?.name ??
     folders[0]?.name ??
     "";
-  const flows = useFlowsManagerStore((state) => state.flows);
+  const agents = useAgentsManagerStore((state) => state.agents);
 
   useEffect(() => {
     // Only check if we have a folderId and folders have loaded
@@ -65,22 +65,22 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
     id: folderId ?? myCollectionId!,
     page: pageIndex,
     size: pageSize,
-    is_component: flowType === "components",
-    is_flow: flowType === "flows",
+    is_component: agentType === "components",
+    is_agent: agentType === "agents",
     search,
   });
 
   const data = {
-    flows: folderData?.flows?.items ?? [],
+    agents: folderData?.agents?.items ?? [],
     name: folderData?.folder?.name ?? "",
     description: folderData?.folder?.description ?? "",
     parent_id: folderData?.folder?.parent_id ?? "",
     components: folderData?.folder?.components ?? [],
     pagination: {
-      page: folderData?.flows?.page ?? 1,
-      size: folderData?.flows?.size ?? 12,
-      total: folderData?.flows?.total ?? 0,
-      pages: folderData?.flows?.pages ?? 0,
+      page: folderData?.agents?.page ?? 1,
+      size: folderData?.agents?.size ?? 12,
+      total: folderData?.agents?.total ?? 0,
+      pages: folderData?.agents?.pages ?? 0,
     },
   };
 
@@ -99,37 +99,37 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
   }, []);
 
   const isEmptyFolder =
-    flows?.find(
-      (flow) =>
-        flow.folder_id === (folderId ?? myCollectionId) &&
-        (ENABLE_MCP ? flow.is_component === false : true),
+    agents?.find(
+      (agent) =>
+        agent.folder_id === (folderId ?? myCollectionId) &&
+        (ENABLE_MCP ? agent.is_component === false : true),
     ) === undefined;
 
-  const handleFileDrop = useFileDrop(isEmptyFolder ? undefined : flowType);
+  const handleFileDrop = useFileDrop(isEmptyFolder ? undefined : agentType);
 
   useEffect(() => {
     if (
       !isEmptyFolder &&
-      flows?.find(
-        (flow) =>
-          flow.folder_id === (folderId ?? myCollectionId) &&
-          flow.is_component === (flowType === "components"),
+      agents?.find(
+        (agent) =>
+          agent.folder_id === (folderId ?? myCollectionId) &&
+          agent.is_component === (agentType === "components"),
       ) === undefined
     ) {
       const otherTabHasItems =
-        flows?.find(
-          (flow) =>
-            flow.folder_id === (folderId ?? myCollectionId) &&
-            flow.is_component === (flowType === "flows"),
+        agents?.find(
+          (agent) =>
+            agent.folder_id === (folderId ?? myCollectionId) &&
+            agent.is_component === (agentType === "agents"),
         ) !== undefined;
 
       if (otherTabHasItems) {
-        setFlowType(flowType === "flows" ? "components" : "flows");
+        setAgentType(agentType === "agents" ? "components" : "agents");
       }
     }
   }, [isEmptyFolder]);
 
-  const [selectedFlows, setSelectedFlows] = useState<string[]>([]);
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(
     null,
   );
@@ -177,8 +177,8 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
       setIsCtrlPressed(false);
     };
 
-    // Only add listeners if we're in flows or components mode, not MCP mode
-    if (flowType === "flows" || flowType === "components") {
+    // Only add listeners if we're in agents or components mode, not MCP mode
+    if (agentType === "agents" || agentType === "components") {
       document.addEventListener("keydown", handleKeyDown);
       document.addEventListener("keyup", handleKeyUp);
       window.addEventListener("blur", handleBlur);
@@ -194,49 +194,49 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
       setIsShiftPressed(false);
       setIsCtrlPressed(false);
     };
-  }, [flowType]);
+  }, [agentType]);
 
-  const setSelectedFlow = useCallback(
-    (selected: boolean, flowId: string, index: number) => {
+  const setSelectedAgent = useCallback(
+    (selected: boolean, agentId: string, index: number) => {
       setLastSelectedIndex(index);
       if (isShiftPressed && lastSelectedIndex !== null) {
-        // Find the indices of the last selected and current flow
-        const flows = data.flows;
+        // Find the indices of the last selected and current agent
+        const agents = data.agents;
 
         // Determine the range to select
         const start = Math.min(lastSelectedIndex, index);
         const end = Math.max(lastSelectedIndex, index);
-        // Get all flow IDs in the range
-        const flowsToSelect = flows
+        // Get all agent IDs in the range
+        const agentsToSelect = agents
           .slice(start, end + 1)
-          .map((flow) => flow.id);
+          .map((agent) => agent.id);
 
         // Update selection
         if (selected) {
-          setSelectedFlows((prev) =>
-            Array.from(new Set([...prev, ...flowsToSelect])),
+          setSelectedAgents((prev) =>
+            Array.from(new Set([...prev, ...agentsToSelect])),
           );
         } else {
-          setSelectedFlows((prev) =>
-            prev.filter((id) => !flowsToSelect.includes(id)),
+          setSelectedAgents((prev) =>
+            prev.filter((id) => !agentsToSelect.includes(id)),
           );
         }
       } else {
         if (selected) {
-          setSelectedFlows([...selectedFlows, flowId]);
+          setSelectedAgents([...selectedAgents, agentId]);
         } else {
-          setSelectedFlows(selectedFlows.filter((id) => id !== flowId));
+          setSelectedAgents(selectedAgents.filter((id) => id !== agentId));
         }
       }
     },
-    [selectedFlows, lastSelectedIndex, data.flows, isShiftPressed],
+    [selectedAgents, lastSelectedIndex, data.agents, isShiftPressed],
   );
 
   useEffect(() => {
-    setSelectedFlows((old) =>
-      old.filter((id) => data.flows.some((flow) => flow.id === id)),
+    setSelectedAgents((old) =>
+      old.filter((id) => data.agents.some((agent) => agent.id === id)),
     );
-  }, [folderData?.flows?.items]);
+  }, [folderData?.agents?.items]);
 
   // Reset key states when navigating away
   useEffect(() => {
@@ -248,8 +248,8 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
 
   return (
     <CardsWrapComponent
-      onFileDrop={flowType === "mcp" ? undefined : handleFileDrop}
-      dragMessage={`Drop your ${isEmptyFolder ? "flows or components" : flowType} here`}
+      onFileDrop={agentType === "mcp" ? undefined : handleFileDrop}
+      dragMessage={`Drop your ${isEmptyFolder ? "agents or components" : agentType} here`}
     >
       <div
         className="flex h-full w-full flex-col overflow-y-auto"
@@ -261,14 +261,14 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
             <div className="flex h-full flex-col justify-start">
               <HeaderComponent
                 folderName={folderName}
-                flowType={flowType}
-                setFlowType={setFlowType}
+                agentType={agentType}
+                setAgentType={setAgentType}
                 view={view}
                 setView={setView}
                 setNewProjectModal={setNewProjectModal}
                 setSearch={onSearch}
                 isEmptyFolder={isEmptyFolder}
-                selectedFlows={selectedFlows}
+                selectedAgents={selectedAgents}
               />
               {isEmptyFolder ? (
                 <EmptyFolder setOpenModal={setNewProjectModal} />
@@ -286,21 +286,21 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
                         <ListSkeleton />
                       </div>
                     )
-                  ) : flowType === "mcp" ? (
+                  ) : agentType === "mcp" ? (
                     <CustomMcpServerTab folderName={folderName} />
-                  ) : (flowType === "flows" || flowType === "components") &&
+                  ) : (agentType === "agents" || agentType === "components") &&
                     data &&
                     data.pagination.total > 0 ? (
                     view === "grid" ? (
                       <div className="mt-4 grid grid-cols-1 gap-1 md:grid-cols-2 lg:grid-cols-3">
-                        {data.flows.map((flow, index) => (
+                        {data.agents.map((agent, index) => (
                           <ListComponent
-                            key={flow.id}
-                            flowData={flow}
+                            key={agent.id}
+                            agentData={agent}
                             index={index}
-                            selected={selectedFlows.includes(flow.id)}
+                            selected={selectedAgents.includes(agent.id)}
                             setSelected={(selected) =>
-                              setSelectedFlow(selected, flow.id, index)
+                              setSelectedAgent(selected, agent.id, index)
                             }
                             shiftPressed={isShiftPressed || isCtrlPressed}
                           />
@@ -308,24 +308,24 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
                       </div>
                     ) : (
                       <div className="mt-4 flex flex-col gap-1">
-                        {data.flows.map((flow, index) => (
+                        {data.agents.map((agent, index) => (
                           <ListComponent
-                            key={flow.id}
-                            flowData={flow}
+                            key={agent.id}
+                            agentData={agent}
                             index={index}
-                            selected={selectedFlows.includes(flow.id)}
+                            selected={selectedAgents.includes(agent.id)}
                             setSelected={(selected) =>
-                              setSelectedFlow(selected, flow.id, index)
+                              setSelectedAgent(selected, agent.id, index)
                             }
                             shiftPressed={isShiftPressed || isCtrlPressed}
-                            disabled={can("view_flows_page") && !can("edit_flows")}
+                            disabled={can("view_agents_page") && !can("edit_agents")}
                           />
                         ))}
                       </div>
                     )
-                  ) : flowType === "flows" ? (
+                  ) : agentType === "agents" ? (
                     <div className="pt-24 text-center text-sm text-secondary-foreground">
-                      No flows in this project.{" "}
+                      No agents in this project.{" "}
                       <a
                         onClick={() => setNewProjectModal(true)}
                         className="cursor-pointer underline"
@@ -343,7 +343,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
               )}
             </div>
           </div>
-          {(flowType === "flows" || flowType === "components") &&
+          {(agentType === "agents" || agentType === "components") &&
             !isLoading &&
             !isEmptyFolder &&
             data.pagination.total >= 10 && (
@@ -355,7 +355,7 @@ const HomePage = ({ type }: { type: "flows" | "components" | "mcp" }) => {
                   totalRowsCount={data.pagination.total}
                   paginate={handlePageChange}
                   pages={data.pagination.pages}
-                  isComponent={flowType === "components"}
+                  isComponent={agentType === "components"}
                 />
               </div>
             )}

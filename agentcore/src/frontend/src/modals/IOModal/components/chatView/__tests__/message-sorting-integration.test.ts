@@ -12,7 +12,7 @@ const createStoreMessage = (
   timestamp: string,
   sender: "User" | "Machine",
   text: string,
-  agent_id: string = "test-flow-id",
+  agent_id: string = "test-agent-id",
 ) => ({
   id,
   timestamp,
@@ -32,7 +32,7 @@ const createStoreMessage = (
 // Helper to simulate the transformation that chat-view.tsx does
 const transformMessages = (storeMessages: any[]): ChatMessageType[] => {
   return storeMessages
-    .filter((message) => message.agent_id === "test-flow-id")
+    .filter((message) => message.agent_id === "test-agent-id")
     .map((message) => ({
       isSend: message.sender === "User",
       message: message.text,
@@ -50,7 +50,7 @@ const transformMessages = (storeMessages: any[]): ChatMessageType[] => {
 };
 
 describe("Message Sorting Integration", () => {
-  describe("Real component data flow simulation", () => {
+  describe("Real component data agent simulation", () => {
     it("should correctly sort messages through the full data transformation pipeline", () => {
       // Simulate messages arriving from backend in random order
       const storeMessages = [
@@ -161,14 +161,14 @@ describe("Message Sorting Integration", () => {
           "2025-08-29 08:51:21 UTC",
           "User",
           "Original text",
-          "test-flow-id",
+          "test-agent-id",
         ),
         createStoreMessage(
           "msg2",
           "2025-08-29 08:51:21 UTC",
           "Machine",
           "AI response",
-          "test-flow-id",
+          "test-agent-id",
         ),
       ];
 
@@ -188,35 +188,35 @@ describe("Message Sorting Integration", () => {
       expect(sorted[1].session).toBe("test-session");
     });
 
-    it("should handle filtering by flow_id correctly", () => {
-      const mixedFlowMessages = [
+    it("should handle filtering by agent_id correctly", () => {
+      const mixedAgentMessages = [
         createStoreMessage(
           "msg1",
           "2025-08-29 08:51:21 UTC",
           "User",
           "Message 1",
-          "test-flow-id",
+          "test-agent-id",
         ),
         createStoreMessage(
           "msg2",
           "2025-08-29 08:51:22 UTC",
           "Machine",
           "Message 2",
-          "other-flow",
+          "other-agent",
         ),
         createStoreMessage(
           "msg3",
           "2025-08-29 08:51:23 UTC",
           "User",
           "Message 3",
-          "test-flow-id",
+          "test-agent-id",
         ),
       ];
 
-      const transformed = transformMessages(mixedFlowMessages);
+      const transformed = transformMessages(mixedAgentMessages);
       const sorted = [...transformed].sort(sortSenderMessages);
 
-      // Only messages from test-flow-id should be included
+      // Only messages from test-agent-id should be included
       expect(sorted.length).toBe(2);
       expect(sorted.map((m) => m.id)).toEqual(["msg1", "msg3"]);
     });
@@ -314,7 +314,7 @@ describe("Message Sorting Integration", () => {
           sender: "User",
           text: "Incomplete message",
           session_id: "test-session",
-          agent_id: "test-flow-id",
+          agent_id: "test-agent-id",
         },
         createStoreMessage(
           "complete1",

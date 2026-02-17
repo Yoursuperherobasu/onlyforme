@@ -10,9 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs-button";
 import { customCodeTabsClass } from "@/customization/constants";
 import useAuthStore from "@/stores/authStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useTweaksStore } from "@/stores/tweaksStore";
-import { hasStreaming } from "@/utils/reactflowUtils";
+import { hasStreaming } from "@/utils/reactFlowUtils";
 import { getOS } from "@/utils/utils";
 import { useDarkStore } from "../../../stores/darkStore";
 import { formatPayloadTweaks } from "../utils/filter-tweaks";
@@ -36,14 +36,14 @@ const operatingSystemTabs = [
 export default function APITabsComponent() {
   const [isCopied, setIsCopied] = useState<Boolean>(false);
   const [copiedStep, setCopiedStep] = useState<string | null>(null);
-  const endpointName = useFlowStore(
-    useShallow((state) => state.currentFlow?.endpoint_name),
+  const endpointName = useAgentStore(
+    useShallow((state) => state.currentAgent?.endpoint_name),
   );
   const dark = useDarkStore((state) => state.dark);
-  const nodes = useFlowStore((state) => state.nodes);
-  const flowId = useFlowStore((state) => state.currentFlow?.id);
-  const inputs = useFlowStore((state) => state.inputs);
-  const outputs = useFlowStore((state) => state.outputs);
+  const nodes = useAgentStore((state) => state.nodes);
+  const agentId = useAgentStore((state) => state.currentAgent?.id);
+  const inputs = useAgentStore((state) => state.inputs);
+  const outputs = useAgentStore((state) => state.outputs);
   const hasChatInput = inputs.some((input) => input.type === "ChatInput");
   const hasChatOutput = outputs.some((output) => output.type === "ChatOutput");
   let input_value = "hello world!";
@@ -77,7 +77,7 @@ export default function APITabsComponent() {
   const codeOptions = {
     endpointName: endpointName || "",
     streaming: streaming,
-    flowId: flowId || "",
+    agentId: agentId || "",
     processedPayload: processedPayload,
   };
 

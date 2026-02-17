@@ -1,6 +1,6 @@
 /**
  * Unit tests for webhook URL generation logic in CopyFieldAreaComponent
- * This test focuses specifically on testing the URL generation logic that includes flow ID
+ * This test focuses specifically on testing the URL generation logic that includes agent ID
  */
 
 describe("Webhook URL Generation Logic", () => {
@@ -17,10 +17,10 @@ describe("Webhook URL Generation Logic", () => {
   function generateWebhookUrl(
     value: string,
     endpointName?: string,
-    flowId?: string,
+    agentId?: string,
   ): string {
     if (value === BACKEND_URL) {
-      return `${URL_WEBHOOK}${endpointName ?? ""}${flowId ?? ""}`;
+      return `${URL_WEBHOOK}${endpointName ?? ""}${agentId ?? ""}`;
     } else if (value === MCP_SSE_VALUE) {
       return URL_MCP_SSE;
     }
@@ -28,19 +28,19 @@ describe("Webhook URL Generation Logic", () => {
   }
 
   describe("BACKEND_URL webhook generation", () => {
-    it("should generate webhook URL with flow ID when both endpoint name and flow ID are provided", () => {
+    it("should generate webhook URL with agent ID when both endpoint name and agent ID are provided", () => {
       const result = generateWebhookUrl(
         BACKEND_URL,
         "test-endpoint",
-        "flow-123",
+        "agent-123",
       );
 
       expect(result).toBe(
-        "http://localhost:7860/api/webhook/test-endpointflow-123",
+        "http://localhost:7860/api/webhook/test-endpointagent-123",
       );
     });
 
-    it("should generate webhook URL with only endpoint name when flow ID is missing", () => {
+    it("should generate webhook URL with only endpoint name when agent ID is missing", () => {
       const result = generateWebhookUrl(
         BACKEND_URL,
         "test-endpoint",
@@ -50,13 +50,13 @@ describe("Webhook URL Generation Logic", () => {
       expect(result).toBe("http://localhost:7860/api/webhook/test-endpoint");
     });
 
-    it("should generate webhook URL with only flow ID when endpoint name is missing", () => {
-      const result = generateWebhookUrl(BACKEND_URL, undefined, "flow-123");
+    it("should generate webhook URL with only agent ID when endpoint name is missing", () => {
+      const result = generateWebhookUrl(BACKEND_URL, undefined, "agent-123");
 
-      expect(result).toBe("http://localhost:7860/api/webhook/flow-123");
+      expect(result).toBe("http://localhost:7860/api/webhook/agent-123");
     });
 
-    it("should generate base webhook URL when both endpoint name and flow ID are missing", () => {
+    it("should generate base webhook URL when both endpoint name and agent ID are missing", () => {
       const result = generateWebhookUrl(BACKEND_URL, undefined, undefined);
 
       expect(result).toBe("http://localhost:7860/api/webhook/");
@@ -68,40 +68,40 @@ describe("Webhook URL Generation Logic", () => {
       expect(result).toBe("http://localhost:7860/api/webhook/");
     });
 
-    it("should handle special characters in flow ID", () => {
-      const specialFlowId = "flow-123_test%20id!@#$%";
-      const result = generateWebhookUrl(BACKEND_URL, "endpoint", specialFlowId);
+    it("should handle special characters in agent ID", () => {
+      const specialAgentId = "agent-123_test%20id!@#$%";
+      const result = generateWebhookUrl(BACKEND_URL, "endpoint", specialAgentId);
 
       expect(result).toBe(
-        `http://localhost:7860/api/webhook/endpoint${specialFlowId}`,
+        `http://localhost:7860/api/webhook/endpoint${specialAgentId}`,
       );
     });
 
-    it("should handle very long flow IDs", () => {
-      const longFlowId = "a".repeat(200);
-      const result = generateWebhookUrl(BACKEND_URL, "endpoint", longFlowId);
+    it("should handle very long agent IDs", () => {
+      const longAgentId = "a".repeat(200);
+      const result = generateWebhookUrl(BACKEND_URL, "endpoint", longAgentId);
 
       expect(result).toBe(
-        `http://localhost:7860/api/webhook/endpoint${longFlowId}`,
+        `http://localhost:7860/api/webhook/endpoint${longAgentId}`,
       );
     });
 
-    it("should handle Unicode characters in flow ID", () => {
-      const unicodeFlowId = "flow-🔥-test-😄";
-      const result = generateWebhookUrl(BACKEND_URL, "endpoint", unicodeFlowId);
+    it("should handle Unicode characters in agent ID", () => {
+      const unicodeAgentId = "agent-🔥-test-😄";
+      const result = generateWebhookUrl(BACKEND_URL, "endpoint", unicodeAgentId);
 
       expect(result).toBe(
-        `http://localhost:7860/api/webhook/endpoint${unicodeFlowId}`,
+        `http://localhost:7860/api/webhook/endpoint${unicodeAgentId}`,
       );
     });
   });
 
   describe("MCP_SSE_VALUE generation", () => {
-    it("should generate MCP SSE URL regardless of endpoint name and flow ID", () => {
+    it("should generate MCP SSE URL regardless of endpoint name and agent ID", () => {
       const result = generateWebhookUrl(
         MCP_SSE_VALUE,
         "test-endpoint",
-        "flow-123",
+        "agent-123",
       );
 
       expect(result).toBe("http://localhost:7860/api/mcp/sse");
@@ -117,13 +117,13 @@ describe("Webhook URL Generation Logic", () => {
   describe("Custom values", () => {
     it("should return original value when not BACKEND_URL or MCP_SSE_VALUE", () => {
       const customValue = "https://my-custom-webhook.com/api";
-      const result = generateWebhookUrl(customValue, "endpoint", "flow-123");
+      const result = generateWebhookUrl(customValue, "endpoint", "agent-123");
 
       expect(result).toBe(customValue);
     });
 
     it("should return empty string when custom value is empty", () => {
-      const result = generateWebhookUrl("", "endpoint", "flow-123");
+      const result = generateWebhookUrl("", "endpoint", "agent-123");
 
       expect(result).toBe("");
     });
@@ -132,10 +132,10 @@ describe("Webhook URL Generation Logic", () => {
   describe("Real-world scenarios", () => {
     const testCases = [
       {
-        description: "Production environment with long flow ID",
+        description: "Production environment with long agent ID",
         value: BACKEND_URL,
         endpointName: "prod-webhook",
-        flowId: "550e8400-e29b-41d4-a716-446655440000",
+        agentId: "550e8400-e29b-41d4-a716-446655440000",
         expected:
           "http://localhost:7860/api/webhook/prod-webhook550e8400-e29b-41d4-a716-446655440000",
       },
@@ -143,49 +143,49 @@ describe("Webhook URL Generation Logic", () => {
         description: "Development environment with simple names",
         value: BACKEND_URL,
         endpointName: "dev",
-        flowId: "123",
+        agentId: "123",
         expected: "http://localhost:7860/api/webhook/dev123",
       },
       {
-        description: "Flow with special characters in endpoint and ID",
+        description: "agent with special characters in endpoint and ID",
         value: BACKEND_URL,
         endpointName: "api-v2_beta",
-        flowId: "flow_2024-01-15",
+        agentId: "agent_2024-01-15",
         expected:
-          "http://localhost:7860/api/webhook/api-v2_betaflow_2024-01-15",
+          "http://localhost:7860/api/webhook/api-v2_betaagent_2024-01-15",
       },
     ];
 
     testCases.forEach(
-      ({ description, value, endpointName, flowId, expected }) => {
+      ({ description, value, endpointName, agentId, expected }) => {
         it(description, () => {
-          const result = generateWebhookUrl(value, endpointName, flowId);
+          const result = generateWebhookUrl(value, endpointName, agentId);
           expect(result).toBe(expected);
         });
       },
     );
   });
 
-  describe("Flow ID presence validation", () => {
-    it("should ensure flow ID is included in webhook URL", () => {
-      const flowId = "critical-flow-id";
-      const result = generateWebhookUrl(BACKEND_URL, "webhook", flowId);
+  describe("agent ID presence validation", () => {
+    it("should ensure agent ID is included in webhook URL", () => {
+      const agentId = "critical-agent-id";
+      const result = generateWebhookUrl(BACKEND_URL, "webhook", agentId);
 
-      expect(result).toContain(flowId);
-      expect(result).toMatch(new RegExp(`${flowId}$`)); // Flow ID should be at the end
+      expect(result).toContain(agentId);
+      expect(result).toMatch(new RegExp(`${agentId}$`)); // agent ID should be at the end
     });
 
-    it("should ensure endpoint name comes before flow ID", () => {
+    it("should ensure endpoint name comes before agent ID", () => {
       const endpointName = "my-endpoint";
-      const flowId = "my-flow";
-      const result = generateWebhookUrl(BACKEND_URL, endpointName, flowId);
+      const agentId = "my-agent";
+      const result = generateWebhookUrl(BACKEND_URL, endpointName, agentId);
 
       const endpointIndex = result.indexOf(endpointName);
-      const flowIndex = result.indexOf(flowId);
+      const agentIndex = result.indexOf(agentId);
 
-      expect(endpointIndex).toBeLessThan(flowIndex);
+      expect(endpointIndex).toBeLessThan(agentIndex);
       expect(result).toBe(
-        `http://localhost:7860/api/webhook/${endpointName}${flowId}`,
+        `http://localhost:7860/api/webhook/${endpointName}${agentId}`,
       );
     });
   });

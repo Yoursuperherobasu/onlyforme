@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { cn } from "@/utils/utils";
 
 export default function DragWrapComponent({
@@ -11,7 +11,7 @@ export default function DragWrapComponent({
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const isIOModalOpen = useFlowsManagerStore((state) => state.IOModalOpen);
+  const isIOModalOpen = useAgentsManagerStore((state) => state.IOModalOpen);
   const [filesCount, setFilesCount] = useState(0);
   useEffect(() => {
     // Function to handle visibility change

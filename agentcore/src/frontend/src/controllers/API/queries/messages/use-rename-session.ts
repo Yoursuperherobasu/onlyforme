@@ -1,6 +1,6 @@
 import type { UseMutationResult } from "@tanstack/react-query";
-import { useGetFlowId } from "@/modals/IOModal/hooks/useGetFlowId";
-import useFlowStore from "@/stores/flowStore";
+import { useGetAgentId } from "@/modals/IOModal/hooks/useGetAgentId";
+import useAgentStore from "@/stores/agentStore";
 import type { useMutationFunctionType } from "@/types/api";
 import type { Message } from "@/types/messages";
 import { api } from "../../api";
@@ -18,20 +18,20 @@ export const useUpdateSessionName: useMutationFunctionType<
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 
-  const flowId = useGetFlowId();
+  const agentId = useGetAgentId();
 
   const updateSessionApi = async (data: UpdateSessionParams) => {
-    const isPlayground = useFlowStore.getState().playgroundPage;
+    const isPlayground = useAgentStore.getState().playgroundPage;
     // if we are in playground we will edit the local storage instead of the API
-    if (isPlayground && flowId) {
-      const messages = JSON.parse(sessionStorage.getItem(flowId) || "");
+    if (isPlayground && agentId) {
+      const messages = JSON.parse(sessionStorage.getItem(agentId) || "");
       const messagesWithNewSessionId = messages.map((message: Message) => {
         if (message.session_id === data.old_session_id) {
           message.session_id = data.new_session_id;
         }
         return message;
       });
-      sessionStorage.setItem(flowId, JSON.stringify(messagesWithNewSessionId));
+      sessionStorage.setItem(agentId, JSON.stringify(messagesWithNewSessionId));
       return {
         data: messagesWithNewSessionId,
       };
@@ -52,7 +52,7 @@ export const useUpdateSessionName: useMutationFunctionType<
       ...options,
       onSettled: () => {
         queryClient.invalidateQueries({
-          queryKey: ["useGetSessionsFromFlowQuery"],
+          queryKey: ["useGetSessionsFromAgentQuery"],
         });
       },
     });

@@ -11,7 +11,7 @@ export const ChatViewWrapper = ({
   visibleSession,
   sessions,
   sidebarOpen,
-  currentFlowId,
+  currentAgentId,
   setSidebarOpen,
   isPlayground,
   setvisibleSession,
@@ -60,7 +60,7 @@ export const ChatViewWrapper = ({
               sidebarOpen ? "blur-sm lg:blur-0" : "",
             )}
           >
-            {visibleSession === currentFlowId
+            {visibleSession === currentAgentId
               ? "Default Session"
               : `${visibleSession}`}
           </div>

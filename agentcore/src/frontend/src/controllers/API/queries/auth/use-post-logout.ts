@@ -2,8 +2,8 @@ import { Cookies } from "react-cookie";
 import {
 } from "@/constants/constants";
 import useAuthStore from "@/stores/authStore";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useFolderStore } from "@/stores/foldersStore";
 import type { useMutationFunctionType } from "@/types/api";
 import { getAuthCookie } from "@/utils/utils";
@@ -28,11 +28,11 @@ export const useLogout: useMutationFunctionType<undefined, void> = (
     onSuccess: () => {
       logout();
 
-      useFlowStore.getState().resetFlowState();
-      useFlowsManagerStore.getState().resetStore();
+      useAgentStore.getState().resetAgentState();
+      useAgentsManagerStore.getState().resetStore();
       useFolderStore.getState().resetStore();
 
-      queryClient.invalidateQueries({ queryKey: ["useGetRefreshFlowsQuery"] });
+      queryClient.invalidateQueries({ queryKey: ["useGetRefreshAgentsQuery"] });
       queryClient.invalidateQueries({ queryKey: ["useGetFolders"] });
       queryClient.invalidateQueries({ queryKey: ["useGetFolder"] });
     },

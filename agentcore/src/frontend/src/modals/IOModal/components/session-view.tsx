@@ -7,7 +7,7 @@ import {
   useDeleteMessages,
   useUpdateMessage,
 } from "@/controllers/API/queries/messages";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import TableComponent from "../../../components/core/parameterRenderComponent/components/tableComponent";
 import useAlertStore from "../../../stores/alertStore";
 import { useMessagesStore } from "../../../stores/messagesStore";
@@ -26,7 +26,7 @@ export default function SessionView({
   const updateMessage = useMessagesStore((state) => state.updateMessage);
   const deleteMessagesStore = useMessagesStore((state) => state.removeMessages);
   const columns = extractColumnsFromRows(messages, "intersection");
-  const playgroundPage = useFlowStore((state) => state.playgroundPage);
+  const playgroundPage = useAgentStore((state) => state.playgroundPage);
   const isFetching = useIsFetching({
     queryKey: ["useGetMessagesQuery"],
     exact: false,

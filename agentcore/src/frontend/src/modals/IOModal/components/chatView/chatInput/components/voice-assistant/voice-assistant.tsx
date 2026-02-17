@@ -12,7 +12,7 @@ import {
 import { customUseStartConversation } from "@/customization/hooks/use-custom-start-conversation";
 import { customUseStartRecording } from "@/customization/hooks/use-custom-start-recording";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useGlobalVariablesStore } from "@/stores/globalVariablesStore/globalVariables";
 import { useMessagesStore } from "@/stores/messagesStore";
 import { useUtilityStore } from "@/stores/utilityStore";
@@ -31,12 +31,12 @@ import { usePlayNextAudioChunk } from "./hooks/use-play-next-audio-chunk";
 import { useStopRecording } from "./hooks/use-stop-recording";
 
 export interface VoiceAssistantProps {
-  flowId: string;
+  agentId: string;
   setShowAudioInput: (value: boolean) => void;
 }
 
 export function VoiceAssistant({
-  flowId,
+  agentId,
   setShowAudioInput,
 }: VoiceAssistantProps) {
   const [recordingTime, setRecordingTime] = useState(0);
@@ -67,18 +67,18 @@ export function VoiceAssistant({
   );
   const setSoundDetected = useVoiceStore((state) => state.setSoundDetected);
   const messagesStore = useMessagesStore();
-  const setIsBuilding = useFlowStore((state) => state.setIsBuilding);
-  const edges = useFlowStore((state) => state.edges);
-  const setEdges = useFlowStore((state) => state.setEdges);
-  const updateBuildStatus = useFlowStore((state) => state.updateBuildStatus);
-  const addDataToFlowPool = useFlowStore((state) => state.addDataToFlowPool);
-  const updateEdgesRunningByNodes = useFlowStore(
+  const setIsBuilding = useAgentStore((state) => state.setIsBuilding);
+  const edges = useAgentStore((state) => state.edges);
+  const setEdges = useAgentStore((state) => state.setEdges);
+  const updateBuildStatus = useAgentStore((state) => state.updateBuildStatus);
+  const addDataToAgentPool = useAgentStore((state) => state.addDataToAgentPool);
+  const updateEdgesRunningByNodes = useAgentStore(
     (state) => state.updateEdgesRunningByNodes,
   );
-  const revertBuiltStatusFromBuilding = useFlowStore(
+  const revertBuiltStatusFromBuilding = useAgentStore(
     (state) => state.revertBuiltStatusFromBuilding,
   );
-  const clearEdgesRunningByNodes = useFlowStore(
+  const clearEdgesRunningByNodes = useAgentStore(
     (state) => state.clearEdgesRunningByNodes,
   );
   const variables = useGlobalVariablesStore(
@@ -90,8 +90,8 @@ export function VoiceAssistant({
   const currentSessionId = useUtilityStore((state) => state.currentSessionId);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { data: globalVariables } = useGetGlobalVariables();
-  const currentFlow = useFlowStore((state) => state.currentFlow);
-  const currentFlowId = currentFlow?.id;
+  const currentAgent = useAgentStore((state) => state.currentAgent);
+  const currentAgentId = currentAgent?.id;
 
   const hasOpenAIAPIKey = useMemo(() => {
     return (
@@ -182,7 +182,7 @@ export function VoiceAssistant({
       setStatus,
       messagesStore,
       setEdges,
-      addDataToFlowPool,
+      addDataToAgentPool,
       updateEdgesRunningByNodes,
       updateBuildStatus,
       hasOpenAIAPIKey,
@@ -192,7 +192,7 @@ export function VoiceAssistant({
 
   const startConversation = () => {
     customUseStartConversation(
-      flowId,
+      agentId,
       wsRef,
       setStatus,
       startRecording,
@@ -217,7 +217,7 @@ export function VoiceAssistant({
   const handleGetMessagesMutation = () => {
     getMessagesMutation.mutate({
       mode: "union",
-      id: currentFlowId,
+      id: currentAgentId,
     });
   };
 

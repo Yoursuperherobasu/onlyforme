@@ -29,7 +29,7 @@ interface InputWrapperProps {
   handleFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   handleButtonClick: () => void;
   setShowAudioInput: (value: boolean) => void;
-  currentFlowId: string;
+  currentAgentId: string;
   playgroundPage: boolean;
 }
 
@@ -47,7 +47,7 @@ const InputWrapper: React.FC<InputWrapperProps> = ({
   handleFileChange,
   handleButtonClick,
   setShowAudioInput,
-  currentFlowId,
+  currentAgentId,
   playgroundPage,
 }) => {
   const classNameFilePreview = `flex w-full items-center gap-2 py-2 overflow-auto`;

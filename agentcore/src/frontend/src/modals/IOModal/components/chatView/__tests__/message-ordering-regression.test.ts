@@ -150,7 +150,7 @@ describe("Message Ordering Regression Tests - GitHub Issue #9186", () => {
       ];
       expect(sorted.map((m) => m.id)).toEqual(expectedOrder);
 
-      // Verify conversation flow pattern
+      // Verify conversation agent pattern
       for (let i = 0; i < sorted.length; i += 2) {
         expect(sorted[i].isSend).toBe(true); // User message
         if (i + 1 < sorted.length) {
@@ -328,7 +328,7 @@ describe("Message Ordering Regression Tests - GitHub Issue #9186", () => {
   });
 
   describe("Real conversation patterns", () => {
-    it("should handle typical question-answer flow", () => {
+    it("should handle typical question-answer agent", () => {
       // Realistic conversation with multiple exchanges
       const conversation = [
         // Third exchange (out of order in array)
@@ -371,8 +371,8 @@ describe("Message Ordering Regression Tests - GitHub Issue #9186", () => {
 
       const sorted = conversation.sort(sortSenderMessages);
 
-      // Should create natural conversation flow
-      const expectedFlow = [
+      // Should create natural conversation agent
+      const expectedAgent = [
         { id: "user-1", type: "question" },
         { id: "ai-1", type: "answer" },
         { id: "user-2", type: "question" },
@@ -381,7 +381,7 @@ describe("Message Ordering Regression Tests - GitHub Issue #9186", () => {
         { id: "ai-3", type: "answer" },
       ];
 
-      expectedFlow.forEach((expected, index) => {
+      expectedAgent.forEach((expected, index) => {
         expect(sorted[index].id).toBe(expected.id);
         expect(sorted[index].isSend).toBe(expected.type === "question");
       });

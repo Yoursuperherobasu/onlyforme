@@ -9,8 +9,8 @@ import {
   NOTE_NODE_MIN_WIDTH,
 } from "@/constants/constants";
 import { useAlternate } from "@/shared/hooks/use-alternate";
-import useFlowStore from "@/stores/flowStore";
-import type { NoteDataType } from "@/types/flow";
+import useAgentStore from "@/stores/agentStore";
+import type { NoteDataType } from "@/types/agent";
 import { cn } from "@/utils/utils";
 import NodeDescription from "../GenericNode/components/NodeDescription";
 import NoteToolbarComponent from "./NoteToolbarComponent";
@@ -32,13 +32,13 @@ function NoteNode({
     ) ?? Object.keys(COLOR_OPTIONS)[0];
   const nodeDiv = useRef<HTMLDivElement>(null);
   const [_resizedNote, setResizedNote] = useState(false);
-  const currentFlow = useFlowStore((state) => state.currentFlow);
-  const setNode = useFlowStore((state) => state.setNode);
+  const currentAgent = useAgentStore((state) => state.currentAgent);
+  const setNode = useAgentStore((state) => state.setNode);
   const [isResizing, setIsResizing] = useState(false);
 
   const nodeData = useMemo(
-    () => currentFlow?.data?.nodes.find((node) => node.id === data.id),
-    [currentFlow, data.id],
+    () => currentAgent?.data?.nodes.find((node) => node.id === data.id),
+    [currentAgent, data.id],
   );
 
   const nodeDataWidth = useMemo(

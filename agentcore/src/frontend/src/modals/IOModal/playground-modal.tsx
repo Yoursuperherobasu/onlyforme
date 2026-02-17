@@ -3,7 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import ThemeButtons from "@/components/core/appHeaderComponent/components/ThemeButtons";
 import { useGetMessagesQuery } from "@/controllers/API/queries/messages";
 import { useDeleteSession } from "@/controllers/API/queries/messages/use-delete-sessions";
-import { useGetSessionsFromFlowQuery } from "@/controllers/API/queries/messages/use-get-sessions-from-flow";
+import { useGetSessionsFromAgentQuery } from "@/controllers/API/queries/messages/use-get-sessions-from-agent";
 import { ENABLE_PUBLISH } from "@/customization/feature-flags";
 import { track } from "@/customization/utils/analytics";
 import { customOpenNewTab } from "@/customization/utils/custom-open-new-tab";
@@ -14,8 +14,8 @@ import AgentCoreLogoColor from "../../assets/motherson_name.svg";
 import IconComponent from "../../components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import useAlertStore from "../../stores/alertStore";
-import useFlowStore from "../../stores/flowStore";
-import useFlowsManagerStore from "../../stores/flowsManagerStore";
+import useAgentStore from "../../stores/agentStore";
+import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useMessagesStore } from "../../stores/messagesStore";
 import type { IOModalPropsType } from "../../types/components";
 import { cn, getNumberFromString } from "../../utils/utils";
@@ -24,7 +24,7 @@ import { ChatViewWrapper } from "./components/chat-view-wrapper";
 import { createNewSessionName } from "./components/chatView/chatInput/components/voice-assistant/helpers/create-new-session-name";
 import { SelectedViewField } from "./components/selected-view-field";
 import { SidebarOpenView } from "./components/sidebar-open-view";
-import { useGetFlowId } from "./hooks/useGetFlowId";
+import { useGetAgentId } from "./hooks/useGetAgentId";
 
 /* ── Gradient palette for the monogram avatar ─────────────────────── */
 
@@ -38,26 +38,26 @@ export default function IOModal({
   playgroundPage,
 }: IOModalPropsType): JSX.Element {
   // ─── All state & store hooks (UNCHANGED) ───────────────────────────
-  const setIOModalOpen = useFlowsManagerStore((state) => state.setIOModalOpen);
-  const inputs = useFlowStore((state) => state.inputs);
-  const outputs = useFlowStore((state) => state.outputs);
-  const nodes = useFlowStore((state) => state.nodes);
-  const buildFlow = useFlowStore((state) => state.buildFlow);
-  const setIsBuilding = useFlowStore((state) => state.setIsBuilding);
-  const isBuilding = useFlowStore((state) => state.isBuilding);
-  const newChatOnPlayground = useFlowStore(
+  const setIOModalOpen = useAgentsManagerStore((state) => state.setIOModalOpen);
+  const inputs = useAgentStore((state) => state.inputs);
+  const outputs = useAgentStore((state) => state.outputs);
+  const nodes = useAgentStore((state) => state.nodes);
+  const buildAgent = useAgentStore((state) => state.buildAgent);
+  const setIsBuilding = useAgentStore((state) => state.setIsBuilding);
+  const isBuilding = useAgentStore((state) => state.isBuilding);
+  const newChatOnPlayground = useAgentStore(
     (state) => state.newChatOnPlayground,
   );
-  const setNewChatOnPlayground = useFlowStore(
+  const setNewChatOnPlayground = useAgentStore(
     (state) => state.setNewChatOnPlayground,
   );
 
-  const { flowIcon, flowId, flowGradient, flowName } = useFlowStore(
+  const { agentIcon, agentId, agentGradient, agentName } = useAgentStore(
     useShallow((state) => ({
-      flowIcon: state.currentFlow?.icon,
-      flowId: state.currentFlow?.id,
-      flowGradient: state.currentFlow?.gradient,
-      flowName: state.currentFlow?.name,
+      agentIcon: state.currentAgent?.icon,
+      agentId: state.currentAgent?.id,
+      agentGradient: state.currentAgent?.gradient,
+      agentName: state.currentAgent?.name,
     })),
   );
   const filteredInputs = inputs.filter((input) => input.type !== "ChatInput");
@@ -75,23 +75,23 @@ export default function IOModal({
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const deleteSession = useMessagesStore((state) => state.deleteSession);
-  const currentFlowId = useGetFlowId();
+  const currentAgentId = useGetAgentId();
 
   const { mutate: deleteSessionFunction } = useDeleteSession();
 
   const [visibleSession, setvisibleSession] = useState<string | undefined>(
-    currentFlowId,
+    currentAgentId,
   );
-  const PlaygroundTitle = playgroundPage && flowName ? flowName : "Playground";
+  const PlaygroundTitle = playgroundPage && agentName ? agentName : "Playground";
 
   // ─── API queries (UNCHANGED) ───────────────────────────────────────
   const {
     data: sessionsFromDb,
     isLoading: sessionsLoading,
     refetch: refetchSessions,
-  } = useGetSessionsFromFlowQuery(
+  } = useGetSessionsFromAgentQuery(
     {
-      id: currentFlowId,
+      id: currentAgentId,
     },
     { enabled: open },
   );
@@ -99,12 +99,12 @@ export default function IOModal({
   useEffect(() => {
     if (sessionsFromDb && !sessionsLoading) {
       const sessions = [...sessionsFromDb.sessions];
-      if (!sessions.includes(currentFlowId)) {
-        sessions.unshift(currentFlowId);
+      if (!sessions.includes(currentAgentId)) {
+        sessions.unshift(currentAgentId);
       }
       setSessions(sessions);
     }
-  }, [sessionsFromDb, sessionsLoading, currentFlowId]);
+  }, [sessionsFromDb, sessionsLoading, currentAgentId]);
 
   useEffect(() => {
     setIOModalOpen(open);
@@ -120,7 +120,7 @@ export default function IOModal({
       if (remainingSessions.length > 0) {
         setvisibleSession(remainingSessions[0]);
       } else {
-        setvisibleSession(currentFlowId);
+        setvisibleSession(currentAgentId);
       }
     }
 
@@ -175,7 +175,7 @@ export default function IOModal({
   const messages = useMessagesStore((state) => state.messages);
   const removeMessages = useMessagesStore((state) => state.removeMessages);
   const [sessions, setSessions] = useState<string[]>([]);
-  const [sessionId, setSessionId] = useState<string>(currentFlowId);
+  const [sessionId, setSessionId] = useState<string>(currentAgentId);
   const setCurrentSessionId = useUtilityStore(
     (state) => state.setCurrentSessionId,
   );
@@ -184,7 +184,7 @@ export default function IOModal({
     useGetMessagesQuery(
       {
         mode: "union",
-        id: currentFlowId,
+        id: currentAgentId,
         params: {
           session_id: visibleSession,
         },
@@ -208,7 +208,7 @@ export default function IOModal({
       if (isBuilding) return;
       setChatValue("");
       for (let i = 0; i < repeat; i++) {
-        await buildFlow({
+        await buildAgent({
           input_value: chatValue,
           startNodeId: chatInput?.id,
           files: files,
@@ -221,13 +221,13 @@ export default function IOModal({
         });
       }
     },
-    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildFlow],
+    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent],
   );
 
   // ─── Effects (UNCHANGED) ──────────────────────────────────────────
   useEffect(() => {
     if (playgroundPage && messages.length > 0) {
-      window.sessionStorage.setItem(currentFlowId, JSON.stringify(messages));
+      window.sessionStorage.setItem(currentAgentId, JSON.stringify(messages));
     }
     if (newChatOnPlayground && !sessionsLoading) {
       const handleRefetchAndSetSession = async () => {
@@ -251,7 +251,7 @@ export default function IOModal({
   useEffect(() => {
     if (!visibleSession) {
       setSessionId(createNewSessionName());
-      setCurrentSessionId(currentFlowId);
+      setCurrentSessionId(currentAgentId);
     } else if (visibleSession) {
       setSessionId(visibleSession);
       setCurrentSessionId(visibleSession);
@@ -282,9 +282,9 @@ export default function IOModal({
   };
 
   const swatchIndex =
-    (flowGradient && !isNaN(parseInt(flowGradient))
-      ? parseInt(flowGradient)
-      : getNumberFromString(flowGradient ?? flowId ?? "")) %
+    (agentGradient && !isNaN(parseInt(agentGradient))
+      ? parseInt(agentGradient)
+      : getNumberFromString(agentGradient ?? agentId ?? "")) %
     swatchColors.length;
 
   const setActiveSession = (session: string) => {
@@ -427,7 +427,7 @@ export default function IOModal({
                   inputs={filteredInputs}
                   outputs={filteredOutputs}
                   sessions={sessions}
-                  currentFlowId={currentFlowId}
+                  currentAgentId={currentAgentId}
                   nodes={filteredNodes}
                 />
               )}
@@ -437,7 +437,7 @@ export default function IOModal({
                 visibleSession={visibleSession}
                 sessions={sessions}
                 sidebarOpen={true}
-                currentFlowId={currentFlowId}
+                currentAgentId={currentAgentId}
                 setSidebarOpen={() => {}}
                 isPlayground={isPlayground}
                 setvisibleSession={setvisibleSession}

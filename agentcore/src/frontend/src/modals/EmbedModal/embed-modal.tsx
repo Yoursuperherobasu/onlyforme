@@ -13,8 +13,8 @@ import BaseModal from "../baseModal";
 interface EmbedModalProps {
   open: boolean;
   setOpen: (open: boolean) => void;
-  flowId: string;
-  flowName: string;
+  agentId: string;
+  agentName: string;
   isAuth: boolean;
   tweaksBuildedObject: {};
   activeTweaks: boolean;
@@ -23,8 +23,8 @@ interface EmbedModalProps {
 export default function EmbedModal({
   open,
   setOpen,
-  flowId,
-  flowName,
+  agentId,
+  agentName,
   isAuth,
   tweaksBuildedObject,
   activeTweaks,
@@ -32,8 +32,8 @@ export default function EmbedModal({
   const isDark = useDarkStore((state) => state.dark);
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const widgetProps = {
-    flowId: flowId,
-    flowName: flowName,
+    agentId: agentId,
+    agentName: agentName,
     isAuth: isAuth,
     tweaksBuildedObject: tweaksBuildedObject,
     activeTweaks: activeTweaks,

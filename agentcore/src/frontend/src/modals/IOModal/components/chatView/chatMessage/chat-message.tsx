@@ -5,8 +5,8 @@ import { useUpdateMessage } from "@/controllers/API/queries/messages";
 import { CustomMarkdownField } from "@/customization/components/custom-markdown-field";
 import { CustomProfileIcon } from "@/customization/components/custom-profile-icon";
 import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
-import useFlowStore from "@/stores/flowStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import Robot from "../../../../../assets/robot.png";
 import IconComponent, {
   ForwardedIconComponent,
@@ -32,8 +32,8 @@ export default function ChatMessage({
   const convert = new Convert({ newline: true });
   const [hidden, setHidden] = useState(true);
   const [streamUrl, setStreamUrl] = useState(chat.stream_url);
-  const agent_id = useFlowsManagerStore((state) => state.currentFlowId);
-  const fitViewNode = useFlowStore((state) => state.fitViewNode);
+  const agent_id = useAgentsManagerStore((state) => state.currentAgentId);
+  const fitViewNode = useAgentStore((state) => state.fitViewNode);
   // We need to check if message is not undefined because
   // we need to run .toString() on it
   const [chatMessage, setChatMessage] = useState(
@@ -45,7 +45,7 @@ export default function ChatMessage({
   const chatMessageRef = useRef(chatMessage);
   const [editMessage, setEditMessage] = useState(false);
   const [showError, setShowError] = useState(false);
-  const isBuilding = useFlowStore((state) => state.isBuilding);
+  const isBuilding = useAgentStore((state) => state.isBuilding);
 
   const isAudioMessage = chat.category === "audio";
 

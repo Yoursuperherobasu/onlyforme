@@ -1,9 +1,9 @@
 import { forwardRef, type ReactNode, useEffect, useState } from "react";
 import { track } from "@/customization/utils/analytics";
-import useFlowStore from "@/stores/flowStore";
-import type { FlowType } from "@/types/flow";
+import useAgentStore from "@/stores/agentStore";
+import type { AgentType } from "@/types/agent";
 import IconComponent from "../../components/common/genericIconComponent";
-import EditFlowSettings from "../../components/core/editFlowSettingsComponent";
+import EditAgentSettings from "../../components/core/editAgentSettingsComponent";
 import { Checkbox } from "../../components/ui/checkbox";
 import { API_WARNING_NOTICE_ALERT } from "../../constants/alerts_constants";
 import {
@@ -13,7 +13,7 @@ import {
 } from "../../constants/constants";
 import useAlertStore from "../../stores/alertStore";
 import { useDarkStore } from "../../stores/darkStore";
-import { downloadFlow, removeApiKeys } from "../../utils/reactflowUtils";
+import { downloadAgent, removeApiKeys } from "../../utils/reactFlowUtils";
 import BaseModal from "../baseModal";
 
 const ExportModal = forwardRef(
@@ -22,7 +22,7 @@ const ExportModal = forwardRef(
       children?: ReactNode;
       open?: boolean;
       setOpen?: (open: boolean) => void;
-      flowData?: FlowType;
+      agentData?: AgentType;
     },
     ref,
   ): JSX.Element => {
@@ -30,16 +30,16 @@ const ExportModal = forwardRef(
     const setSuccessData = useAlertStore((state) => state.setSuccessData);
     const setNoticeData = useAlertStore((state) => state.setNoticeData);
     const [checked, setChecked] = useState(false);
-    const currentFlowOnPage = useFlowStore((state) => state.currentFlow);
-    const currentFlow = props.flowData ?? currentFlowOnPage;
-    const isBuilding = useFlowStore((state) => state.isBuilding);
+    const currentAgentOnPage = useAgentStore((state) => state.currentAgent);
+    const currentAgent = props.agentData ?? currentAgentOnPage;
+    const isBuilding = useAgentStore((state) => state.isBuilding);
     useEffect(() => {
-      setName(currentFlow?.name ?? "");
-      setDescription(currentFlow?.description ?? "");
-    }, [currentFlow?.name, currentFlow?.description]);
-    const [name, setName] = useState(currentFlow?.name ?? "");
+      setName(currentAgent?.name ?? "");
+      setDescription(currentAgent?.description ?? "");
+    }, [currentAgent?.name, currentAgent?.description]);
+    const [name, setName] = useState(currentAgent?.name ?? "");
     const [description, setDescription] = useState(
-      currentFlow?.description ?? "",
+      currentAgent?.description ?? "",
     );
 
     const [customOpen, customSetOpen] = useState(false);
@@ -56,16 +56,16 @@ const ExportModal = forwardRef(
         onSubmit={async () => {
           try {
             if (checked) {
-              await downloadFlow(
+              await downloadAgent(
                 {
-                  id: currentFlow!.id,
-                  data: currentFlow!.data!,
+                  id: currentAgent!.id,
+                  data: currentAgent!.data!,
                   description,
                   name,
                   last_tested_version: version,
-                  endpoint_name: currentFlow!.endpoint_name,
+                  endpoint_name: currentAgent!.endpoint_name,
                   is_component: false,
-                  tags: currentFlow!.tags,
+                  tags: currentAgent!.tags,
                 },
                 name!,
                 description,
@@ -75,31 +75,31 @@ const ExportModal = forwardRef(
                 title: API_WARNING_NOTICE_ALERT,
               });
               setOpen(false);
-              track("Flow Exported", { flowId: currentFlow!.id });
+              track("agent Exported", { agentId: currentAgent!.id });
             } else {
-              await downloadFlow(
+              await downloadAgent(
                 removeApiKeys({
-                  id: currentFlow!.id,
-                  data: currentFlow!.data!,
+                  id: currentAgent!.id,
+                  data: currentAgent!.data!,
                   description,
                   name,
                   last_tested_version: version,
-                  endpoint_name: currentFlow!.endpoint_name,
+                  endpoint_name: currentAgent!.endpoint_name,
                   is_component: false,
-                  tags: currentFlow!.tags,
+                  tags: currentAgent!.tags,
                 }),
                 name!,
                 description,
               );
 
               setSuccessData({
-                title: "Flow exported successfully",
+                title: "agent exported successfully",
               });
               setOpen(false);
-              track("Flow Exported", { flowId: currentFlow!.id });
+              track("agent Exported", { agentId: currentAgent!.id });
             }
           } catch (error) {
-            console.error("Error exporting flow:", error);
+            console.error("Error exporting agent:", error);
           }
         }}
       >
@@ -113,7 +113,7 @@ const ExportModal = forwardRef(
           />
         </BaseModal.Header>
         <BaseModal.Content>
-          <EditFlowSettings
+          <EditAgentSettings
             name={name}
             description={description}
             setName={setName}

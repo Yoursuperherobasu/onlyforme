@@ -1,7 +1,7 @@
 import { Panel } from "@xyflow/react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
-import FlowLogsModal from "@/modals/flowLogsModal";
+import AgentLogsModal from "@/modals/agentLogsModal";
 
 const LogCanvasControls = () => {
   return (
@@ -10,7 +10,7 @@ const LogCanvasControls = () => {
       className="react-flow__controls !m-2 rounded-md"
       position="bottom-left"
     >
-      <FlowLogsModal>
+      <AgentLogsModal>
         <Button
           variant="primary"
           size="sm"
@@ -19,7 +19,7 @@ const LogCanvasControls = () => {
           <ForwardedIconComponent name="Terminal" className="text-primary" />
           <span className="text-mmd font-normal">Logs</span>
         </Button>
-      </FlowLogsModal>
+      </AgentLogsModal>
     </Panel>
   );
 };

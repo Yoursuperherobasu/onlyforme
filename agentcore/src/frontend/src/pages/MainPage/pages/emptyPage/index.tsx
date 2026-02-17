@@ -19,7 +19,7 @@ export const EmptyPage = ({ setOpenModal }: EmptyPageProps) => {
 
   return (
     <CardsWrapComponent
-      dragMessage={`Drop your flows or components here`}
+      dragMessage={`Drop your agents or components here`}
       onFileDrop={handleFileDrop}
     >
       <div className="m-0 h-full w-full bg-secondary p-0">
@@ -38,7 +38,7 @@ export const EmptyPage = ({ setOpenModal }: EmptyPageProps) => {
             >
               Begin with a template, or start from scratch.
             </p>
-            {can("edit_flows") && (
+            {can("edit_agents") && (
             <Button
               variant="default"
               onClick={() => setOpenModal(true)}

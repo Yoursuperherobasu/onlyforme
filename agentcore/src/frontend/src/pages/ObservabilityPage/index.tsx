@@ -135,7 +135,7 @@ interface Metrics {
   p95_latency_ms: number | null;
   by_model: ModelUsageItem[];
   by_date: DailyUsageItem[];
-  top_flows: Array<{ name: string; count: number; tokens: number; cost: number }>;
+  top_agents: Array<{ name: string; count: number; tokens: number; cost: number }>;
 }
 
 interface SessionListItem {
@@ -206,8 +206,8 @@ interface SessionDetailResponse {
 }
 
 interface AgentListItem {
-  flow_id: string;
-  flow_name: string | null;
+  agent_id: string;
+  agent_name: string | null;
   project_id: string | null;
   project_name: string | null;
   trace_count: number;
@@ -221,8 +221,8 @@ interface AgentListItem {
 }
 
 interface AgentDetailResponse {
-  flow_id: string;
-  flow_name: string | null;
+  agent_id: string;
+  agent_name: string | null;
   trace_count: number;
   session_count: number;
   observation_count: number;
@@ -438,9 +438,9 @@ async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: A
   return response.data;
 }
 
-async function fetchAgentDetail(flowId: string): Promise<AgentDetailResponse> {
+async function fetchAgentDetail(agentId: string): Promise<AgentDetailResponse> {
   const tzOffset = getUserTimezoneOffset();
-  const response = await api.get<AgentDetailResponse>(`/api/observability/agents/${flowId}?tz_offset=${tzOffset}`);
+  const response = await api.get<AgentDetailResponse>(`/api/observability/agents/${agentId}?tz_offset=${tzOffset}`);
   return response.data;
 }
 
@@ -664,7 +664,7 @@ function RecentAgentActivityPanel({ agentsData }: {
           <div className="space-y-3">
             {recentAgents.map((agent) => (
               <div
-                key={agent.flow_id}
+                key={agent.agent_id}
                 className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 <div
@@ -675,7 +675,7 @@ function RecentAgentActivityPanel({ agentsData }: {
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate" style={{ color: THEME.textMain }}>
-                    {agent.flow_name || 'Unnamed Agent'}
+                    {agent.agent_name || 'Unnamed Agent'}
                   </p>
                   <p className="text-xs" style={{ color: THEME.textSecondary }}>
                     {agent.session_count} sessions • {agent.error_count > 0 ? `${agent.error_count} errors` : 'No errors'}
@@ -835,7 +835,7 @@ export default function ObservabilityPage(): JSX.Element {
     if (!agentSearch.trim()) return agentsData.agents;
     const search = agentSearch.toLowerCase();
     return agentsData.agents.filter(agent =>
-      agent.flow_name?.toLowerCase().includes(search)
+      agent.agent_name?.toLowerCase().includes(search)
     );
   }, [agentsData?.agents, agentSearch]);
 
@@ -1486,9 +1486,9 @@ export default function ObservabilityPage(): JSX.Element {
                       <TableBody>
                         {filteredAgents.map((agent) => (
                           <TableRow
-                            key={agent.flow_id}
+                            key={agent.agent_id}
                             className="cursor-pointer border-gray-100 hover:bg-gray-50"
-                            onClick={() => setSelectedAgent(agent.flow_id)}
+                            onClick={() => setSelectedAgent(agent.agent_id)}
                           >
                             <TableCell className="font-medium" style={{ color: THEME.textMain }}>
                               <div className="flex items-center gap-3">
@@ -1498,7 +1498,7 @@ export default function ObservabilityPage(): JSX.Element {
                                 >
                                   <Bot className="h-4 w-4" style={{ color: THEME.primary }} />
                                 </div>
-                                {agent.flow_name}
+                                {agent.agent_name}
                               </div>
                             </TableCell>
                             <TableCell style={{ color: THEME.textSecondary }}>{agent.project_name || "-"}</TableCell>
@@ -1528,7 +1528,7 @@ export default function ObservabilityPage(): JSX.Element {
                     <div className="text-center py-12">
                       <Bot className="h-12 w-12 mx-auto mb-4" style={{ color: THEME.textSecondary }} />
                       <p style={{ color: THEME.textSecondary }}>
-                        {agentSearch ? `No agents found matching "${agentSearch}"` : "No agents found. Run a flow to see agent metrics."}
+                        {agentSearch ? `No agents found matching "${agentSearch}"` : "No agents found. Run a agent to see agent metrics."}
                       </p>
                     </div>
                   )}
@@ -1613,7 +1613,7 @@ export default function ObservabilityPage(): JSX.Element {
                     <div className="text-center py-12">
                       <FolderOpen className="h-12 w-12 mx-auto mb-4" style={{ color: THEME.textSecondary }} />
                       <p style={{ color: THEME.textSecondary }}>
-                        {projectSearch ? `No projects found matching "${projectSearch}"` : "No projects found. Organize your flows into folders to see project metrics."}
+                        {projectSearch ? `No projects found matching "${projectSearch}"` : "No projects found. Organize your agents into folders to see project metrics."}
                       </p>
                     </div>
                   )}
@@ -1797,24 +1797,24 @@ export default function ObservabilityPage(): JSX.Element {
                   </CardContent>
                 </Card>
 
-                {/* Top Flows - Horizontal Bar Chart */}
-                {metrics?.top_flows && metrics.top_flows.length > 0 && (
+                {/* Top Agents - Horizontal Bar Chart */}
+                {metrics?.top_agents && metrics.top_agents.length > 0 && (
                   <Card className="border-0 shadow-sm">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
                         <TrendingUp className="h-5 w-5" style={{ color: THEME.primary }} />
-                        Top Flows by Usage
+                        Top Agents by Usage
                       </CardTitle>
                       <CardDescription style={{ color: THEME.textSecondary }}>
-                        Flow execution count and token usage
+                        agent execution count and token usage
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <ResponsiveContainer width="100%" height={Math.max(250, metrics.top_flows.length * 50)}>
+                      <ResponsiveContainer width="100%" height={Math.max(250, metrics.top_agents.length * 50)}>
                         <BarChart
-                          data={metrics.top_flows.slice(0, 10).map(flow => ({
-                            ...flow,
-                            shortName: flow.name.length > 25 ? flow.name.slice(0, 25) + '...' : flow.name
+                          data={metrics.top_agents.slice(0, 10).map(agent => ({
+                            ...agent,
+                            shortName: agent.name.length > 25 ? agent.name.slice(0, 25) + '...' : agent.name
                           }))}
                           layout="vertical"
                           margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
@@ -2202,7 +2202,7 @@ export default function ObservabilityPage(): JSX.Element {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
               <Bot className="h-5 w-5" style={{ color: THEME.primary }} />
-              {agentDetail?.flow_name || "Agent Details"}
+              {agentDetail?.agent_name || "Agent Details"}
             </DialogTitle>
           </DialogHeader>
           {agentDetail && (
@@ -2296,11 +2296,11 @@ export default function ObservabilityPage(): JSX.Element {
                 <div className="space-y-2">
                   {projectDetail.agents.map((agent) => (
                     <div
-                      key={agent.flow_id}
+                      key={agent.agent_id}
                       className="p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
                       onClick={() => {
                         setSelectedProject(null);
-                        setSelectedAgent(agent.flow_id);
+                        setSelectedAgent(agent.agent_id);
                       }}
                     >
                       <div className="flex justify-between items-center">
@@ -2312,7 +2312,7 @@ export default function ObservabilityPage(): JSX.Element {
                             <Bot className="h-4 w-4" style={{ color: THEME.primary }} />
                           </div>
                           <div>
-                            <p className="font-medium" style={{ color: THEME.textMain }}>{agent.flow_name}</p>
+                            <p className="font-medium" style={{ color: THEME.textMain }}>{agent.agent_name}</p>
                             <p className="text-sm" style={{ color: THEME.textSecondary }}>
                               {agent.trace_count} traces | {agent.session_count} sessions | {formatTokens(agent.total_tokens)} tokens
                             </p>

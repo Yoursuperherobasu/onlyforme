@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X, Info } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
-import useFlowsManagerStore from "@/stores/flowsManagerStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { usePostFolders } from "@/controllers/API/queries/folders";
 import { useGetDownloadFolders } from "@/controllers/API/queries/folders/use-get-download-folders";
 import useAlertStore from "@/stores/alertStore";
@@ -37,7 +37,7 @@ export default function FolderCardsView({
   onFilesClick,
 }: FolderCardsViewProps): JSX.Element {
   const folders = useFolderStore((state) => state.folders);
-  const flows = useFlowsManagerStore((state) => state.flows);
+  const agents = useAgentsManagerStore((state) => state.agents);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   
@@ -71,10 +71,10 @@ export default function FolderCardsView({
   const recentFolders = sortedFolders.slice(0, 4);
   const olderFolders = sortedFolders.slice(4);
 
-  // Count flows per folder
-  const getFlowCount = (folderId: string) => {
-    if (!flows || flows.length === 0) return 0;
-    const count = flows.filter((flow) => flow.folder_id === folderId).length;
+  // Count agents per folder
+  const getAgentCount = (folderId: string) => {
+    if (!agents || agents.length === 0) return 0;
+    const count = agents.filter((agent) => agent.folder_id === folderId).length;
     console.log(`Folder ${folderId} has ${count} agents`);
     return count;
   };
@@ -222,7 +222,7 @@ export default function FolderCardsView({
 
             {/* Recent Folder Cards*/}
             {recentFolders.map((folder) => {
-              const flowCount = getFlowCount(folder.id);
+              const agentCount = getAgentCount(folder.id);
               return (
                 <div
                   key={folder.id}
@@ -327,7 +327,7 @@ export default function FolderCardsView({
 
                   {/* Stats - Bottom */}
                   <div className="flex flex-col items-center justify-center gap-1 text-xs text-muted-foreground pt-2 border-t border-border/50 w-full">
-                    <span>{flowCount} {flowCount === 1 ? "agent" : "agents"}</span>
+                    <span>{agentCount} {agentCount === 1 ? "agent" : "agents"}</span>
                     {folder.updated_at && (
                       <span className="text-xs">{formatDate(folder.updated_at)}</span>
                     )}
@@ -358,7 +358,7 @@ export default function FolderCardsView({
               {/* Table Body */}
               <div className="divide-y">
                 {olderFolders.map((folder) => {
-                  const flowCount = getFlowCount(folder.id);
+                  const agentCount = getAgentCount(folder.id);
                   const isExpanded = expandedTableRow === folder.id;
                   
                   return (
@@ -393,7 +393,7 @@ export default function FolderCardsView({
                               </p>
                             )}
                             <p className="text-xs text-muted-foreground mt-1">
-                              {flowCount} {flowCount === 1 ? "agent" : "agents"}
+                              {agentCount} {agentCount === 1 ? "agent" : "agents"}
                             </p>
                           </div>
                         </div>
@@ -559,7 +559,7 @@ export default function FolderCardsView({
                   required
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="e.g., Customer Support Workflow"
+                  placeholder="e.g., Customer Support Workagent"
                   className="bg-background"
                   autoFocus
                 />
@@ -622,7 +622,7 @@ export default function FolderCardsView({
                     {selectedFolderDetail.name}
                   </h2>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {getFlowCount(selectedFolderDetail.id)} {getFlowCount(selectedFolderDetail.id) === 1 ? "agent" : "agents"}
+                    {getAgentCount(selectedFolderDetail.id)} {getAgentCount(selectedFolderDetail.id) === 1 ? "agent" : "agents"}
                   </p>
                 </div>
               </div>
@@ -650,7 +650,7 @@ export default function FolderCardsView({
                 <div>
                   <h3 className="text-xs font-semibold text-muted-foreground mb-2">AGENTS</h3>
                   <p className="text-sm font-medium">
-                    {getFlowCount(selectedFolderDetail.id)}
+                    {getAgentCount(selectedFolderDetail.id)}
                   </p>
                 </div>
                 {selectedFolderDetail.updated_at && (

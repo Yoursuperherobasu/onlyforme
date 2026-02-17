@@ -4,7 +4,7 @@ import custom from "../customization/config-constants";
 import type { languageMap } from "../types/components";
 
 /**
- * invalid characters for flow name
+ * invalid characters for agent name
  * @constant
  */
 export const INVALID_CHARACTERS = [
@@ -104,16 +104,16 @@ export const limitScrollFieldsModal = 10;
  * The base text for subtitle of Export Dialog (Toolbar)
  * @constant
  */
-export const EXPORT_DIALOG_SUBTITLE = "Export flow as JSON file.";
+export const EXPORT_DIALOG_SUBTITLE = "Export agent as JSON file.";
 /**
- * The base text for subtitle of Flow Settings (Menubar)
+ * The base text for subtitle of agent Settings (Menubar)
  * @constant
  */
 export const SETTINGS_DIALOG_SUBTITLE =
-  "Customize your flow details and settings.";
+  "Customize your agent details and settings.";
 
 /**
- * The base text for subtitle of Flow Logs (Menubar)
+ * The base text for subtitle of agent Logs (Menubar)
  * @constant
  */
 export const LOGS_DIALOG_SUBTITLE =
@@ -124,7 +124,7 @@ export const LOGS_DIALOG_SUBTITLE =
  * @constant
  */
 export const CODE_DIALOG_SUBTITLE =
-  "Export your flow to integrate it using this code.";
+  "Export your agent to integrate it using this code.";
 
 /**
  * The base text for subtitle of Chat Form
@@ -159,12 +159,12 @@ export const PROMPT_DIALOG_SUBTITLE =
 
 export const CHAT_CANNOT_OPEN_TITLE = "Chat Cannot Open";
 
-export const CHAT_CANNOT_OPEN_DESCRIPTION = "This is not a chat flow.";
+export const CHAT_CANNOT_OPEN_DESCRIPTION = "This is not a chat agent.";
 
-export const FLOW_NOT_BUILT_TITLE = "Flow not built";
+export const FLOW_NOT_BUILT_TITLE = "agent not built";
 
 export const FLOW_NOT_BUILT_DESCRIPTION =
-  "Please build the flow before chatting.";
+  "Please build the agent before chatting.";
 
 /**
  * The base text for subtitle of Text Dialog
@@ -177,7 +177,7 @@ export const TEXT_DIALOG_TITLE = "Edit text content";
  * @constant
  */
 export const IMPORT_DIALOG_SUBTITLE =
-  "Import flows from a JSON file or choose from pre-existing examples.";
+  "Import agents from a JSON file or choose from pre-existing examples.";
 
 /**
  * The text that shows when a tooltip is empty
@@ -195,16 +195,16 @@ export const CSVError = "Error loading CSV";
 
 export const PDFLoadErrorTitle = "Error loading PDF";
 
-export const PDFCheckFlow = "Please check your flow and try again";
+export const PDFCheckAgent = "Please check your agent and try again";
 
 export const PDFErrorTitle = "PDF Output";
 
-export const PDFLoadError = "Run the flow to see the pdf";
+export const PDFLoadError = "Run the agent to see the pdf";
 
 export const IMGViewConstant = "Expand the view to see the image";
 
 export const IMGViewErrorMSG =
-  "Run the flow or inform a valid url to see your image";
+  "Run the agent or inform a valid url to see your image";
 
 export const IMGViewErrorTitle = "Image output";
 
@@ -213,7 +213,7 @@ export const IMGViewErrorTitle = "Image output";
  * @constant
  */
 export const EXPORT_CODE_DIALOG =
-  "Generate the code to integrate your flow into an external application.";
+  "Generate the code to integrate your agent into an external application.";
 
 /**
  * The base text for subtitle of code dialog
@@ -369,7 +369,7 @@ export const ADJECTIVES: string[] = [
   "zealous",
 ];
 /**
- * Nouns for the name of the flow
+ * Nouns for the name of the agent
  * @constant
  *
  */
@@ -725,12 +725,12 @@ export const TEXT_INPUT_MODAL_TITLE = "Inputs";
 export const OUTPUTS_MODAL_TITLE = "Outputs";
 export const AGENTCORE_CHAT_TITLE = "AgentCore Chat";
 export const CHAT_INPUT_PLACEHOLDER =
-  "No chat input variables found. Click to run your flow.";
+  "No chat input variables found. Click to run your agent.";
 export const CHAT_INPUT_PLACEHOLDER_SEND = "Send a message...";
 export const EDIT_CODE_TITLE = "Edit Code";
 export const MY_COLLECTION_DESC =
   "Manage your projects. Download and upload entire collections.";
-export const STORE_DESC = "Explore community-shared flows and components.";
+export const STORE_DESC = "Explore community-shared agents and components.";
 export const STORE_TITLE = "AgentCore Store";
 export const NO_API_KEY = "You don't have an API key.";
 export const INSERT_API_KEY = "Insert your AgentCore API key.";
@@ -785,7 +785,7 @@ export const BUNDLES_SIDEBAR_FOLDER_NAMES = [
 
 export const AUTHORIZED_DUPLICATE_REQUESTS = [
   "/health",
-  "/flows",
+  "/agents",
   "/agents",
   "/logout",
   "/refresh",
@@ -913,8 +913,8 @@ export const defaultShortcuts = [
     shortcut: "mod+shift+f",
   },
   {
-    display_name: "Flow Share",
-    name: "Flow Share",
+    display_name: "agent Share",
+    name: "agent Share",
     shortcut: "mod+shift+b",
   },
   {
@@ -948,7 +948,7 @@ export const NO_COLUMN_DEFINITION_ALERT_TITLE = "No Column Definitions";
 export const NO_COLUMN_DEFINITION_ALERT_DESCRIPTION =
   "There are no column definitions available for this table.";
 
-export const LOCATIONS_TO_RETURN = ["/flow/", "/settings/"];
+export const LOCATIONS_TO_RETURN = ["/agent/", "/settings/"];
 
 export const MAX_BATCH_SIZE = 50;
 
@@ -1019,7 +1019,7 @@ export const COLOR_OPTIONS = {
 export const maxSizeFilesInBytes = 10 * 1024 * 1024; // 10MB in bytes
 export const MAX_TEXT_LENGTH = 99999;
 
-export const SEARCH_TABS = ["All", "Flows", "Components"];
+export const SEARCH_TABS = ["All", "Agents", "Components"];
 export const PAGINATION_SIZE = 12;
 export const PAGINATION_PAGE = 1;
 

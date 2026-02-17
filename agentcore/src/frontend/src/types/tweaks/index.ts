@@ -8,8 +8,8 @@ export type GetCodesType = {
 };
 
 export type GetCodeType = {
-  flowId: string;
-  flowName: string;
+  agentId: string;
+  agentName: string;
   isAuth: boolean;
   tweaksBuildedObject?: {};
   endpointName?: string | null;

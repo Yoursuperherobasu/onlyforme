@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { handleKeyDown } from "@/utils/reactflowUtils";
+import { handleKeyDown } from "@/utils/reactFlowUtils";
 import { cn } from "@/utils/utils";
 
 interface CursorInputProps {

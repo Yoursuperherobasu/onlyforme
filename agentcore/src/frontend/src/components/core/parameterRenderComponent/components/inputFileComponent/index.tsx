@@ -13,7 +13,7 @@ import {
   INVALID_FILE_ALERT,
 } from "../../../../../constants/alerts_constants";
 import useAlertStore from "../../../../../stores/alertStore";
-import useFlowsManagerStore from "../../../../../stores/flowsManagerStore";
+import useAgentsManagerStore from "../../../../../stores/agentsManagerStore";
 import IconComponent, {
   ForwardedIconComponent,
 } from "../../../../common/genericIconComponent";
@@ -31,7 +31,7 @@ export default function InputFileComponent({
   editNode = false,
   id,
 }: InputProps<string, FileComponentType>): JSX.Element {
-  const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
+  const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { validateFileSize } = useFileSizeValidator();
 
@@ -90,7 +90,7 @@ export default function InputFileComponent({
               new Promise<{ file_name: string; file_path: string } | null>(
                 async (resolve) => {
                   const data = await mutateAsync(
-                    { file, id: currentFlowId },
+                    { file, id: currentAgentId },
                     {
                       onError: (error) => {
                         console.error(CONSOLE_ERROR_MSG);

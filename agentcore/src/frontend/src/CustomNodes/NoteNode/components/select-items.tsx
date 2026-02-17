@@ -4,8 +4,8 @@ import {
   SelectContentWithoutPortal,
   SelectItem,
 } from "@/components/ui/select-custom";
-import ToolbarSelectItem from "@/pages/FlowPage/components/nodeToolbarComponent/toolbarSelectItem";
-import type { NoteDataType } from "@/types/flow";
+import ToolbarSelectItem from "@/pages/AgentPage/components/nodeToolbarComponent/toolbarSelectItem";
+import type { NoteDataType } from "@/types/agent";
 
 export const SelectItems = memo(
   ({ shortcuts, data }: { shortcuts: any[]; data: NoteDataType }) => (

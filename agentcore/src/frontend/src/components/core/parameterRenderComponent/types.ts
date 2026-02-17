@@ -148,9 +148,9 @@ export type TabComponentType = {
 };
 
 export type NodeInfoType = {
-  flowId: string;
+  agentId: string;
   nodeType: string;
-  flowName: string;
+  agentName: string;
   isAuth: boolean;
   variableName: string;
 };

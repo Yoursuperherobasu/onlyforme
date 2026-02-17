@@ -8,14 +8,14 @@ export function SaveChangesModal({
   onSave,
   onProceed,
   onCancel,
-  flowName,
+  agentName,
   lastSaved,
   autoSave,
 }: {
   onSave: () => void;
   onProceed: () => void;
   onCancel: () => void;
-  flowName: string;
+  agentName: string;
   lastSaved: string | undefined;
   autoSave: boolean;
 }): JSX.Element {
@@ -26,7 +26,7 @@ export function SaveChangesModal({
       onClose={onCancel}
       destructiveCancel
       title={
-        (autoSave ? "Flow" : truncate(flowName, { length: 32 })) +
+        (autoSave ? "agent" : truncate(agentName, { length: 32 })) +
         " has unsaved changes"
       }
       cancelText={autoSave ? undefined : "Exit anyway"}

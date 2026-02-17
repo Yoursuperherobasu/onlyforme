@@ -30,7 +30,7 @@ export const useDeleteMessages: useMutationFunctionType<
     ...options,
     onSettled: (data, error, variables, context) => {
       queryClient.invalidateQueries({
-        queryKey: ["useGetSessionsFromFlowQuery"],
+        queryKey: ["useGetSessionsFromAgentQuery"],
       });
       options?.onSettled?.(data, error, variables, context);
     },

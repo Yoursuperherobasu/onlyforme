@@ -10,7 +10,7 @@ export const useShortcutsStore = create<shortcutsStoreType>((set, get) => ({
   },
   outputInspection: "o",
   play: "p",
-  flow: "mod+shift+b",
+  agent: "mod+shift+b",
   undo: "mod+z",
   redo: "mod+y",
   redoAlt: "mod+shift+z",

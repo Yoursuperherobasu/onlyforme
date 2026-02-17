@@ -5,7 +5,7 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 interface DownloadImagesQueryParams {
-  flowId: string;
+  agentId: string;
   fileName: string;
 }
 
@@ -22,7 +22,7 @@ export const useGetDownloadImagesQuery: useQueryFunctionType<
   const getDownloadImagesFn = async () => {
     if (!params) return;
     const response = await api.get<DownloadImagesResponse>(
-      `${getURL("FILES")}/images/${params.flowId}/${params.fileName}`,
+      `${getURL("FILES")}/images/${params.agentId}/${params.fileName}`,
     );
     return response["data"];
   };

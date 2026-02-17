@@ -1,11 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import CopyFieldAreaComponent from "../index";
 
 // Mock the stores
 jest.mock("@/stores/alertStore");
-jest.mock("@/stores/flowStore");
+jest.mock("@/stores/agentStore");
 
 // Mock IconComponent
 jest.mock("@/components/common/genericIconComponent", () => {
@@ -52,14 +52,14 @@ const mockedUseAlertStore = useAlertStore as jest.MockedFunction<
   typeof useAlertStore
 >;
 
-// Mock flow store
-const mockCurrentFlow = {
-  id: "test-flow-id-123",
+// Mock agent store
+const mockCurrentAgent = {
+  id: "test-agent-id-123",
   endpoint_name: "test-endpoint",
 };
 
-const mockedUseFlowStore = useFlowStore as jest.MockedFunction<
-  typeof useFlowStore
+const mockedUseAgentStore = useAgentStore as jest.MockedFunction<
+  typeof useAgentStore
 >;
 
 describe("CopyFieldAreaComponent", () => {
@@ -78,7 +78,7 @@ describe("CopyFieldAreaComponent", () => {
 
     // Setup store mocks
     mockedUseAlertStore.mockReturnValue(mockSetSuccessData);
-    mockedUseFlowStore.mockReturnValue(mockCurrentFlow);
+    mockedUseAgentStore.mockReturnValue(mockCurrentAgent);
   });
 
   afterEach(() => {
@@ -86,7 +86,7 @@ describe("CopyFieldAreaComponent", () => {
   });
 
   describe("Webhook URL Generation", () => {
-    it("should generate webhook URL with flow ID when value is BACKEND_URL", () => {
+    it("should generate webhook URL with agent ID when value is BACKEND_URL", () => {
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
@@ -110,9 +110,9 @@ describe("CopyFieldAreaComponent", () => {
       expect(input).toHaveValue("http://localhost:7860/api/mcp/sse");
     });
 
-    it("should handle missing flow ID gracefully", () => {
-      // Mock flow store to return flow with no ID
-      mockedUseFlowStore.mockReturnValue({
+    it("should handle missing agent ID gracefully", () => {
+      // Mock agent store to return agent with no ID
+      mockedUseAgentStore.mockReturnValue({
         id: undefined,
         endpoint_name: "test-endpoint",
       });
@@ -130,27 +130,27 @@ describe("CopyFieldAreaComponent", () => {
     });
 
     it("should handle missing endpoint name gracefully", () => {
-      // Mock flow store to return flow with no endpoint_name
-      mockedUseFlowStore.mockReturnValue({
-        id: "test-flow-id-123",
+      // Mock agent store to return agent with no endpoint_name
+      mockedUseAgentStore.mockReturnValue({
+        id: "test-agent-id-123",
         endpoint_name: undefined,
       });
 
       render(<CopyFieldAreaComponent {...defaultProps} />);
 
       const input = screen.getByDisplayValue(
-        "http://localhost:7860/api/webhook/test-flow-id-123",
+        "http://localhost:7860/api/webhook/test-agent-id-123",
       );
 
       expect(input).toBeInTheDocument();
       expect(input).toHaveValue(
-        "http://localhost:7860/api/webhook/test-flow-id-123",
+        "http://localhost:7860/api/webhook/test-agent-id-123",
       );
     });
 
-    it("should handle missing both flow ID and endpoint name", () => {
-      // Mock flow store to return empty flow
-      mockedUseFlowStore.mockReturnValue({
+    it("should handle missing both agent ID and endpoint name", () => {
+      // Mock agent store to return empty agent
+      mockedUseAgentStore.mockReturnValue({
         id: undefined,
         endpoint_name: undefined,
       });
@@ -243,11 +243,11 @@ describe("CopyFieldAreaComponent", () => {
     });
   });
 
-  describe("Flow ID Edge Cases", () => {
-    it("should handle very long flow IDs", () => {
-      const longFlowId = "a".repeat(100);
-      mockedUseFlowStore.mockReturnValue({
-        id: longFlowId,
+  describe("agent ID Edge Cases", () => {
+    it("should handle very long agent IDs", () => {
+      const longAgentId = "a".repeat(100);
+      mockedUseAgentStore.mockReturnValue({
+        id: longAgentId,
         endpoint_name: "test-endpoint",
       });
 
@@ -260,10 +260,10 @@ describe("CopyFieldAreaComponent", () => {
       expect(input).toHaveValue(expectedUrl);
     });
 
-    it("should handle flow IDs with special characters", () => {
-      const specialFlowId = "flow-123_test%20id";
-      mockedUseFlowStore.mockReturnValue({
-        id: specialFlowId,
+    it("should handle agent IDs with special characters", () => {
+      const specialAgentId = "agent-123_test%20id";
+      mockedUseAgentStore.mockReturnValue({
+        id: specialAgentId,
         endpoint_name: "endpoint",
       });
 
@@ -276,8 +276,8 @@ describe("CopyFieldAreaComponent", () => {
       expect(input).toHaveValue(expectedUrl);
     });
 
-    it("should handle empty string flow ID", () => {
-      mockedUseFlowStore.mockReturnValue({
+    it("should handle empty string agent ID", () => {
+      mockedUseAgentStore.mockReturnValue({
         id: "",
         endpoint_name: "test-endpoint",
       });

@@ -1,6 +1,6 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import type { ColDef, ColGroupDef } from "ag-grid-community";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useMessagesStore } from "@/stores/messagesStore";
 import type { useQueryFunctionType } from "../../../../types/api";
 import {
@@ -30,10 +30,10 @@ export const useGetMessagesQuery: useQueryFunctionType<
   const { query } = UseRequestProcessor();
 
   const getMessagesFn = async (id?: string, params = {}) => {
-    const isPlaygroundPage = useFlowStore.getState().playgroundPage;
+    const isPlaygroundPage = useAgentStore.getState().playgroundPage;
     const config = {};
     if (id) {
-      config["params"] = { flow_id: id };
+      config["params"] = { agent_id: id };
     }
     if (params) {
       // Process params to ensure session_id is properly encoded

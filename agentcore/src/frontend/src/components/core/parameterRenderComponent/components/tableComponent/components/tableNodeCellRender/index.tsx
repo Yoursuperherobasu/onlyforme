@@ -5,18 +5,18 @@ import useHandleNodeClass from "@/CustomNodes/hooks/use-handle-node-class";
 import { ParameterRenderComponent } from "@/components/core/parameterRenderComponent";
 import type { NodeInfoType } from "@/components/core/parameterRenderComponent/types";
 import useAuthStore from "@/stores/authStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import type { APIClassType } from "@/types/api";
-import { isTargetHandleConnected } from "@/utils/reactflowUtils";
+import { isTargetHandleConnected } from "@/utils/reactFlowUtils";
 import { cn } from "@/utils/utils";
 
 export default function TableNodeCellRender({
   value: { nodeId, parameterId, isTweaks },
 }: CustomCellRendererProps) {
-  const edges = useFlowStore((state) => state.edges);
-  const node = useFlowStore((state) => state.getNode(nodeId));
+  const edges = useAgentStore((state) => state.edges);
+  const node = useAgentStore((state) => state.getNode(nodeId));
   const parameter = node?.data?.node?.template?.[parameterId];
-  const currentFlow = useFlowStore((state) => state.currentFlow);
+  const currentAgent = useAgentStore((state) => state.currentAgent);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
   const shouldDisplayApiKey = isAuthenticated;
@@ -42,9 +42,9 @@ export default function TableNodeCellRender({
 
   const nodeInformationMetadata: NodeInfoType = useMemo(() => {
     return {
-      flowId: currentFlow?.id ?? "",
+      agentId: currentAgent?.id ?? "",
       nodeType: node?.data?.type?.toLowerCase() ?? "",
-      flowName: currentFlow?.name ?? "",
+      agentName: currentAgent?.name ?? "",
       isAuth: shouldDisplayApiKey!,
       variableName: parameterId,
     };

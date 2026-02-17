@@ -3,7 +3,7 @@ export type ChatViewWrapperProps = {
   visibleSession: string | undefined;
   sessions: string[];
   sidebarOpen: boolean;
-  currentFlowId: string;
+  currentAgentId: string;
   setSidebarOpen: (open: boolean) => void;
   isPlayground: boolean | undefined;
   setvisibleSession: (session: string | undefined) => void;

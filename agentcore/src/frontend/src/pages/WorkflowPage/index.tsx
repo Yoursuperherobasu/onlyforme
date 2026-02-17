@@ -1,13 +1,13 @@
 import {
   Search,
-  Workflow,
+  Workagent,
   X
 } from "lucide-react";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import { useEffect, useState } from "react";
 
-interface WorkflowType {
+interface WorkagentType {
   id: string;
   name: string;
   description: string;
@@ -20,27 +20,27 @@ interface WorkflowType {
   enabled: boolean;
 }
 
-interface WorkflowsViewProps {
-  workflows?: WorkflowType[];
+interface workflowsViewProps {
+  workflows?: WorkagentType[];
   setSearch: (search: string) => void;
-  onWorkflowClick?: (workflow: WorkflowType) => void;
+  onWorkagentClick?: (workflow: WorkagentType) => void;
 }
 
-export default function WorkflowsView({
+export default function workflowsView({
   workflows,
   setSearch,
-  onWorkflowClick,
-}: WorkflowsViewProps): JSX.Element {
+  onWorkagentClick,
+}: workflowsViewProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
-  const [workflowStates, setWorkflowStates] = useState<{
+  const [workflowStates, setWorkagentStates] = useState<{
     [key: string]: { status: boolean; enabled: boolean };
   }>({});
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
-  /* ---------------------------------- Dummy Workflows ---------------------------------- */
+  /* ---------------------------------- Dummy workflows ---------------------------------- */
 
-  const DUMMY_WORKFLOWS: WorkflowType[] = [
+  const DUMMY_WORKAGENTS: WorkagentType[] = [
     {
       id: "1",
       name: "Customer Support Chatbot",
@@ -79,7 +79,7 @@ export default function WorkflowsView({
     },
     {
       id: "4",
-      name: "Data Processing Workflow",
+      name: "Data Processing Workagent",
       description: "Automated ETL pipeline with AI-powered data cleaning",
       user: "David Kumar",
       department: "Data Engineering",
@@ -163,25 +163,25 @@ export default function WorkflowsView({
     },
   ];
 
-  const displayWorkflows = workflows?.length ? workflows : DUMMY_WORKFLOWS;
+  const displayworkflows = workflows?.length ? workflows : DUMMY_WORKAGENTS;
 
   /* ---------------------------------- Initialize States ---------------------------------- */
 
   useEffect(() => {
     const initialStates: { [key: string]: { status: boolean; enabled: boolean } } = {};
-    displayWorkflows.forEach((workflow) => {
+    displayworkflows.forEach((workflow) => {
       initialStates[workflow.id] = {
         status: workflow.status,
         enabled: workflow.enabled,
       };
     });
-    setWorkflowStates(initialStates);
+    setWorkagentStates(initialStates);
   }, []);
 
   /* ---------------------------------- Toggle Handlers ---------------------------------- */
 
   const handleStatusToggle = (workflowId: string) => {
-    setWorkflowStates((prev) => ({
+    setWorkagentStates((prev) => ({
       ...prev,
       [workflowId]: {
         ...prev[workflowId],
@@ -191,7 +191,7 @@ export default function WorkflowsView({
   };
 
   const handleEnabledToggle = (workflowId: string) => {
-    setWorkflowStates((prev) => ({
+    setWorkagentStates((prev) => ({
       ...prev,
       [workflowId]: {
         ...prev[workflowId],
@@ -202,7 +202,7 @@ export default function WorkflowsView({
 
   /* ---------------------------------- Filtering ---------------------------------- */
 
-  const filteredWorkflows = displayWorkflows.filter((workflow) => {
+  const filteredworkflows = displayworkflows.filter((workflow) => {
     const matchesSearch =
       !searchQuery ||
       workflow.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -282,11 +282,11 @@ export default function WorkflowsView({
             </thead>
 
             <tbody className="divide-y">
-              {filteredWorkflows.map((workflow) => (
+              {filteredworkflows.map((workflow) => (
                 <tr
                   key={workflow.id}
                   className="hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => onWorkflowClick?.(workflow)}
+                  onClick={() => onWorkagentClick?.(workflow)}
                 >
                   <td className="px-6 py-4">
                     <div className="font-semibold">{workflow.name}</div>

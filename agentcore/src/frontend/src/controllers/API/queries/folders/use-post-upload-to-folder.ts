@@ -3,28 +3,28 @@ import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
-interface IPostAddUploadFlowToFolder {
-  flows: FormData;
+interface IPostAddUploadAgentToFolder {
+  agents: FormData;
   folderId: string;
 }
 
-export const usePostUploadFlowToFolder: useMutationFunctionType<
+export const usePostUploadAgentToFolder: useMutationFunctionType<
   undefined,
-  IPostAddUploadFlowToFolder
+  IPostAddUploadAgentToFolder
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 
-  const uploadFlowToFolderFn = async (
-    payload: IPostAddUploadFlowToFolder,
+  const uploadAgentToFolderFn = async (
+    payload: IPostAddUploadAgentToFolder,
   ): Promise<void> => {
     const res = await api.post(
-      `${getURL("FLOWS")}/upload/?folder_id=${encodeURIComponent(payload.folderId)}`,
-      payload.flows,
+      `${getURL("AGENTS")}/upload/?folder_id=${encodeURIComponent(payload.folderId)}`,
+      payload.agents,
     );
     return res.data;
   };
 
-  const mutation = mutate(["usePostUploadFlowToFolder"], uploadFlowToFolderFn, {
+  const mutation = mutate(["usePostUploadAgentToFolder"], uploadAgentToFolderFn, {
     ...options,
     onSettled: (res) => {
       queryClient.refetchQueries({

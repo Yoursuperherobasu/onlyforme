@@ -11,13 +11,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
-import useDeleteFlow from "@/hooks/flows/use-delete-flow";
+import useDeleteAgent from "@/hooks/agents/use-delete-agent";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import ExportModal from "@/modals/exportModal";
-import FlowSettingsModal from "@/modals/flowSettingsModal";
+import AgentSettingsModal from "@/modals/agentSettingsModal";
 import useAlertStore from "@/stores/alertStore";
-import type { FlowType } from "@/types/flow";
-import { downloadFlow } from "@/utils/reactflowUtils";
+import type { AgentType } from "@/types/agent";
+import { downloadAgent } from "@/utils/reactFlowUtils";
 import { swatchColors } from "@/utils/styleUtils";
 import { cn, getNumberFromString } from "@/utils/utils";
 import useDescriptionModal from "../../hooks/use-description-modal";
@@ -26,14 +26,14 @@ import { timeElapsed } from "../../utils/time-elapse";
 import DropdownComponent from "../dropdown";
 
 const ListComponent = ({
-  flowData,
+  agentData,
   selected,
   setSelected,
   shiftPressed,
   index,
   disabled = false,
 }: {
-  flowData: FlowType;
+  agentData: AgentType;
   selected: boolean;
   setSelected: (selected: boolean) => void;
   shiftPressed: boolean;
@@ -43,14 +43,14 @@ const ListComponent = ({
   const navigate = useCustomNavigate();
   const [openDelete, setOpenDelete] = useState(false);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
-  const { deleteFlow } = useDeleteFlow();
+  const { deleteAgent } = useDeleteAgent();
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { folderId } = useParams();
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
-  const isComponent = flowData.is_component ?? false;
+  const isComponent = agentData.is_component ?? false;
 
-  const editFlowLink = `/flow/${flowData.id}${folderId ? `/folder/${folderId}` : ""}`;
+  const editAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}`;
 
   const handleClick = async () => {
     if (disabled) return; // Prevent click when disabled
@@ -59,13 +59,13 @@ const ListComponent = ({
       setSelected(!selected);
     } else {
       if (!isComponent) {
-        navigate(editFlowLink);
+        navigate(editAgentLink);
       }
     }
   };
 
   const handleDelete = () => {
-    deleteFlow({ id: [flowData.id] })
+    deleteAgent({ id: [agentData.id] })
       .then(() => {
         setSuccessData({
           title: "Selected items deleted successfully",
@@ -79,23 +79,23 @@ const ListComponent = ({
       });
   };
 
-  const { onDragStart } = useDragStart(flowData);
+  const { onDragStart } = useDragStart(agentData);
 
   const descriptionModal = useDescriptionModal(
-    [flowData?.id],
-    flowData.is_component ? "component" : "flow",
+    [agentData?.id],
+    agentData.is_component ? "component" : "agent",
   );
 
   const swatchIndex =
-    (flowData.gradient && !isNaN(parseInt(flowData.gradient))
-      ? parseInt(flowData.gradient)
-      : getNumberFromString(flowData.gradient ?? flowData.id)) %
+    (agentData.gradient && !isNaN(parseInt(agentData.gradient))
+      ? parseInt(agentData.gradient)
+      : getNumberFromString(agentData.gradient ?? agentData.id)) %
     swatchColors.length;
 
   const handleExport = () => {
-    if (flowData.is_component) {
-      downloadFlow(flowData, flowData.name, flowData.description);
-      setSuccessData({ title: `${flowData.name} exported successfully` });
+    if (agentData.is_component) {
+      downloadAgent(agentData, agentData.name, agentData.description);
+      setSuccessData({ title: `${agentData.name} exported successfully` });
     } else {
       setOpenExportModal(true);
     }
@@ -104,7 +104,7 @@ const ListComponent = ({
   return (
     <>
       <Card
-        key={flowData.id}
+        key={agentData.id}
         draggable={!disabled}
         onDragStart={disabled ? undefined : onDragStart}
         onClick={handleClick}
@@ -136,7 +136,7 @@ const ListComponent = ({
                   "ml-2 transition-opacity focus-visible:ring-0",
                   !selected && "opacity-0 group-hover/checkbox:opacity-100",
                 )}
-                data-testid={`checkbox-${flowData.id}`}
+                data-testid={`checkbox-${agentData.id}`}
               />
             </div>
             <div
@@ -146,7 +146,7 @@ const ListComponent = ({
               )}
             >
               <ForwardedIconComponent
-                name="Workflow"
+                name="Workagent"
                 className={cn(
                   "h-5 w-5",
                   index % 2 === 0 ? "text-foreground" : "text-white",
@@ -159,18 +159,18 @@ const ListComponent = ({
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
               <div
                 className="flex min-w-0 flex-shrink truncate text-sm font-semibold"
-                data-testid={`flow-name-div`}
+                data-testid={`agent-name-div`}
               >
                 <span
                   className="truncate"
-                  data-testid={`flow-name-${flowData.id}`}
+                  data-testid={`agent-name-${agentData.id}`}
                 >
-                  {flowData.name}
+                  {agentData.name}
                 </span>
               </div>
               <div className="flex min-w-0 flex-shrink text-xs text-muted-foreground">
                 <span className="truncate">
-                  Edited {timeElapsed(flowData.updated_at)} ago
+                  Edited {timeElapsed(agentData.updated_at)} ago
                 </span>
               </div>
             </div>
@@ -200,7 +200,7 @@ const ListComponent = ({
               side="bottom"
             >
               <DropdownComponent
-                flowData={flowData}
+                agentData={agentData}
                 setOpenDelete={setOpenDelete}
                 handleExport={handleExport}
                 handleEdit={() => {
@@ -217,18 +217,18 @@ const ListComponent = ({
           setOpen={setOpenDelete}
           onConfirm={handleDelete}
           description={descriptionModal}
-          note={!flowData.is_component ? "and its message history" : ""}
+          note={!agentData.is_component ? "and its message history" : ""}
         />
       )}
       <ExportModal
         open={openExportModal}
         setOpen={setOpenExportModal}
-        flowData={flowData}
+        agentData={agentData}
       />
-      <FlowSettingsModal
+      <AgentSettingsModal
         open={openSettings}
         setOpen={setOpenSettings}
-        flowData={flowData}
+        agentData={agentData}
       />
     </>
   );

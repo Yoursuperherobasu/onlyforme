@@ -4,7 +4,7 @@ import { LogLevel } from '@azure/msal-browser';
      auth: {
          clientId: 'd717db80-a34b-43c3-b78b-41322e2058cc', // This is the ONLY mandatory field that you need to supply.
          authority: 'https://login.microsoftonline.com/69b98d34-6d85-4ddf-9d5f-6f8767b5f4b7', // Replace the placeholder with your tenant info
-         redirectUri: 'http://localhost:3000/flows', // Points to window.location.origin. You must register this URI on Microsoft Entra admin center/App Registration.
+         redirectUri: 'http://localhost:3000/agents', // Points to window.location.origin. You must register this URI on Microsoft Entra admin center/App Registration.
          postLogoutRedirectUri: '/', // Indicates the page to navigate after logout.
          navigateToLoginRequestUrl: false, // If "true", will navigate back to the original request location before processing the auth code response.
      },

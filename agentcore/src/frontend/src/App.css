@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Prevent react flow to overflow the page */
+/* Prevent react agent to overflow the page */
 body {
   overflow: hidden;
 }

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 const useDescriptionModal = (
-  selectedFlowsComponentsCards: string[] | undefined,
+  selectedAgentsComponentsCards: string[] | undefined,
   type: string | undefined,
 ) => {
   const getDescriptionModal = useMemo(() => {
@@ -9,7 +9,7 @@ const useDescriptionModal = (
       const labels = {
         all: "item",
         component: "component",
-        flow: "flow",
+        agent: "agent",
       };
       return labels[type] || "";
     };
@@ -18,16 +18,16 @@ const useDescriptionModal = (
       const labels = {
         all: "items",
         component: "components",
-        flow: "flows",
+        agent: "agents",
       };
       return labels[type] || "";
     };
 
-    if (selectedFlowsComponentsCards?.length === 1) {
+    if (selectedAgentsComponentsCards?.length === 1) {
       return getTypeLabel(type);
     }
     return getPluralizedLabel(type);
-  }, [selectedFlowsComponentsCards, type]);
+  }, [selectedAgentsComponentsCards, type]);
 
   return getDescriptionModal;
 };

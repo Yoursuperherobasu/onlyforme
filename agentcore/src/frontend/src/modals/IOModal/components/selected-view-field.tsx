@@ -12,7 +12,7 @@ export const SelectedViewField = ({
   inputs,
   outputs,
   sessions,
-  currentFlowId,
+  currentAgentId,
   nodes,
 }: SelectedViewFieldProps) => {
   return (
@@ -55,7 +55,7 @@ export const SelectedViewField = ({
             />
           )}
           {sessions.some((session) => session === selectedViewField?.id) && (
-            <SessionView session={selectedViewField?.id} id={currentFlowId} />
+            <SessionView session={selectedViewField?.id} id={currentAgentId} />
           )}
         </div>
       </div>

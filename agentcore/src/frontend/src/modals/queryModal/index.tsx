@@ -5,7 +5,7 @@ import {
   TEXT_DIALOG_TITLE,
 } from "../../constants/constants";
 import type { queryModalPropsType } from "../../types/components";
-import { handleKeyDown } from "../../utils/reactflowUtils";
+import { handleKeyDown } from "../../utils/reactFlowUtils";
 import { classNames } from "../../utils/utils";
 import BaseModal from "../baseModal";
 

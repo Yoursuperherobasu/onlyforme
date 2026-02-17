@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import IconComponent from "@/components/common/genericIconComponent";
-import { usePostPublishFlow } from "@/controllers/API/queries/flows/use-post-publish-flow";
+import { usePostPublishAgent } from "@/controllers/API/queries/agents/use-post-publish-agent";
 import BaseModal from "../baseModal";
 
 interface SavedConnection {
@@ -87,29 +87,29 @@ const deleteConnection = (connectionId: string) => {
 };
 
 interface PublishModalProps {
-  flowId: string;
-  flowName: string;
+  agentId: string;
+  agentName: string;
   open: boolean;
   setOpen: (open: boolean) => void;
   onSuccess?: (response: any) => void;
 }
 
 export default function PublishModal({
-  flowId,
-  flowName,
+  agentId,
+  agentName,
   open,
   setOpen,
   onSuccess,
 }: PublishModalProps) {
   const [agentcoreUrl, setAgentcoreUrl] = useState("http://localhost:5839");
   const [apiKey, setApiKey] = useState("");
-  const [modelName, setModelName] = useState(flowName);
+  const [modelName, setModelName] = useState(agentName);
   const [error, setError] = useState<string | null>(null);
   const [savedConnections, setSavedConnections] = useState<SavedConnection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<string>("new");
   const [showApiKey, setShowApiKey] = useState(false);
 
-  const publishMutation = usePostPublishFlow();
+  const publishMutation = usePostPublishAgent();
 
   useEffect(() => {
     if (open) {
@@ -131,9 +131,9 @@ export default function PublishModal({
   }, [open]);
 
   useEffect(() => {
-    // Update model name when flow name changes
-    setModelName(flowName);
-  }, [flowName]);
+    // Update model name when agent name changes
+    setModelName(agentName);
+  }, [agentName]);
 
   const handleConnectionChange = (value: string) => {
     setSelectedConnection(value);
@@ -170,7 +170,7 @@ export default function PublishModal({
 
     publishMutation.mutate(
       {
-        flow_id: flowId,
+        agent_id: agentId,
         agentcore_url: agentcoreUrl,
         agentcore_api_key: apiKey,
         model_name: modelName.trim() || undefined,
@@ -187,7 +187,7 @@ export default function PublishModal({
         },
         onError: (err: any) => {
           setError(
-            err?.response?.data?.detail || "Failed to publish flow. Please try again.",
+            err?.response?.data?.detail || "Failed to publish agent. Please try again.",
           );
         },
       }
@@ -196,7 +196,7 @@ export default function PublishModal({
 
   return (
     <BaseModal open={open} setOpen={setOpen} size="medium">
-      <BaseModal.Header description="Deploy your flow to AgentCore as a selectable model">
+      <BaseModal.Header description="Deploy your agent to AgentCore as a selectable model">
         <span className="pr-2">Publish to AgentCore</span>
         <IconComponent
           name="Globe"
@@ -207,10 +207,10 @@ export default function PublishModal({
 
       <BaseModal.Content>
         <div className="flex flex-col gap-4">
-          {/* Flow info */}
+          {/* agent info */}
           <div className="rounded-md bg-muted p-3">
-            <div className="text-sm font-medium">Flow: {flowName}</div>
-            <div className="text-xs text-muted-foreground">ID: {flowId}</div>
+            <div className="text-sm font-medium">agent: {agentName}</div>
+            <div className="text-xs text-muted-foreground">ID: {agentId}</div>
           </div>
 
           {/* Saved Connections Selector */}
@@ -370,7 +370,7 @@ export default function PublishModal({
           ) : (
             <>
               <IconComponent name="Upload" className="h-4 w-4" />
-              Publish Flow
+              Publish agent
             </>
           )}
         </Button>

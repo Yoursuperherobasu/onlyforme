@@ -9,14 +9,14 @@ import {
   hasFileTweaks,
 } from "./detect-file-tweaks";
 
-/** Generates Python code using requests for API calls, handling multi-step file uploads (v1 for ChatInput, v2 for others) before flow execution. Supports auth. */
+/** Generates Python code using requests for API calls, handling multi-step file uploads (v1 for ChatInput, v2 for others) before agent execution. Supports auth. */
 export function getNewPythonApiCode({
-  flowId,
+  agentId,
   endpointName,
   processedPayload,
   shouldDisplayApiKey,
 }: {
-  flowId: string;
+  agentId: string;
   endpointName: string;
   processedPayload: any;
   shouldDisplayApiKey: boolean;
@@ -30,7 +30,7 @@ export function getNewPythonApiCode({
 
   // If no file uploads, use existing logic
   if (!hasFiles) {
-    const apiUrl = `${baseUrl}/api/run/${endpointName || flowId}`;
+    const apiUrl = `${baseUrl}/api/run/${endpointName || agentId}`;
     const payloadString = JSON.stringify(processedPayload, null, 4)
       .replace(/true/g, "True")
       .replace(/false/g, "False")
@@ -48,7 +48,7 @@ export function getNewPythonApiCode({
 import os
 import uuid
 
-${authSection}url = "${apiUrl}"  # The complete API endpoint URL for this flow
+${authSection}url = "${apiUrl}"  # The complete API endpoint URL for this agent
 
 # Request payload configuration
 payload = ${payloadString}
@@ -77,7 +77,7 @@ except ValueError as e:
 
   if (chatInputNodeIds.length === 0 && fileNodeIds.length === 0) {
     return getNewPythonApiCode({
-      flowId,
+      agentId,
       endpointName,
       processedPayload: { ...processedPayload, tweaks: nonFileTweaks },
       shouldDisplayApiKey,
@@ -103,7 +103,7 @@ except ValueError as e:
         uploadSteps.length + 1
       }: Upload file for ChatInput ${nodeId}\nwith open(\"your_image_${
         index + 1
-      }.jpg\", \"rb\") as f:\n    response = requests.post(\n        f\"{base_url}/api/files/upload/{flow_id}\",\n        headers=headers,\n        files={\"file\": f}\n    )\n    response.raise_for_status()\n    chat_file_path_${
+      }.jpg\", \"rb\") as f:\n    response = requests.post(\n        f\"{base_url}/api/files/upload/{agent_id}\",\n        headers=headers,\n        files={\"file\": f}\n    )\n    response.raise_for_status()\n    chat_file_path_${
         index + 1
       } = response.json()[\"file_path\"]`,
     );
@@ -161,13 +161,13 @@ import os
 import uuid
 
 ${authSection}base_url = "${baseUrl}"
-flow_id = "${flowId}"
+agent_id = "${agentId}"
 
 ${headersSection}
 
 ${uploadSteps.join("\n\n")}
 
-# Step ${uploadSteps.length + 1}: Execute flow with all file paths
+# Step ${uploadSteps.length + 1}: Execute agent with all file paths
 payload = {
     "output_type": "${processedPayload.output_type || "chat"}",
     "input_type": "${processedPayload.input_type || "chat"}",
@@ -179,7 +179,7 @@ ${allTweaks}
 }
 
 response = requests.post(
-    f"{base_url}/api/run/{endpointName or flowId}",
+    f"{base_url}/api/run/{endpointName or agentId}",
     headers={"Content-Type": "application/json", **headers},
     json=payload
 )

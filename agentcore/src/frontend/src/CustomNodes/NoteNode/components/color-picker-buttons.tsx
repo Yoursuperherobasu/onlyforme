@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { COLOR_OPTIONS } from "@/constants/constants";
-import type { noteDataType } from "@/types/flow";
+import type { noteDataType } from "@/types/agent";
 import { cn } from "@/utils/utils";
 
 export const ColorPickerButtons = memo(

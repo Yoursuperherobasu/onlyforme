@@ -14,12 +14,12 @@ import { track } from "@/customization/utils/analytics";
 import { customOpenNewTab } from "@/customization/utils/custom-open-new-tab";
 import useAlertStore from "@/stores/alertStore";
 import { useDarkStore } from "@/stores/darkStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useShortcutsStore } from "@/stores/shortcuts";
 import { useUtilityStore } from "@/stores/utilityStore";
 import type { VertexBuildTypeAPI } from "@/types/api";
-import type { NodeDataType } from "@/types/flow";
-import { findLastNode } from "@/utils/reactflowUtils";
+import type { NodeDataType } from "@/types/agent";
+import { findLastNode } from "@/utils/reactFlowUtils";
 import { classNames, cn } from "@/utils/utils";
 import IconComponent from "../../../../components/common/genericIconComponent";
 import BuildStatusDisplay from "./components/build-status-display";
@@ -57,8 +57,8 @@ export default function NodeStatus({
   isBreakingChange: boolean;
   getValidationStatus: (data) => VertexBuildTypeAPI | null;
 }) {
-  const nodeId_ = data.node?.flow?.data
-    ? (findLastNode(data.node?.flow.data!)?.id ?? nodeId)
+  const nodeId_ = data.node?.agent?.data
+    ? (findLastNode(data.node?.agent.data!)?.id ?? nodeId)
     : nodeId;
   const [validationString, setValidationString] = useState<string>("");
   const [validationStatus, setValidationStatus] =
@@ -86,13 +86,13 @@ export default function NodeStatus({
   const showNodeStatus =
     conditionSuccess || conditionError || conditionInactive;
 
-  const lastRunTime = useFlowStore(
-    (state) => state.flowBuildStatus[nodeId_]?.timestamp,
+  const lastRunTime = useAgentStore(
+    (state) => state.agentBuildStatus[nodeId_]?.timestamp,
   );
   const iconStatus = useIconStatus(buildStatus);
-  const buildFlow = useFlowStore((state) => state.buildFlow);
-  const isBuilding = useFlowStore((state) => state.isBuilding);
-  const setNode = useFlowStore((state) => state.setNode);
+  const buildAgent = useAgentStore((state) => state.buildAgent);
+  const isBuilding = useAgentStore((state) => state.isBuilding);
+  const setNode = useAgentStore((state) => state.setNode);
   const version = useDarkStore((state) => state.version);
   const eventDeliveryConfig = useUtilityStore((state) => state.eventDelivery);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -200,19 +200,19 @@ export default function NodeStatus({
   function handlePlayWShortcut() {
     if (buildStatus === BuildStatus.BUILDING || isBuilding || !selected) return;
     setValidationStatus(null);
-    buildFlow({
+    buildAgent({
       stopNodeId: nodeId,
       eventDelivery: eventDeliveryConfig,
     });
   }
 
   const play = useShortcutsStore((state) => state.play);
-  const flowPool = useFlowStore((state) => state.flowPool);
+  const agentPool = useAgentStore((state) => state.agentPool);
   useHotkeys(play, handlePlayWShortcut, { preventDefault: true });
   useValidationStatusString(validationStatus, setValidationString);
   useUpdateValidationStatus(
     nodeId_,
-    flowPool,
+    agentPool,
     setValidationStatus,
     getValidationStatus,
   );
@@ -284,7 +284,7 @@ export default function NodeStatus({
 
   const [isHovered, setIsHovered] = useState(false);
 
-  const stopBuilding = useFlowStore((state) => state.stopBuilding);
+  const stopBuilding = useAgentStore((state) => state.stopBuilding);
 
   const handleClickRun = () => {
     if (BuildStatus.BUILDING === buildStatus && isHovered) {
@@ -292,11 +292,11 @@ export default function NodeStatus({
       return;
     }
     if (buildStatus === BuildStatus.BUILDING || isBuilding) return;
-    buildFlow({
+    buildAgent({
       stopNodeId: nodeId,
       eventDelivery: eventDeliveryConfig,
     });
-    track("Flow Build - Clicked", { stopNodeId: nodeId });
+    track("agent Build - Clicked", { stopNodeId: nodeId });
   };
 
   const iconName =

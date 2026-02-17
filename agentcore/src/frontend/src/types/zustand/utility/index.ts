@@ -10,8 +10,8 @@ export type UtilityStoreType = {
   setPlaygroundScrollBehaves: (behaves: ScrollBehavior) => void;
   maxFileSizeUpload: number;
   setMaxFileSizeUpload: (maxFileSizeUpload: number) => void;
-  flowsPagination: Pagination;
-  setFlowsPagination: (pagination: Pagination) => void;
+  agentsPagination: Pagination;
+  setAgentsPagination: (pagination: Pagination) => void;
   tags: Tag[];
   setTags: (tags: Tag[]) => void;
   featureFlags: Record<string, any>;

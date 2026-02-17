@@ -1,11 +1,11 @@
-import type { FlowType } from "../../../types/flow";
+import type { AgentType } from "../../../types/agent";
 
 export type FolderType = {
   name: string;
   description: string;
   id?: string | null;
   parent_id: string;
-  flows: FlowType[];
+  agents: AgentType[];
   components: string[];
 };
 
@@ -17,8 +17,8 @@ export type PaginatedFolderType = {
     parent_id: string;
     components: string[];
   };
-  flows: {
-    items: FlowType[];
+  agents: {
+    items: AgentType[];
     total: number;
     page: number;
     size: number;
@@ -31,14 +31,14 @@ export type AddFolderType = {
   description: string;
   id?: string | null;
   parent_id: string | null;
-  flows?: string[];
+  agents?: string[];
   components?: string[];
 };
 
 export type StarterProjectsType = {
   name?: string;
   description?: string;
-  flows?: FlowType[];
+  agents?: AgentType[];
   id: string;
   parent_id: string;
 };

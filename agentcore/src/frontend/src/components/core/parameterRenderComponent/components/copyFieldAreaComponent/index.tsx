@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { GRADIENT_CLASS_DISABLED } from "@/constants/constants";
 import { customGetHostProtocol } from "@/customization/utils/custom-get-host-protocol";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { cn } from "../../../../../utils/utils";
 import IconComponent from "../../../../common/genericIconComponent";
 import { Input } from "../../../../ui/input";
@@ -65,8 +65,8 @@ export default function CopyFieldAreaComponent({
   const [isCopied, setIsCopied] = useState(false);
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
-  const currentFlow = useFlowStore((state) => state.currentFlow);
-  const endpointName = currentFlow?.endpoint_name ?? currentFlow?.id ?? "";
+  const currentAgent = useAgentStore((state) => state.currentAgent);
+  const endpointName = currentAgent?.endpoint_name ?? currentAgent?.id ?? "";
 
   const valueToRender = useMemo(() => {
     if (value === BACKEND_URL) {

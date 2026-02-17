@@ -6,8 +6,8 @@ export const track = async (
   return;
 };
 
-export const trackFlowBuild = async (
-  flowName: string,
+export const trackAgentBuild = async (
+  agentName: string,
   isError?: boolean,
   properties?: Record<string, any>,
 ): Promise<void> => {
@@ -15,8 +15,8 @@ export const trackFlowBuild = async (
 };
 
 export const trackDataLoaded = async (
-  flowId?: string,
-  flowName?: string,
+  agentId?: string,
+  agentName?: string,
   component?: string,
   componentId?: string,
 ): Promise<void> => {

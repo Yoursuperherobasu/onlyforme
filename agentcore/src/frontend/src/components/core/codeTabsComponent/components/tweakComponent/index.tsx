@@ -3,8 +3,8 @@ import AccordionComponent from "@/components/common/accordionComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { EditNodeComponent } from "@/modals/editNodeModal/components/editNodeComponent";
 import type { APIClassType } from "@/types/api";
-import type { AllNodeType } from "@/types/flow";
-import { customStringify } from "@/utils/reactflowUtils";
+import type { AllNodeType } from "@/types/agent";
+import { customStringify } from "@/utils/reactFlowUtils";
 
 export function TweakComponent({
   open,

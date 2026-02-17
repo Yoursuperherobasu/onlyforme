@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import TableComponent from "@/components/core/parameterRenderComponent/components/tableComponent";
 import { Checkbox } from "@/components/ui/checkbox";
-import useDuplicateFlows from "@/pages/MainPage/hooks/use-handle-duplicate";
-import useFlowStore from "@/stores/flowStore";
-import type { ComponentsToUpdateType } from "@/types/zustand/flow";
+import useDuplicateAgents from "@/pages/MainPage/hooks/use-handle-duplicate";
+import useAgentStore from "@/stores/agentStore";
+import type { ComponentsToUpdateType } from "@/types/zustand/agent";
 import { cn } from "@/utils/utils";
 import BaseModal from "../baseModal";
 
@@ -25,23 +25,23 @@ export default function UpdateComponentModal({
   components: ComponentsToUpdateType[];
   isMultiple?: boolean;
 }) {
-  const [backupFlow, setBackupFlow] = useState<boolean>(true);
+  const [backupAgent, setBackupAgent] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
   const [selectedComponents, setSelectedComponents] = useState<Set<string>>(
     new Set(components.filter((c) => !c.breakingChange).map((c) => c.id)),
   );
   const agGrid = useRef<AgGridReact>(null);
-  const currentFlow = useFlowStore((state) => state.currentFlow);
+  const currentAgent = useAgentStore((state) => state.currentAgent);
 
-  const { handleDuplicate } = useDuplicateFlows({
-    flow: currentFlow
-      ? { ...currentFlow, name: currentFlow.name + " (Backup)" }
+  const { handleDuplicate } = useDuplicateAgents({
+    agent: currentAgent
+      ? { ...currentAgent, name: currentAgent.name + " (Backup)" }
       : undefined,
   });
 
   const handleUpdate = () => {
     setLoading(true);
-    if (backupFlow) {
+    if (backupAgent) {
       handleDuplicate().then(() => {
         onUpdateNode(
           components.length > 0 ? Array.from(selectedComponents) : undefined,
@@ -103,7 +103,7 @@ export default function UpdateComponentModal({
 
   useEffect(() => {
     if (open) {
-      setBackupFlow(true);
+      setBackupAgent(true);
       setSelectedComponents(
         new Set(components.filter((c) => !c.breakingChange).map((c) => c.id)),
       );
@@ -147,7 +147,7 @@ export default function UpdateComponentModal({
                   breaking
                 </span>{" "}
                 may change inputs, outputs, or component behavior. In some
-                cases, they will disconnect components from your flow, requiring
+                cases, they will disconnect components from your agent, requiring
                 you to review or reconnect them afterward. Components added from
                 the sidebar always use the latest version.
               </p>
@@ -157,7 +157,7 @@ export default function UpdateComponentModal({
                   This update may change inputs, outputs, or component behavior.
                   In some cases, it will{" "}
                   <span className="font-semibold text-accent-amber-foreground">
-                    disconnect this component from your flow
+                    disconnect this component from your agent
                   </span>
                   , requiring you to review or reconnect it afterward.
                 </p>
@@ -196,20 +196,20 @@ export default function UpdateComponentModal({
           <div
             className={cn(
               "mb-3 flex items-center gap-3 rounded-md border p-3 text-sm transition-all",
-              !backupFlow && "border-accent-amber-foreground bg-accent-amber",
+              !backupAgent && "border-accent-amber-foreground bg-accent-amber",
             )}
           >
             <Checkbox
-              checked={backupFlow}
+              checked={backupAgent}
               onCheckedChange={(checked) =>
-                setBackupFlow(checked === "indeterminate" ? false : checked)
+                setBackupAgent(checked === "indeterminate" ? false : checked)
               }
               className="bg-muted"
-              id="backupFlow"
-              data-testid="backup-flow-checkbox"
+              id="backupAgent"
+              data-testid="backup-agent-checkbox"
             />
-            <label htmlFor="backupFlow" className="cursor-pointer select-none">
-              Create backup flow before updating
+            <label htmlFor="backupAgent" className="cursor-pointer select-none">
+              Create backup agent before updating
             </label>
           </div>
         </div>

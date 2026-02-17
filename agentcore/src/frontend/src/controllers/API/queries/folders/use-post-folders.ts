@@ -18,7 +18,7 @@ export const usePostFolders: useMutationFunctionType<
     const payload = {
       name: newFolder.data.name,
       description: newFolder.data.description,
-      flows_list: newFolder.data.flows ?? [],
+      agents_list: newFolder.data.agents ?? [],
       components_list: newFolder.data.components ?? [],
     };
 

@@ -6,7 +6,7 @@ import { usePostUploadFile } from "@/controllers/API/queries/files/use-post-uplo
 import { ENABLE_IMAGE_ON_PLAYGROUND } from "@/customization/feature-flags";
 import useFileSizeValidator from "@/shared/hooks/use-file-size-validator";
 import useAlertStore from "@/stores/alertStore";
-import useFlowStore from "@/stores/flowStore";
+import useAgentStore from "@/stores/agentStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 import { useVoiceStore } from "@/stores/voiceStore";
 import {
@@ -14,7 +14,7 @@ import {
   FS_ERROR_TEXT,
   SN_ERROR_TEXT,
 } from "../../../../../constants/constants";
-import useFlowsManagerStore from "../../../../../stores/flowsManagerStore";
+import useAgentsManagerStore from "../../../../../stores/agentsManagerStore";
 import type {
   ChatInputType,
   FilePreviewType,
@@ -34,12 +34,12 @@ export default function ChatInput({
   isDragging,
   playgroundPage,
 }: ChatInputType): JSX.Element {
-  const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
+  const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { validateFileSize } = useFileSizeValidator();
-  const stopBuilding = useFlowStore((state) => state.stopBuilding);
-  const isBuilding = useFlowStore((state) => state.isBuilding);
+  const stopBuilding = useAgentStore((state) => state.stopBuilding);
+  const isBuilding = useAgentStore((state) => state.isBuilding);
   const chatValue = useUtilityStore((state) => state.chatValueStore);
 
   const { scrollToBottom } = useStickToBottomContext();
@@ -125,7 +125,7 @@ export default function ChatInput({
       ]);
 
       mutate(
-        { file, id: currentFlowId },
+        { file, id: currentAgentId },
         {
           onSuccess: (data) => {
             setFiles((prev) => {
@@ -163,7 +163,7 @@ export default function ChatInput({
     return () => {
       document.removeEventListener("paste", handleFileChange);
     };
-  }, [handleFileChange, currentFlowId, isBuilding]);
+  }, [handleFileChange, currentAgentId, isBuilding]);
 
   const setChatValueStore = useUtilityStore((state) => state.setChatValueStore);
 
@@ -228,7 +228,7 @@ export default function ChatInput({
           transition={{ duration: 0.2 }}
         >
           <VoiceAssistant
-            flowId={currentFlowId}
+            agentId={currentAgentId}
             setShowAudioInput={setShowAudioInput}
           />
         </motion.div>
@@ -254,7 +254,7 @@ export default function ChatInput({
             handleFileChange={handleFileChange}
             handleButtonClick={handleButtonClick}
             setShowAudioInput={setShowAudioInput}
-            currentFlowId={currentFlowId}
+            currentAgentId={currentAgentId}
             playgroundPage={playgroundPage}
           />
         </motion.div>

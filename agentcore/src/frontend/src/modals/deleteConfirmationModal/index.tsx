@@ -45,7 +45,7 @@ export default function DeleteConfirmationModal({
           </DialogTitle>
         </DialogHeader>
         <span className="pb-3 text-sm">
-          This will permanently delete the {description ?? "flow"}
+          This will permanently delete the {description ?? "agent"}
           {note ? " " + note : ""}.<br />
           <br />
           This can't be undone.

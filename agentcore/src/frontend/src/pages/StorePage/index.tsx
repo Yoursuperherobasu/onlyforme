@@ -37,7 +37,7 @@ import {
 import { AuthContext } from "../../contexts/authContext";
 import { getStoreComponents } from "../../controllers/API";
 import useAlertStore from "../../stores/alertStore";
-import useFlowsManagerStore from "../../stores/flowsManagerStore";
+import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useStoreStore } from "../../stores/storeStore";
 import type { storeComponent } from "../../types/store";
 import { cn } from "../../utils/utils";
@@ -53,7 +53,7 @@ export default function StorePage(): JSX.Element {
   const { apiKey } = useContext(AuthContext);
 
   const setErrorData = useAlertStore((state) => state.setErrorData);
-  const currentFlowId = useFlowsManagerStore((state) => state.currentFlowId);
+  const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
   const [loading, setLoading] = useState(true);
   const { id } = useParams();
   const [filteredCategories, setFilterCategories] = useState<any[]>([]);
@@ -86,7 +86,7 @@ export default function StorePage(): JSX.Element {
         });
       }
     }
-  }, [loadingApiKey, validApiKey, hasApiKey, currentFlowId]);
+  }, [loadingApiKey, validApiKey, hasApiKey, currentAgentId]);
 
   useEffect(() => {
     handleGetComponents();
@@ -113,7 +113,7 @@ export default function StorePage(): JSX.Element {
       page: pageIndex,
       limit: pageSize,
       is_component:
-        tabActive === "All" ? null : tabActive === "Flows" ? false : true,
+        tabActive === "All" ? null : tabActive === "Agents" ? false : true,
       sort: pageOrder === "Popular" ? "-count(downloads)" : "name",
       tags: filteredCategories,
       liked: selectFilter === "likedbyme" && validApiKey ? true : null,
@@ -218,20 +218,20 @@ export default function StorePage(): JSX.Element {
                 All
               </button>
               <button
-                data-testid="flows-button-store"
+                data-testid="agents-button-store"
                 disabled={loading}
                 onClick={() => {
                   resetPagination();
-                  setTabActive("Flows");
+                  setTabActive("Agents");
                 }}
                 className={
-                  (tabActive === "Flows"
+                  (tabActive === "Agents"
                     ? "border-b-2 border-primary p-3"
                     : "border-b-2 border-transparent p-3 text-muted-foreground hover:text-primary") +
                   (loading ? " cursor-not-allowed" : "")
                 }
               >
-                Flows
+                Agents
               </button>
               <button
                 data-testid="components-button-store"
@@ -369,7 +369,7 @@ export default function StorePage(): JSX.Element {
                     ) : (
                       <>
                         There are no{" "}
-                        {tabActive == "Flows" ? "Flows" : "Components"} with the
+                        {tabActive == "Agents" ? "Agents" : "Components"} with the
                         selected filters.
                       </>
                     )}
