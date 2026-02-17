@@ -290,50 +290,6 @@ def create_app():
     return app
 
 
-# def setup_static_files(app: FastAPI, static_files_dir: Path) -> None:
-#     """Setup the static files directory.
-
-#     Args:
-#         app (FastAPI): FastAPI app.
-#         static_files_dir (str): Path to the static files directory.
-#     """
-#     app.mount(
-#         "/",
-#         StaticFiles(directory=static_files_dir, html=True),
-#         name="static",
-#     )
-
-    # @app.exception_handler(404)
-    # async def custom_404_handler(_request, _exc):
-    #     path = anyio.Path(static_files_dir) / "index.html"
-
-    #     if not await path.exists():
-    #         msg = f"File at path {path} does not exist."
-    #         raise RuntimeError(msg)
-    #     return FileResponse(path)
-
-
-# def get_static_files_dir():
-#     """Get the static files directory relative to Agentcore's main.py file."""
-#     frontend_path = Path(__file__).parent
-#     return frontend_path / "frontend"
-
-
-# def setup_app(static_files_dir: Path | None = None, *, backend_only: bool = False) -> FastAPI:
-#     """Setup the FastAPI app."""
-#     # get the directory of the current file
-#     if not static_files_dir:
-#         static_files_dir = get_static_files_dir()
-
-#     if not backend_only and (not static_files_dir or not static_files_dir.exists()):
-#         msg = f"Static files directory {static_files_dir} does not exist."
-#         raise RuntimeError(msg)
-#     app = create_app()
-
-#     if not backend_only and static_files_dir is not None:
-#         setup_static_files(app, static_files_dir)
-#     return app
-
 def get_number_of_workers(workers=None):
     if workers == -1 or workers is None:
         workers = (cpu_count() * 2) + 1
