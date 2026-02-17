@@ -43,7 +43,6 @@ import McpSidebarGroup from "./components/McpSidebarGroup";
 import MemoizedSidebarGroup from "./components/sidebarBundles";
 import SidebarMenuButtons from "./components/sidebarFooterButtons";
 import { SidebarHeaderComponent } from "./components/sidebarHeader";
-import SidebarSegmentedNav from "./components/sidebarSegmentedNav";
 import { applyBetaFilter } from "./helpers/apply-beta-filter";
 import { applyComponentFilter } from "./helpers/apply-component-filter";
 import { applyEdgeFilter } from "./helpers/apply-edge-filter";
@@ -573,12 +572,8 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
       className="noflow select-none"
     >
       <div className="flex h-full">
-        {ENABLE_NEW_SIDEBAR && <SidebarSegmentedNav />}
         <div
-          className={cn(
-            "flex flex-col h-full w-full group-data-[collapsible=icon]:hidden",
-            ENABLE_NEW_SIDEBAR && "sidebar-segmented",
-          )}
+          className="flex flex-col h-full w-full group-data-[collapsible=icon]:hidden"
         >
           <SidebarHeaderComponent
             showConfig={showConfig}
@@ -599,7 +594,7 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
           />
 
           <SidebarContent
-            segmentedSidebar={ENABLE_NEW_SIDEBAR}
+            segmentedSidebar={false}
             className="flex-1 group-data-[collapsible=icon]:hidden"
           >
             {isLoading ? (
