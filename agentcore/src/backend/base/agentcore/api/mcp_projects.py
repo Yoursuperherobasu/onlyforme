@@ -79,13 +79,41 @@ async def _can_access_project(session, current_user, project: Project) -> bool:
     if project.user_id == current_user.id or project.owner_user_id == current_user.id:
         return True
 
-    if role in {"super_admin", "root"} and project.org_id:
+    if role in {"super_admin", "root"}:
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
-        return project.org_id in org_ids
+        if project.org_id and project.org_id in org_ids:
+            return True
+        owner_id = project.owner_user_id or project.user_id
+        if owner_id and org_ids:
+            owner_membership = (
+                await session.exec(
+                    select(UserOrganizationMembership.id).where(
+                        UserOrganizationMembership.user_id == owner_id,
+                        UserOrganizationMembership.org_id.in_(list(org_ids)),
+                        UserOrganizationMembership.status.in_(["accepted", "active"]),
+                    )
+                )
+            ).first()
+            if owner_membership:
+                return True
 
-    if role == "department_admin" and project.dept_id:
+    if role == "department_admin":
         _, dept_ids = await _get_scope_memberships(session, current_user.id)
-        return project.dept_id in dept_ids
+        if project.dept_id and project.dept_id in dept_ids:
+            return True
+        owner_id = project.owner_user_id or project.user_id
+        if owner_id and dept_ids:
+            owner_membership = (
+                await session.exec(
+                    select(UserDepartmentMembership.id).where(
+                        UserDepartmentMembership.user_id == owner_id,
+                        UserDepartmentMembership.department_id.in_(list(dept_ids)),
+                        UserDepartmentMembership.status == "active",
+                    )
+                )
+            ).first()
+            if owner_membership:
+                return True
 
     return False
 

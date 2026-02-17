@@ -14,9 +14,11 @@ from pydantic import (
     ValidationInfo,
     field_serializer,
     field_validator,
+    model_validator,
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import Text, UniqueConstraint, text
+from sqlalchemy.orm import synonym
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 from agentcore.schema.data import Data
@@ -198,7 +200,9 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
     icon: str | None = Field(default=None, nullable=True)
     tags: list[str] | None = Field(sa_column=Column(JSON), default=[])
     locked: bool | None = Field(default=False, nullable=True)
-    folder_id: UUID | None = Field(default=None, foreign_key="project.id", nullable=True, index=True)
+    project_id: UUID | None = Field(default=None, foreign_key="project.id", nullable=True, index=True)
+    # Backward-compatible alias. Keep until all call sites migrate to project_id.
+    folder_id = synonym("project_id")
     fs_path: str | None = Field(default=None, nullable=True)
     folder: Optional["Project"] = Relationship(back_populates="agents")
     publish_records: list["PublishRecord"] = Relationship(back_populates="agent")
@@ -222,14 +226,23 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
 
 class AgentCreate(AgentBase):
     user_id: UUID | None = None
+    project_id: UUID | None = None
     folder_id: UUID | None = None
     fs_path: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_project_id(cls, data):
+        if isinstance(data, dict) and data.get("project_id") is None and data.get("folder_id") is not None:
+            data["project_id"] = data["folder_id"]
+        return data
 
 
 class AgentRead(AgentBase):
     id: UUID
     user_id: UUID | None = Field()
-    folder_id: UUID | None = Field()
+    project_id: UUID | None = Field(default=None)
+    folder_id: UUID | None = Field(default=None)
     tags: list[str] | None = Field(None, description="The tags of the agent")
 
 
@@ -238,6 +251,10 @@ class AgentHeader(BaseModel):
 
     id: UUID = Field(description="Unique identifier for the agent")
     name: str = Field(description="The name of the agent")
+    project_id: UUID | None = Field(
+        None,
+        description="The ID of the project containing the agent. None if not associated with a project",
+    )
     folder_id: UUID | None = Field(
         None,
         description="The ID of the folder containing the agent. None if not associated with a folder",
@@ -264,6 +281,7 @@ class AgentUpdate(SQLModel):
     name: str | None = None
     description: str | None = None
     data: dict | None = None
+    project_id: UUID | None = None
     folder_id: UUID | None = None
     endpoint_name: str | None = None
     mcp_enabled: bool | None = None
@@ -272,6 +290,13 @@ class AgentUpdate(SQLModel):
     action_description: str | None = None
     access_type: AccessTypeEnum | None = None
     fs_path: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_project_id(cls, data):
+        if isinstance(data, dict) and data.get("project_id") is None and data.get("folder_id") is not None:
+            data["project_id"] = data["folder_id"]
+        return data
 
     @field_validator("endpoint_name")
     @classmethod

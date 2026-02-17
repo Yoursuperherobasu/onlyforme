@@ -72,10 +72,10 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
 
   const data = {
     agents: folderData?.agents?.items ?? [],
-    name: folderData?.folder?.name ?? "",
-    description: folderData?.folder?.description ?? "",
-    parent_id: folderData?.folder?.parent_id ?? "",
-    components: folderData?.folder?.components ?? [],
+    name: folderData?.project?.name ?? "",
+    description: folderData?.project?.description ?? "",
+    parent_id: folderData?.project?.parent_id ?? "",
+    components: folderData?.project?.components ?? [],
     pagination: {
       page: folderData?.agents?.page ?? 1,
       size: folderData?.agents?.size ?? 12,

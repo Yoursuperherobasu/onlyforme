@@ -52,6 +52,11 @@ export default function UserManagementModal({
   const { userData } = useContext(AuthContext);
   const deptAdminFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const getDefaultRoleForCreator = () => {
+    if (userData?.role === "root") return "super_admin";
+    return "business_user";
+  };
+
   function handleInput({
     target: { name, value },
   }: inputHandlerEventType): void {
@@ -138,18 +143,19 @@ export default function UserManagementModal({
   }, []);
 
   function resetForm() {
+    const defaultRole = getDefaultRoleForCreator();
     setPassword("");
     setUserName("");
     setConfirmPassword("");
     setIsActive(false);
-    setSelectedRole("business_user");
+    setSelectedRole(defaultRole);
     setDepartmentAdminEmail("");
     setDepartmentName("");
     setOrganizationName("");
     setOrganizationDescription("");
     setDepartmentAdminError("");
     setOrganizationError("");
-    setInputState(CONTROL_NEW_USER);
+    setInputState({ ...CONTROL_NEW_USER, role: defaultRole });
   }
 
   function handleRoleChange(selectedRole: string) {
@@ -170,8 +176,8 @@ export default function UserManagementModal({
     return role.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
   }
 
-  const effectiveRole = selectedRole || "business_user";
   const isRootAdmin = userData?.role === "root";
+  const effectiveRole = isRootAdmin ? "super_admin" : (selectedRole || "business_user");
   const isSuperAdmin = userData?.role === "super_admin";
   const isDepartmentAdminCreator = userData?.role === "department_admin";
   const isCreatingSuperAdmin = effectiveRole === "super_admin";
@@ -191,6 +197,9 @@ export default function UserManagementModal({
       baseRoles = availableRoles;
     } else {
       baseRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
+    }
+    if (isRootAdmin) {
+      return ["super_admin"];
     }
     return Array.from(new Set([...baseRoles, effectiveRole].filter(Boolean)));
   })();
