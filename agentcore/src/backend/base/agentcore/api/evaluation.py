@@ -3787,23 +3787,23 @@ async def run_saved_evaluators_for_new_trace(
         logger.warning("Failed loading evaluators for new trace {}: {}", trace_id, str(e))
         return 0
 
-    logger.info(f"📋 Found {len(evaluators)} evaluator(s) for user {user_id}")
+    logger.info(f" Found {len(evaluators)} evaluator(s) for user {user_id}")
     
     scheduled = 0
     for idx, evaluator in enumerate(evaluators, 1):
         logger.info(
-            f"🔎 Evaluator {idx}/{len(evaluators)}: name='{evaluator.name}', "
+            f" Evaluator {idx}/{len(evaluators)}: name='{evaluator.name}', "
             f"target={evaluator.target}, agent_id={evaluator.agent_id}, "
             f"agent_ids={evaluator.agent_ids}, agent_name={evaluator.agent_name}"
         )
         
         targets = _normalize_targets(evaluator.target)
         if "new" not in targets:
-            logger.info(f"  ⏭️ Skipping: target={targets} (not 'new')")
+            logger.info(f"  Skipping: target={targets} (not 'new')")
             continue
 
         logger.info(
-            f"  🎯 Checking filters: trace_dict_agent_id={trace_dict.get('metadata', {}).get('agent_id')}, "
+            f"   Checking filters: trace_dict_agent_id={trace_dict.get('metadata', {}).get('agent_id')}, "
             f"trace_dict_agent_name={trace_dict.get('metadata', {}).get('agent_name')}"
         )
         
@@ -3820,10 +3820,10 @@ async def run_saved_evaluators_for_new_trace(
         )
         
         if not matches:
-            logger.info(f"  ❌ Skipping: trace does not match filters")
+            logger.info(f"   Skipping: trace does not match filters")
             continue
         
-        logger.info(f"  ✅ MATCH! Scheduling evaluation for '{evaluator.name}'")
+        logger.info(f"  MATCH! Scheduling evaluation for '{evaluator.name}'")
 
         # Skip invalid evaluator definitions instead of failing all.
         try:
@@ -3856,12 +3856,12 @@ async def run_saved_evaluators_for_new_trace(
 
     if scheduled:
         logger.info(
-            f"✅ Scheduled {scheduled} new-trace evaluator(s) for trace_ref={trace_ref_id}, "
+            f" Scheduled {scheduled} new-trace evaluator(s) for trace_ref={trace_ref_id}, "
             f"resolved_trace_id={resolved_trace_id}, user_id={user_id}"
         )
     else:
         logger.info(
-            f"⚠️ No evaluators scheduled for trace {trace_ref_id}. "
+            f"No evaluators scheduled for trace {trace_ref_id}. "
             f"Total evaluators checked: {len(evaluators)}"
         )
     return scheduled
