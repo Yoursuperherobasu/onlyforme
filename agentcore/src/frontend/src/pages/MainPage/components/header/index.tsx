@@ -52,8 +52,12 @@ const HeaderComponent = ({
     useGetDownloadAgents();
   const { mutate: deleteAgents, isPending: isDeleting } = useDeleteDeleteAgents();
 
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canCreateAgent =
+    can("edit_agents") ||
+    can("view_projects_page") ||
+    can("view_project_page");
 
   useEffect(() => {
     debouncedSetSearch(debouncedSearch);
@@ -206,7 +210,7 @@ const HeaderComponent = ({
                     </Button>
                   </DeleteConfirmationModal>
                 </div>
-                {can("edit_agents") && (
+                {canCreateAgent && (
                 <ShadTooltip content="New Agent" side="bottom">
                   <Button
                     variant="default"

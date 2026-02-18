@@ -38,7 +38,7 @@ export default function AgentCatalogueView({
       name: "Customer Support Agent",
       description:
         "Intelligent customer support automation with context-aware responses.",
-      provider: "Weaviate",
+      provider: "MTC",
       team: "Team",
       contextWindow: "1M tokens",
       pricing: "$0.10 / 1M tokens",
@@ -55,7 +55,7 @@ export default function AgentCatalogueView({
       name: "Data Processing Pipeline",
       description:
         "Automated data extraction, transformation, and loading workflows.",
-      provider: "Weaviate",
+      provider: "MTC",
       team: "AI",
       contextWindow: "1M tokens",
       pricing: "$0.15 / 1M tokens",
@@ -138,6 +138,9 @@ export default function AgentCatalogueView({
   ];
 
   const displayAgents = models?.length ? models : DUMMY_AGENTS;
+
+
+  
 
   /* ---------------------------------- Filtering ---------------------------------- */
 

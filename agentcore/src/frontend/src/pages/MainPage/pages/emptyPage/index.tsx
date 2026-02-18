@@ -14,8 +14,10 @@ type EmptyPageProps = {
 export const EmptyPage = ({ setOpenModal }: EmptyPageProps) => {
   const folders = useFolderStore((state) => state.folders);
   const handleFileDrop = useFileDrop(undefined);
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canViewProjectsPage =
+    can("view_projects_page") || can("view_project_page");
 
   return (
     <CardsWrapComponent
@@ -38,22 +40,22 @@ export const EmptyPage = ({ setOpenModal }: EmptyPageProps) => {
             >
               Begin with a template, or start from scratch.
             </p>
-            {can("edit_agents") && (
-            <Button
-              variant="default"
-              onClick={() => setOpenModal(true)}
-              id="new-project-btn"
-              data-testid="new_project_btn_empty_page"
-            >
-              <ForwardedIconComponent
-                name="Plus"
-                aria-hidden="true"
-                className="h-4 w-4"
-              />
-              <span className="hidden whitespace-nowrap font-semibold md:inline">
-                New Agent
-              </span>
-            </Button>
+            {canViewProjectsPage && (
+              <Button
+                variant="default"
+                onClick={() => setOpenModal(true)}
+                id="new-project-btn"
+                data-testid="new_project_btn_empty_page"
+              >
+                <ForwardedIconComponent
+                  name="Plus"
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                />
+                <span className="hidden whitespace-nowrap font-semibold md:inline">
+                  New Agent
+                </span>
+              </Button>
             )}
           </div>
         </div>
