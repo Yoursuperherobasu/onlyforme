@@ -105,6 +105,23 @@ class LangGraphVertex:
         # Component instance (loaded lazily)
         self.custom_component: Any = None
     
+      # ── Redis serialization support ──────────────────────────────────────
+    def __getstate__(self) -> dict:
+        """Return serializable state for Redis/dill/pickle.
+        The ``custom_component`` is excluded because it may hold
+        non-serializable runtime objects (DB sessions, HTTP clients, etc.).
+        It will be re-loaded lazily on next use after deserialization.
+        """
+        state = self.__dict__.copy()
+        state.pop("custom_component", None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state after deserialization."""
+        self.__dict__.update(state)
+        self.custom_component = None
+
+
     def _determine_base_type(self) -> str:
         """Determine base type from vertex type."""
         # This logic extracted from lazy_load_dict
@@ -281,6 +298,14 @@ class LangGraphVertex:
         self.built_result = self.built_object
         self.built = True
         
+         # Build output logs from the component's results/artifacts
+        if self.custom_component is not None:
+            from agentcore.schema.schema import build_output_logs
+            try:
+                self.outputs_logs = build_output_logs(self, result)
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to build output logs for vertex %s", self.id, exc_info=True)
+                
         # Create result data
         self.result = {
             "results": self.built_result if isinstance(self.built_result, dict) else {"result": self.built_result},

@@ -288,7 +288,7 @@ async def handle_list_tools(project_id=None, *, mcp_enabled_only=False):
             # Build query based on parameters
             if project_id:
                 # Filter agents by project and optionally by MCP enabled status
-                agents_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
+                agents_query = select(Agent).where(Agent.folder_id == project_id)
                 if mcp_enabled_only:
                     agents_query = agents_query.where(Agent.mcp_enabled == True)  # noqa: E712
             else:

@@ -132,7 +132,9 @@ class Settings(BaseSettings):
     Controlled by AGENTCORE_USE_NOOP_DATABASE env variable."""
 
     # cache configuration
-    cache_type: Literal["async", "redis", "memory"] = "async"
+    #cache_type: Literal["async", "redis", "memory"] = "async"
+    cache_type: Literal["async", "redis", "memory"] = "redis"
+    """The cache type can be 'async', 'redis' or 'memory'. Default is 'redis' for distributed caching."""
     """The cache type can be 'async' or 'redis'."""
     redis_host: str = "rdatabase.redis.cache.windows.net"
     redis_port: int = 6380

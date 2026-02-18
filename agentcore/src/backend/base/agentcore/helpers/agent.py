@@ -32,7 +32,7 @@ async def list_agents(*, user_id: str | None = None) -> list[Data]:
     try:
         async with session_scope() as session:
             uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
-            stmt = select(Agent).where(Agent.user_id == uuid_user_id).where(Agent.is_component == False)  # noqa: E712
+            stmt = select(Agent).where(Agent.user_id == uuid_user_id)
             agents = (await session.exec(stmt)).all()
 
             return [agent.to_data() for agent in agents]
@@ -275,13 +275,12 @@ def get_arg_names(inputs: list[Vertex]) -> list[dict[str, str]]:
 
 async def get_agent_by_id_or_endpoint_name(agent_id_or_name: str, user_id: str | UUID | None = None) -> AgentRead | None:
     async with session_scope() as session:
-        endpoint_name = None
         try:
             agent_id = UUID(agent_id_or_name)
             agent = await session.get(Agent, agent_id)
         except ValueError:
-            endpoint_name = agent_id_or_name
-            stmt = select(Agent).where(Agent.endpoint_name == endpoint_name)
+            # Fallback: try matching by agent name
+            stmt = select(Agent).where(Agent.name == agent_id_or_name)
             if user_id:
                 uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
                 stmt = stmt.where(Agent.user_id == uuid_user_id)

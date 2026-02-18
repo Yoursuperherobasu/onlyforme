@@ -266,7 +266,7 @@ def get_unique_name(base_name, max_length, existing_names):
 
 async def get_agent_snake_case(agent_name: str, user_id: str, session, is_action: bool | None = None) -> Agent | None:
     uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
-    stmt = select(Agent).where(Agent.user_id == uuid_user_id).where(Agent.is_component == False)  # noqa: E712
+    stmt = select(Agent).where(Agent.user_id == uuid_user_id)
     agents = (await session.exec(stmt)).all()
 
     for agent in agents:

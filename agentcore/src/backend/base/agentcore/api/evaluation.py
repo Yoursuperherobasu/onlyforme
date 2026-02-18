@@ -3878,12 +3878,6 @@ async def list_evaluation_models(
                 select(agent)
                 .where(
                     or_(
-                        agent.is_component == False,  # noqa: E712
-                        agent.is_component.is_(None),
-                    )
-                )
-                .where(
-                    or_(
                         agent.user_id == current_user.id,
                         agent.access_type == AccessTypeEnum.PUBLIC,
                     )
@@ -3900,18 +3894,17 @@ async def list_evaluation_models(
                 updated_dt = None
             created_ts = int(updated_dt.timestamp()) if updated_dt else int(time.time())
             return {
-                "id": f"lb:{agent.endpoint_name or agent.id}",
+                "id": f"lb:{agent.id}",
                 "name": agent.name,
                 "object": "model",
                 "created": created_ts,
                 "owned_by": str(agent.user_id) if agent.user_id else None,
-                "root": f"lb:{agent.endpoint_name or agent.id}",
+                "root": f"lb:{agent.id}",
                 "parent": None,
                 "permission": [],
                 "metadata": {
                     "display_name": agent.name,
                     "description": agent.description,
-                    "endpoint_name": agent.endpoint_name,
                     # New canonical key used across the codebase
                     "agent_id": str(agent.id),
                     # Legacy aliases expected by some frontend codepaths — keep for compatibility
