@@ -202,6 +202,7 @@ export type Permission = {
   key: string;
   name: string;
   description?: string | null;
+  category?: string | null;
   group?: string | null;
 };
 

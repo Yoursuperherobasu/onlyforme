@@ -206,7 +206,7 @@ async def _visible_user_ids_for_admin(session: DbSession, current_user: User) ->
 async def add_user(
     user: UserCreate,
     session: DbSession,
-    current_user: User = Depends(PermissionChecker(["manage_users"])),
+    current_user: User = Depends(PermissionChecker(["view_admin_page"])),
 ) -> User:
     """Add a new user to the database and stitch org/dept memberships by creator role."""
     new_user = User.model_validate(user, from_attributes=True)
@@ -422,7 +422,7 @@ async def read_all_users(
     role: str | None = None,
     q: str | None = None,
     session: DbSession,
-    current_admin: User = Depends(PermissionChecker(["manage_users"])),
+    current_admin: User = Depends(PermissionChecker(["view_admin_page"])),
 ) -> UsersResponse:
     """Retrieve a list of users from the database with hierarchy-aware visibility."""
     visible_user_ids = await _visible_user_ids_for_admin(session, current_admin)
@@ -465,7 +465,7 @@ async def patch_user(
         if user_id not in visible_user_ids:
             raise HTTPException(status_code=403, detail="Permission denied")
         user_permissions = await get_permissions_for_role(user.role)
-        if "manage_users" not in user_permissions:
+        if "view_admin_page" not in user_permissions:
             raise HTTPException(status_code=403, detail="Permission denied")
     if update_password:
         if not user.is_superuser:
@@ -507,7 +507,7 @@ async def reset_password(
 async def delete_user(
     user_id: UUID,
     session: DbSession,
-    current_user: User = Depends(PermissionChecker(["manage_users"])),
+    current_user: User = Depends(PermissionChecker(["view_admin_page"])),
 ) -> dict:
     """Delete a user from the database."""
     if current_user.id == user_id:
@@ -524,3 +524,4 @@ async def delete_user(
     await session.delete(user_db)
     await session.commit()
     return {"detail": "User deleted"}
+

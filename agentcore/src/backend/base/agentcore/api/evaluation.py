@@ -31,6 +31,7 @@ from agentcore.services.deps import session_scope
 from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent as agent
 
 from agentcore.services.auth.utils import get_current_active_user
+from agentcore.services.auth.decorators import PermissionChecker
 from agentcore.services.database.models.user.model import User
 from agentcore.api.utils import DbSession
 from agentcore.api.observability import fetch_traces_from_langfuse, fetch_scores_for_trace
@@ -52,7 +53,11 @@ except Exception:
     openai = None
     OPENAI_AVAILABLE = False
 
-router = APIRouter(prefix="/evaluation", tags=["Evaluation"])
+router = APIRouter(
+    prefix="/evaluation",
+    tags=["Evaluation"],
+    dependencies=[Depends(PermissionChecker(["view_evaluation_page"]))],
+)
 
 _LITELLM_STD_LOGGING_PATCHED = False
 _DATASET_EXPERIMENT_JOBS: dict[str, dict[str, Any]] = {}
@@ -4198,3 +4203,4 @@ Respond ONLY with valid JSON, no markdown formatting."""
     except Exception as e:
         logger.opt(exception=True).error("Error creating preview: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+

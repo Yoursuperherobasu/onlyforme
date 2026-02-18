@@ -1,19 +1,34 @@
 import { useEffect, useState } from "react";
 import { AgentCard } from "./components/AgentCard";
 import { Button } from "@/components/ui/button";
-import { Search, Users } from "lucide-react";
+import { Search } from "lucide-react";
 import ActionModal from "./components/ActionModal";
+import { useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 
 import { useGetApprovals, type ApprovalAgent } from "@/controllers/API/queries/approvals";
 import { useApprovalActionModal, useApprovalActions } from "./hooks";
 import CustomLoader from "@/customization/components/custom-loader";
 
 type FilterType = "all" | "pending" | "approved" | "rejected";
+type ApprovalTabType = "agent" | "model" | "mcp";
+
+const APPROVAL_TABS: Array<{ id: ApprovalTabType; label: string; permission: string }> = [
+  { id: "agent", label: "Agent", permission: "view_agent" },
+  { id: "model", label: "Model", permission: "view_model" },
+  { id: "mcp", label: "MCP", permission: "view_mcp" },
+];
+
+// Hardcoded mapping for now; API/DB-backed mapping can replace this later.
+const APPROVAL_ENTITY_TYPE_BY_ID: Record<string, ApprovalTabType> = {};
 
 export default function ApprovalPage() {
   /* ================= STATE ================= */
   const [filter, setFilter] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<ApprovalTabType>("agent");
+  const { permissions } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   /* ================= MODAL & ACTIONS MANAGEMENT ================= */
   const { isOpen, selectedAgent, action, openModal, closeModal } =
@@ -23,16 +38,26 @@ export default function ApprovalPage() {
   /* ================= API QUERIES ================= */
   // Fetch all approvals from backend
   const { data: agents = [], isLoading: isLoadingAgents } = useGetApprovals();
+  const visibleTabs = APPROVAL_TABS.filter((tab) => can(tab.permission));
+
+  useEffect(() => {
+    if (visibleTabs.length === 0) return;
+    if (!visibleTabs.some((tab) => tab.id === activeTab)) {
+      setActiveTab(visibleTabs[0].id);
+    }
+  }, [activeTab, visibleTabs]);
 
   /* ================= FILTERING & CALCULATIONS ================= */
   const filteredAgents = agents.filter((agent) => {
+    const entityType = APPROVAL_ENTITY_TYPE_BY_ID[agent.id] || "agent";
+    const matchesTab = entityType === activeTab;
     const matchesFilter = filter === "all" ? true : agent.status === filter;
     const matchesSearch =
       searchQuery === "" ||
       agent.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       agent.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       agent.project.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesFilter && matchesSearch;
+    return matchesTab && matchesFilter && matchesSearch;
   });
 
   const counts = {
@@ -103,6 +128,19 @@ export default function ApprovalPage() {
       </div>
 
       {/* Filter Tabs */}
+      <div className="flex items-center gap-3 border-b border-border px-8 py-4">
+        {visibleTabs.map((tab) => (
+          <Button
+            key={tab.id}
+            variant={activeTab === tab.id ? "default" : "outline"}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </Button>
+        ))}
+      </div>
+
+      {/* Status Tabs */}
       <div className="flex items-center gap-3 border-b border-border px-8 py-4">
         {(["all", "pending", "approved", "rejected"] as FilterType[]).map(
           (type) => (

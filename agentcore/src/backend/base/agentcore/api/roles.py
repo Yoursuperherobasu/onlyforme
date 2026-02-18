@@ -30,7 +30,7 @@ def _normalize_role_name(name: str) -> str:
 @router.get(
     "/permissions",
     response_model=list[PermissionReadResponse],
-    dependencies=[Depends(PermissionChecker(["view_access_control_page", "manage_roles"], all_required=False))],
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
 )
 async def list_permissions(session: DbSession) -> list[Permission]:
     permissions = (await session.exec(select(Permission).order_by(Permission.name))).all()
@@ -40,7 +40,7 @@ async def list_permissions(session: DbSession) -> list[Permission]:
 @router.get(
     "/",
     response_model=list[RoleReadResponse],
-    dependencies=[Depends(PermissionChecker(["view_access_control_page", "manage_roles"], all_required=False))],
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
 )
 async def list_roles(session: DbSession) -> list[RoleReadResponse]:
     roles = (await session.exec(select(Role).order_by(Role.name))).all()
@@ -72,7 +72,7 @@ async def list_roles(session: DbSession) -> list[RoleReadResponse]:
 @router.post(
     "/",
     response_model=RoleReadResponse,
-    dependencies=[Depends(PermissionChecker(["manage_roles"]))],
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
 )
 async def create_role(payload: RoleCreateRequest, session: DbSession) -> RoleReadResponse:
     name = _normalize_role_name(payload.name)
@@ -111,7 +111,7 @@ async def create_role(payload: RoleCreateRequest, session: DbSession) -> RoleRea
 @router.patch(
     "/{role_id}",
     response_model=RoleReadResponse,
-    dependencies=[Depends(PermissionChecker(["manage_roles"]))],
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
 )
 async def update_role(role_id: UUID, payload: RoleUpdateRequest, session: DbSession) -> RoleReadResponse:
     role = await session.get(Role, role_id)
@@ -158,7 +158,7 @@ async def update_role(role_id: UUID, payload: RoleUpdateRequest, session: DbSess
 @router.put(
     "/{role_id}/permissions",
     response_model=RoleReadResponse,
-    dependencies=[Depends(PermissionChecker(["manage_roles"]))],
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
 )
 async def replace_role_permissions(role_id: UUID, permissions: list[str], session: DbSession) -> RoleReadResponse:
     role = await session.get(Role, role_id)
@@ -181,7 +181,7 @@ async def replace_role_permissions(role_id: UUID, permissions: list[str], sessio
 
 @router.delete(
     "/{role_id}",
-    dependencies=[Depends(PermissionChecker(["manage_roles"]))],
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
 )
 async def delete_role(role_id: UUID, session: DbSession) -> dict:
     role = await session.get(Role, role_id)
@@ -222,3 +222,4 @@ async def _get_permissions_for_role(session: DbSession, role_id: UUID) -> list[s
     perm_ids = [row.permission_id for row in rows]
     perm_rows = (await session.exec(select(Permission).where(Permission.id.in_(perm_ids)))).all()
     return [p.key for p in perm_rows]
+

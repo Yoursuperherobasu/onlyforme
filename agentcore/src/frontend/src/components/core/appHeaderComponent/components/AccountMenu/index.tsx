@@ -86,7 +86,7 @@ export const AccountMenu = () => {
                 </HeaderMenuItemButton>
               </div>
             )}
-            {can("manage_roles") && (
+            {can("view_access_control_page") && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {
@@ -133,3 +133,4 @@ export const AccountMenu = () => {
     </HeaderMenu>
   );
 };
+

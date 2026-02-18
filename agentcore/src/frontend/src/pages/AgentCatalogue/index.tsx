@@ -273,7 +273,7 @@ export default function AgentCatalogueView({
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={!can("approve_reject_page")}
+                          disabled={!can("view_only_agent")}
                         >
                           <Eye className="h-3.5 w-3.5 mr-1.5" />
                           View
@@ -291,7 +291,7 @@ export default function AgentCatalogueView({
                       <span className="inline-block">
                         <Button
                           size="sm"
-                          disabled={!can("approve_reject_page")}
+                          disabled={!can("copy_agents")}
                         >
                           <Copy className="h-3.5 w-3.5 mr-1.5" />
                           Copy

@@ -19,6 +19,18 @@ ROLE_ALIASES = {
 PERMISSION_ALIASES = {
     # Keep old permission checks working while roles move to assets-based keys.
     "view_assets_files_tab": ["view_files_tab"],
+    "manage_users": ["view_admin_page"],
+    "manage_roles": ["view_access_control_page"],
+    "interact_agents": ["view_orchastration_page"],
+    "view_orchestrator_page": ["view_orchastration_page"],
+    "view_traces": ["view_observability_page"],
+    "view_evaluation": ["view_evaluation_page"],
+    "view_guardrails": ["view_guardrail_page"],
+    "view_vector_db": ["view_vectorDb_page"],
+    "view_mcp": ["view_mcp_page"],
+    "add_mcp": ["add_new_mcp"],
+    "view_knowledge_base_management": ["view_knowledge_base"],
+    "approve_reject_page": ["prod_publish_approval_required"],
 }
 
 
@@ -44,13 +56,13 @@ def _expand_permissions(perms: List[str]) -> List[str]:
 
 ACTIONS = {
     "VIEW_DASHBOARD": "view_dashboard",
-    "MANAGE_USERS": "manage_users",
+    "MANAGE_USERS": "view_admin_page",
     "EDIT_AGENTS": "edit_agents",
     "VIEW_COSTS": "view_costs",
     "VIEW_FILES_TAB": "view_files_tab",
     "VIEW_ADMIN_PAGE": "view_admin_page",
     "VIEW_ACCESS_CONTROL_PAGE": "view_access_control_page",
-    "MANAGE_ROLES": "manage_roles",
+    "MANAGE_ROLES": "view_access_control_page",
     "VIEW_AGENTS_PAGE": "view_agents_page",
     "VIEW_COMPONENTS_PAGE": "view_components_page",
     "VIEW_ASSETS_FILES_TAB": "view_assets_files_tab",
@@ -60,13 +72,14 @@ ACTIONS = {
     "VIEW_SETTINGS_API_KEYS_TAB": "view_settings_api_keys_tab",
     "VIEW_SETTINGS_SHORTCUTS_TAB": "view_settings_shortcuts_tab",
     "VIEW_SETTINGS_MESSAGES_TAB": "view_settings_messages_tab",
-    "VIEW_MCP_SERVERS_PAGE": "view_mcp_servers_page",
+    "VIEW_MCP_SERVERS_PAGE": "view_mcp_page",
     "VIEW_MODEL_CATALOGUE_PAGE": "view_model_catalogue_page",
     "VIEW_AGENT_CATALOGUE_PAGE": "view_agent_catalogue_page",
-    "VIEW_ORCHESTRATOR_PAGE": "view_orchestrator_page",
-    "VIEW_GUARDRAILS_PAGE": "view_guardrails_page",
-    "VIEW_VECTOR_DB_PAGE": "view_vector_db_page",
-    "VIEW_OBSERVABILITY_DASHBOARD": "view_observability_dashboard",
+    "VIEW_ORCHESTRATOR_PAGE": "view_orchastration_page",
+    "VIEW_GUARDRAILS_PAGE": "view_guardrail_page",
+    "VIEW_VECTOR_DB_PAGE": "view_vectorDb_page",
+    "VIEW_OBSERVABILITY_DASHBOARD": "view_observability_page",
+    "VIEW_EVALUATION_PAGE": "view_evaluation_page",
     "VIEW_APPROVAL_PAGE": "view_approval_page",
     "VIEW_TIMEOUT_SETTINGS_PAGE": "view_timeout_settings_page",
     "VIEW_WORKAGENTS_PAGE": "view_workflows_page",
@@ -100,6 +113,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_GUARDRAILS_PAGE"],
         ACTIONS["VIEW_VECTOR_DB_PAGE"],
         ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
+        ACTIONS["VIEW_EVALUATION_PAGE"],
         ACTIONS["VIEW_APPROVAL_PAGE"],
         ACTIONS["VIEW_TIMEOUT_SETTINGS_PAGE"],
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
@@ -131,6 +145,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_GUARDRAILS_PAGE"],
         ACTIONS["VIEW_VECTOR_DB_PAGE"],
         ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
+        ACTIONS["VIEW_EVALUATION_PAGE"],
         ACTIONS["VIEW_APPROVAL_PAGE"],
         ACTIONS["VIEW_TIMEOUT_SETTINGS_PAGE"],
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
@@ -185,7 +200,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v4"  # 🔥 bump this when permissions change
+PERMISSION_VERSION = "v5"  # bump when permissions change
 
 
 class PermissionCacheService:
@@ -282,3 +297,4 @@ async def invalidate_role_permissions_cache(role: str) -> None:
         await permission_cache.redis.delete(key)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to invalidate permission cache for {role}: {exc}")
+

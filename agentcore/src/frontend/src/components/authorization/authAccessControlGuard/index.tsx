@@ -14,8 +14,7 @@ export const ProtectedAccessControlRoute = ({
     return <LoadingPage />;
   }
 
-  const canAccess = permissions.includes("view_access_control_page") ||
-    permissions.includes("manage_roles");
+  const canAccess = permissions.includes("view_access_control_page");
 
   if (!canAccess) {
     return (
@@ -25,3 +24,4 @@ export const ProtectedAccessControlRoute = ({
 
   return children;
 };
+

@@ -104,9 +104,9 @@ const router = createBrowserRouter(
                   <Route
                     path="approval"
                     element={
-                      
+                      <ProtectedPermissionRoute permission="view_approval_page">
                         <ApprovalPage />
-                 
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
@@ -193,7 +193,11 @@ const router = createBrowserRouter(
                   />
                   <Route
                     path="evaluation"
-                    element={<EvaluationPage />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_evaluation_page">
+                        <EvaluationPage />
+                      </ProtectedPermissionRoute>
+                    }
                   />
                   {ENABLE_FILE_MANAGEMENT && (
                     <Route path="assets">
