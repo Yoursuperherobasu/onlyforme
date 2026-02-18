@@ -590,7 +590,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {can("view_vectorDb_page") && (
+        {can("view_vectordb_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"

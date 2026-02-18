@@ -69,16 +69,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Page Access", keys: ["view_control_panel"] },
       {
         name: "Actions",
-        keys: [
-          "view_prod",
-          "prod_share_agent",
-          "prod_start_stop_agent",
-          "prod_enable_disable_agent",
-          "view_uat",
-          "uat_share_agent",
-          "uat_start_stop_agent",
-          "uat_enable_disable_agent",
-        ],
+        keys: ["share_agent", "start_stop_agent", "enable_disable_agent"],
       },
     ],
   },
@@ -86,13 +77,13 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
     page: "Orchestration Chat",
     sections: [
       { name: "Page Access", keys: ["view_orchastration_page"] },
-      { name: "Actions", keys: ["view_uat", "view_prod"] },
+      { name: "Actions", keys: ["interact_agents"] },
     ],
   },
   { page: "Observability", sections: [{ name: "Page Access", keys: ["view_observability_page"] }] },
   { page: "Evaluation", sections: [{ name: "Page Access", keys: ["view_evaluation_page"] }] },
   { page: "Guardrails Catalogue", sections: [{ name: "Page Access", keys: ["view_guardrail_page"] }] },
-  { page: "VectorDB Catalogue", sections: [{ name: "Page Access", keys: ["view_vectorDb_page"] }] },
+  { page: "VectorDB Catalogue", sections: [{ name: "Page Access", keys: ["view_vectordb_page"] }] },
   {
     page: "MCP Servers",
     sections: [
@@ -122,6 +113,42 @@ const EXCEL_PERMISSION_KEYS = new Set(
   EXCEL_PERMISSION_STRUCTURE.flatMap((page) => page.sections.flatMap((section) => section.keys)),
 );
 
+const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
+  manage_users: ["view_admin_page"],
+  manage_roles: ["view_access_control_page"],
+  view_orchestrator_page: ["view_orchastration_page"],
+  view_traces: ["view_observability_page"],
+  view_evaluation: ["view_evaluation_page"],
+  view_guardrails: ["view_guardrail_page"],
+  view_vector_db: ["view_vectordb_page"],
+  view_vectorDb_page: ["view_vectordb_page"],
+  view_vector_db_page: ["view_vectordb_page"],
+  view_mcp_servers_page: ["view_mcp_page"],
+  view_mcp_page: ["view_mcp"],
+  view_model_catalogue_page: ["view_models"],
+  view_agent_catalogue_page: ["view_published_agents"],
+  view_guardrails_page: ["view_guardrail_page"],
+  view_observability_dashboard: ["view_observability_page"],
+  view_knowledge_base_management: ["view_knowledge_base"],
+  approve_reject_page: ["prod_publish_approval_required"],
+  view_approval_page: ["view_agent", "view_model", "view_mcp"],
+};
+
+const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {
+  const expanded: string[] = [];
+  permissionKeys.forEach((key) => {
+    if (!expanded.includes(key)) {
+      expanded.push(key);
+    }
+    (ROLE_PERMISSION_ALIASES[key] || []).forEach((alias) => {
+      if (!expanded.includes(alias)) {
+        expanded.push(alias);
+      }
+    });
+  });
+  return expanded;
+};
+
 export default function AccessControlPage() {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -147,6 +174,16 @@ export default function AccessControlPage() {
     () => roles.find((r) => r.id === selectedRoleId) || null,
     [roles, selectedRoleId]
   );
+  const validPermissionKeys = useMemo(
+    () => new Set(permissions.map((perm) => perm.key)),
+    [permissions],
+  );
+
+  const toSavablePermissions = useCallback(
+    (permissionKeys: string[]) =>
+      Array.from(new Set(permissionKeys)).filter((key) => validPermissionKeys.has(key)),
+    [validPermissionKeys],
+  );
 
   // Load permissions and roles
   const loadData = useCallback(async (force = false) => {
@@ -167,16 +204,27 @@ export default function AccessControlPage() {
 
       const permissionsData: Permission[] = permissionsRes?.data ?? [];
       const rolesData: Role[] = rolesRes?.data ?? [];
+      const availablePermissionKeys = new Set(
+        permissionsData
+          .filter((perm) => EXCEL_PERMISSION_KEYS.has(perm.key))
+          .map((perm) => perm.key),
+      );
 
       console.log("Permissions loaded successfully:", permissionsData);
       console.log("Roles loaded successfully:", rolesData);
 
       setPermissions(permissionsData.filter((perm) => EXCEL_PERMISSION_KEYS.has(perm.key)));
-      setRoles(rolesData);
+      const normalizedRoles = rolesData.map((role) => ({
+        ...role,
+        permissions: expandRolePermissionsForUi(role.permissions || []).filter((key) =>
+          availablePermissionKeys.has(key),
+        ),
+      }));
+      setRoles(normalizedRoles);
 
-      if (rolesData.length > 0) {
-        setSelectedRoleId(rolesData[0].id);
-        setDraftPermissions(rolesData[0].permissions || []);
+      if (normalizedRoles.length > 0) {
+        setSelectedRoleId(normalizedRoles[0].id);
+        setDraftPermissions(normalizedRoles[0].permissions || []);
       }
     } catch (error: any) {
       console.error("Failed to load access control data:", error);
@@ -198,9 +246,9 @@ export default function AccessControlPage() {
   // Update draft permissions when selected role changes
   useEffect(() => {
     if (selectedRole) {
-      setDraftPermissions(selectedRole.permissions || []);
+      setDraftPermissions(toSavablePermissions(selectedRole.permissions || []));
     }
-  }, [selectedRole]);
+  }, [selectedRole, toSavablePermissions]);
 
   const permissionPages: PermissionPage[] = useMemo(() => {
     const permissionByKey = new Map(permissions.map((perm) => [perm.key, perm]));
@@ -239,12 +287,17 @@ export default function AccessControlPage() {
 
   const handleSavePermissions = () => {
     if (!selectedRole) return;
+    const payloadPermissions = toSavablePermissions(draftPermissions);
     mutateUpdateRolePermissions(
-      { role_id: selectedRole.id, permissions: draftPermissions },
+      { role_id: selectedRole.id, permissions: payloadPermissions },
       {
         onSuccess: (role) => {
+          const normalizedRole = {
+            ...role,
+            permissions: toSavablePermissions(expandRolePermissionsForUi(role.permissions || [])),
+          };
           setRoles((prev) =>
-            prev.map((r) => (r.id === role.id ? role : r)),
+            prev.map((r) => (r.id === normalizedRole.id ? normalizedRole : r)),
           );
           setSuccessData({ title: "Permissions updated successfully" });
           getUser();
@@ -262,17 +315,22 @@ export default function AccessControlPage() {
 
   const handleCreateRole = () => {
     if (!newRoleName.trim()) return;
+    const payloadPermissions = toSavablePermissions(newRolePermissions);
     mutateCreateRole(
       {
         name: newRoleName.trim(),
         description: newRoleDescription.trim() || null,
-        permissions: newRolePermissions,
+        permissions: payloadPermissions,
       },
       {
         onSuccess: (role) => {
-          setRoles((prev) => [...prev, role]);
-          setSelectedRoleId(role.id);
-          setDraftPermissions(role.permissions || []);
+          const normalizedRole = {
+            ...role,
+            permissions: toSavablePermissions(expandRolePermissionsForUi(role.permissions || [])),
+          };
+          setRoles((prev) => [...prev, normalizedRole]);
+          setSelectedRoleId(normalizedRole.id);
+          setDraftPermissions(normalizedRole.permissions || []);
           setIsCreateOpen(false);
           setNewRoleName("");
           setNewRoleDescription("");

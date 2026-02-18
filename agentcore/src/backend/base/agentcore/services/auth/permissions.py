@@ -26,11 +26,18 @@ PERMISSION_ALIASES = {
     "view_traces": ["view_observability_page"],
     "view_evaluation": ["view_evaluation_page"],
     "view_guardrails": ["view_guardrail_page"],
-    "view_vector_db": ["view_vectorDb_page"],
-    "view_mcp": ["view_mcp_page"],
+    "view_vector_db": ["view_vectordb_page"],
+    "view_vectorDb_page": ["view_vectordb_page"],
+    "view_mcp_page": ["view_mcp"],
     "add_mcp": ["add_new_mcp"],
     "view_knowledge_base_management": ["view_knowledge_base"],
     "approve_reject_page": ["prod_publish_approval_required"],
+    "view_model_catalogue_page": ["view_models"],
+    "view_agent_catalogue_page": ["view_published_agents"],
+    "view_mcp_servers_page": ["view_mcp_page", "view_mcp"],
+    "view_guardrails_page": ["view_guardrail_page"],
+    "view_vector_db_page": ["view_vectordb_page"],
+    "view_observability_dashboard": ["view_observability_page"],
 }
 
 
@@ -77,7 +84,10 @@ ACTIONS = {
     "VIEW_AGENT_CATALOGUE_PAGE": "view_agent_catalogue_page",
     "VIEW_ORCHESTRATOR_PAGE": "view_orchastration_page",
     "VIEW_GUARDRAILS_PAGE": "view_guardrail_page",
-    "VIEW_VECTOR_DB_PAGE": "view_vectorDb_page",
+    "VIEW_VECTOR_DB_PAGE": "view_vectordb_page",
+    "VIEW_REVIEW_AGENT_TAB": "view_agent",
+    "VIEW_REVIEW_MODEL_TAB": "view_model",
+    "VIEW_REVIEW_MCP_TAB": "view_mcp",
     "VIEW_OBSERVABILITY_DASHBOARD": "view_observability_page",
     "VIEW_EVALUATION_PAGE": "view_evaluation_page",
     "VIEW_APPROVAL_PAGE": "view_approval_page",
@@ -115,6 +125,9 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
         ACTIONS["VIEW_EVALUATION_PAGE"],
         ACTIONS["VIEW_APPROVAL_PAGE"],
+        ACTIONS["VIEW_REVIEW_AGENT_TAB"],
+        ACTIONS["VIEW_REVIEW_MODEL_TAB"],
+        ACTIONS["VIEW_REVIEW_MCP_TAB"],
         ACTIONS["VIEW_TIMEOUT_SETTINGS_PAGE"],
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
         ACTIONS["VIEW_PLAYGROUND_PAGE"],
@@ -147,6 +160,9 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
         ACTIONS["VIEW_EVALUATION_PAGE"],
         ACTIONS["VIEW_APPROVAL_PAGE"],
+        ACTIONS["VIEW_REVIEW_AGENT_TAB"],
+        ACTIONS["VIEW_REVIEW_MODEL_TAB"],
+        ACTIONS["VIEW_REVIEW_MCP_TAB"],
         ACTIONS["VIEW_TIMEOUT_SETTINGS_PAGE"],
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
         ACTIONS["VIEW_PLAYGROUND_PAGE"],
@@ -200,7 +216,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v5"  # bump when permissions change
+PERMISSION_VERSION = "v7"  # bump when permissions change
 
 
 class PermissionCacheService:
@@ -217,6 +233,8 @@ class PermissionCacheService:
             if isinstance(cached, bytes):
                 cached = cached.decode("utf-8")
             cached = str(cached)
+            if cached == "__none__":
+                return []
             if cached.strip():
                 perms = _expand_permissions(cached.split(","))
                 if perms != [""]:
@@ -224,7 +242,9 @@ class PermissionCacheService:
 
         perms = await _get_permissions_for_role_db(role)
         if not perms:
-            perms = ROLE_PERMISSIONS.get(role, [])
+            await self.redis.set(key, "__none__", ex=self.ttl)
+            logger.info(f"RBAC cached → {key} = []")
+            return []
         perms = _expand_permissions(perms)
         await self.redis.set(key, ",".join(perms), ex=self.ttl)
 
@@ -236,19 +256,22 @@ permission_cache: Optional[PermissionCacheService] = None
 
 
 async def get_permissions_for_role(role: str) -> List[str]:
+    normalized = _normalize_role(role)
+    if normalized == "root":
+        async with session_scope() as session:
+            all_perm_rows = (await session.exec(select(Permission.key))).all()
+        return _expand_permissions([p for p in all_perm_rows if p])
+
     if permission_cache is None:
-        # 🔥 fallback (no Redis)
-        perms = await _get_permissions_for_role_db(_normalize_role(role))
+        perms = await _get_permissions_for_role_db(normalized)
         if perms:
             return _expand_permissions(perms)
-        normalized = _normalize_role(role)
-        return _expand_permissions(ROLE_PERMISSIONS.get(normalized, []))
+        return []
 
     perms = await permission_cache.get_permissions_for_role(role)
     if perms:
         return _expand_permissions(perms)
-    normalized = _normalize_role(role)
-    return _expand_permissions(ROLE_PERMISSIONS.get(normalized, []))
+    return []
 
 
 async def _get_permissions_for_role_db(role: str) -> List[str]:

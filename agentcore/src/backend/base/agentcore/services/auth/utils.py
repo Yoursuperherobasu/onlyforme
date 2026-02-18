@@ -23,7 +23,7 @@ from agentcore.services.database.models.user.crud import (
 from agentcore.services.database.models.user.model import User, UserRead
 from agentcore.services.deps import get_db_service, get_session, get_settings_service
 from agentcore.services.settings.service import SettingsService
-from agentcore.services.auth.permissions import ROLE_PERMISSIONS
+from agentcore.services.auth.permissions import get_permissions_for_role
 
 # API key to Azure Key Vault
 
@@ -38,7 +38,7 @@ MINIMUM_KEY_LENGTH = 32
 
 def require_permission(action: str):
     async def permission_dependency(current_user: User = Depends(get_current_active_user)):
-        allowed_actions = ROLE_PERMISSIONS.get(current_user.role, [])
+        allowed_actions = await get_permissions_for_role(current_user.role)
         if action not in allowed_actions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
