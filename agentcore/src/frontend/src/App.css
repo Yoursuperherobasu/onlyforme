@@ -24,6 +24,10 @@ body {
   min-width: inherit;
 }
 
+#react-agent-id .react-flow__node {
+  box-shadow: 0 8px 22px rgba(218, 33, 40, 0.35);
+}
+
 .App-logo {
   height: 40vmin;
   pointer-events: none;
@@ -249,5 +253,4 @@ code {
   --sidebar-icon: rgba(255, 255, 255, 0.85);
   --sidebar-icon-active: #ffffff;
 }
-
 

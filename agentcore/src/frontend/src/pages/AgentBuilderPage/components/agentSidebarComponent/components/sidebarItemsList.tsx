@@ -3,6 +3,7 @@ import ShadTooltip from "@/components/common/shadTooltipComponent";
 import useAgentStore from "@/stores/agentStore";
 import { checkChatInput, checkWebhookInput } from "@/utils/reactflowUtils";
 import { removeCountFromString } from "@/utils/utils";
+import { getCategoryAccentColor } from "../helpers/get-category-accent-color";
 import { disableItem } from "../helpers/disable-item";
 import { getDisabledTooltip } from "../helpers/get-disabled-tooltip";
 import type { UniqueInputsComponents } from "../types";
@@ -17,6 +18,7 @@ const SidebarItemsList = ({
   sensitiveSort,
 }) => {
   const { t } = useTranslation();
+  const accentColor = getCategoryAccentColor(item.name, nodeColors);
   return (
     <div className="flex flex-col gap-1 py-1">
       {Object.keys(dataFilter[item.name])
@@ -69,7 +71,7 @@ const SidebarItemsList = ({
                     node: currentItem,
                   })
                 }
-                color={nodeColors[item.name]}
+                color={accentColor}
                 itemName={SBItemName}
                 error={!!currentItem.error}
                 display_name={currentItem.display_name}
@@ -96,6 +98,7 @@ const UniqueInputsDraggableComponent = ({
   nodeColors,
 }) => {
   const { t } = useTranslation();
+  const accentColor = getCategoryAccentColor(item.name, nodeColors);
   const nodes = useAgentStore((state) => state.nodes);
   const chatInputAdded = useMemo(() => checkChatInput(nodes), [nodes]);
   const webhookInputAdded = useMemo(() => checkWebhookInput(nodes), [nodes]);
@@ -121,7 +124,7 @@ const UniqueInputsDraggableComponent = ({
             node: currentItem,
           })
         }
-        color={nodeColors[item.name]}
+        color={accentColor}
         itemName={SBItemName}
         error={!!currentItem.error}
         display_name={t(currentItem.display_name)}

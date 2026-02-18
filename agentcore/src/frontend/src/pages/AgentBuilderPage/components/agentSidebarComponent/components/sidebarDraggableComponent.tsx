@@ -168,6 +168,8 @@ export const SidebarDraggableComponent = forwardRef(
               <ForwardedIconComponent
                 name={icon}
                 className="h-[18px] w-[18px] shrink-0"
+                iconColor={color}
+                stroke={color}
               />
               <div className="flex flex-1 items-center overflow-hidden">
                 <ShadTooltip content={display_name} styleClasses="z-50">

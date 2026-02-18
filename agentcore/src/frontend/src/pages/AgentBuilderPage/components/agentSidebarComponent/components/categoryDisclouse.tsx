@@ -7,25 +7,9 @@ import {
 } from "@/components/ui/disclosure";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import type { APIClassType } from "@/types/api";
+import { getCategoryAccentColor } from "../helpers/get-category-accent-color";
 import SidebarItemsList from "./sidebarItemsList";
 import { useTranslation } from 'react-i18next';
-
-const SIDEBAR_CATEGORY_ACCENTS: Record<string, string> = {
-  input_output: "#2563eb",
-  agents: "#16a34a",
-  mcp: "#0ea5e9",
-  models: "#c026d3",
-  vectorstores: "#ca8a04",
-  processing: "#475569",
-  logic: "#64748b",
-  tools: "#06b6d4",
-  Guardrails: "#6b7280",
-  HumanInTheLoop: "#6b7280",
-  outputs: "#dc2626",
-  prompts: "#7c3aed",
-  chains: "#f97316",
-  helpers: "#0ea5e9",
-};
 
 export const CategoryDisclosure = memo(function CategoryDisclosure({
   item,
@@ -64,10 +48,7 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
   const { t } = useTranslation();
   const isOpen = openCategories.includes(item.name);
   const itemCount = Object.keys(dataFilter[item.name] ?? {}).length;
-  const accentColor =
-    SIDEBAR_CATEGORY_ACCENTS[item.name] ??
-    nodeColors[item.name] ??
-    "#2563eb";
+  const accentColor = getCategoryAccentColor(item.name, nodeColors);
   const handleOpenChange = useCallback(
     (isOpen: boolean) => {
       setOpenCategories((prev) =>
