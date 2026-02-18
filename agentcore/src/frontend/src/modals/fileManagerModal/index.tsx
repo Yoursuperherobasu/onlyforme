@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
+import { Input } from "@/components/ui/input";
 import useAlertStore from "@/stores/alertStore";
 import type { FileType } from "@/types/file_management";
 import { ForwardedIconComponent } from "../../components/common/genericIconComponent";
@@ -41,12 +42,19 @@ export default function FileManagerModal({
   const [internalSelectedFiles, setInternalSelectedFiles] = useState<string[]>(
     selectedFiles || [],
   );
+  const [knowledgeBaseName, setKnowledgeBaseName] = useState("");
 
   useEffect(() => {
     setInternalSelectedFiles(selectedFiles || []);
   }, [internalOpen]);
 
   const handleUpload = (filesPaths: string[]) => {
+    if (!knowledgeBaseName.trim()) {
+      setErrorData({
+        title: "Knowledge base name is required",
+      });
+      return;
+    }
     setInternalSelectedFiles(
       isList ? [...internalSelectedFiles, ...filesPaths] : [filesPaths[0]],
     );
@@ -83,10 +91,21 @@ export default function FileManagerModal({
         <BaseModal.Content overflowHidden>
           <div className="flex flex-col gap-4 overflow-hidden">
             <div className="flex shrink-0 flex-col">
+              <div className="mb-3">
+                <Input
+                  placeholder="Knowledge base name"
+                  value={knowledgeBaseName}
+                  onChange={(event) => {
+                    setKnowledgeBaseName(event.target.value);
+                  }}
+                  data-testid="knowledge-base-name-input"
+                />
+              </div>
               <DragFilesComponent
                 onUpload={handleUpload}
                 types={types}
                 isList={isList ?? false}
+                knowledgeBaseName={knowledgeBaseName.trim()}
               />
             </div>
             <div className="flex flex-1 flex-col overflow-hidden">

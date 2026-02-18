@@ -166,7 +166,7 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
               data-testid="navbar-custom-code-button"
             >
               <IconComponent name="Plus" className="h-4 w-4" />
-              Custom Code
+              Create Custom
             </Button>
 
             <div className="h-5 w-px bg-border" />
