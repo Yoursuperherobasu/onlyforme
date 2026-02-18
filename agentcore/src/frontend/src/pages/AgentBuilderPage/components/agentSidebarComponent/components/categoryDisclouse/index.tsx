@@ -10,6 +10,23 @@ import type { APIClassType } from "@/types/api";
 import SidebarItemsList from "../sidebarItemsList";
 import { useTranslation } from 'react-i18next';
 
+const SIDEBAR_CATEGORY_ACCENTS: Record<string, string> = {
+  input_output: "#2563eb",
+  agents: "#16a34a",
+  mcp: "#0ea5e9",
+  models: "#c026d3",
+  vectorstores: "#ca8a04",
+  processing: "#475569",
+  logic: "#64748b",
+  tools: "#06b6d4",
+  Guardrails: "#6b7280",
+  HumanInTheLoop: "#6b7280",
+  outputs: "#dc2626",
+  prompts: "#7c3aed",
+  chains: "#f97316",
+  helpers: "#0ea5e9",
+};
+
 export const CategoryDisclosure = memo(function CategoryDisclosure({
   item,
   openCategories,
@@ -45,6 +62,11 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
   );
   const { t } = useTranslation();
   const isOpen = openCategories.includes(item.name);
+  const itemCount = Object.keys(dataFilter[item.name] ?? {}).length;
+  const accentColor =
+    SIDEBAR_CATEGORY_ACCENTS[item.name] ??
+    nodeColors[item.name] ??
+    "#2563eb";
   const handleOpenChange = useCallback(
     (isOpen: boolean) => {
       setOpenCategories((prev) =>
@@ -62,14 +84,23 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
               data-testid={`disclosure-${item.display_name.toLocaleLowerCase()}`}
               tabIndex={0}
               onKeyDown={handleKeyDownInput}
-              className="user-select-none flex cursor-pointer items-center gap-2"
+              className="user-select-none flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/80"
+              style={{ borderLeft: `2px solid ${accentColor}` }}
             >
-              <ForwardedIconComponent
-                name={item.icon}
-                className="h-4 w-4 group-aria-expanded/collapsible:text-accent-pink-foreground"
-              />
-              <span className="flex-1 group-aria-expanded/collapsible:font-semibold">
+              <span style={{ color: accentColor }}>
+                <ForwardedIconComponent
+                  name={item.icon}
+                  className="h-4 w-4"
+                />
+              </span>
+              <span
+                className="flex-1 font-semibold"
+                style={{ color: accentColor }}
+              >
                 {t(item.display_name)}
+              </span>
+              <span className="text-xs font-bold" style={{ color: accentColor }}>
+                {itemCount}
               </span>
               <ForwardedIconComponent
                 name="ChevronRight"

@@ -20,7 +20,7 @@ const AgentToolbarOptions = ({
 
   return (
     <div className="flex items-center gap-1.5">
-      <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">
+      <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
         <PlaygroundButton
           hasIO={hasIO}
           open={open}
@@ -29,7 +29,7 @@ const AgentToolbarOptions = ({
         />
         
       </div>
-      <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">
+      <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
         <PublishButton
           hasIO={hasIO}
           open={open}
