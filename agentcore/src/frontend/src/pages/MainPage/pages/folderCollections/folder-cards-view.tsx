@@ -203,7 +203,7 @@ export default function FolderCardsView({
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
 
             {/* Create New Project Card*/}
-            {can("edit_projects_page") && (
+            {can("view_projects_page") && (
             <div
               className="group relative flex flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-5 transition-all hover:border-primary hover:bg-accent"
             >
@@ -242,7 +242,7 @@ export default function FolderCardsView({
                     )}
 
                     {/* Menu Button - Only show if user has edit or delete permissions */}
-                    {can("edit_projects_page") && (
+                    {can("view_projects_page") && (
                     <div className="z-20">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -254,7 +254,7 @@ export default function FolderCardsView({
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {can("edit_projects_page") && (
+                          {can("view_projects_page") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -265,7 +265,7 @@ export default function FolderCardsView({
                             Rename
                           </DropdownMenuItem>
                           )}
-                          {can("edit_projects_page") && (
+                          {can("view_projects_page") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -276,7 +276,7 @@ export default function FolderCardsView({
                             Download
                           </DropdownMenuItem>
                           )}
-                          {can("delete_project") && (
+                          {can("view_projects_page") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();

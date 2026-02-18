@@ -18,6 +18,8 @@ ROLE_ALIASES = {
 
 PERMISSION_ALIASES = {
     # Keep old permission checks working while roles move to assets-based keys.
+    "view_project_page": ["view_projects_page"],
+    "view_projects_page": ["view_project_page"],
     "view_assets_files_tab": ["view_files_tab"],
     "manage_users": ["view_admin_page"],
     "manage_roles": ["view_access_control_page"],
@@ -297,4 +299,3 @@ async def invalidate_role_permissions_cache(role: str) -> None:
         await permission_cache.redis.delete(key)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to invalidate permission cache for {role}: {exc}")
-
