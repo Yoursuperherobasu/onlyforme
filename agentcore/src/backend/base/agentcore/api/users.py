@@ -426,7 +426,7 @@ async def read_current_user(
         if not cached_user:
             user = await get_user_by_id(db, current_user.id)
             cached_user = user.model_dump()
-            await user_cache.set_user(user)
+            await user_cache.set_user(cached_user)
     except Exception:
         cached_user = current_user.model_dump()
 

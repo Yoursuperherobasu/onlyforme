@@ -2,6 +2,7 @@ from .file import File
 from .agent import Agent
 from .project import Project
 from .conversation import ConversationTable
+from .model_registry import ModelRegistry
 from .conversation_prod import ConversationProdTable
 from .conversation_uat import ConversationUATTable
 from .transactions import TransactionTable
@@ -38,6 +39,7 @@ __all__ = [
     "Project",
     "Permission",
     "ApprovalRequest",
+    "ModelRegistry",
     "AgentBundle",
     "AgentDeploymentProd",
     "AgentDeploymentUAT",
