@@ -4695,50 +4695,52 @@ async def list_evaluation_models(
     """
     try:
         async with session_scope() as session:
-            stmt = (
-                select(agent)
-                .where(
-                    or_(
-                        agent.is_component == False,  # noqa: E712
-                        agent.is_component.is_(None),
-                    )
-                )
-                .where(
-                    or_(
-                        agent.user_id == current_user.id,
-                        agent.access_type == AccessTypeEnum.PUBLIC,
-                    )
+            stmt = select(agent).where(
+                or_(
+                    agent.user_id == current_user.id,
+                    agent.access_type == AccessTypeEnum.PUBLIC,
                 )
             )
+            is_component_col = getattr(agent, "is_component", None)
+            if is_component_col is not None:
+                stmt = stmt.where(
+                    or_(
+                        is_component_col == False,  # noqa: E712
+                        is_component_col.is_(None),
+                    )
+                )
             _res = await session.exec(stmt)
             agents = _res.all()
 
-        def to_payload(agent: agent) -> dict:
-            updated = agent.updated_at
+        def to_payload(agent_obj: agent) -> dict:
+            updated = agent_obj.updated_at
             try:
                 updated_dt = datetime.fromisoformat(updated) if isinstance(updated, str) else updated
             except Exception:
                 updated_dt = None
             created_ts = int(updated_dt.timestamp()) if updated_dt else int(time.time())
+            endpoint_name = getattr(agent_obj, "endpoint_name", None)
+            model_id = endpoint_name or agent_obj.id
+            access = agent_obj.access_type.value if agent_obj.access_type else AccessTypeEnum.PRIVATE.value
             return {
-                "id": f"lb:{agent.endpoint_name or agent.id}",
-                "name": agent.name,
+                "id": f"lb:{model_id}",
+                "name": agent_obj.name,
                 "object": "model",
                 "created": created_ts,
-                "owned_by": str(agent.user_id) if agent.user_id else None,
-                "root": f"lb:{agent.endpoint_name or agent.id}",
+                "owned_by": str(agent_obj.user_id) if agent_obj.user_id else None,
+                "root": f"lb:{model_id}",
                 "parent": None,
                 "permission": [],
                 "metadata": {
-                    "display_name": agent.name,
-                    "description": agent.description,
-                    "endpoint_name": agent.endpoint_name,
+                    "display_name": agent_obj.name,
+                    "description": agent_obj.description,
+                    "endpoint_name": endpoint_name,
                     # New canonical key used across the codebase
-                    "agent_id": str(agent.id),
+                    "agent_id": str(agent_obj.id),
                     # Legacy aliases expected by some frontend codepaths — keep for compatibility
-                    "agent_id": str(agent.id),
-                    "agent_ids": [str(agent.id)],
-                    "access": agent.access_type.value if agent.access_type else AccessTypeEnum.PRIVATE.value,
+                    "agent_id": str(agent_obj.id),
+                    "agent_ids": [str(agent_obj.id)],
+                    "access": access,
                 },
             }
 

@@ -2518,6 +2518,15 @@ def _match_trace_to_agent(trace, agents_by_id: dict, agents_by_name: dict) -> tu
     return None, None
 
 
+def _user_agents_stmt(user_id):
+    """Build a user-agent query compatible with schemas that may not expose `is_component`."""
+    stmt = select(Agent).where(Agent.user_id == user_id)
+    is_component_col = getattr(Agent, "is_component", None)
+    if is_component_col is not None:
+        stmt = stmt.where((is_component_col == False) | (is_component_col.is_(None)))  # noqa: E712
+    return stmt
+
+
 @router.get("/agents")
 async def get_user_agents(
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -2541,12 +2550,7 @@ async def get_user_agents(
         logger.info(f"Fetching agents for user_id: {user_id}")
 
         # Get all user agents from database (source of truth)
-        agents_result = await session.exec(
-            select(Agent).where(
-                Agent.user_id == current_user.id,
-                (Agent.is_component == False) | (Agent.is_component.is_(None)),  # noqa: E712
-            )
-        )
+        agents_result = await session.exec(_user_agents_stmt(current_user.id))
         user_agents = agents_result.all()
 
         # Build lookup dictionaries
@@ -3036,12 +3040,7 @@ async def get_user_projects(
         user_folders = folders_result.all()
 
         # Get all user agents
-        agents_result = await session.exec(
-            select(Agent).where(
-                Agent.user_id == current_user.id,
-                (Agent.is_component == False) | (Agent.is_component.is_(None)),  # noqa: E712
-            )
-        )
+        agents_result = await session.exec(_user_agents_stmt(current_user.id))
         user_agents = agents_result.all()
 
         # Build folder lookup and agent-to-folder mapping
@@ -3186,13 +3185,8 @@ async def get_project_detail(
         project_name = folder.name
 
         # Get agents in this folder
-        agents_result = await session.exec(
-            select(Agent).where(
-                Agent.user_id == current_user.id,
-                Agent.folder_id == folder.id,
-                (Agent.is_component == False) | (Agent.is_component.is_(None)),  # noqa: E712
-            )
-        )
+        agents_stmt = _user_agents_stmt(current_user.id).where(Agent.folder_id == folder.id)
+        agents_result = await session.exec(agents_stmt)
         folder_agents = agents_result.all()
 
         agents_by_id = {str(f.id): f for f in folder_agents}
