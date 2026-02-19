@@ -27,6 +27,7 @@ from agentcore.api.roles import router as roles_router
 from agentcore.api.approvals import router as approvals_router
 from agentcore.api.cache import router as cache_router
 from agentcore.api.control_panel import router as control_panel_router
+from agentcore.api.knowledge_bases import router as knowledge_bases_router
 
 router = APIRouter(
     prefix="/api",
@@ -58,3 +59,4 @@ router.include_router(roles_router)
 router.include_router(approvals_router)
 router.include_router(control_panel_router)
 router.include_router(cache_router)
+router.include_router(knowledge_bases_router)

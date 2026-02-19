@@ -16,6 +16,7 @@ from .department import Department
 from .user_organization_membership import UserOrganizationMembership
 from .user_department_membership import UserDepartmentMembership
 from .vector_db_catalogue import VectorDBCatalogue
+from .knowledge_base import KnowledgeBase
 from .agent_bundle import AgentBundle
 from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
@@ -51,6 +52,7 @@ __all__ = [
     "TransactionProdTable",
     "TransactionUATTable",
     "VectorDBCatalogue",
+    "KnowledgeBase",
     "TransactionTable",
     "TransactionUATTable",
     "User",

@@ -8,6 +8,7 @@ class File(SQLModel, table=True):  # type: ignore[call-arg]
     user_id: UUID = Field(foreign_key="user.id")
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
+    knowledge_base_id: UUID | None = Field(default=None, foreign_key="knowledge_base.id", nullable=True, index=True)
     name: str = Field(unique=True, nullable=False)
     path: str = Field(nullable=False)
     size: int = Field(nullable=False)

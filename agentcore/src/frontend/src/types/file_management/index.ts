@@ -1,6 +1,9 @@
 export type FileType = {
   id: string;
   user_id: string;
+  org_id?: string | null;
+  dept_id?: string | null;
+  knowledge_base_id?: string | null;
   provider: string;
   name: string;
   updated_at?: string;
