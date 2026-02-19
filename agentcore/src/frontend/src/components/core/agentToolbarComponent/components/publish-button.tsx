@@ -17,9 +17,21 @@ import { usePatchUpdateAgent } from "@/controllers/API/queries/agents/use-patch-
 import { usePostUnifiedPublishAgent } from "@/controllers/API/queries/agents/use-post-unified-publish-agent";
 import { cn } from "@/utils/utils";
 import { Input } from "@/components/ui/input";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 
 interface PublishButtonProps {
   hasIO: boolean;
+}
+
+interface PublishContextResponse {
+  department_id: string;
+  department_admin_id: string;
+}
+
+interface PublishContextResolveResult {
+  data: PublishContextResponse | null;
+  errorDetail?: string;
 }
 
 const PublishIcon = () => (
@@ -114,10 +126,6 @@ const PublishButton = ({
       setErrorData({ title: "No active agent found." });
       return null;
     }
-    if (normalizedEmails.length === 0) {
-      setErrorData({ title: "Please enter at least one email ID." });
-      return null;
-    }
     if (invalidEmails.length > 0) {
       setErrorData({
         title: "Invalid email format",
@@ -155,6 +163,55 @@ const PublishButton = ({
       if (runId === latestValidationRun.current) {
         setValidationInProgress(false);
       }
+    }
+  };
+
+  const resolvePublishContext = async (
+    suppressError = false,
+  ): Promise<PublishContextResolveResult> => {
+    if (!currentAgent?.id) {
+      const detail = "No active agent found.";
+      if (!suppressError) {
+        setErrorData({ title: detail });
+      }
+      return { data: null, errorDetail: detail };
+    }
+    try {
+      const response = await api.get<PublishContextResponse>(
+        `${getURL("PUBLISH")}/${currentAgent.id}/context`,
+      );
+      return { data: response.data };
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail ?? "Please try again.";
+      if (!suppressError) {
+        setErrorData({
+          title: "Unable to resolve publish context.",
+          list: [detail],
+        });
+      }
+      return { data: null, errorDetail: detail };
+    }
+  };
+
+  const resolveDepartmentFromCurrentUserEmail = async (): Promise<string | null> => {
+    if (!currentAgent?.id) {
+      return null;
+    }
+
+    const fallbackEmail = (userData?.username ?? "").trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!fallbackEmail || !emailRegex.test(fallbackEmail)) {
+      return null;
+    }
+
+    try {
+      const selfValidation = await validatePublishEmail.mutateAsync({
+        agent_id: currentAgent.id,
+        email: fallbackEmail,
+      });
+      return selfValidation.department_id;
+    } catch {
+      return null;
     }
   };
 
@@ -228,35 +285,56 @@ const PublishButton = ({
       return;
     }
 
-    const results = await validateEmails();
-    if (!results) {
-      return;
+    let resolvedDepartmentId: string | null = null;
+    let resolvedDepartmentAdminId = userData?.department_admin ?? undefined;
+
+    if (normalizedEmails.length > 0) {
+      const results = await validateEmails();
+      if (!results) {
+        return;
+      }
+
+      const missingEmails = results
+        .filter((item) => !item.exists_in_department)
+        .map((item) => item.email);
+
+      if (missingEmails.length > 0) {
+        setErrorData({
+          title: "Some emails are not available in this department.",
+          list: missingEmails,
+        });
+        return;
+      }
+
+      resolvedDepartmentId =
+        results.find((item) => item.exists_in_department && item.department_id)?.department_id ??
+        results.find((item) => item.department_id)?.department_id ??
+        null;
+    } else {
+      const contextResult = await resolvePublishContext(true);
+      if (contextResult.data) {
+        resolvedDepartmentId = contextResult.data.department_id;
+        resolvedDepartmentAdminId =
+          contextResult.data.department_admin_id ?? resolvedDepartmentAdminId;
+      } else {
+        const fallbackDepartmentId = await resolveDepartmentFromCurrentUserEmail();
+        if (!fallbackDepartmentId) {
+          setErrorData({
+            title: "Unable to resolve publish context.",
+            list: [contextResult.errorDetail ?? "Please provide at least one valid email ID."],
+          });
+          return;
+        }
+        resolvedDepartmentId = fallbackDepartmentId;
+      }
     }
 
-    const missingEmails = results
-      .filter((item) => !item.exists_in_department)
-      .map((item) => item.email);
-
-    if (missingEmails.length > 0) {
-      setErrorData({
-        title: "Some emails are not available in this department.",
-        list: missingEmails,
-      });
-      return;
-    }
-
-    const resolvedDepartmentId =
-      results.find((item) => item.exists_in_department && item.department_id)?.department_id ??
-      results.find((item) => item.department_id)?.department_id ??
-      null;
     if (!resolvedDepartmentId) {
       setErrorData({
         title: "Unable to resolve department_id for publish payload.",
       });
       return;
     }
-
-    const resolvedDepartmentAdminId = userData?.department_admin ?? undefined;
 
     const publishRequests: Array<{
       environment: "uat" | "prod";
@@ -432,7 +510,7 @@ const PublishButton = ({
 
           <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
             <Label htmlFor="publish-emails" className="text-sm font-medium">
-              Business/User Email IDs
+              Business/User Email IDs (optional)
             </Label>
             <Textarea
               id="publish-emails"
