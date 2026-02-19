@@ -71,7 +71,7 @@ async def _resolve_tenant_scope_for_user(
     user_id: UUID,
     requested_org_id: UUID | None = None,
     requested_dept_id: UUID | None = None,
-) -> tuple[UUID, UUID]:
+) -> tuple[UUID | None, UUID | None]:
     memberships = (
         await session.exec(
             select(UserDepartmentMembership).where(
@@ -81,13 +81,8 @@ async def _resolve_tenant_scope_for_user(
         )
     ).all()
     if not memberships:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No active department membership found for this user. "
-                "Map user in user_department_membership first."
-            ),
-        )
+        # Do not block agent creation/open flow for users without mapped membership.
+        return requested_org_id, requested_dept_id
 
     scoped = memberships
     if requested_org_id:
@@ -96,13 +91,8 @@ async def _resolve_tenant_scope_for_user(
         scoped = [m for m in scoped if m.department_id == requested_dept_id]
 
     if not scoped:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Requested org_id/dept_id is not mapped to the current user "
-                "in user_department_membership."
-            ),
-        )
+        # Fall back to the first active membership instead of blocking the user.
+        scoped = memberships
 
     selected = sorted(scoped, key=lambda m: (str(m.org_id), str(m.department_id)))[0]
     return selected.org_id, selected.department_id
