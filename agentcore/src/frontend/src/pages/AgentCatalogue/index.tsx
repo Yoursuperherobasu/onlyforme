@@ -1,188 +1,189 @@
-import { Plus, Search, Eye, Copy, Star, Grid3x3, List } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { ModelType } from "@/types/models/models";
-import { Button } from "@/components/ui/button";
-import { useContext } from "react";
-import { AuthContext } from "@/contexts/authContext";
+import { Copy, Eye, Search, Star } from "lucide-react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
-// import EditModelModal from "./components/edit-model-modal";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { AuthContext } from "@/contexts/authContext";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
+import { useGetFoldersQuery } from "@/controllers/API/queries/folders/use-get-folders";
+import {
+  useGetRegistry,
+  useGetRegistryEntry,
+  useGetRegistryRatings,
+  usePostRegistryClone,
+  usePostRegistryRate,
+  type RegistryEntry,
+} from "@/controllers/API/queries/registry";
+import CustomLoader from "@/customization/components/custom-loader";
+import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
+import useAlertStore from "@/stores/alertStore";
 
 interface AgentCatalogueViewProps {
-  models: ModelType[];
-  setOpenModal?: (open: boolean) => void;
-  setSearch: (search: string) => void;
-  onEditModel?: (model: ModelType) => void;
-  onDeleteModel?: (model: ModelType) => void;
+  setSearch?: (search: string) => void;
 }
 
 export default function AgentCatalogueView({
-  models,
   setSearch,
-  onEditModel,
-  onDeleteModel,
 }: AgentCatalogueViewProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [selectedEntry, setSelectedEntry] = useState<RegistryEntry | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [ratingOpen, setRatingOpen] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [cloneName, setCloneName] = useState("");
+  const [createProject, setCreateProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
+  const [score, setScore] = useState(5);
+  const [review, setReview] = useState("");
 
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<ModelType | null>(null);
-
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
+  const navigate = useCustomNavigate();
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
-  /* ---------------------------------- Dummy Agents ---------------------------------- */
-
-  const DUMMY_AGENTS = [
+  const { data: registryData, isLoading: isLoadingRegistry } = useGetRegistry(
     {
-      id: "1",
-      name: "Customer Support Agent",
-      description:
-        "Intelligent customer support automation with context-aware responses.",
-      provider: "MTC",
-      team: "Team",
-      contextWindow: "1M tokens",
-      pricing: "$0.10 / 1M tokens",
-      category: "Multimodal",
-      status: "active",
-      isCustom: false,
-      rating: 4.8,
-      reviews: 1240,
-      tags: ["Chatbot", "AI Agent"],
-      icon: "💬",
+      search: searchQuery || undefined,
+      page: 1,
+      page_size: 60,
+      deployment_env: "PROD",
     },
     {
-      id: "2",
-      name: "Data Processing Pipeline",
-      description:
-        "Automated data extraction, transformation, and loading workflows.",
-      provider: "MTC",
-      team: "AI",
-      contextWindow: "1M tokens",
-      pricing: "$0.15 / 1M tokens",
-      category: "Multimodal",
-      status: "active",
-      isCustom: false,
-      rating: 4.6,
-      reviews: 980,
-      tags: ["Pipeline", "ETL"],
-      icon: "🔄",
+      refetchInterval: 30000,
+      keepPreviousData: true,
     },
-    {
-      id: "3",
-      name: "Code Review Assistant",
-      description:
-        "AI-powered code review with security and performance insights.",
-      provider: "OpenAI",
-      team: "PRO",
-      contextWindow: "128K tokens",
-      pricing: "$10 / 1M tokens",
-      category: "Text",
-      status: "beta",
-      isCustom: false,
-      rating: 4.9,
-      reviews: 667,
-      tags: ["Assistant", "DevOps"],
-      icon: "📝",
-    },
-    {
-      id: "4",
-      name: "Email Automation agent",
-      description:
-        "Scalp email campaigns with personalization and A/B testing.",
-      provider: "MarketingAI",
-      team: "",
-      contextWindow: "200K tokens",
-      pricing: "$15 / 1M tokens",
-      category: "Multimodal",
-      status: "active",
-      isCustom: false,
-      rating: 4.7,
-      reviews: 823,
-      tags: ["Email", "Marketing"],
-      icon: "💬",
-    },
-    {
-      id: "5",
-      name: "Sales Intelligence Bot",
-      description:
-        "Track leads and automate follow-ups with AI-driven insights.",
-      provider: "SalesForce",
-      team: "Enterprise",
-      contextWindow: "500K tokens",
-      pricing: "$20 / 1M tokens",
-      category: "Text",
-      status: "active",
-      isCustom: false,
-      rating: 4.5,
-      reviews: 543,
-      tags: ["Sales", "CRM"],
-      icon: "📊",
-    },
-    {
-      id: "6",
-      name: "Document Analyzer",
-      description:
-        "Extract and analyze data from documents with high accuracy.",
-      provider: "Google",
-      team: "Cloud",
-      contextWindow: "2M tokens",
-      pricing: "$8 / 1M tokens",
-      category: "Multimodal",
-      status: "active",
-      isCustom: false,
-      rating: 4.4,
-      reviews: 892,
-      tags: ["Document", "AI"],
-      icon: "📄",
-    },
-  ];
-
-  const displayAgents = models?.length ? models : DUMMY_AGENTS;
-
-
-  
-
-  /* ---------------------------------- Filtering ---------------------------------- */
-
-  const filteredAgents = displayAgents.filter((agent: any) => {
-    const matchesSearch =
-      !searchQuery ||
-      agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.description?.toLowerCase().includes(searchQuery.toLowerCase());
-
-    return matchesSearch;
+  );
+  const { data: folders = [], refetch: refetchFolders } = useGetFoldersQuery({
+    staleTime: 0,
   });
+  const { data: detailEntry } = useGetRegistryEntry(
+    { registry_id: selectedEntry?.id || "" },
+    { enabled: viewOpen && !!selectedEntry?.id },
+  );
+  const { data: ratingsData, refetch: refetchRatings } = useGetRegistryRatings(
+    { registry_id: selectedEntry?.id || "" },
+    { enabled: ratingOpen && !!selectedEntry?.id },
+  );
+  const cloneMutation = usePostRegistryClone();
+  const rateMutation = usePostRegistryRate();
 
-  /* ---------------------------------- Debounced Search ---------------------------------- */
+  const filteredAgents = useMemo(
+    () => registryData?.items || [],
+    [registryData?.items],
+  );
 
   useEffect(() => {
+    if (!setSearch) return;
     const timer = setTimeout(() => setSearch(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery, setSearch]);
 
-  /* ---------------------------------- Status Badge ---------------------------------- */
+  useEffect(() => {
+    if (!selectedProjectId && folders.length > 0) {
+      setSelectedProjectId(String(folders[0].id || ""));
+    }
+  }, [folders, selectedProjectId]);
 
-  const StatusBadge = ({ status }: { status: string }) => {
-    const colors = {
-      active: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
-      beta: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-      deprecated: "bg-red-500/10 text-red-500 border-red-500/20",
-    };
-    return (
-      <span
-        className={`px-2 py-0.5 rounded text-xs font-medium border ${colors[status as keyof typeof colors] || colors.active}`}
-      >
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </span>
-    );
+  const openCloneModal = (entry: RegistryEntry) => {
+    setSelectedEntry(entry);
+    setCloneOpen(true);
+    setCloneName(`${entry.title} (Copy)`);
+    setCreateProject(false);
+    setNewProjectName("");
+    setNewProjectDescription("");
   };
 
-  /* ---------------------------------- JSX ---------------------------------- */
+  const openViewModal = (entry: RegistryEntry) => {
+    setSelectedEntry(entry);
+    setViewOpen(true);
+  };
+
+  const openRatingModal = (entry: RegistryEntry) => {
+    setSelectedEntry(entry);
+    setRatingOpen(true);
+    setScore(5);
+    setReview("");
+  };
+
+  const handleClone = async () => {
+    try {
+      if (!selectedEntry) return;
+      let projectId = selectedProjectId;
+      if (createProject) {
+        if (!newProjectName.trim()) {
+          setErrorData({ title: "Project name is required" });
+          return;
+        }
+        const created = await api.post(`${getURL("PROJECTS")}/`, {
+          name: newProjectName.trim(),
+          description: newProjectDescription.trim(),
+          agents_list: [],
+          components_list: [],
+        });
+        projectId = String(created?.data?.id || "");
+        const refreshed = await refetchFolders();
+        if (!projectId) {
+          const updatedFolders = refreshed?.data || folders;
+          const fallback = updatedFolders.find(
+            (f) => f.name === newProjectName.trim(),
+          );
+          projectId = String(fallback?.id || "");
+        }
+      }
+      if (!projectId) {
+        setErrorData({ title: "Please select a project first" });
+        return;
+      }
+      const response = await cloneMutation.mutateAsync({
+        registry_id: selectedEntry.id,
+        project_id: projectId,
+        new_name: cloneName.trim() || undefined,
+      });
+      setSuccessData({
+        title: `Agent '${response.agent_name}' copied successfully`,
+      });
+      setCloneOpen(false);
+      navigate(`/agent/${response.agent_id}/folder/${projectId}`);
+    } catch (error: any) {
+      setErrorData({
+        title: "Failed to copy agent",
+        list: [error?.response?.data?.detail || "Please try again"],
+      });
+    }
+  };
+
+  const handleRate = async () => {
+    try {
+      if (!selectedEntry) return;
+      await rateMutation.mutateAsync({
+        registry_id: selectedEntry.id,
+        score,
+        review: review.trim() || undefined,
+      });
+      await refetchRatings();
+      setSuccessData({ title: "Rating submitted successfully" });
+    } catch (error: any) {
+      setErrorData({
+        title: "Failed to submit rating",
+        list: [error?.response?.data?.detail || "Please try again"],
+      });
+    }
+  };
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* Header - Fixed */}
-      <div className="flex-shrink-0 flex items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
             <h1 className="text-2xl font-semibold">Agent Registry</h1>
@@ -206,119 +207,284 @@ export default function AgentCatalogueView({
         </div>
       </div>
 
-      {/* Cards Grid - Scrollable */}
       <div className="flex-1 overflow-auto p-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {filteredAgents.map((agent: any) => (
-            <div
-              key={agent.id}
-              className="group relative border rounded-lg bg-card overflow-hidden hover:border-primary/50 transition-all"
-            >
-              {/* Card Content */}
-              <div className="p-6">
-                {/* Icon & Title */}
-                <div className="flex items-start gap-4 mb-4">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-semibold mb-1 truncate">
-                      {agent.name}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      by {agent.provider}
-                      {agent.team && (
-                        <span className="ml-2 text-primary">{agent.team}</span>
-                      )}
+        {isLoadingRegistry ? (
+          <div className="flex h-full items-center justify-center">
+            <CustomLoader />
+          </div>
+        ) : filteredAgents.length === 0 ? (
+          <div className="rounded-lg border border-border bg-card p-12 text-center">
+            <p className="text-muted-foreground">No registry agents found</p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              {filteredAgents.map((agent) => (
+                <div
+                  key={agent.id}
+                  className="group relative overflow-hidden rounded-lg border bg-card transition-all hover:border-primary/50"
+                >
+                  <div className="p-6">
+                    <div className="mb-4 flex items-start gap-4">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="mb-1 truncate text-lg font-semibold">
+                          {agent.title}
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          by {agent.listed_by_username || "Unknown"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <p className="mb-4 line-clamp-2 text-sm text-muted-foreground">
+                      {agent.summary || "No description provided."}
                     </p>
-                  </div>
-                </div>
 
-                {/* Description */}
-                <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                  {agent.description}
-                </p>
-
-                {/* Tags */}
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {agent.tags?.map((tag: string, idx: number) => (
-                    <span
-                      key={idx}
-                      className="px-2.5 py-1 bg-muted border rounded-md text-xs"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-
-                {/* Rating & Actions */}
-               
-                <div className="flex items-center justify-between pt-4 border-t">
-                  <ShadTooltip 
-  content={!can("copy_agents") ? "You don't have permission to view ratings" : ""}
->
-  <div className={`flex items-center gap-1.5 text-sm ${!can("copy_agents") ? "opacity-50 pointer-events-none cursor-not-allowed" : ""}`}>
-    <Star className="h-4 w-4 fill-yellow-500 text-yellow-500" />
-    <span className="font-medium">{agent.rating}</span>
-    <span className="text-muted-foreground">
-      ({agent.reviews})
-    </span>
-  </div>
-</ShadTooltip>
-                  
-
-                  <div className="flex items-center gap-2">
-                    <ShadTooltip
-                      content={
-                        !can("view_only_agent")
-                          ? "You don't have permission to view"
-                          : ""
-                      }
-                    >
-                      <span className="inline-block">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={!can("view_only_agent")}
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      {(agent.tags || []).map((tag: string, idx: number) => (
+                        <span
+                          key={`${agent.id}-${idx}`}
+                          className="rounded-md border bg-muted px-2.5 py-1 text-xs"
                         >
-                          <Eye className="h-3.5 w-3.5 mr-1.5" />
-                          View
-                        </Button>
-                      </span>
-                    </ShadTooltip>
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
 
-                    <ShadTooltip
-                      content={
-                        !can("copy_agents")
-                          ? "You don't have permission to copy"
-                          : ""
-                      }
-                    >
-                      <span className="inline-block">
-                        <Button
-                          size="sm"
+                    <div className="flex items-center justify-between border-t pt-4">
+                      <ShadTooltip
+                        content={
+                          !can("copy_agents")
+                            ? "You don't have permission to view ratings"
+                            : "Click to rate and view reviews"
+                        }
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            can("copy_agents") && openRatingModal(agent)
+                          }
+                          className={`flex items-center gap-1.5 text-sm ${!can("copy_agents") ? "cursor-not-allowed opacity-50" : ""}`}
                           disabled={!can("copy_agents")}
                         >
-                          <Copy className="h-3.5 w-3.5 mr-1.5" />
-                          Copy
-                        </Button>
-                      </span>
-                    </ShadTooltip>
+                          <Star className="h-4 w-4 fill-yellow-500 text-yellow-500" />
+                          <span className="font-medium">
+                            {Number(agent.rating || 0).toFixed(1)}
+                          </span>
+                          <span className="text-muted-foreground">
+                            ({agent.rating_count || 0})
+                          </span>
+                        </button>
+                      </ShadTooltip>
+
+                      <div className="flex items-center gap-2">
+                        <ShadTooltip
+                          content={
+                            !can("view_only_agent")
+                              ? "You don't have permission to view"
+                              : ""
+                          }
+                        >
+                          <span className="inline-block">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={!can("view_only_agent")}
+                              onClick={() => openViewModal(agent)}
+                            >
+                              <Eye className="mr-1.5 h-3.5 w-3.5" />
+                              View
+                            </Button>
+                          </span>
+                        </ShadTooltip>
+
+                        <ShadTooltip
+                          content={
+                            !can("copy_agents")
+                              ? "You don't have permission to copy"
+                              : ""
+                          }
+                        >
+                          <span className="inline-block">
+                            <Button
+                              size="sm"
+                              disabled={!can("copy_agents")}
+                              onClick={() => openCloneModal(agent)}
+                            >
+                              <Copy className="mr-1.5 h-3.5 w-3.5" />
+                              Copy
+                            </Button>
+                          </span>
+                        </ShadTooltip>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          Showing {filteredAgents.length} of {displayAgents.length} agents
-        </div>
+            <div className="mt-6 text-center text-sm text-muted-foreground">
+              Showing {filteredAgents.length} of {registryData?.total || 0} agents
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Modal */}
-      {/* <EditModelModal
-        open={isEditModalOpen}
-        onOpenChange={setIsEditModalOpen}
-        model={selectedModel}
-      /> */}
+      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{detailEntry?.title || selectedEntry?.title}</DialogTitle>
+            <DialogDescription>
+              {detailEntry?.summary || selectedEntry?.summary || "No summary"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <p>
+              Environment:{" "}
+              {detailEntry?.deployment_env || selectedEntry?.deployment_env}
+            </p>
+            <p>Version: {detailEntry?.version_number || "-"}</p>
+            <p>
+              Listed by:{" "}
+              {detailEntry?.listed_by_username ||
+                selectedEntry?.listed_by_username ||
+                "-"}
+            </p>
+            <p>Published notes: {detailEntry?.publish_description || "-"}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Copy Agent</DialogTitle>
+            <DialogDescription>
+              Choose existing project or create a new project, then copy this
+              registry agent.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            <label className="block">
+              <span className="mb-1 block text-xs text-muted-foreground">
+                Agent Name
+              </span>
+              <input
+                value={cloneName}
+                onChange={(e) => setCloneName(e.target.value)}
+                className="w-full rounded-md border bg-card px-3 py-2"
+                placeholder="Copied agent name"
+              />
+            </label>
+
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={createProject}
+                onChange={(e) => setCreateProject(e.target.checked)}
+              />
+              <span>Create new project and copy there</span>
+            </label>
+
+            {createProject ? (
+              <div className="space-y-2">
+                <input
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  className="w-full rounded-md border bg-card px-3 py-2"
+                  placeholder="New project name"
+                />
+                <textarea
+                  value={newProjectDescription}
+                  onChange={(e) => setNewProjectDescription(e.target.value)}
+                  className="w-full rounded-md border bg-card px-3 py-2"
+                  placeholder="New project description (optional)"
+                />
+              </div>
+            ) : (
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="w-full rounded-md border bg-card px-3 py-2"
+              >
+                <option value="">Select project</option>
+                {folders.map((folder) => (
+                  <option
+                    key={folder.id || folder.name}
+                    value={String(folder.id || "")}
+                  >
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloneOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleClone} disabled={cloneMutation.isLoading}>
+              {cloneMutation.isLoading ? "Copying..." : "Copy Agent"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={ratingOpen} onOpenChange={setRatingOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rate Agent</DialogTitle>
+            <DialogDescription>
+              Submit your rating and review for this registry agent.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            <div>
+              <span className="mb-1 block text-xs text-muted-foreground">
+                Score (1 to 5)
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={5}
+                step={0.5}
+                value={score}
+                onChange={(e) => setScore(Number(e.target.value))}
+                className="w-full rounded-md border bg-card px-3 py-2"
+              />
+            </div>
+            <textarea
+              value={review}
+              onChange={(e) => setReview(e.target.value)}
+              className="w-full rounded-md border bg-card px-3 py-2"
+              placeholder="Write a short review (optional)"
+            />
+
+            <div className="rounded-md border bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground">
+                Average:{" "}
+                {Number(
+                  ratingsData?.average_rating || selectedEntry?.rating || 0,
+                ).toFixed(1)}{" "}
+                • Total ratings:{" "}
+                {ratingsData?.total_ratings || selectedEntry?.rating_count || 0}
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRatingOpen(false)}>
+              Close
+            </Button>
+            <Button onClick={handleRate} disabled={rateMutation.isLoading}>
+              {rateMutation.isLoading ? "Submitting..." : "Submit Rating"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

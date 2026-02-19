@@ -28,9 +28,11 @@ from agentcore.services.database.models.approval_request.model import (
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
     DeploymentPRODStatusEnum,
+    ProdDeploymentVisibilityEnum,
 )
 from agentcore.services.database.models.agent_deployment_uat.model import (
     AgentDeploymentUAT,
+    DeploymentVisibilityEnum,
     DeploymentUATStatusEnum,
 )
 from agentcore.services.database.models.agent_registry.model import RegistryDeploymentEnvEnum
@@ -302,6 +304,21 @@ async def list_control_panel_agents(
     try:
         # Pick the right model
         Model = AgentDeploymentProd if env == ControlPanelEnv.PROD else AgentDeploymentUAT
+        published_status = (
+            DeploymentPRODStatusEnum.PUBLISHED
+            if env == ControlPanelEnv.PROD
+            else DeploymentUATStatusEnum.PUBLISHED
+        )
+        public_visibility = (
+            ProdDeploymentVisibilityEnum.PUBLIC
+            if env == ControlPanelEnv.PROD
+            else DeploymentVisibilityEnum.PUBLIC
+        )
+        private_visibility = (
+            ProdDeploymentVisibilityEnum.PRIVATE
+            if env == ControlPanelEnv.PROD
+            else DeploymentVisibilityEnum.PRIVATE
+        )
 
         # ── Base query ──────────────────────────────────────────────
         stmt = (
@@ -311,6 +328,14 @@ async def list_control_panel_agents(
                 User.department_name.label("creator_department"),  # type: ignore[attr-defined]
             )
             .outerjoin(User, Model.deployed_by == User.id)  # type: ignore[arg-type]
+            .where(Model.status == published_status)  # type: ignore[arg-type]
+            .where(
+                (Model.visibility == public_visibility)  # type: ignore[arg-type]
+                | (
+                    (Model.visibility == private_visibility)  # type: ignore[arg-type]
+                    & (Model.deployed_by == current_user.id)  # type: ignore[arg-type]
+                )
+            )
         )
 
         # ── Search filter ──────────────────────────────────────────

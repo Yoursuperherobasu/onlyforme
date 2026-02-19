@@ -2,9 +2,11 @@ import {
   Search,
   X
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
-import { useEffect, useMemo, useState } from "react";
+import CustomLoader from "@/customization/components/custom-loader";
+import { useGetControlPanelAgents } from "@/controllers/API/queries/control-panel";
 
 type EnvironmentTab = "UAT" | "PROD";
 
@@ -23,138 +25,19 @@ interface WorkagentType {
 
 interface WorkflowsViewProps {
   workflows?: WorkagentType[];
-  setSearch: (search: string) => void;
+  setSearch?: (search: string) => void;
   onWorkagentClick?: (workflow: WorkagentType) => void;
 }
 
-const DUMMY_WORKAGENTS_UAT: WorkagentType[] = [
-  {
-    id: "uat-1",
-    name: "Customer Support Chatbot",
-    description: "Intelligent chatbot for customer inquiries",
-    user: "Sarah Mitchell",
-    department: "Customer Support",
-    created: "Aug 28, 10:26 AM",
-    lastRun: "Jan 20, 8:34 AM",
-    failedRuns: 5,
-    status: false,
-    enabled: true,
-  },
-  {
-    id: "uat-2",
-    name: "Document Analysis Pipeline",
-    description: "Extract insights from PDF documents",
-    user: "Michael Chen",
-    department: "Data Science",
-    created: "Aug 15, 2:14 PM",
-    lastRun: "Jan 20, 10:34 AM",
-    failedRuns: 2,
-    status: true,
-    enabled: true,
-  },
-  {
-    id: "uat-3",
-    name: "Content Generation Agent",
-    description: "Multi-agent system for generating blog posts",
-    user: "Emily Rodriguez",
-    department: "Marketing",
-    created: "Jul 22, 9:45 AM",
-    lastRun: "Jan 20, 10:29 AM",
-    failedRuns: 18,
-    status: false,
-    enabled: false,
-  },
-  {
-    id: "uat-4",
-    name: "Data Processing Workagent",
-    description: "Automated ETL pipeline with AI-powered data cleaning",
-    user: "David Kumar",
-    department: "Data Engineering",
-    created: "Jul 10, 4:30 PM",
-    lastRun: "Jan 20, 9:15 AM",
-    failedRuns: 7,
-    status: true,
-    enabled: true,
-  },
-  {
-    id: "uat-5",
-    name: "Sentiment Analysis API",
-    description: "Real-time sentiment analysis for customer feedback",
-    user: "Jessica Park",
-    department: "Analytics",
-    created: "Jun 18, 11:20 AM",
-    lastRun: "Jan 20, 9:34 AM",
-    failedRuns: null,
-    status: false,
-    enabled: true,
-  },
-];
-
-const DUMMY_WORKAGENTS_PROD: WorkagentType[] = [
-  {
-    id: "prod-1",
-    name: "Fraud Detection Agent",
-    description: "Real-time transaction risk analysis",
-    user: "Noah Thompson",
-    department: "Risk",
-    created: "Sep 03, 1:40 PM",
-    lastRun: "Jan 20, 10:40 AM",
-    failedRuns: 1,
-    status: true,
-    enabled: true,
-  },
-  {
-    id: "prod-2",
-    name: "Invoice Reconciliation",
-    description: "Auto-match invoice records across systems",
-    user: "Priya Menon",
-    department: "Finance",
-    created: "Aug 11, 11:00 AM",
-    lastRun: "Jan 20, 9:52 AM",
-    failedRuns: 0,
-    status: true,
-    enabled: true,
-  },
-  {
-    id: "prod-3",
-    name: "Legal Policy Reviewer",
-    description: "Detects policy conflicts and compliance gaps",
-    user: "Liam Foster",
-    department: "Legal",
-    created: "Jul 30, 5:05 PM",
-    lastRun: "Jan 20, 9:08 AM",
-    failedRuns: 3,
-    status: false,
-    enabled: true,
-  },
-  {
-    id: "prod-4",
-    name: "Ops Alert Summarizer",
-    description: "Summarizes high-volume operational alerts",
-    user: "Ava Brooks",
-    department: "Operations",
-    created: "Jun 27, 8:20 AM",
-    lastRun: "Jan 20, 10:11 AM",
-    failedRuns: null,
-    status: true,
-    enabled: false,
-  },
-  {
-    id: "prod-5",
-    name: "Sales Forecasting Assistant",
-    description: "Generates weekly sales demand forecasts",
-    user: "Ethan Reed",
-    department: "Sales",
-    created: "May 14, 2:50 PM",
-    lastRun: "Jan 20, 8:56 AM",
-    failedRuns: 2,
-    status: false,
-    enabled: true,
-  },
-];
+function formatDateTime(value?: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString();
+}
 
 export default function WorkflowsView({
-  workflows,
+  workflows = [],
   setSearch,
   onWorkagentClick,
 }: WorkflowsViewProps): JSX.Element {
@@ -166,13 +49,37 @@ export default function WorkflowsView({
   const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
+  const { data, isLoading } = useGetControlPanelAgents(
+    {
+      env: activeTab.toLowerCase() as "uat" | "prod",
+      search: searchQuery || undefined,
+      page: 1,
+      size: 100,
+    },
+    {
+      refetchInterval: 30000,
+      keepPreviousData: true,
+    },
+  );
+
   const displayworkflows = useMemo(() => {
     if (workflows?.length) {
       return workflows;
     }
 
-    return activeTab === "UAT" ? DUMMY_WORKAGENTS_UAT : DUMMY_WORKAGENTS_PROD;
-  }, [activeTab, workflows]);
+    return (data?.items ?? []).map((item) => ({
+      id: item.deploy_id,
+      name: item.agent_name,
+      description: item.agent_description ?? "",
+      user: item.creator_name ?? "-",
+      department: item.creator_department ?? "-",
+      created: formatDateTime(item.created_at),
+      lastRun: formatDateTime(item.last_run),
+      failedRuns: item.failed_runs ?? 0,
+      status: item.is_active,
+      enabled: item.is_enabled,
+    }));
+  }, [workflows, data?.items]);
 
   useEffect(() => {
     const initialStates: { [key: string]: { status: boolean; enabled: boolean } } = {};
@@ -217,6 +124,7 @@ export default function WorkflowsView({
   });
 
   useEffect(() => {
+    if (!setSearch) return;
     const timer = setTimeout(() => setSearch(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery, setSearch]);
@@ -302,7 +210,22 @@ export default function WorkflowsView({
             </thead>
 
             <tbody className="divide-y">
-              {filteredworkflows.map((workflow) => (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-10 text-center">
+                    <div className="flex items-center justify-center">
+                      <CustomLoader />
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredworkflows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-10 text-center text-sm text-muted-foreground">
+                    No deployed agents found
+                  </td>
+                </tr>
+              ) : (
+                filteredworkflows.map((workflow) => (
                 <tr
                   key={workflow.id}
                   className="cursor-pointer transition-colors hover:bg-muted/50"
@@ -374,7 +297,8 @@ export default function WorkflowsView({
                     </td>
                   )}
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>

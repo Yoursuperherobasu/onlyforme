@@ -61,7 +61,7 @@ router = APIRouter(prefix="/publish", tags=["Publish"])
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Roles that can publish directly to PROD (others go through approval flow)
-ADMIN_ROLES = {"admin", "super_admin"}
+ADMIN_ROLES = {"admin", "super_admin", "root", "department_admin"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1086,7 +1086,8 @@ async def publish_agent(
         else:
             # ─── PROD ────────────────────────────────────────────
             next_version = await _get_next_version_number(session, agent_id, AgentDeploymentProd)
-            is_admin = current_user.role in ADMIN_ROLES
+            role = str(getattr(current_user, "role", "")).lower()
+            is_admin = role in ADMIN_ROLES
 
             visibility_enum = ProdDeploymentVisibilityEnum(body.visibility.upper())
 
