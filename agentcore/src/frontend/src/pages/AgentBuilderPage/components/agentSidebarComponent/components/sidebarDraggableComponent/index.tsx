@@ -21,7 +21,7 @@ import {
   createAgentComponent,
   downloadNode,
   getNodeId,
-} from "../../../../../../utils/reactflowUtils";
+} from "../../../../../../utils/reactFlowUtils";
 import { cn, removeCountFromString } from "../../../../../../utils/utils";
 import { useTranslation } from 'react-i18next';
 

@@ -117,13 +117,13 @@ async def _new_agent(
         if db_agent.data:
             db_agent.data = jsonable_encoder(strip_sensitive_values_from_agent_data(db_agent.data))
 
-        if db_agent.folder_id is None:
+        if db_agent.project_id is None:
             # Make sure agents always have a folder
             default_folder = (
                 await session.exec(select(Folder).where(Folder.name == DEFAULT_FOLDER_NAME, Folder.user_id == user_id))
             ).first()
             if default_folder:
-                db_agent.folder_id = default_folder.id
+                db_agent.project_id = default_folder.id
 
         session.add(db_agent)
     except Exception as e:
@@ -178,7 +178,7 @@ async def read_agents(
     remove_example_agents: bool = False,
     components_only: bool = False,
     get_all: bool = True,
-    folder_id: UUID | None = None,
+    project_id: UUID | None = None,
     params: Annotated[Params, Depends()],
     header_agents: bool = False,
 ):
@@ -193,7 +193,7 @@ async def read_agents(
         get_all (bool, optional): Whether to return all agents without pagination. Defaults to True.
         **This field must be True because of backward compatibility with the frontend - Release: 1.0.20**
 
-        folder_id (UUID, optional): The project ID. Defaults to None.
+        project_id (UUID, optional): The project ID. Defaults to None.
         params (Params): Pagination parameters.
         remove_example_agents (bool, optional): Whether to remove example agents. Defaults to False.
         header_agents (bool, optional): Whether to return only specific headers of the agents. Defaults to False.
@@ -208,27 +208,27 @@ async def read_agents(
         default_folder = (await session.exec(select(Folder).where(Folder.name == DEFAULT_FOLDER_NAME))).first()
 
         starter_folder = (await session.exec(select(Folder).where(Folder.name == STARTER_FOLDER_NAME))).first()
-        starter_folder_id = starter_folder.id if starter_folder else None
+        starter_project_id = starter_folder.id if starter_folder else None
 
         if not default_folder:
             # Auto-create the default folder if it doesn't exist
             default_folder = await get_or_create_default_folder(session, current_user.id)
 
-        default_folder_id = default_folder.id
+        default_project_id = default_folder.id
 
-        if not folder_id:
-            folder_id = default_folder_id
+        if not project_id:
+            project_id = default_project_id
 
         # Only show agents owned by the current user (SSO authentication)
         stmt = select(Agent).where(Agent.user_id == current_user.id)
 
         if remove_example_agents:
-            stmt = stmt.where(Agent.folder_id != starter_folder_id)
+            stmt = stmt.where(Agent.project_id != starter_project_id)
 
         if get_all:
             agents = (await session.exec(stmt)).all()
-            if remove_example_agents and starter_folder_id:
-                agents = [agent for agent in agents if agent.folder_id != starter_folder_id]
+            if remove_example_agents and starter_project_id:
+                agents = [agent for agent in agents if agent.project_id != starter_project_id]
             if header_agents:
                 # Convert to AgentHeader objects and compress the response
                 agent_headers = [AgentHeader.model_validate(agent, from_attributes=True) for agent in agents]
@@ -237,7 +237,7 @@ async def read_agents(
             # Compress the full agents response
             return compress_response(agents)
 
-        stmt = stmt.where(Agent.folder_id == folder_id)
+        stmt = stmt.where(Agent.project_id == project_id)
 
         import warnings
 
@@ -326,10 +326,10 @@ async def update_agent(
 
         db_agent.updated_at = datetime.now(timezone.utc)
 
-        if db_agent.folder_id is None:
+        if db_agent.project_id is None:
             default_folder = (await session.exec(select(Folder).where(Folder.name == DEFAULT_FOLDER_NAME))).first()
             if default_folder:
-                db_agent.folder_id = default_folder.id
+                db_agent.project_id = default_folder.id
 
         session.add(db_agent)
         await session.commit()
@@ -405,7 +405,7 @@ async def upload_file(
     session: DbSession,
     file: Annotated[UploadFile, File(...)],
     current_user: CurrentActiveUser,
-    folder_id: UUID | None = None,
+    project_id: UUID | None = None,
 ):
     """Upload agents from a file."""
     contents = await file.read()
@@ -415,8 +415,8 @@ async def upload_file(
     # Now we set the user_id for all agents
     for agent in agent_list.agents:
         agent.user_id = current_user.id
-        if folder_id:
-            agent.folder_id = folder_id
+        if project_id:
+            agent.project_id = project_id
         response = await _new_agent(session=session, agent=agent, user_id=current_user.id)
         response_list.append(response)
 
@@ -544,7 +544,7 @@ async def read_basic_examples(
             return []
 
         # Get all agents in the starter folder
-        all_starter_folder_agents = (await session.exec(select(Agent).where(Agent.folder_id == starter_folder.id))).all()
+        all_starter_folder_agents = (await session.exec(select(Agent).where(Agent.project_id == starter_folder.id))).all()
 
         agent_reads = [AgentRead.model_validate(agent, from_attributes=True) for agent in all_starter_folder_agents]
         all_starter_folder_agents_response = compress_response(agent_reads)

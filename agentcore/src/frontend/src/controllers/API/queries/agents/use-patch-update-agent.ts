@@ -10,7 +10,7 @@ interface IPatchUpdateAgent {
   name?: string;
   data?: reactFlowJsonObject;
   description?: string;
-  folder_id?: string | null | undefined;
+  project_id?: string | null | undefined;
   endpoint_name?: string | null | undefined;
   locked?: boolean | null | undefined;
   access_type?: "PUBLIC" | "PRIVATE" | "PROTECTED";
@@ -35,7 +35,7 @@ export const usePatchUpdateAgent: useMutationFunctionType<
     mutate(["usePatchUpdateAgent"], PatchUpdateAgentFn, {
       onSettled: (res) => {
         queryClient.refetchQueries({
-          queryKey: ["useGetFolders", res.folder_id],
+          queryKey: ["useGetFolders", res.project_id],
         }),
           queryClient.refetchQueries({
             queryKey: ["useGetFolder"],

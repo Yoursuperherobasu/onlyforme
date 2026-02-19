@@ -2105,20 +2105,20 @@ async def get_user_agents(
         agents_by_name = {f.name: f for f in user_agents}
 
         # Get all folders (projects) that contain these agents
-        folder_ids = set(f.folder_id for f in user_agents if f.folder_id)
+        project_ids = set(f.project_id for f in user_agents if f.project_id)
         folders_by_id: dict[str, Folder] = {}
-        if folder_ids:
+        if project_ids:
             folders_result = await session.exec(
-                select(Folder).where(Folder.id.in_(folder_ids))
+                select(Folder).where(Folder.id.in_(project_ids))
             )
             folders_by_id = {str(f.id): f for f in folders_result.all()}
 
         # Build agent_id to folder mapping
         agent_to_folder: dict[str, tuple[str | None, str | None]] = {}
         for agent in user_agents:
-            folder_id = str(agent.folder_id) if agent.folder_id else None
-            folder_name = folders_by_id.get(folder_id).name if folder_id and folder_id in folders_by_id else None
-            agent_to_folder[str(agent.id)] = (folder_id, folder_name)
+            project_id = str(agent.project_id) if agent.project_id else None
+            folder_name = folders_by_id.get(project_id).name if project_id and project_id in folders_by_id else None
+            agent_to_folder[str(agent.id)] = (project_id, folder_name)
 
         logger.info(f"Found {len(user_agents)} agents in database for user")
 
@@ -2568,8 +2568,8 @@ async def get_user_projects(
         folders_by_id = {str(f.id): f for f in user_folders}
         agent_to_folder: dict[str, str] = {}
         for agent in user_agents:
-            if agent.folder_id:
-                agent_to_folder[str(agent.id)] = str(agent.folder_id)
+            if agent.project_id:
+                agent_to_folder[str(agent.id)] = str(agent.project_id)
 
         agents_by_id = {str(f.id): f for f in user_agents}
         agents_by_name = {f.name: f for f in user_agents}
@@ -2587,8 +2587,8 @@ async def get_user_projects(
                 continue
 
             # Get folder for this agent
-            folder_id = agent_to_folder.get(matched_fid)
-            if not folder_id:
+            project_id = agent_to_folder.get(matched_fid)
+            if not project_id:
                 continue
 
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
@@ -2605,10 +2605,10 @@ async def get_user_projects(
             trace_tokens = sum(o.total_tokens for o in parsed_obs)
             trace_cost = sum(o.total_cost for o in parsed_obs)
 
-            if folder_id not in projects_data:
-                folder = folders_by_id.get(folder_id)
-                projects_data[folder_id] = {
-                    "project_id": folder_id,
+            if project_id not in projects_data:
+                folder = folders_by_id.get(project_id)
+                projects_data[project_id] = {
+                    "project_id": project_id,
                     "project_name": folder.name if folder else None,
                     "agents": set(),
                     "trace_count": 0,
@@ -2618,14 +2618,14 @@ async def get_user_projects(
                     "timestamps": [],
                 }
 
-            projects_data[folder_id]["agents"].add(matched_fid)
-            projects_data[folder_id]["trace_count"] += 1
-            projects_data[folder_id]["total_tokens"] += trace_tokens
-            projects_data[folder_id]["total_cost"] += trace_cost
+            projects_data[project_id]["agents"].add(matched_fid)
+            projects_data[project_id]["trace_count"] += 1
+            projects_data[project_id]["total_tokens"] += trace_tokens
+            projects_data[project_id]["total_cost"] += trace_cost
             if session_id:
-                projects_data[folder_id]["sessions"].add(session_id)
+                projects_data[project_id]["sessions"].add(session_id)
             if timestamp:
-                projects_data[folder_id]["timestamps"].append(timestamp)
+                projects_data[project_id]["timestamps"].append(timestamp)
 
         # Build response
         projects = []
@@ -2694,7 +2694,7 @@ async def get_project_detail(
         agents_result = await session.exec(
             select(Agent).where(
                 Agent.user_id == current_user.id,
-                Agent.folder_id == folder.id,
+                Agent.project_id == folder.id,
             )
         )
         folder_agents = agents_result.all()

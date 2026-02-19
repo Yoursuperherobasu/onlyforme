@@ -1,4 +1,4 @@
-"""rename agent folder_id to project_id
+"""rename agent project_id to project_id
 
 Revision ID: f1a2b3c4d5e6
 Revises: e7f8a9b0c1d2
@@ -31,19 +31,19 @@ def _has_index(bind, table: str, index_name: str) -> bool:
 def upgrade() -> None:
     bind = op.get_bind()
 
-    if _has_column(bind, "agent", "folder_id") and not _has_column(bind, "agent", "project_id"):
-        op.alter_column("agent", "folder_id", new_column_name="project_id", existing_type=sa.Uuid(), nullable=True)
+    if _has_column(bind, "agent", "project_id") and not _has_column(bind, "agent", "project_id"):
+        op.alter_column("agent", "project_id", new_column_name="project_id", existing_type=sa.Uuid(), nullable=True)
 
     # Keep index naming aligned with column naming.
-    if _has_index(bind, "agent", "ix_agent_folder_id") and not _has_index(bind, "agent", "ix_agent_project_id"):
-        op.execute(sa.text("ALTER INDEX ix_agent_folder_id RENAME TO ix_agent_project_id"))
+    if _has_index(bind, "agent", "ix_agent_project_id") and not _has_index(bind, "agent", "ix_agent_project_id"):
+        op.execute(sa.text("ALTER INDEX ix_agent_project_id RENAME TO ix_agent_project_id"))
 
 
 def downgrade() -> None:
     bind = op.get_bind()
 
-    if _has_column(bind, "agent", "project_id") and not _has_column(bind, "agent", "folder_id"):
-        op.alter_column("agent", "project_id", new_column_name="folder_id", existing_type=sa.Uuid(), nullable=True)
+    if _has_column(bind, "agent", "project_id") and not _has_column(bind, "agent", "project_id"):
+        op.alter_column("agent", "project_id", new_column_name="project_id", existing_type=sa.Uuid(), nullable=True)
 
-    if _has_index(bind, "agent", "ix_agent_project_id") and not _has_index(bind, "agent", "ix_agent_folder_id"):
-        op.execute(sa.text("ALTER INDEX ix_agent_project_id RENAME TO ix_agent_folder_id"))
+    if _has_index(bind, "agent", "ix_agent_project_id") and not _has_index(bind, "agent", "ix_agent_project_id"):
+        op.execute(sa.text("ALTER INDEX ix_agent_project_id RENAME TO ix_agent_project_id"))

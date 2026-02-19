@@ -26,17 +26,17 @@ async def create_default_folder_if_it_doesnt_exist(session: AsyncSession, user_i
             update(Agent)
             .where(
                 and_(
-                    Agent.folder_id is None,
+                    Agent.project_id is None,
                     Agent.user_id == user_id,
                 )
             )
-            .values(folder_id=folder.id)
+            .values(project_id=folder.id)
         )
         await session.commit()
     return folder
 
 
-async def get_default_folder_id(session: AsyncSession, user_id: UUID):
+async def get_default_project_id(session: AsyncSession, user_id: UUID):
     folder = (
         await session.exec(select(Folder).where(Folder.name == DEFAULT_FOLDER_NAME, Folder.user_id == user_id))
     ).first()

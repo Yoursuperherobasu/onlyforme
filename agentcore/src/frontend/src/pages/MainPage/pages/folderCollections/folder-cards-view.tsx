@@ -74,7 +74,7 @@ export default function FolderCardsView({
   // Count agents per folder
   const getAgentCount = (folderId: string) => {
     if (!agents || agents.length === 0) return 0;
-    const count = agents.filter((agent) => agent.folder_id === folderId).length;
+    const count = agents.filter((agent) => agent.project_id === folderId).length;
     console.log(`Folder ${folderId} has ${count} agents`);
     return count;
   };

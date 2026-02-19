@@ -219,12 +219,12 @@ async def build_graph_from_db_no_cache(agent_id: uuid.UUID, session: AsyncSessio
         raise ValueError(msg)
     kwargs["user_id"] = kwargs.get("user_id") or str(agent.user_id)
 
-    # Pass folder_id as project_id for observability tracking
-    if agent.folder_id:
-        kwargs["project_id"] = str(agent.folder_id)
+    # Pass project_id as project_id for observability tracking
+    if agent.project_id:
+        kwargs["project_id"] = str(agent.project_id)
         # Try to get folder name for project_name
         try:
-            folder = await session.get(Folder, agent.folder_id)
+            folder = await session.get(Folder, agent.project_id)
             if folder:
                 kwargs["project_name"] = folder.name
         except Exception:

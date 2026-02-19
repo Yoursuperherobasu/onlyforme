@@ -126,7 +126,7 @@ class PublishRequest(BaseModel):
 class CloneFromPublishRequest(BaseModel):
     """Request body for cloning an agent from a deployed snapshot."""
 
-    folder_id: UUID = Field(
+    project_id: UUID = Field(
         description="Target project (folder) to place the cloned agent into",
     )
     new_name: str | None = Field(
@@ -205,7 +205,7 @@ class CloneResponse(BaseModel):
 
     agent_id: UUID
     agent_name: str
-    folder_id: UUID
+    project_id: UUID
     cloned_from_publish_id: UUID
     environment_source: str  # "uat" or "prod"
 
@@ -247,6 +247,7 @@ async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.get("/validate-email", response_model=ValidatePublishEmailResponse)
+@router.post("/validate-email", response_model=ValidatePublishEmailResponse)
 async def validate_publish_email(
     *,
     agent_id: UUID = Query(..., description="Agent ID"),
@@ -1278,7 +1279,7 @@ async def clone_from_publish(
         3. System reads agent_snapshot from the deployment record
         4. INSERT new agent with:
            - user_id = current_user (NOT the original author)
-           - folder_id = selected project
+           - project_id = selected project
            - data = frozen snapshot (the flow JSON)
            - name = original name + " (Copy)" or custom name
            - cloned_from_deployment_id = deployment record UUID (lineage tracking)
@@ -1291,7 +1292,7 @@ async def clone_from_publish(
     Args:
         session: Async database session.
         deploy_id: UUID of the deployment record to clone from.
-        body: Clone configuration (folder_id, optional new_name).
+        body: Clone configuration (project_id, optional new_name).
         current_user: The authenticated user who will own the clone.
 
     Returns:
@@ -1313,14 +1314,14 @@ async def clone_from_publish(
         # Verify target folder exists and belongs to user
         folder = (await session.exec(
             select(Folder).where(
-                Folder.id == body.folder_id,
+                Folder.id == body.project_id,
                 Folder.user_id == current_user.id,
             )
         )).first()
         if not folder:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Folder {body.folder_id} not found or not owned by you",
+                detail=f"Folder {body.project_id} not found or not owned by you",
             )
 
         # Determine agent name with uniqueness handling
@@ -1358,7 +1359,7 @@ async def clone_from_publish(
             description=record.agent_description,
             data=record.agent_snapshot,
             user_id=current_user.id,
-            folder_id=body.folder_id,
+            project_id=body.project_id,
             cloned_from_deployment_id=deploy_id,
             updated_at=datetime.now(timezone.utc),
         )
@@ -1374,7 +1375,7 @@ async def clone_from_publish(
         return CloneResponse(
             agent_id=new_agent.id,
             agent_name=new_agent.name,
-            folder_id=new_agent.folder_id,
+            project_id=new_agent.project_id,
             cloned_from_publish_id=deploy_id,
             environment_source=env,
         )

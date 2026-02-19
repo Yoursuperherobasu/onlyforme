@@ -108,7 +108,7 @@ class RegistryListResponse(BaseModel):
 class RegistryCloneRequest(BaseModel):
     """Request body for cloning (Copy button) an agent from the registry."""
 
-    folder_id: UUID = Field(
+    project_id: UUID = Field(
         description="Target project (folder) to place the cloned agent into",
     )
     new_name: str | None = Field(
@@ -122,7 +122,7 @@ class RegistryCloneResponse(BaseModel):
 
     agent_id: UUID
     agent_name: str
-    folder_id: UUID
+    project_id: UUID
     cloned_from_registry_id: UUID
     cloned_from_deployment_id: UUID
     environment_source: str  # "uat" or "prod"
@@ -436,7 +436,7 @@ async def clone_from_registry(
         4. Reads the frozen agent_snapshot from the deployment
         5. INSERT new agent with:
            - user_id = current_user (NOT the original author)
-           - folder_id = selected folder
+           - project_id = selected folder
            - data = frozen snapshot (the flow JSON)
            - name = original title + " (Copy)" or custom name
            - cloned_from_deployment_id = deployment record UUID (lineage)
@@ -447,7 +447,7 @@ async def clone_from_registry(
     Args:
         session: Async database session.
         registry_id: UUID of the registry entry to clone from.
-        body: Clone configuration (folder_id, optional new_name).
+        body: Clone configuration (project_id, optional new_name).
         current_user: The authenticated user who will own the clone.
     Returns:
         RegistryCloneResponse with the new agent's details.
@@ -503,7 +503,7 @@ async def clone_from_registry(
         # 3. Verify target folder exists and belongs to user
         folder = (await session.exec(
             select(Folder).where(
-                Folder.id == body.folder_id,
+                Folder.id == body.project_id,
                 Folder.user_id == current_user.id,
             )
         )).first()
@@ -511,7 +511,7 @@ async def clone_from_registry(
         if not folder:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Folder {body.folder_id} not found or not owned by you",
+                detail=f"Folder {body.project_id} not found or not owned by you",
             )
 
         # 4. Determine agent name with uniqueness handling
@@ -551,7 +551,7 @@ async def clone_from_registry(
             description=agent_description,
             data=snapshot,
             user_id=current_user.id,
-            folder_id=body.folder_id,
+            project_id=body.project_id,
             cloned_from_deployment_id=entry.agent_deployment_id,
             updated_at=datetime.now(timezone.utc),
         )
@@ -568,7 +568,7 @@ async def clone_from_registry(
         return RegistryCloneResponse(
             agent_id=new_agent.id,
             agent_name=new_agent.name,
-            folder_id=new_agent.folder_id,
+            project_id=new_agent.project_id,
             cloned_from_registry_id=registry_id,
             cloned_from_deployment_id=entry.agent_deployment_id,
             environment_source=env_source,

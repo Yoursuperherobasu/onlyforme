@@ -35,7 +35,7 @@ export default function CollectionPage(): JSX.Element {
   const handleDeleteFolder = () => {
     mutate(
       {
-        folder_id: folderToEdit?.id!,
+        project_id: folderToEdit?.id!,
       },
       {
         onSuccess: () => {

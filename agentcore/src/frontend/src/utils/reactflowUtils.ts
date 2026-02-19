@@ -2025,7 +2025,7 @@ export const createNewAgent = (
     icon: agent?.icon ?? undefined,
     gradient: agent?.gradient ?? undefined,
     is_component: agent?.is_component ?? false,
-    folder_id: folderId,
+    project_id: folderId,
     endpoint_name: agent?.endpoint_name ?? undefined,
     tags: agent?.tags ?? [],
     mcp_enabled: true,

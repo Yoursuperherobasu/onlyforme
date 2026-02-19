@@ -154,7 +154,7 @@ async def list_project_tools(
                 raise HTTPException(status_code=404, detail="Project not found")
 
             # Query agents in the project
-            agents_query = select(Agent).where(Agent.folder_id == project_id)
+            agents_query = select(Agent).where(Agent.project_id == project_id)
 
             # Optionally filter for MCP-enabled agents only
             if mcp_enabled:
@@ -327,7 +327,7 @@ async def update_project_mcp_settings(
             session.add(project)
 
             # Query agents in the project
-            agents = (await session.exec(select(Agent).where(Agent.folder_id == project_id))).all()
+            agents = (await session.exec(select(Agent).where(Agent.project_id == project_id))).all()
             agents_to_update = {x.id: x for x in request.settings}
 
             updated_agents = []

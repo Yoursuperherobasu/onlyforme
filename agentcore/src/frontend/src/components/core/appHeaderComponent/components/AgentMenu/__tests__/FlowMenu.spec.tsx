@@ -62,7 +62,7 @@ jest.mock("@/stores/agentStore", () => ({
       currentAgent: {
         id: "1",
         name: "agent",
-        folder_id: "f1",
+        project_id: "f1",
         icon: "Workagent",
         gradient: "0",
         locked: false,

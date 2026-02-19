@@ -11,7 +11,7 @@ interface IPostAddAgent {
   data: reactFlowJsonObject;
   description: string;
   is_component: boolean;
-  folder_id: string;
+  project_id: string;
   endpoint_name: string | undefined;
   icon: string | undefined;
   gradient: string | undefined;
@@ -32,7 +32,7 @@ export const usePostAddAgent: useMutationFunctionType<
       data: payload.data,
       description: payload.description,
       is_component: payload.is_component,
-      folder_id: payload.folder_id || null,
+      project_id: payload.project_id || null,
       icon: payload.icon || null,
       gradient: payload.gradient || null,
       endpoint_name: payload.endpoint_name || null,
@@ -57,7 +57,7 @@ export const usePostAddAgent: useMutationFunctionType<
           });
 
           queryClient.refetchQueries({
-            queryKey: ["useGetFolder", response.folder_id ?? myCollectionId],
+            queryKey: ["useGetFolder", response.project_id ?? myCollectionId],
           });
         }
       },

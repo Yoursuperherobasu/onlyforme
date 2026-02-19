@@ -15,11 +15,11 @@ const useDuplicateAgent = ({ agent }: UseDuplicateAgentsParams) => {
 
   const handleDuplicate = async () => {
     if (agent?.data) {
-      const folder_id = folderId ?? myCollectionId ?? "";
+      const project_id = folderId ?? myCollectionId ?? "";
 
-      const newAgent = createNewAgent(agent.data, folder_id, agent);
+      const newAgent = createNewAgent(agent.data, project_id, agent);
 
-      newAgent.folder_id = folder_id;
+      newAgent.project_id = project_id;
 
       await postAddAgent(newAgent);
     }

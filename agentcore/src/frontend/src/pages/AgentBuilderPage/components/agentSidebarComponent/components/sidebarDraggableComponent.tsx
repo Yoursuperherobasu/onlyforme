@@ -22,7 +22,7 @@ import {
   createAgentComponent,
   downloadNode,
   getNodeId,
-} from "@/utils/reactflowUtils";
+} from "@/utils/reactFlowUtils";
 import { cn, removeCountFromString } from "@/utils/utils";
 
 export const SidebarDraggableComponent = forwardRef(

@@ -18,7 +18,7 @@ export const usePostUploadAgentToFolder: useMutationFunctionType<
     payload: IPostAddUploadAgentToFolder,
   ): Promise<void> => {
     const res = await api.post(
-      `${getURL("AGENTS")}/upload/?folder_id=${encodeURIComponent(payload.folderId)}`,
+      `${getURL("AGENTS")}/upload/?project_id=${encodeURIComponent(payload.folderId)}`,
       payload.agents,
     );
     return res.data;

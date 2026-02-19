@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import useAgentStore from "@/stores/agentStore";
-import { checkChatInput, checkWebhookInput } from "@/utils/reactflowUtils";
+import { checkChatInput, checkWebhookInput } from "@/utils/reactFlowUtils";
 import { removeCountFromString } from "@/utils/utils";
 import { getCategoryAccentColor } from "../helpers/get-category-accent-color";
 import { disableItem } from "../helpers/disable-item";

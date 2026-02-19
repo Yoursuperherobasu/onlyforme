@@ -88,7 +88,7 @@ async def handle_list_resources(project_id=None):
 
         async with session_scope() as session:
             # Build query based on whether project_id is provided
-            agents_query = select(Agent).where(Agent.folder_id == project_id) if project_id else select(Agent)
+            agents_query = select(Agent).where(Agent.project_id == project_id) if project_id else select(Agent)
 
             agents = (await session.exec(agents_query)).all()
 
@@ -181,7 +181,7 @@ async def handle_call_tool(
             raise ValueError(msg)
 
         # If project_id is provided, verify the agent belongs to the project
-        if project_id and agent.folder_id != project_id:
+        if project_id and agent.project_id != project_id:
             msg = f"agent '{name}' not found in project {project_id}"
             raise ValueError(msg)
 
@@ -288,7 +288,7 @@ async def handle_list_tools(project_id=None, *, mcp_enabled_only=False):
             # Build query based on parameters
             if project_id:
                 # Filter agents by project and optionally by MCP enabled status
-                agents_query = select(Agent).where(Agent.folder_id == project_id)
+                agents_query = select(Agent).where(Agent.project_id == project_id)
                 if mcp_enabled_only:
                     agents_query = agents_query.where(Agent.mcp_enabled == True)  # noqa: E712
             else:

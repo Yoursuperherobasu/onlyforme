@@ -199,14 +199,14 @@ async def create_project(
 
         if project.components_list:
             update_statement_components = (
-                update(Agent).where(Agent.id.in_(project.components_list)).values(folder_id=new_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(project.components_list)).values(project_id=new_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_components)
             await session.commit()
 
         if project.agents_list:
             update_statement_agents = (
-                update(Agent).where(Agent.id.in_(project.agents_list)).values(folder_id=new_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(project.agents_list)).values(project_id=new_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_agents)
             await session.commit()
@@ -258,7 +258,7 @@ async def read_project(
 
     try:
         if params and params.page and params.size:
-            stmt = select(Agent).where(Agent.folder_id == project_id)
+            stmt = select(Agent).where(Agent.project_id == project_id)
 
             if Agent.updated_at is not None:
                 stmt = stmt.order_by(Agent.updated_at.desc())  # type: ignore[attr-defined]
@@ -317,7 +317,7 @@ async def update_project(
 
         concat_project_components = project.components + project.agents
 
-        agents_ids = (await session.exec(select(Agent.id).where(Agent.folder_id == existing_project.id))).all()
+        agents_ids = (await session.exec(select(Agent.id).where(Agent.project_id == existing_project.id))).all()
 
         excluded_agents = list(set(agents_ids) - set(concat_project_components))
 
@@ -326,14 +326,14 @@ async def update_project(
         ).first()
         if my_collection_project:
             update_statement_my_collection = (
-                update(Agent).where(Agent.id.in_(excluded_agents)).values(folder_id=my_collection_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(excluded_agents)).values(project_id=my_collection_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_my_collection)
             await session.commit()
 
         if concat_project_components:
             update_statement_components = (
-                update(Agent).where(Agent.id.in_(concat_project_components)).values(folder_id=existing_project.id)  # type: ignore[attr-defined]
+                update(Agent).where(Agent.id.in_(concat_project_components)).values(project_id=existing_project.id)  # type: ignore[attr-defined]
             )
             await session.exec(update_statement_components)
             await session.commit()
@@ -357,10 +357,10 @@ async def delete_project(
             raise HTTPException(status_code=404, detail="Project not found")
 
         if _is_admin_role(getattr(current_user, "role", None)):
-            agents = (await session.exec(select(Agent).where(Agent.folder_id == project_id))).all()
+            agents = (await session.exec(select(Agent).where(Agent.project_id == project_id))).all()
         else:
             agents = (
-                await session.exec(select(Agent).where(Agent.folder_id == project_id, Agent.user_id == current_user.id))
+                await session.exec(select(Agent).where(Agent.project_id == project_id, Agent.user_id == current_user.id))
             ).all()
         if len(agents) > 0:
             for agent in agents:
@@ -392,7 +392,7 @@ async def download_file(
         if not project or not await _can_access_project(session, current_user, project):
             raise HTTPException(status_code=404, detail="Project not found")
 
-        agents_query = select(Agent).where(Agent.folder_id == project_id)
+        agents_query = select(Agent).where(Agent.project_id == project_id)
         agents_result = await session.exec(agents_query)
         agents = [AgentRead.model_validate(agent, from_attributes=True) for agent in agents_result.all()]
 
@@ -466,6 +466,6 @@ async def upload_file(
         agent_name = await generate_unique_agent_name(agent.name, current_user.id, session)
         agent.name = agent_name
         agent.user_id = current_user.id
-        agent.folder_id = new_project.id
+        agent.project_id = new_project.id
 
     return await create_agent(session=session, agent_list=agent_list, current_user=current_user)

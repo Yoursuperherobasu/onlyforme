@@ -61,7 +61,7 @@ import {
   scapeJSONParse,
   updateIds,
   validateSelection,
-} from "../../../../utils/reactflowUtils";
+} from "../../../../utils/reactFlowUtils";
 import ConnectionLineComponent from "../ConnectionLineComponent";
 import AgentBuildingComponent from "../agentBuildingComponent";
 import SelectionMenu from "../SelectionMenuComponent";

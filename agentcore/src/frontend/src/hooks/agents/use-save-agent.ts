@@ -66,7 +66,7 @@ const useSaveAgent = () => {
             name,
             data,
             description,
-            folder_id,
+            project_id,
             endpoint_name,
             locked,
           } = agent;
@@ -77,7 +77,7 @@ const useSaveAgent = () => {
                 name,
                 data: data!,
                 description,
-                folder_id,
+                project_id,
                 endpoint_name,
                 locked,
               },

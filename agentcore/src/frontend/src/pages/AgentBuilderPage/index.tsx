@@ -10,7 +10,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { SaveChangesModal } from "@/modals/saveChangesModal";
 import useAlertStore from "@/stores/alertStore";
 import { useTypesStore } from "@/stores/typesStore";
-import { customStringify } from "@/utils/reactflowUtils";
+import { customStringify } from "@/utils/reactFlowUtils";
 import useAgentStore from "../../stores/agentStore";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useTranslation } from 'react-i18next';

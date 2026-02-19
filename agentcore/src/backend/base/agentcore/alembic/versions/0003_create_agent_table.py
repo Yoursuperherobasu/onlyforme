@@ -47,12 +47,12 @@ def upgrade() -> None:
         sa.Column("action_description", sa.Text(), nullable=True),
         sa.Column("access_type", sa.Text(), nullable=False, server_default=sa.text("'PRIVATE'")),
         sa.Column("user_id", sa.Uuid(), nullable=True),
-        sa.Column("folder_id", sa.Uuid(), nullable=True),
+        sa.Column("project_id", sa.Uuid(), nullable=True),
         sa.Column("fs_path", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("id"),
         sa.ForeignKeyConstraint(["user_id"], ["user.id"]),
-        sa.ForeignKeyConstraint(["folder_id"], ["project.id"]),
+        sa.ForeignKeyConstraint(["project_id"], ["project.id"]),
         sa.UniqueConstraint("user_id", "name", name="unique_agent_name"),
         sa.UniqueConstraint("user_id", "endpoint_name", name="unique_agent_endpoint_name"),
     )
@@ -67,11 +67,11 @@ def upgrade() -> None:
     op.create_index(op.f("ix_agent_description"), "agent", ["description"], unique=False)
     op.create_index(op.f("ix_agent_endpoint_name"), "agent", ["endpoint_name"], unique=False)
     op.create_index(op.f("ix_agent_user_id"), "agent", ["user_id"], unique=False)
-    op.create_index(op.f("ix_agent_folder_id"), "agent", ["folder_id"], unique=False)
+    op.create_index(op.f("ix_agent_project_id"), "agent", ["project_id"], unique=False)
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_agent_folder_id"), table_name="agent")
+    op.drop_index(op.f("ix_agent_project_id"), table_name="agent")
     op.drop_index(op.f("ix_agent_user_id"), table_name="agent")
     op.drop_index(op.f("ix_agent_endpoint_name"), table_name="agent")
     op.drop_index(op.f("ix_agent_description"), table_name="agent")

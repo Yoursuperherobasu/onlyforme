@@ -1,6 +1,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
+import json
 from typing import TYPE_CHECKING, Any, ClassVar, Optional
 from uuid import UUID, uuid4
 
@@ -85,17 +86,22 @@ class AgentBase(SQLModel):
     def validate_json(cls, v):
         if not v:
             return v
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except Exception as e:
+                msg = "Agent data must be a valid JSON"
+                raise ValueError(msg) from e  # noqa: TRY004
         if not isinstance(v, dict):
             msg = "Agent data must be a valid JSON"
             raise ValueError(msg)  # noqa: TRY004
 
-        # data must contain nodes and edges
-        if "nodes" not in v:
-            msg = "Agent data must have nodes"
-            raise ValueError(msg)
-        if "edges" not in v:
-            msg = "Agent data must have edges"
-            raise ValueError(msg)
+        # Keep API reads resilient for legacy rows and partial saves.
+        # Frontend expects these keys to exist.
+        if "nodes" not in v or not isinstance(v.get("nodes"), list):
+            v["nodes"] = []
+        if "edges" not in v or not isinstance(v.get("edges"), list):
+            v["edges"] = []
 
         return v
 
