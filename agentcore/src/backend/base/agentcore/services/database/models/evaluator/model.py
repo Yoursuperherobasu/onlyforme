@@ -29,6 +29,8 @@ class EvaluatorBase(SQLModel):
 class Evaluator(EvaluatorBase, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID | None = Field(default=None, index=True, nullable=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True, nullable=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", index=True, nullable=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_response(self) -> dict:
@@ -38,6 +40,8 @@ class Evaluator(EvaluatorBase, table=True):
             "criteria": self.criteria,
             "model": self.model,
             "user_id": str(self.user_id) if self.user_id else None,
+            "org_id": str(self.org_id) if self.org_id else None,
+            "dept_id": str(self.dept_id) if self.dept_id else None,
             "preset_id": self.preset_id,
             "agent_ids": self.agent_ids,
             "agent_id": self.agent_id,

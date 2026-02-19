@@ -1,11 +1,16 @@
+# Path: src/backend/agentcore/services/database/models/conversation_uat/model.py
+#
+# Clone of the dev ConversationTable for UAT environment.
+# Adds deployment_id FK to link conversations to a specific UAT deployment version.
+
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Optional
 from uuid import UUID, uuid4
 
 from pydantic import ConfigDict, field_serializer, field_validator
-from sqlalchemy import Text
-from sqlmodel import JSON, Column, Field, SQLModel
+from sqlalchemy import Index, Text
+from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 from agentcore.schema.content_block import ContentBlock
 from agentcore.schema.properties import Properties
@@ -14,9 +19,10 @@ from agentcore.schema.validators import str_to_naive_timestamp_validator
 if TYPE_CHECKING:
     from agentcore.schema.message import Message
 
+    from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
 
-class ConversationBase(SQLModel):
-    # Use naive timestamp validator for database storage to prevent PostgreSQL timezone conversion
+
+class ConversationUATBase(SQLModel):
     timestamp: Annotated[datetime, str_to_naive_timestamp_validator] = Field(
         default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
@@ -46,9 +52,7 @@ class ConversationBase(SQLModel):
         return value
 
     @classmethod
-    def from_message(cls, message: "Message", agent_id: str | UUID | None = None):
-        # first check if the record has all the required fields (sender and sender_name are required)
-        # text can be None or empty string
+    def from_message(cls, message: "Message", agent_id: str | UUID | None = None, deployment_id: UUID | None = None):
         if not message.sender or not message.sender_name:
             msg = "The message does not have the required fields (sender, sender_name)."
             raise ValueError(msg)
@@ -65,31 +69,23 @@ class ConversationBase(SQLModel):
                 message.files = image_paths
 
         if isinstance(message.timestamp, str):
-            # Convert timestamp string to datetime
             try:
-                # Try format without timezone
                 timestamp = datetime.strptime(message.timestamp, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 try:
-                    # Try format with timezone name like UTC
                     timestamp = datetime.strptime(message.timestamp, "%Y-%m-%d %H:%M:%S %Z")
-                    # Strip timezone info
                     timestamp = timestamp.replace(tzinfo=None)
                 except ValueError:
-                    # Fallback for ISO format if the above fails
                     timestamp = datetime.fromisoformat(message.timestamp)
-                    # Strip timezone info if present
                     if timestamp.tzinfo is not None:
                         timestamp = timestamp.replace(tzinfo=None)
         else:
             timestamp = message.timestamp
-            # Strip timezone info if present
             if timestamp and timestamp.tzinfo is not None:
                 timestamp = timestamp.replace(tzinfo=None)
         if not agent_id and message.agent_id:
             agent_id = message.agent_id
-        # If the text is not a string, it means it could be
-        # async iterator so we simply add it as an empty string
+
         message_text = "" if not isinstance(message.text, str) else message.text
 
         properties = (
@@ -117,6 +113,7 @@ class ConversationBase(SQLModel):
             files=message.files or [],
             timestamp=timestamp,
             agent_id=agent_id,
+            deployment_id=deployment_id,
             properties=properties,
             category=message.category,
             content_blocks=content_blocks,
@@ -124,23 +121,35 @@ class ConversationBase(SQLModel):
         return result
 
 
-class ConversationTable(ConversationBase, table=True):  # type: ignore[call-arg]
+class ConversationUATTable(ConversationUATBase, table=True):  # type: ignore[call-arg]
     model_config = ConfigDict(validate_assignment=True, arbitrary_types_allowed=True)
-    __tablename__ = "conversation"
+    __tablename__ = "conversation_uat"
     id: UUID = Field(default_factory=uuid4, primary_key=True)
 
-    agent_id: UUID | None = Field(default=None)
+    agent_id: UUID | None = Field(default=None, index=True)
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
+    deployment_id: UUID | None = Field(
+        default=None,
+        foreign_key="agent_deployment_uat.id",
+        index=True,
+        description="Link to the specific UAT deployment version",
+    )
     files: list[str] = Field(sa_column=Column(JSON))
     properties: dict | Properties = Field(default_factory=lambda: Properties().model_dump(), sa_column=Column(JSON))  # type: ignore[assignment]
     category: str = Field(sa_column=Column(Text))
     content_blocks: list[dict | ContentBlock] = Field(default_factory=list, sa_column=Column(JSON))  # type: ignore[assignment]
 
-    # We need to make sure the datetimes have timezone after running session.refresh
-    # because we are losing the timezone information when we save the message to the database
-    # and when we read it back. We use field_validator to make sure the datetimes have timezone
-    # after running session.refresh
+    # Relationships
+    deployment: Optional["AgentDeploymentUAT"] = Relationship()
+
+    __table_args__ = (
+        Index("ix_conversation_uat_session", "session_id"),
+        Index("ix_conversation_uat_agent", "agent_id"),
+        Index("ix_conversation_uat_org", "org_id"),
+        Index("ix_conversation_uat_dept", "dept_id"),
+        Index("ix_conversation_uat_deployment", "deployment_id"),
+    )
 
     @field_validator("agent_id", mode="before")
     @classmethod
@@ -174,18 +183,19 @@ class ConversationTable(ConversationBase, table=True):  # type: ignore[call-arg]
         return value
 
 
-class ConversationRead(ConversationBase):
+class ConversationUATRead(ConversationUATBase):
     id: UUID
     agent_id: UUID | None = Field()
     org_id: UUID | None = None
     dept_id: UUID | None = None
+    deployment_id: UUID | None = None
 
 
-class ConversationCreate(ConversationBase):
-    pass
+class ConversationUATCreate(ConversationUATBase):
+    deployment_id: UUID | None = None
 
 
-class ConversationUpdate(SQLModel):
+class ConversationUATUpdate(SQLModel):
     text: str | None = None
     sender: str | None = None
     sender_name: str | None = None

@@ -1,13 +1,23 @@
+# Path: src/backend/agentcore/services/database/models/transaction_uat/model.py
+#
+# Clone of the dev TransactionTable for UAT environment.
+# Adds deployment_id FK to link transactions to a specific UAT deployment version.
+
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
 from pydantic import field_serializer, field_validator
-from sqlmodel import JSON, Column, Field, SQLModel
+from sqlalchemy import Index
+from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
 from agentcore.serialization.serialization import get_max_items_length, get_max_text_length, serialize
 
+if TYPE_CHECKING:
+    from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
 
-class TransactionBase(SQLModel):
+
+class TransactionUATBase(SQLModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     vertex_id: str = Field(nullable=False)
     target_id: str | None = Field(default=None)
@@ -19,7 +29,6 @@ class TransactionBase(SQLModel):
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
 
-    # Needed for Column(JSON)
     class Config:
         arbitrary_types_allowed = True
 
@@ -34,34 +43,36 @@ class TransactionBase(SQLModel):
 
     @field_serializer("inputs")
     def serialize_inputs(self, data) -> dict:
-        """Serialize the transaction's input data with enforced limits on text length and item count.
-
-        Parameters:
-            data (dict): The input data to be serialized.
-
-        Returns:
-            dict: The serialized input data with applied constraints.
-        """
         return serialize(data, max_length=get_max_text_length(), max_items=get_max_items_length())
 
     @field_serializer("outputs")
     def serialize_outputs(self, data) -> dict:
-        """Serialize the outputs dictionary with enforced limits on text length and item count.
-
-        Parameters:
-            data (dict): The outputs data to serialize.
-
-        Returns:
-            dict: The serialized outputs dictionary with applied constraints.
-        """
         return serialize(data, max_length=get_max_text_length(), max_items=get_max_items_length())
 
 
-class TransactionTable(TransactionBase, table=True):  # type: ignore[call-arg]
-    __tablename__ = "transaction"
+class TransactionUATTable(TransactionUATBase, table=True):  # type: ignore[call-arg]
+    __tablename__ = "transaction_uat"
     id: UUID | None = Field(default_factory=uuid4, primary_key=True)
 
+    deployment_id: UUID | None = Field(
+        default=None,
+        foreign_key="agent_deployment_uat.id",
+        index=True,
+        description="Link to the specific UAT deployment version",
+    )
 
-class TransactionReadResponse(TransactionBase):
+    # Relationships
+    deployment: Optional["AgentDeploymentUAT"] = Relationship()
+
+    __table_args__ = (
+        Index("ix_transaction_uat_agent", "agent_id"),
+        Index("ix_transaction_uat_org", "org_id"),
+        Index("ix_transaction_uat_dept", "dept_id"),
+        Index("ix_transaction_uat_deployment", "deployment_id"),
+    )
+
+
+class TransactionUATReadResponse(TransactionUATBase):
     id: UUID = Field(alias="transaction_id")
     agent_id: UUID
+    deployment_id: UUID | None = None

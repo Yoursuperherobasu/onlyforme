@@ -1,17 +1,11 @@
 
-import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Optional
 from uuid import UUID, uuid4
 
-import emoji
-from emoji import purely_emoji
-from fastapi import HTTPException, status
-from loguru import logger
 from pydantic import (
     BaseModel,
-    ValidationInfo,
     field_serializer,
     field_validator,
     model_validator,
@@ -24,16 +18,21 @@ from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 from agentcore.schema.data import Data
 
 if TYPE_CHECKING:
+    from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
+    from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
     from agentcore.services.database.models.project.model import Project
-    from agentcore.services.database.models.publish_record.model import PublishRecord
     from agentcore.services.database.models.user.model import User
-
-HEX_COLOR_LENGTH = 7
-
 
 class AccessTypeEnum(str, Enum):
     PRIVATE = "PRIVATE"
     PUBLIC = "PUBLIC"
+
+
+class LifecycleStatusEnum(str, Enum):
+    DRAFT = "DRAFT"
+    PUBLISHED = "PUBLISHED"
+    DEPRECATED = "DEPRECATED"
+    ARCHIVED = "ARCHIVED"
 
 
 class AgentBase(SQLModel):
@@ -42,14 +41,8 @@ class AgentBase(SQLModel):
 
     name: str = Field(index=True)
     description: str | None = Field(default=None, sa_column=Column(Text, index=True, nullable=True))
-    icon: str | None = Field(default=None, nullable=True)
-    icon_bg_color: str | None = Field(default=None, nullable=True)
-    gradient: str | None = Field(default=None, nullable=True)
     data: dict | None = Field(default=None, nullable=True)
-    is_component: bool | None = Field(default=False, nullable=True)
     updated_at: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=True)
-    webhook: bool | None = Field(default=False, nullable=True, description="Can be used on the webhook endpoint")
-    endpoint_name: str | None = Field(default=None, nullable=True, index=True)
     tags: list[str] | None = None
     locked: bool | None = Field(default=False, nullable=True)
     mcp_enabled: bool | None = Field(default=False, nullable=True, description="Can be exposed in the MCP server")
@@ -73,80 +66,19 @@ class AgentBase(SQLModel):
             server_default=text("'PRIVATE'"),
         ),
     )
-
-    @field_validator("endpoint_name")
-    @classmethod
-    def validate_endpoint_name(cls, v):
-        # Endpoint name must be a string containing only letters, numbers, hyphens, and underscores
-        if v is not None:
-            if not isinstance(v, str):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Endpoint name must be a string",
-                )
-            if not re.match(r"^[a-zA-Z0-9_-]+$", v):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Endpoint name must contain only letters, numbers, hyphens, and underscores",
-                )
-        return v
-
-    @field_validator("icon_bg_color")
-    @classmethod
-    def validate_icon_bg_color(cls, v):
-        if v is not None and not isinstance(v, str):
-            msg = "Icon background color must be a string"
-            raise ValueError(msg)
-        # validate that is is a hex color
-        if v and not v.startswith("#"):
-            msg = "Icon background color must start with #"
-            raise ValueError(msg)
-
-        # validate that it is a valid hex color
-        if v and len(v) != HEX_COLOR_LENGTH:
-            msg = "Icon background color must be 7 characters long"
-            raise ValueError(msg)
-        return v
-
-    @field_validator("icon")
-    @classmethod
-    def validate_icon_atr(cls, v):
-        #   const emojiRegex = /\p{Emoji}/u;
-        # const isEmoji = emojiRegex.test(data?.node?.icon!);
-        # emoji pattern in Python
-        if v is None:
-            return v
-        # we are going to use the emoji library to validate the emoji
-        # emojis can be defined using the :emoji_name: syntax
-
-        if not v.startswith(":") and not v.endswith(":"):
-            return v
-        if not v.startswith(":") or not v.endswith(":"):
-            # emoji should have both starting and ending colons
-            # so if one of them is missing, we will raise
-            msg = f"Invalid emoji. {v} is not a valid emoji."
-            raise ValueError(msg)
-
-        emoji_value = emoji.emojize(v, variant="emoji_type")
-        if v == emoji_value:
-            logger.warning(f"Invalid emoji. {v} is not a valid emoji.")
-        icon = emoji_value
-
-        if purely_emoji(icon):
-            # this is indeed an emoji
-            return icon
-        # otherwise it should be a valid lucide icon
-        if v is not None and not isinstance(v, str):
-            msg = "Icon must be a string"
-            raise ValueError(msg)
-        # is should be lowercase and contain only letters and hyphens
-        if v and not v.islower():
-            msg = "Icon must be lowercase"
-            raise ValueError(msg)
-        if v and not v.replace("-", "").isalpha():
-            msg = "Icon must contain only letters and hyphens"
-            raise ValueError(msg)
-        return v
+    lifecycle_status: LifecycleStatusEnum = Field(
+        default=LifecycleStatusEnum.DRAFT,
+        sa_column=Column(
+            SQLEnum(
+                LifecycleStatusEnum,
+                name="lifecycle_status_enum",
+                values_callable=lambda enum: [member.value for member in enum],
+            ),
+            nullable=False,
+            server_default=text("'DRAFT'"),
+        ),
+    )
+    cloned_from_deployment_id: UUID | None = Field(default=None, nullable=True)
 
     @field_validator("data")
     @classmethod
@@ -197,15 +129,17 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
     data: dict | None = Field(default=None, sa_column=Column(JSON))
     user_id: UUID | None = Field(index=True, foreign_key="user.id", nullable=True)
     user: "User" = Relationship(back_populates="agents")
-    icon: str | None = Field(default=None, nullable=True)
     tags: list[str] | None = Field(sa_column=Column(JSON), default=[])
     locked: bool | None = Field(default=False, nullable=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
     project_id: UUID | None = Field(default=None, foreign_key="project.id", nullable=True, index=True)
     # Backward-compatible alias. Keep until all call sites migrate to project_id.
     folder_id: ClassVar[Any] = synonym("project_id")
     fs_path: str | None = Field(default=None, nullable=True)
     folder: Optional["Project"] = Relationship(back_populates="agents")
-    publish_records: list["PublishRecord"] = Relationship(back_populates="agent")
+    deployment_uat_records: list["AgentDeploymentUAT"] = Relationship(back_populates="agent")
+    deployment_prod_records: list["AgentDeploymentProd"] = Relationship(back_populates="agent")
 
     def to_data(self):
         serialized = self.model_dump()
@@ -220,7 +154,6 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
 
     __table_args__ = (
         UniqueConstraint("user_id", "name", name="unique_agent_name"),
-        UniqueConstraint("user_id", "endpoint_name", name="unique_agent_endpoint_name"),
     )
 
 
@@ -259,23 +192,13 @@ class AgentHeader(BaseModel):
         None,
         description="The ID of the folder containing the agent. None if not associated with a folder",
     )
-    is_component: bool | None = Field(None, description="Flag indicating whether the agent is a component")
-    endpoint_name: str | None = Field(None, description="The name of the endpoint associated with this agent")
     description: str | None = Field(None, description="A description of the agent")
-    data: dict | None = Field(None, description="The data of the component, if is_component is True")
+    data: dict | None = Field(None, description="The data of the component")
     access_type: AccessTypeEnum | None = Field(None, description="The access type of the agent")
     tags: list[str] | None = Field(None, description="The tags of the agent")
     mcp_enabled: bool | None = Field(None, description="Flag indicating whether the agent is exposed in the MCP server")
     action_name: str | None = Field(None, description="The name of the action associated with the agent")
     action_description: str | None = Field(None, description="The description of the action associated with the agent")
-
-    @field_validator("data", mode="before")
-    @classmethod
-    def validate_agent_header(cls, value: dict, info: ValidationInfo):
-        if not info.data["is_component"]:
-            return None
-        return value
-
 
 class AgentUpdate(SQLModel):
     name: str | None = None
@@ -283,13 +206,14 @@ class AgentUpdate(SQLModel):
     data: dict | None = None
     project_id: UUID | None = None
     folder_id: UUID | None = None
-    endpoint_name: str | None = None
     mcp_enabled: bool | None = None
     locked: bool | None = None
     action_name: str | None = None
     action_description: str | None = None
     access_type: AccessTypeEnum | None = None
     fs_path: str | None = None
+    lifecycle_status: LifecycleStatusEnum | None = None
+    cloned_from_deployment_id: UUID | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -297,21 +221,3 @@ class AgentUpdate(SQLModel):
         if isinstance(data, dict) and data.get("project_id") is None and data.get("folder_id") is not None:
             data["project_id"] = data["folder_id"]
         return data
-
-    @field_validator("endpoint_name")
-    @classmethod
-    def validate_endpoint_name(cls, v):
-        # Endpoint name must be a string containing only letters, numbers, hyphens, and underscores
-        if v is not None:
-            if not isinstance(v, str):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Endpoint name must be a string",
-                )
-            if not re.match(r"^[a-zA-Z0-9_-]+$", v):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Endpoint name must contain only letters, numbers, hyphens, and underscores",
-                )
-        return v
-
