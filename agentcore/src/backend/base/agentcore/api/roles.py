@@ -42,7 +42,11 @@ def _normalize_role_name(name: str) -> str:
     response_model=list[PermissionReadResponse],
     dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
 )
-async def list_permissions(session: DbSession) -> list[Permission]:
+async def list_permissions(
+    session: DbSession,
+    current_user: User = Depends(get_current_active_user),
+) -> list[Permission]:
+    _ensure_access_control_actor(current_user)
     permissions = (await session.exec(select(Permission).order_by(Permission.name))).all()
     return permissions
 
@@ -56,6 +60,7 @@ async def list_roles(
     session: DbSession,
     current_user: User = Depends(get_current_active_user),
 ) -> list[RoleReadResponse]:
+    _ensure_access_control_actor(current_user)
     roles = await _get_roles_in_scope(session, current_user)
 
     response: list[RoleReadResponse] = []
@@ -85,10 +90,8 @@ async def create_role(
     session: DbSession,
     current_user: User = Depends(get_current_active_user),
 ) -> RoleReadResponse:
-    actor_role = normalize_role(current_user.role)
-    if actor_role not in {"root", "super_admin"}:
-        raise HTTPException(status_code=403, detail="Only root or super admin can create roles.")
-    if actor_role == "super_admin":
+    _ensure_access_control_actor(current_user)
+    if normalize_role(current_user.role) == "super_admin":
         org_ids = await _admin_org_ids(session, current_user)
         if not org_ids:
             raise HTTPException(status_code=403, detail="Super admin has no organization scope.")
@@ -139,6 +142,7 @@ async def update_role(
     session: DbSession,
     current_user: User = Depends(get_current_active_user),
 ) -> RoleReadResponse:
+    _ensure_access_control_actor(current_user)
     role = await session.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -189,6 +193,7 @@ async def replace_role_permissions(
     session: DbSession,
     current_user: User = Depends(get_current_active_user),
 ) -> RoleReadResponse:
+    _ensure_access_control_actor(current_user)
     role = await session.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -217,6 +222,7 @@ async def delete_role(
     session: DbSession,
     current_user: User = Depends(get_current_active_user),
 ) -> dict:
+    _ensure_access_control_actor(current_user)
     role = await session.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -342,7 +348,8 @@ async def _roles_used_in_org(session: DbSession, org_ids: set[UUID]) -> set[UUID
 async def _get_roles_in_scope(session: DbSession, current_user: User) -> list[Role]:
     actor_role = normalize_role(current_user.role)
     if actor_role == "root":
-        return (await session.exec(select(Role).order_by(Role.name))).all()
+        roles = (await session.exec(select(Role).order_by(Role.name))).all()
+        return [role for role in roles if normalize_role(role.name) != "root"]
     if actor_role != "super_admin":
         return []
 
@@ -355,8 +362,9 @@ async def _get_roles_in_scope(session: DbSession, current_user: User) -> list[Ro
     roles = (await session.exec(select(Role).order_by(Role.name))).all()
     scoped_roles: list[Role] = []
     for role in roles:
+        if normalize_role(role.name) == "root":
+            continue
         if role.is_system:
-            scoped_roles.append(role)
             continue
         if role.created_by and role.created_by in org_user_ids:
             scoped_roles.append(role)
@@ -368,14 +376,21 @@ async def _get_roles_in_scope(session: DbSession, current_user: User) -> list[Ro
 
 async def _assert_role_in_scope(session: DbSession, current_user: User, role: Role) -> None:
     actor_role = normalize_role(current_user.role)
+    if normalize_role(role.name) == "root":
+        raise HTTPException(status_code=403, detail="Root role is system-managed and not configurable.")
+
     if actor_role == "root":
         return
+
     if actor_role != "super_admin":
         raise HTTPException(status_code=403, detail="Insufficient scope for role management.")
-    if role.is_system:
-        raise HTTPException(status_code=403, detail="System roles are managed at root scope only.")
 
     scoped_roles = await _get_roles_in_scope(session, current_user)
     if not any(r.id == role.id for r in scoped_roles):
         raise HTTPException(status_code=403, detail="Role is outside your organization scope.")
+
+
+def _ensure_access_control_actor(current_user: User) -> None:
+    if normalize_role(current_user.role) not in {"super_admin", "root"}:
+        raise HTTPException(status_code=403, detail="Access Control is restricted to root or super admin users.")
 
