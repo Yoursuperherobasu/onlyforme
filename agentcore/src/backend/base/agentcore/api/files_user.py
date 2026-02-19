@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlmodel import col, select
@@ -81,6 +81,22 @@ async def save_file_routine(file, storage_service, current_user: CurrentActiveUs
     return file_id, file_name
 
 
+def sanitize_knowledge_base_name(raw_name: str) -> str:
+    """Sanitize user-provided folder names for safe storage usage."""
+    clean_name = raw_name.strip()
+    clean_name = clean_name.replace("\\", "_").replace("/", "_")
+    clean_name = re.sub(r"[^A-Za-z0-9 _.-]", "_", clean_name)
+    return re.sub(r"\s+", " ", clean_name).strip(" .")
+
+
+def get_storage_relative_path(file_path: str, user_id: uuid.UUID) -> str:
+    """Convert stored DB path into storage-relative path under user root."""
+    user_prefix = f"{user_id}/"
+    if file_path.startswith(user_prefix):
+        return file_path[len(user_prefix) :]
+    return file_path
+
+
 @router.post("", status_code=HTTPStatus.CREATED)
 @router.post("/", status_code=HTTPStatus.CREATED)
 async def upload_user_file(
@@ -89,6 +105,7 @@ async def upload_user_file(
     current_user: CurrentActiveUser,
     storage_service=Depends(get_storage_service),
     settings_service=Depends(get_settings_service),
+    knowledge_base_name: Annotated[str | None, Form()] = None,
 ) -> UploadFileResponse:
 
     """Upload a file for the current user and track it in the database."""
@@ -146,10 +163,20 @@ async def upload_user_file(
             # Create the unique filename with extension for storage
             unique_filename = f"{root_filename}.{file_extension}" if file_extension else root_filename
 
+        safe_knowledge_base_name = ""
+        if knowledge_base_name:
+            safe_knowledge_base_name = sanitize_knowledge_base_name(knowledge_base_name)
+            if not safe_knowledge_base_name:
+                raise HTTPException(status_code=400, detail="Invalid knowledge base name")
+
+        storage_file_name = (
+            f"{safe_knowledge_base_name}/{unique_filename}" if safe_knowledge_base_name else unique_filename
+        )
+
         # Read file content and save with unique filename
         try:
             file_id, stored_file_name = await save_file_routine(
-                file, storage_service, current_user, file_name=unique_filename
+                file, storage_service, current_user, file_name=storage_file_name
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error saving file: {e}") from e
@@ -165,13 +192,15 @@ async def upload_user_file(
             id=file_id,
             user_id=current_user.id,
             name=root_filename,
-            path=f"{current_user.id}/{stored_file_name}",
+            path=f"{current_user.id}/{storage_file_name}",
             size=file_size,
         )
         session.add(new_file)
 
         await session.commit()
         await session.refresh(new_file)
+    except HTTPException:
+        raise
     except Exception as e:
         # Optionally, you could also delete the file from disk if the DB insert fails.
         raise HTTPException(status_code=500, detail=f"Database error: {e}") from e
@@ -278,7 +307,8 @@ async def delete_files_batch(
 
         # Delete all files from the storage service
         for file in files:
-            await storage_service.delete_file(agent_id=str(current_user.id), file_name=file.path)
+            storage_path = get_storage_relative_path(file.path, current_user.id)
+            await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
             await session.delete(file)
 
         # Delete all files from the database
@@ -315,8 +345,9 @@ async def download_files_batch(
         with zipfile.ZipFile(zip_stream, "w") as zip_file:
             for file in files:
                 # Get the file content from storage
+                storage_path = get_storage_relative_path(file.path, current_user.id)
                 file_content = await storage_service.get_file(
-                    agent_id=str(current_user.id), file_name=file.path.split("/")[-1]
+                    agent_id=str(current_user.id), file_name=storage_path
                 )
 
                 # Get the file extension from the original filename
@@ -407,11 +438,10 @@ async def download_file(
         if not file:
             raise HTTPException(status_code=404, detail="File not found")
 
-        # Get the basename of the file path
-        file_name = file.path.split("/")[-1]
+        storage_path = get_storage_relative_path(file.path, current_user.id)
 
         # Get file stream
-        file_stream = await storage_service.get_file(agent_id=str(current_user.id), file_name=file_name)
+        file_stream = await storage_service.get_file(agent_id=str(current_user.id), file_name=storage_path)
 
         if file_stream is None:
             raise HTTPException(status_code=404, detail="File stream not available")
@@ -476,7 +506,8 @@ async def delete_file(
             raise HTTPException(status_code=404, detail="File not found")
 
         # Delete the file from the storage service
-        await storage_service.delete_file(agent_id=str(current_user.id), file_name=file_to_delete.path)
+        storage_path = get_storage_relative_path(file_to_delete.path, current_user.id)
+        await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
 
         # Delete from the database
         await session.delete(file_to_delete)
@@ -508,7 +539,8 @@ async def delete_all_files(
 
         # Delete all files from the storage service
         for file in files:
-            await storage_service.delete_file(agent_id=str(current_user.id), file_name=file.path)
+            storage_path = get_storage_relative_path(file.path, current_user.id)
+            await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
             await session.delete(file)
 
         # Delete all files from the database

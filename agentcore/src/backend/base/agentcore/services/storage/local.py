@@ -33,6 +33,7 @@ class LocalStorageService(StorageService):
         folder_path = self.data_dir / agent_id
         await folder_path.mkdir(parents=True, exist_ok=True)
         file_path = folder_path / file_name
+        await file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             async with async_open(str(file_path), "wb") as f:

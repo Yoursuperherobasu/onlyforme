@@ -308,21 +308,17 @@ class Settings(BaseSettings):
     @classmethod
     def set_agentcore_dir(cls, value):
         if not value:
-            from platformdirs import user_cache_dir
-
-            # Define the app name and author
-            app_name = "agentcore"
-            app_author = "agentcore"
-
-            # Get the cache directory for the application
-            cache_dir = user_cache_dir(app_name, app_author)
-
-            # Create a .agentcore directory inside the cache directory
-            value = Path(cache_dir)
+            # Default storage root for uploaded knowledge/files inside the backend tree.
+            value = Path(__file__).resolve().parents[4] / "knowledge_base_storage"
             value.mkdir(parents=True, exist_ok=True)
 
         if isinstance(value, str):
             value = Path(value)
+
+        # Make relative CONFIG_DIR stable regardless of process working directory.
+        if not value.is_absolute():
+            value = Path(__file__).resolve().parents[4] / value
+
         if not value.exists():
             value.mkdir(parents=True, exist_ok=True)
 
