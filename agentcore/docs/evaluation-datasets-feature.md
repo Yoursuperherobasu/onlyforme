@@ -13,7 +13,7 @@ This document describes the Dataset feature that was implemented in the Evaluati
 The feature enables users to:
 
 - create and manage Langfuse datasets
-- add dataset items manually or from production traces
+- add dataset items manually or from production traces (with optional metadata)
 - run experiments against those datasets
 - optionally evaluate experiment outputs with exact match and/or LLM-as-a-judge criteria
 
@@ -56,14 +56,20 @@ Added these endpoints under `/api/evaluation`:
   - list dataset items
 - `POST /datasets/{dataset_name}/items`
   - add dataset item (manual or from trace)
+- `DELETE /datasets/{dataset_name}/items/{item_id}`
+  - delete one dataset item
 - `GET /datasets/{dataset_name}/runs`
   - list dataset runs/experiments
 - `GET /datasets/{dataset_name}/runs/{run_id}`
   - fetch run detail including run items, linked trace snapshot, and score snapshot
+- `DELETE /datasets/{dataset_name}/runs/{run_id}`
+  - delete one dataset run
 - `POST /datasets/{dataset_name}/experiments`
   - queue experiment run in background
 - `GET /datasets/experiments/{job_id}`
   - fetch background job status/result
+- `DELETE /datasets/{dataset_name}`
+  - delete dataset data (runs + items), and delete dataset container when supported by SDK
 
 #### 4. Experiment execution behavior
 Experiments are executed via `Langfuse.run_experiment(...)`.
@@ -79,6 +85,18 @@ Evaluators during experiment:
 
 - `exact_match` evaluator (when expected output exists)
 - optional LLM evaluator when criteria/model are provided (or selected via evaluator config)
+- optional preset-driven evaluator template (`preset_id`) with auto-resolved criteria
+
+Dataset LLM evaluator prompt template now enforces this structure:
+
+```text
+Input:
+Query: {{query}}
+Generation: {{generation}}
+Ground Truth: {{ground_truth}}
+```
+
+If the selected/effective criteria does not include these placeholders, backend appends them automatically.
 
 #### 5. Job lifecycle
 Experiment jobs are queued and tracked in process memory:
@@ -115,10 +133,11 @@ Added UI sections:
 - why datasets intro
 - dataset management (select + create)
 - dataset items table and add item form
-- experiment form (name, run name, agent, evaluator, criteria/model, concurrency)
+- experiment form (name, run name, agent, evaluator, preset template, criteria/model, concurrency)
 - run history table
 - clickable run rows with detail modal
 - latest background job status display with polling
+- delete actions for dataset, dataset items, and runs
 
 ## Data Storage and Ownership
 
@@ -155,7 +174,9 @@ When creating datasets/items, metadata is augmented with these fields.
    - set `Experiment Name`
    - optional `Run Name`, `Description`
    - optional `Agent (Flow)` for real execution
-   - optional evaluator selection and/or criteria/model
+   - optional saved evaluator selection
+   - optional preset template selection (auto-loads evaluator name + prompt criteria)
+   - optional custom criteria/model override
    - set `Max Concurrency`
    - click `Run Experiment`
 6. Monitor status:
@@ -209,7 +230,9 @@ Base URL examples assume local app:
   "run_name": "support-agent-v2-2026-02-16",
   "agent_id": "2f749947-55b8-4653-aaea-0c792cd166a3",
   "max_concurrency": 10,
-  "criteria": "Evaluate helpfulness and factual correctness",
+  "preset_id": "correctness",
+  "evaluator_name": "Correctness",
+  "criteria": "Evaluate correctness...\n\nInput:\nQuery: {{query}}\nGeneration: {{generation}}\nGround Truth: {{ground_truth}}",
   "model": "gpt-4o"
 }
 ```
@@ -233,6 +256,7 @@ Base URL examples assume local app:
 
 - Job tracking is in-memory and not persisted to application DB.
 - If no `agent_id` is selected, experiment uses fallback mode (`output = input`).
+- Some Langfuse SDK versions do not expose dataset-container delete. In that case, dataset delete endpoint returns `status="purged"` after removing runs and items.
 - Current project-wide frontend typecheck has unrelated existing errors outside this feature area.
 
 ## Recommended Next Enhancements
