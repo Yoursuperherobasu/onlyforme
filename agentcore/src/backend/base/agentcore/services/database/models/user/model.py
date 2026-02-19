@@ -41,6 +41,16 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
     last_login_at: datetime | None = Field(default=None, nullable=True)
     deleted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     store_api_key: str | None = Field(default=None, nullable=True)
+    department_name: str | None = Field(default=None, nullable=True, max_length=255, index=True)
+    department_admin: UUID | None = Field(
+        default=None, nullable=True, foreign_key="user.id",
+        description="FK to the department admin user",
+    )
+    created_by: UUID | None = Field(
+        default=None, nullable=True, foreign_key="user.id",
+        description="FK to the user who created this account",
+    )
+    country: str | None = Field(default=None, nullable=True, max_length=100, index=True)
     agents: list["Agent"] = Relationship(back_populates="user")
     # [VARIABLE REMOVED] variables relationship removed — migrating to Azure Key Vault
     folders: list["Project"] = Relationship(
@@ -65,6 +75,10 @@ class UserCreate(SQLModel):
     optins: dict[str, Any] | None = Field(
         default={"github_starred": False, "dialog_dismissed": False, "discord_clicked": False}
     )
+    department_name: str | None = None
+    department_admin: UUID | None = None
+    created_by: UUID | None = None
+    country: str | None = None
 
 class UserRead(SQLModel):
     id: UUID = Field(default_factory=uuid4)
@@ -86,6 +100,10 @@ class UserRead(SQLModel):
     last_login_at: datetime | None = Field(nullable=True)
     deleted_at: datetime | None = Field(default=None)
     optins: dict[str, Any] | None = Field(default=None)
+    department_name: str | None = Field(default=None)
+    department_admin: UUID | None = Field(default=None)
+    created_by: UUID | None = Field(default=None)
+    country: str | None = Field(default=None)
 
 
 class UserUpdate(SQLModel):
@@ -105,3 +123,7 @@ class UserUpdate(SQLModel):
     last_login_at: datetime | None = None
     deleted_at: datetime | None = None
     optins: dict[str, Any] | None = None
+    department_name: str | None = None
+    department_admin: UUID | None = None
+    created_by: UUID | None = None
+    country: str | None = None

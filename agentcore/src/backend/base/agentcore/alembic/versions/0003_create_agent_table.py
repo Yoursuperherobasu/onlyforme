@@ -32,14 +32,8 @@ def upgrade() -> None:
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("name", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("icon", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("icon_bg_color", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("gradient", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("data", sa.JSON(), nullable=True),
-        sa.Column("is_component", sa.Boolean(), nullable=True, server_default=sa.text("false")),
         sa.Column("updated_at", sa.DateTime(), nullable=True, server_default=sa.func.now()),
-        sa.Column("webhook", sa.Boolean(), nullable=True, server_default=sa.text("false")),
-        sa.Column("endpoint_name", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("tags", sa.JSON(), nullable=True),
         sa.Column("locked", sa.Boolean(), nullable=True, server_default=sa.text("false")),
         sa.Column("mcp_enabled", sa.Boolean(), nullable=True, server_default=sa.text("false")),
@@ -54,7 +48,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["user.id"]),
         sa.ForeignKeyConstraint(["folder_id"], ["project.id"]),
         sa.UniqueConstraint("user_id", "name", name="unique_agent_name"),
-        sa.UniqueConstraint("user_id", "endpoint_name", name="unique_agent_endpoint_name"),
     )
     # Cast to proper PostgreSQL enum type (drop default first — PG can't auto-cast text default to enum)
     op.execute(sa.text("ALTER TABLE agent ALTER COLUMN access_type DROP DEFAULT"))
@@ -65,7 +58,6 @@ def upgrade() -> None:
     op.execute(sa.text("ALTER TABLE agent ALTER COLUMN access_type SET DEFAULT 'PRIVATE'"))
     op.create_index(op.f("ix_agent_name"), "agent", ["name"], unique=False)
     op.create_index(op.f("ix_agent_description"), "agent", ["description"], unique=False)
-    op.create_index(op.f("ix_agent_endpoint_name"), "agent", ["endpoint_name"], unique=False)
     op.create_index(op.f("ix_agent_user_id"), "agent", ["user_id"], unique=False)
     op.create_index(op.f("ix_agent_folder_id"), "agent", ["folder_id"], unique=False)
 
@@ -73,7 +65,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(op.f("ix_agent_folder_id"), table_name="agent")
     op.drop_index(op.f("ix_agent_user_id"), table_name="agent")
-    op.drop_index(op.f("ix_agent_endpoint_name"), table_name="agent")
     op.drop_index(op.f("ix_agent_description"), table_name="agent")
     op.drop_index(op.f("ix_agent_name"), table_name="agent")
     op.drop_table("agent")

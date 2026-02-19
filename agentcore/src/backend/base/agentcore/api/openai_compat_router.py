@@ -133,7 +133,6 @@ async def _fetch_accessible_agents(user: UserRead) -> list[Agent]:
     async with session_scope() as session:
         stmt = (
             select(Agent)
-            .where(Agent.is_component == False)  # noqa: E712
             .where(
                 or_(
                     Agent.user_id == user.id,
@@ -145,7 +144,7 @@ async def _fetch_accessible_agents(user: UserRead) -> list[Agent]:
 
 
 def _model_identifier(agent: Agent, *, include_prefix: bool = True) -> str:
-    suffix = agent.endpoint_name or str(agent.id)
+    suffix = str(agent.id)
     return f"lb:{suffix}" if include_prefix else suffix
 
 
@@ -171,7 +170,6 @@ def _agent_to_model_payload(agent: Agent) -> dict[str, Any]:
         "metadata": {
             "display_name": agent.name,
             "description": agent.description,
-            "endpoint_name": agent.endpoint_name,
             "agent_id": str(agent.id),
             "access": agent.access_type.value if agent.access_type else AccessTypeEnum.PRIVATE.value,
         },

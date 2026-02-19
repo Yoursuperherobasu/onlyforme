@@ -113,6 +113,46 @@ class LangGraphAdapter:
         self.activated_vertices: list[str] = []
         self._is_state_vertices: list[str] | None = None
     
+ # ── Redis serialization support ──────────────────────────────────────
+    def __getstate__(self) -> dict:
+        """Return serializable state for Redis/dill/pickle.
+        Non-serializable objects (asyncio.Lock, compiled LangGraph app,
+        StateGraph, tracing service) are excluded and re-created on load
+        via ``__setstate__``.
+        """
+        state = self.__dict__.copy()
+        # Remove non-serializable attributes
+        state.pop("_lock", None)
+        state.pop("workflow", None)
+        state.pop("compiled_app", None)
+        state.pop("tracing_service", None)
+        # Convert deque to list for clean serialization
+        if "_run_queue" in state and isinstance(state["_run_queue"], deque):
+            state["_run_queue"] = list(state["_run_queue"])
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state after deserialization from Redis.
+        Re-creates non-serializable objects that were stripped in
+        ``__getstate__``.
+        """
+        self.__dict__.update(state)
+        # Restore non-serializable attributes
+        self._lock = asyncio.Lock()
+        self.workflow = None
+        self.compiled_app = None
+        self.tracing_service = None
+        # Restore deque if it was converted to list
+        if isinstance(self._run_queue, list):
+            self._run_queue = deque(self._run_queue)
+        # Rebuild LangGraph workflow from stored raw data if available
+        if self.raw_graph_data and self.vertices:
+            try:
+                self._build_langgraph_workflow()
+            except Exception:
+                logger.warning("Could not rebuild LangGraph workflow after deserialization")
+
+
     @classmethod
     def from_payload(
         cls,
@@ -123,7 +163,7 @@ class LangGraphAdapter:
         project_id: str | None = None,
         project_name: str | None = None,
     ) -> LangGraphAdapter:
-        """Create adapter from JSON payload (replaces Graph.from_payload).
+        """Create adapter from JSON payload.
 
         Args:
             payload: The JSON payload with nodes and edges
@@ -488,13 +528,13 @@ class LangGraphAdapter:
         # Initialize tracing service - this creates the FLOW-LEVEL trace
         # Each vertex build will create child spans under this trace via trace_component()
         self.tracing_service = get_tracing_service()
-        logger.info(f"🔍 TRACING INIT: service={self.tracing_service}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
+        logger.info(f"TRACING INIT: service={self.tracing_service}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
         if self.tracing_service and not self.tracing_service.deactivated:
             from uuid import UUID
             run_name = f"{self.agent_name} - {self.agent_id}"
             # Use the run_id we just set (converted to UUID)
             run_id = UUID(self._run_id) if self._run_id else uuid4()
-            logger.info(f"🚀 STARTING TRACERS: agent={self.agent_name}, user={self.user_id}, session={self._session_id}, run_id={run_id}")
+            logger.info(f" STARTING TRACERS: agent={self.agent_name}, user={self.user_id}, session={self._session_id}, run_id={run_id}")
             await self.tracing_service.start_tracers(
                 run_id=run_id,
                 run_name=run_name,
@@ -505,9 +545,9 @@ class LangGraphAdapter:
                 observability_project_id=self.project_id,
                 observability_project_name=self.project_name,
             )
-            logger.info(f"✅ TRACERS STARTED: agent={self.agent_name}")
+            logger.info(f"TRACERS STARTED: agent={self.agent_name}")
         else:
-            logger.warning(f"⚠️ TRACING DISABLED: service_exists={self.tracing_service is not None}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
+            logger.warning(f"TRACING DISABLED: service_exists={self.tracing_service is not None}, deactivated={self.tracing_service.deactivated if self.tracing_service else 'N/A'}")
     
     def set_run_id(self, run_id: str | None = None) -> None:
         """Set the run ID for this graph execution.
@@ -573,9 +613,8 @@ class LangGraphAdapter:
         fallback_to_env_vars: bool = False,
         event_manager = None,
     ):
-        """Run the graph with given inputs (compatibility method for old Graph API).
+        """Run the graph with given inputs
         
-        This method provides backward compatibility with the old Graph.arun() interface.
         It executes the graph by building each output vertex.
         
         Args:

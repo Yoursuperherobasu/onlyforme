@@ -24,6 +24,12 @@ from .approval_request import ApprovalRequest
 
 __all__ = [
     "Agent",
+    "AgentBundle",
+    "AgentDeploymentProd",
+    "AgentDeploymentUAT",
+    "AgentRegistry",
+    "ApprovalRequest",
+    "ConversationProdTable",
     "ConversationTable",
     "ConversationProdTable",
     "ConversationUATTable",
@@ -46,5 +52,6 @@ __all__ = [
     "TransactionUATTable",
     "VectorDBCatalogue",
     "TransactionTable",
+    "TransactionUATTable",
     "User",
 ]

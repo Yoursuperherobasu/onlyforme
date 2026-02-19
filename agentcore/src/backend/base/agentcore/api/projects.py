@@ -239,10 +239,7 @@ async def read_project(
     project_id: UUID,
     current_user: CurrentActiveUser,
     params: Annotated[Params | None, Depends(custom_params)],
-    is_component: bool = False,
-    is_agent: bool = False,
-    search: str = "",
-):
+    search: str = ""):
     try:
         project = (
             await session.exec(
@@ -265,12 +262,6 @@ async def read_project(
 
             if Agent.updated_at is not None:
                 stmt = stmt.order_by(Agent.updated_at.desc())  # type: ignore[attr-defined]
-            if not _is_admin_role(getattr(current_user, "role", None)):
-                stmt = stmt.where(Agent.user_id == current_user.id)
-            if is_component:
-                stmt = stmt.where(Agent.is_component == True)  # noqa: E712
-            if is_agent:
-                stmt = stmt.where(Agent.is_component == False)  # noqa: E712
             if search:
                 stmt = stmt.where(Agent.name.like(f"%{search}%"))  # type: ignore[attr-defined]
             import warnings

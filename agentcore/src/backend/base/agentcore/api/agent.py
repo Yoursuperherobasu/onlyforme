@@ -25,7 +25,6 @@ from agentcore.api.utils import (
     cascade_delete_agent,
     remove_api_keys,
     strip_sensitive_values_from_agent_data,
-    validate_is_component,
 )
 from agentcore.api.v1_schemas import AgentListCreate
 from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
@@ -40,7 +39,6 @@ from agentcore.services.database.models.agent.model import (
     AgentRead,
     AgentUpdate,
 )
-from agentcore.services.database.models.agent.utils import get_webhook_component_in_agent
 from agentcore.services.database.models.folder.constants import DEFAULT_FOLDER_NAME
 from agentcore.services.database.models.folder.model import Folder
 from agentcore.services.deps import get_settings_service
@@ -111,30 +109,6 @@ async def _new_agent(
                     agent.name = f"{agent.name} (1)"
             else:
                 agent.name = f"{agent.name} (1)"
-        # Now check if the endpoint is unique
-        if (
-            agent.endpoint_name
-            and (
-                await session.exec(
-                    select(Agent).where(Agent.endpoint_name == agent.endpoint_name).where(Agent.user_id == user_id)
-                )
-            ).first()
-        ):
-            agents = (
-                await session.exec(
-                    select(Agent)
-                    .where(Agent.endpoint_name.like(f"{agent.endpoint_name}-%"))  # type: ignore[union-attr]
-                    .where(Agent.user_id == user_id)
-                )
-            ).all()
-            if agents:
-                # The endpoint name is like "my-endpoint","my-endpoint-1", "my-endpoint-2"
-                # so we need to get the highest number and add 1
-                # we need to get the last part of the endpoint name
-                numbers = [int(agent.endpoint_name.split("-")[-1]) for agent in agents]
-                agent.endpoint_name = f"{agent.endpoint_name}-{max(numbers) + 1}"
-            else:
-                agent.endpoint_name = f"{agent.endpoint_name}-1"
 
         db_agent = Agent.model_validate(agent, from_attributes=True)
         db_agent.updated_at = datetime.now(timezone.utc)
@@ -251,14 +225,8 @@ async def read_agents(
         if remove_example_agents:
             stmt = stmt.where(Agent.folder_id != starter_folder_id)
 
-        if components_only:
-            stmt = stmt.where(Agent.is_component == True)  # noqa: E712
-
         if get_all:
             agents = (await session.exec(stmt)).all()
-            agents = validate_is_component(agents)
-            if components_only:
-                agents = [agent for agent in agents if agent.is_component]
             if remove_example_agents and starter_folder_id:
                 agents = [agent for agent in agents if agent.folder_id != starter_folder_id]
             if header_agents:
@@ -344,18 +312,9 @@ async def update_agent(
 
         update_data = agent.model_dump(exclude_unset=True, exclude_none=True)
 
-        # Legacy payload compatibility: accept folder_id, persist as project_id only.
-        if "project_id" not in update_data and "folder_id" in update_data:
-            update_data["project_id"] = update_data["folder_id"]
-        update_data.pop("folder_id", None)
-
-        # Specifically handle endpoint_name when it's explicitly set to null or empty string
-        if agent.endpoint_name is None or agent.endpoint_name == "":
-            update_data["endpoint_name"] = None
-
-        # Always strip sensitive values (API keys, secrets) and normalize to JSON-safe payload.
-        if "data" in update_data and update_data["data"] is not None:
-            update_data["data"] = jsonable_encoder(strip_sensitive_values_from_agent_data(update_data["data"]))
+        # Always strip sensitive values (API keys, secrets) from agent data before saving to DB
+        if "data" in update_data and update_data["data"]:
+            update_data["data"] = strip_sensitive_values_from_agent_data(update_data["data"])
 
         if settings_service.settings.remove_api_keys:
             update_data = remove_api_keys(update_data)
@@ -365,8 +324,6 @@ async def update_agent(
 
         await _verify_fs_path(db_agent.fs_path)
 
-        webhook_component = get_webhook_component_in_agent(db_agent.data)
-        db_agent.webhook = webhook_component is not None
         db_agent.updated_at = datetime.now(timezone.utc)
 
         if db_agent.folder_id is None:

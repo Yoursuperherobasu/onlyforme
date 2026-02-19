@@ -10,6 +10,9 @@ class ChatNode(Node):
             source_id = self._vertex.incoming_edges[0].source_id
             source_vertex = self.graph.get_vertex(source_id)
             component = source_vertex.custom_component
+            component = source_vertex.custom_component if source_vertex else None
+            if component is None:
+                return None, None, None, None
             source = component.display_name
             icon = component.icon
             possible_attributes = ["model_name", "model_id", "model"]

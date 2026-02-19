@@ -2096,7 +2096,6 @@ async def get_user_agents(
         agents_result = await session.exec(
             select(Agent).where(
                 Agent.user_id == current_user.id,
-                (Agent.is_component == False) | (Agent.is_component.is_(None)),  # noqa: E712
             )
         )
         user_agents = agents_result.all()
@@ -2561,7 +2560,6 @@ async def get_user_projects(
         agents_result = await session.exec(
             select(Agent).where(
                 Agent.user_id == current_user.id,
-                (Agent.is_component == False) | (Agent.is_component.is_(None)),  # noqa: E712
             )
         )
         user_agents = agents_result.all()
@@ -2697,7 +2695,6 @@ async def get_project_detail(
             select(Agent).where(
                 Agent.user_id == current_user.id,
                 Agent.folder_id == folder.id,
-                (Agent.is_component == False) | (Agent.is_component.is_(None)),  # noqa: E712
             )
         )
         folder_agents = agents_result.all()

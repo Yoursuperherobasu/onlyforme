@@ -1,3 +1,17 @@
-from .model import Department
+from .model import (
+    Department,
+    DepartmentBase,
+    DepartmentCreate,
+    DepartmentRead,
+    DepartmentUpdate,
+    DeptStatusEnum,
+)
 
-__all__ = ["Department"]
+__all__ = [
+    "Department",
+    "DepartmentBase",
+    "DepartmentCreate",
+    "DepartmentRead",
+    "DepartmentUpdate",
+    "DeptStatusEnum",
+]

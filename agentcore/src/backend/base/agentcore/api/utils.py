@@ -123,25 +123,6 @@ def build_input_keys_response(langchain_object, artifacts):
 
     return input_keys_response
 
-
-def validate_is_component(agents: list[Agent]):
-    for agent in agents:
-        if not agent.data or agent.is_component is not None:
-            continue
-
-        is_component = get_is_component_from_data(agent.data)
-        if is_component is not None:
-            agent.is_component = is_component
-        else:
-            agent.is_component = len(agent.data.get("nodes", [])) == 1
-    return agents
-
-
-def get_is_component_from_data(data: dict):
-    """Returns True if the data is a component."""
-    return data.get("is_component")
-
-
 def format_elapsed_time(elapsed_time: float) -> str:
     """Format elapsed time to a human-readable format coming from perf_counter().
 
