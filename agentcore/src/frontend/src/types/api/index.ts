@@ -188,6 +188,7 @@ export type Users = {
   creator_email?: string | null;
   creator_role?: string | null;
   department_admin_email?: string | null;
+  department_admin?: string | null;
   department_name?: string | null;
   optins?: {
     github_starred?: boolean;

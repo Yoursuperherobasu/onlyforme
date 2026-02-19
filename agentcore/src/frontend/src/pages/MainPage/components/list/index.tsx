@@ -20,6 +20,8 @@ import type { AgentType } from "@/types/agent";
 import { downloadAgent } from "@/utils/reactFlowUtils";
 import { swatchColors } from "@/utils/styleUtils";
 import { cn, getNumberFromString } from "@/utils/utils";
+import { useGetApprovalDetails } from "@/controllers/API/queries/approvals";
+import ShadTooltip from "@/components/common/shadTooltipComponent";
 import useDescriptionModal from "../../hooks/use-description-modal";
 import { useGetTemplateStyle } from "../../utils/get-template-style";
 import { timeElapsed } from "../../utils/time-elapse";
@@ -49,11 +51,18 @@ const ListComponent = ({
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
   const isComponent = agentData.is_component ?? false;
+  const { data: approvalDetails } = useGetApprovalDetails(
+    { agent_id: agentData.id },
+    { refetchInterval: 30000 },
+  );
+  const approvalStatus = approvalDetails?.status;
+  const workflowLocked = !isComponent && approvalStatus === "pending";
+  const effectiveDisabled = disabled || workflowLocked;
 
   const editAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}`;
 
   const handleClick = async () => {
-    if (disabled) return; // Prevent click when disabled
+    if (effectiveDisabled) return; // Prevent click when disabled
     
     if (shiftPressed) {
       setSelected(!selected);
@@ -105,19 +114,19 @@ const ListComponent = ({
     <>
       <Card
         key={agentData.id}
-        draggable={!disabled}
-        onDragStart={disabled ? undefined : onDragStart}
+        draggable={!effectiveDisabled}
+        onDragStart={effectiveDisabled ? undefined : onDragStart}
         onClick={handleClick}
         className={cn(
           "flex flex-row bg-background group justify-between rounded-lg border-none px-4 py-3 shadow-none hover:bg-muted",
-          isComponent || disabled ? "cursor-default" : "cursor-pointer",
-          disabled && "opacity-50 pointer-events-none"
+          isComponent || effectiveDisabled ? "cursor-default" : "cursor-pointer",
+          effectiveDisabled && "opacity-70"
         )}
         data-testid="list-card"
       >
         <div
           className={`flex min-w-0 ${
-            isComponent || disabled ? "cursor-default" : "cursor-pointer"
+            isComponent || effectiveDisabled ? "cursor-default" : "cursor-pointer"
           } items-center gap-4`}
         >
           <div className="group/checkbox relative flex items-center">
@@ -131,7 +140,7 @@ const ListComponent = ({
                 checked={selected}
                 onCheckedChange={(checked) => setSelected(checked as boolean)}
                 onClick={(e) => e.stopPropagation()}
-                disabled={disabled}
+                disabled={effectiveDisabled}
                 className={cn(
                   "ml-2 transition-opacity focus-visible:ring-0",
                   !selected && "opacity-0 group-hover/checkbox:opacity-100",
@@ -173,19 +182,45 @@ const ListComponent = ({
                   Edited {timeElapsed(agentData.updated_at)} ago
                 </span>
               </div>
+              {!isComponent && approvalStatus && (
+                <ShadTooltip
+                  content={
+                    approvalDetails?.adminComments
+                      ? `Admin comments: ${approvalDetails.adminComments}`
+                      : approvalDetails?.adminAttachments?.length
+                        ? `Admin attached ${approvalDetails.adminAttachments.length} file(s)`
+                        : ""
+                  }
+                >
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      approvalStatus === "pending" && "bg-yellow-100 text-yellow-800",
+                      approvalStatus === "approved" && "bg-green-100 text-green-800",
+                      approvalStatus === "rejected" && "bg-red-100 text-red-800",
+                    )}
+                  >
+                    {approvalStatus === "pending"
+                      ? "Awaiting Approval"
+                      : approvalStatus === "approved"
+                        ? `Approved ${approvalDetails?.version ?? ""}`
+                        : "Rejected"}
+                  </span>
+                </ShadTooltip>
+              )}
             </div>
           </div>
         </div>
 
         <div className="ml-5 flex items-center gap-2">
           <DropdownMenu>
-            <DropdownMenuTrigger asChild disabled={disabled}>
+            <DropdownMenuTrigger asChild disabled={effectiveDisabled}>
               <Button
                 variant="ghost"
                 size="iconMd"
                 data-testid="home-dropdown-menu"
                 className="group"
-                disabled={disabled}
+                disabled={effectiveDisabled}
               >
                 <ForwardedIconComponent
                   name="Ellipsis"

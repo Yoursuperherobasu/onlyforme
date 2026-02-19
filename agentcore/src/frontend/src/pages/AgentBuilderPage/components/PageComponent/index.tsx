@@ -30,6 +30,7 @@ import {
 import { useGetBuildsQuery } from "@/controllers/API/queries/_builds";
 import CustomLoader from "@/customization/components/custom-loader";
 import { track } from "@/customization/utils/analytics";
+import { useGetApprovalDetails } from "@/controllers/API/queries/approvals";
 import useAutoSaveAgent from "@/hooks/agents/use-autosave-agent";
 import useUploadAgent from "@/hooks/agents/use-upload-agent";
 import { useAddComponent } from "@/hooks/use-add-component";
@@ -90,6 +91,21 @@ const edgeTypes = {
   default: DefaultEdge,
 };
 
+function formatBrowserLocalDate(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
 export default function Page({
   view,
   setIsLoading,
@@ -144,6 +160,13 @@ export default function Page({
   const [lastSelection, setLastSelection] =
     useState<OnSelectionChangeParams | null>(null);
   const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
+  const { data: approvalDetails } = useGetApprovalDetails(
+    { agent_id: currentAgentId },
+    {
+      enabled: !!currentAgentId && !view,
+      refetchInterval: 30000,
+    },
+  );
 
   useEffect(() => {
     if (currentAgentId !== "") {
@@ -688,6 +711,14 @@ export default function Page({
 
   const MIN_ZOOM = 0.25;
   const MAX_ZOOM = 2;
+  const showReviewFeedbackPanel =
+    !view &&
+    (approvalDetails?.status === "approved" ||
+      approvalDetails?.status === "rejected") &&
+    !!(
+      approvalDetails?.adminComments?.trim() ||
+      approvalDetails?.adminAttachments?.length
+    );
   const fitViewOptions = {
     minZoom: MIN_ZOOM,
     maxZoom: MAX_ZOOM,
@@ -716,6 +747,63 @@ export default function Page({
               nodes={lastSelection?.nodes}
               onClick={handleGroupNode}
             />
+            {showReviewFeedbackPanel && (
+              <div className="pointer-events-none absolute right-4 top-4 z-20 w-[380px] max-w-[calc(100%-2rem)]">
+                <div className="pointer-events-auto rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-sm">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">
+                      Review Feedback
+                    </h3>
+                    <span
+                      className={
+                        approvalDetails?.status === "approved"
+                          ? "rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-800"
+                          : "rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800"
+                      }
+                    >
+                      {approvalDetails?.status === "approved"
+                        ? "Approved"
+                        : "Rejected"}
+                    </span>
+                  </div>
+                  {approvalDetails?.adminComments?.trim() && (
+                    <p className="mb-3 text-xs text-foreground/90">
+                      {approvalDetails.adminComments}
+                    </p>
+                  )}
+                  {!!approvalDetails?.adminAttachments?.length && (
+                    <div>
+                      <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                        Attachments
+                      </p>
+                      <div className="max-h-36 space-y-1 overflow-auto pr-1">
+                        {approvalDetails.adminAttachments.map((file, index) => (
+                          <div
+                            key={`${file.filename ?? "file"}-${index}`}
+                            className="rounded border bg-muted/30 px-2 py-1"
+                          >
+                            <p className="truncate text-xs font-medium">
+                              {file.filename || "Attachment"}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {(file.size ?? 0) > 0
+                                ? `${Math.max(
+                                    1,
+                                    Math.round((file.size ?? 0) / 1024),
+                                  )} KB`
+                                : "Size unknown"}
+                              {file.uploadedAt
+                                ? ` • ${formatBrowserLocalDate(file.uploadedAt)}`
+                                : ""}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <ReactFlow<AllNodeType, EdgeType>
               nodes={nodes}
               edges={edges}

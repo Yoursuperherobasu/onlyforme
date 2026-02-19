@@ -166,6 +166,8 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
 
 class AgentCreate(AgentBase):
     user_id: UUID | None = None
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
     project_id: UUID | None = None
     folder_id: UUID | None = None
     fs_path: str | None = None

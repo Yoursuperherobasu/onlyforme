@@ -2,7 +2,6 @@ import { useCallback } from "react";
 import {
   useApproveAgent,
   useRejectAgent,
-  useUploadApprovalAttachments,
 } from "@/controllers/API/queries/approvals";
 import useAlertStore from "@/stores/alertStore";
 import type { ApprovalAgent } from "@/controllers/API/queries/approvals";
@@ -18,11 +17,10 @@ export const useApprovalActions = () => {
   // API mutation hooks
   const approveAgentMutation = useApproveAgent();
   const rejectAgentMutation = useRejectAgent();
-  const uploadAttachmentsMutation = useUploadApprovalAttachments();
 
   /**
    * Handle agent approval
-   * Uploads attachments first (if any), then sends approval with comments
+   * Sends comments + attachments in one approve request
    */
   const handleApprove = useCallback(
     async (
@@ -31,28 +29,12 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
-        // Upload attachments if provided
-        if (attachments.length > 0) {
-          await new Promise((resolve, reject) => {
-            uploadAttachmentsMutation.mutate(
-              {
-                agentId: agent.id,
-                files: attachments,
-              },
-              {
-                onSuccess: resolve,
-                onError: reject,
-              },
-            );
-          });
-        }
-
-        // Then approve the agent
         await new Promise((resolve, reject) => {
           approveAgentMutation.mutate(
             {
               agentId: agent.id,
               comments,
+              attachments,
             },
             {
               onSuccess: () => {
@@ -74,12 +56,12 @@ export const useApprovalActions = () => {
         console.error("Approval error:", error);
       }
     },
-    [approveAgentMutation, uploadAttachmentsMutation, setSuccessData, setErrorData],
+    [approveAgentMutation, setSuccessData, setErrorData],
   );
 
   /**
    * Handle agent rejection
-   * Uploads attachments first (if any), then sends rejection with comments
+   * Sends comments + attachments in one reject request
    */
   const handleReject = useCallback(
     async (
@@ -88,28 +70,12 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
-        // Upload attachments if provided
-        if (attachments.length > 0) {
-          await new Promise((resolve, reject) => {
-            uploadAttachmentsMutation.mutate(
-              {
-                agentId: agent.id,
-                files: attachments,
-              },
-              {
-                onSuccess: resolve,
-                onError: reject,
-              },
-            );
-          });
-        }
-
-        // Then reject the agent
         await new Promise((resolve, reject) => {
           rejectAgentMutation.mutate(
             {
               agentId: agent.id,
               comments,
+              attachments,
             },
             {
               onSuccess: () => {
@@ -131,7 +97,7 @@ export const useApprovalActions = () => {
         console.error("Rejection error:", error);
       }
     },
-    [rejectAgentMutation, uploadAttachmentsMutation, setSuccessData, setErrorData],
+    [rejectAgentMutation, setSuccessData, setErrorData],
   );
 
   return {
@@ -139,7 +105,6 @@ export const useApprovalActions = () => {
     handleReject,
     isLoading:
       approveAgentMutation.isPending ||
-      rejectAgentMutation.isPending ||
-      uploadAttachmentsMutation.isPending,
+      rejectAgentMutation.isPending,
   };
 };

@@ -14,6 +14,7 @@ import useAgentStore from "@/stores/agentStore";
 import useAlertStore from "@/stores/alertStore";
 import { useValidatePublishEmail } from "@/controllers/API/queries/agents/use-validate-publish-email";
 import { usePatchUpdateAgent } from "@/controllers/API/queries/agents/use-patch-update-agent";
+import { usePostUnifiedPublishAgent } from "@/controllers/API/queries/agents/use-post-unified-publish-agent";
 import { cn } from "@/utils/utils";
 import { Input } from "@/components/ui/input";
 
@@ -58,7 +59,7 @@ const DisabledButton = () => (
 const PublishButton = ({
   hasIO,
 }: PublishButtonProps) => {
-  const { permissions } = useContext(AuthContext);
+  const { permissions, userData } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canPublish = can("view_project_page");
   const currentAgent = useAgentsManagerStore((state) => state.currentAgent);
@@ -77,12 +78,14 @@ const PublishButton = ({
   const [publishProd, setPublishProd] = useState(false);
   const [prodPublic, setProdPublic] = useState(false);
   const [prodPrivate, setProdPrivate] = useState(false);
+  const [publishDescription, setPublishDescription] = useState("");
   const [emailsInput, setEmailsInput] = useState("");
   const [emailValidationResults, setEmailValidationResults] = useState<
-    Array<{ email: string; exists_in_department: boolean; message: string }>
+    Array<{ email: string; department_id: string | null; exists_in_department: boolean; message: string }>
   >([]);
   const [validationInProgress, setValidationInProgress] = useState(false);
   const latestValidationRun = useRef(0);
+  const publishMutation = usePostUnifiedPublishAgent();
 
   const normalizedEmails = useMemo(() => {
     return Array.from(
@@ -242,10 +245,69 @@ const PublishButton = ({
       return;
     }
 
-    setSuccessData({
-      title: "Publish request details captured successfully.",
-    });
-    setOpen(false);
+    const resolvedDepartmentId =
+      results.find((item) => item.exists_in_department && item.department_id)?.department_id ??
+      results.find((item) => item.department_id)?.department_id ??
+      null;
+    if (!resolvedDepartmentId) {
+      setErrorData({
+        title: "Unable to resolve department_id for publish payload.",
+      });
+      return;
+    }
+
+    const resolvedDepartmentAdminId = userData?.department_admin ?? undefined;
+
+    const publishRequests: Array<{
+      environment: "uat" | "prod";
+      visibility: "PUBLIC" | "PRIVATE";
+    }> = [];
+    if (publishUat) {
+      publishRequests.push({ environment: "uat", visibility: "PRIVATE" });
+    }
+    if (publishProd) {
+      publishRequests.push({
+        environment: "prod",
+        visibility: prodPublic ? "PUBLIC" : "PRIVATE",
+      });
+    }
+
+    try {
+      const responses: Array<{
+        environment: "uat" | "prod";
+        message: string;
+        version_number: string;
+      }> = [];
+      for (const request of publishRequests) {
+        const response = await publishMutation.mutateAsync({
+          agent_id: currentAgent.id,
+          department_id: resolvedDepartmentId,
+          ...(resolvedDepartmentAdminId
+            ? { department_admin_id: resolvedDepartmentAdminId }
+            : {}),
+          environment: request.environment,
+          visibility: request.visibility,
+          publish_description: publishDescription.trim() || undefined,
+        });
+        responses.push(response);
+      }
+
+      const responseLines = responses.map(
+        (response) =>
+          `${response.environment.toUpperCase()}: ${response.message} (${response.version_number})`,
+      );
+      setSuccessData({
+        title: `Publish completed successfully. ${responseLines.join(" | ")}`,
+      });
+      setOpen(false);
+    } catch (error: any) {
+      setErrorData({
+        title: "Failed to publish agent",
+        list: [error?.response?.data?.detail ?? "Please try again."],
+      });
+      return;
+    }
+
   };
 
   // If user doesn't have edit_agents permission, show disabled button with no interaction
@@ -356,6 +418,19 @@ const PublishButton = ({
           </div>
 
           <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+            <Label htmlFor="publish-description" className="text-sm font-medium">
+              Publish description (optional)
+            </Label>
+            <Textarea
+              id="publish-description"
+              value={publishDescription}
+              onChange={(event) => setPublishDescription(event.target.value)}
+              placeholder="What changed in this release?"
+              className="min-h-[72px] bg-background"
+            />
+          </div>
+
+          <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
             <Label htmlFor="publish-emails" className="text-sm font-medium">
               Business/User Email IDs
             </Label>
@@ -401,7 +476,12 @@ const PublishButton = ({
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit}>Submit Publish Request</Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={validationInProgress || publishMutation.isPending}
+            >
+              {publishMutation.isPending ? "Publishing..." : "Submit Publish Request"}
+            </Button>
           </div>
         </div>
       </DialogContent>

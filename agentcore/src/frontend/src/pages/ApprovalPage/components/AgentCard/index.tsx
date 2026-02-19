@@ -47,6 +47,11 @@ export function AgentCard({
 
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const submittedDisplay = (() => {
+    const dt = new Date(submitted);
+    if (Number.isNaN(dt.getTime())) return submitted;
+    return dt.toLocaleString();
+  })();
 
   return (
     <div className="rounded-lg border border-border bg-card p-6 transition-shadow hover:shadow-md">
@@ -81,7 +86,7 @@ export function AgentCard({
         </div>
         <div>
           <div className="text-xs text-muted-foreground">Submitted</div>
-          <div className="font-medium">{submitted}</div>
+          <div className="font-medium">{submittedDisplay}</div>
         </div>
       </div>
 
@@ -162,4 +167,3 @@ export function AgentCard({
     </div>
   );
 }
-

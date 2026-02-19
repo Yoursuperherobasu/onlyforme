@@ -39,6 +39,7 @@ from agentcore.services.database.models.agent.model import (
     AgentRead,
     AgentUpdate,
 )
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.folder.constants import DEFAULT_FOLDER_NAME
 from agentcore.services.database.models.folder.model import Folder
 from agentcore.services.deps import get_settings_service
@@ -64,6 +65,49 @@ async def _save_agent_to_fs(agent: Agent) -> None:
                 logger.exception("Failed to write agent %s to path %s", agent.name, agent.fs_path)
 
 
+async def _resolve_tenant_scope_for_user(
+    *,
+    session: AsyncSession,
+    user_id: UUID,
+    requested_org_id: UUID | None = None,
+    requested_dept_id: UUID | None = None,
+) -> tuple[UUID, UUID]:
+    memberships = (
+        await session.exec(
+            select(UserDepartmentMembership).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    if not memberships:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No active department membership found for this user. "
+                "Map user in user_department_membership first."
+            ),
+        )
+
+    scoped = memberships
+    if requested_org_id:
+        scoped = [m for m in scoped if m.org_id == requested_org_id]
+    if requested_dept_id:
+        scoped = [m for m in scoped if m.department_id == requested_dept_id]
+
+    if not scoped:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Requested org_id/dept_id is not mapped to the current user "
+                "in user_department_membership."
+            ),
+        )
+
+    selected = sorted(scoped, key=lambda m: (str(m.org_id), str(m.department_id)))[0]
+    return selected.org_id, selected.department_id
+
+
 async def _new_agent(
     *,
     session: AsyncSession,
@@ -76,6 +120,15 @@ async def _new_agent(
         """Create a new agent."""
         if agent.user_id is None:
             agent.user_id = user_id
+
+        resolved_org_id, resolved_dept_id = await _resolve_tenant_scope_for_user(
+            session=session,
+            user_id=user_id,
+            requested_org_id=getattr(agent, "org_id", None),
+            requested_dept_id=getattr(agent, "dept_id", None),
+        )
+        agent.org_id = resolved_org_id
+        agent.dept_id = resolved_dept_id
 
         # First check if the agent.name is unique
         # there might be agents with name like: "Myagent", "Myagent (1)", "Myagent (2)"
@@ -152,7 +205,7 @@ async def create_agent(
         await _save_agent_to_fs(db_agent)
 
     except Exception as e:
-        logger.exception("Failed to update agent {}", agent_id)
+        logger.exception("Failed to create agent {}", getattr(agent, "id", None) or agent.name)
         if "UNIQUE constraint failed" in str(e):
             # Get the name of the column that failed
             columns = str(e).split("UNIQUE constraint failed: ")[1].split(".")[1].split("\n")[0]
@@ -387,6 +440,14 @@ async def create_agents(
     db_agents = []
     for agent in agent_list.agents:
         agent.user_id = current_user.id
+        resolved_org_id, resolved_dept_id = await _resolve_tenant_scope_for_user(
+            session=session,
+            user_id=current_user.id,
+            requested_org_id=getattr(agent, "org_id", None),
+            requested_dept_id=getattr(agent, "dept_id", None),
+        )
+        agent.org_id = resolved_org_id
+        agent.dept_id = resolved_dept_id
         db_agent = Agent.model_validate(agent, from_attributes=True)
         # Strip sensitive values (API keys, secrets) from agent data before saving to DB
         if db_agent.data:

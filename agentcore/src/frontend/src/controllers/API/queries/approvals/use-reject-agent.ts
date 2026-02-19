@@ -8,6 +8,7 @@ interface RejectAgentParams {
   agentId: string;
   comments: string;
   reason?: string;
+  attachments?: File[];
 }
 
 /**
@@ -23,14 +24,19 @@ export const useRejectAgent: useMutationFunctionType<
   const rejectAgentFn = async (
     params: RejectAgentParams,
   ): Promise<void> => {
-    const payload = {
-      comments: params.comments,
-      reason: params.reason || "Not approved",
-    };
+    const formData = new FormData();
+    formData.append("comments", params.comments ?? "");
+    formData.append("reason", params.reason || "Not approved");
+    for (const file of params.attachments ?? []) {
+      formData.append("attachments", file);
+    }
 
     await api.post(
       `${getURL("APPROVALS")}/${params.agentId}/reject`,
-      payload,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+      },
     );
   };
 

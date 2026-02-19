@@ -33,6 +33,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.approval_request.model import (
     ApprovalRequest,
 )
@@ -107,8 +108,12 @@ class PublishRequest(BaseModel):
     department_id: UUID = Field(
         description="Department the agent belongs to",
     )
-    department_admin_id: UUID = Field(
-        description="User ID of the department admin to whom the publish request is directed",
+    department_admin_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Optional: department admin user ID. If omitted, backend resolves it from "
+            "user_department_membership -> department.admin_user_id."
+        ),
     )
     visibility: str = Field(
         default="PRIVATE",
@@ -231,6 +236,15 @@ class ValidatePublishEmailResponse(BaseModel):
     message: str
 
 
+class PublishContextResponse(BaseModel):
+    """Resolved publish context for current user and agent tenant scope."""
+
+    agent_id: UUID
+    org_id: UUID
+    department_id: UUID
+    department_admin_id: UUID
+
+
 async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set[UUID]:
     rows = (
         await session.exec(
@@ -241,6 +255,116 @@ async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set
         )
     ).all()
     return set(rows)    
+
+
+async def _resolve_publish_scope(
+    session: DbSession,
+    *,
+    current_user: CurrentActiveUser,
+    agent: Agent,
+    requested_department_id: UUID | None = None,
+    requested_department_admin_id: UUID | None = None,
+) -> tuple[UUID, UUID]:
+    """Resolve and validate publish department/admin in the agent's org tenant."""
+    base_memberships = (
+        await session.exec(
+            select(UserDepartmentMembership).where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    if not base_memberships:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Current user has no active department membership. "
+                "Please map the user in user_department_membership first."
+            ),
+        )
+
+    # If org isn't stitched on agent yet, derive it from publisher membership.
+    if not agent.org_id:
+        if requested_department_id:
+            scoped = [m for m in base_memberships if m.department_id == requested_department_id]
+            if not scoped:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"department_id {requested_department_id} is not mapped to publishing user "
+                        f"{current_user.id}."
+                    ),
+                )
+            selected = scoped[0]
+        else:
+            selected = sorted(base_memberships, key=lambda m: (str(m.org_id), str(m.department_id)))[0]
+
+        agent.org_id = selected.org_id
+        if not agent.dept_id:
+            agent.dept_id = selected.department_id
+        session.add(agent)
+
+    memberships = [m for m in base_memberships if m.org_id == agent.org_id]
+    if not memberships:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current user has no active department mapping in the agent organization.",
+        )
+
+    allowed_dept_ids = {m.department_id for m in memberships}
+
+    if requested_department_id is not None:
+        if requested_department_id not in allowed_dept_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"department_id {requested_department_id} is not mapped to current user "
+                    f"in organization {agent.org_id}."
+                ),
+            )
+        resolved_department_id = requested_department_id
+    elif agent.dept_id and agent.dept_id in allowed_dept_ids:
+        resolved_department_id = agent.dept_id
+    else:
+        # Deterministic fallback when user has multiple departments.
+        resolved_department_id = sorted(allowed_dept_ids, key=str)[0]
+
+    department = (
+        await session.exec(
+            select(Department).where(
+                Department.id == resolved_department_id,
+                Department.org_id == agent.org_id,
+            )
+        )
+    ).first()
+    if not department:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Department {resolved_department_id} is not part of organization {agent.org_id}."
+            ),
+        )
+
+    resolved_department_admin_id = department.admin_user_id
+    if requested_department_admin_id and requested_department_admin_id != resolved_department_admin_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"department_admin_id {requested_department_admin_id} does not match "
+                f"department admin {resolved_department_admin_id} for department {resolved_department_id}."
+            ),
+        )
+
+    admin_user = (
+        await session.exec(select(User).where(User.id == resolved_department_admin_id))
+    ).first()
+    if not admin_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Department admin user {resolved_department_admin_id} not found.",
+        )
+
+    return resolved_department_id, resolved_department_admin_id
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Helper Functions
@@ -313,6 +437,33 @@ async def validate_publish_email(
             if exists_in_department
             else "Email exists, but not in this department."
         ),
+    )
+
+
+@router.get("/{agent_id}/context", response_model=PublishContextResponse, status_code=200)
+async def get_publish_context(
+    *,
+    session: DbSession,
+    agent_id: UUID,
+    current_user: CurrentActiveUser,
+) -> PublishContextResponse:
+    """Return resolved tenant-safe publish context for the current user."""
+    agent = await _get_agent_or_404(session, agent_id, current_user.id)
+    if not agent.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Agent must belong to an organization before publishing.",
+        )
+    department_id, department_admin_id = await _resolve_publish_scope(
+        session,
+        current_user=current_user,
+        agent=agent,
+    )
+    return PublishContextResponse(
+        agent_id=agent.id,
+        org_id=agent.org_id,
+        department_id=department_id,
+        department_admin_id=department_admin_id,
     )
 
 async def _get_next_version_number(
@@ -841,22 +992,13 @@ async def publish_agent(
                 detail="Cannot deploy agent with no flow data. Build the agent first.",
             )
 
-        if not agent.org_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Agent must belong to an organization before deploying. "
-                       "Set org_id on the agent first.",
-            )
-
-        # Validate department admin exists
-        admin_user = (await session.exec(
-            select(User).where(User.id == body.department_admin_id)
-        )).first()
-        if not admin_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Department admin user {body.department_admin_id} not found.",
-            )
+        resolved_department_id, resolved_department_admin_id = await _resolve_publish_scope(
+            session,
+            current_user=current_user,
+            agent=agent,
+            requested_department_id=body.department_id,
+            requested_department_admin_id=body.department_admin_id,
+        )
 
         # Freeze snapshot — immutable copy of the current agent flow
         snapshot = agent.data.copy()
@@ -901,7 +1043,7 @@ async def publish_agent(
 
             logger.info(
                 f"Deployed agent '{agent.name}' ({agent_id}) to UAT as v{next_version} "
-                f"by user {current_user.id} [dept={body.department_id}]"
+                f"by user {current_user.id} [dept={resolved_department_id}]"
             )
 
             # Sync schedule if flow contains a ScheduleTrigger node
@@ -984,7 +1126,7 @@ async def publish_agent(
 
                 logger.info(
                     f"Admin direct-deployed agent '{agent.name}' ({agent_id}) to PROD "
-                    f"as v{next_version} by {current_user.id} [dept={body.department_id}]"
+                    f"as v{next_version} by {current_user.id} [dept={resolved_department_id}]"
                 )
 
                 # Sync schedule
@@ -1046,9 +1188,11 @@ async def publish_agent(
                 # Create approval_request targeting the supplied department admin
                 approval = ApprovalRequest(
                     agent_id=agent_id,
-                    agent_publish_id=new_record.id,
+                    deployment_id=new_record.id,
+                    org_id=agent.org_id,
+                    dept_id=resolved_department_id,
                     requested_by=current_user.id,
-                    request_to=body.department_admin_id,
+                    request_to=resolved_department_admin_id,
                     requested_at=datetime.now(timezone.utc),
                     visibility_requested=visibility_enum,
                     publish_description=body.publish_description,
@@ -1068,7 +1212,7 @@ async def publish_agent(
                 logger.info(
                     f"Developer {current_user.id} submitted agent '{agent.name}' ({agent_id}) "
                     f"for PROD approval as v{next_version}. "
-                    f"Approval sent to dept admin {body.department_admin_id} [dept={body.department_id}]"
+                    f"Approval sent to dept admin {resolved_department_admin_id} [dept={resolved_department_id}]"
                 )
 
                 return PublishActionResponse(

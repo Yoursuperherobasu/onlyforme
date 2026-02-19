@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import ActionModal from "./components/ActionModal";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
+import useAlertStore from "@/stores/alertStore";
 
 import { useGetApprovals, type ApprovalAgent } from "@/controllers/API/queries/approvals";
 import { useApprovalActionModal, useApprovalActions } from "./hooks";
@@ -28,6 +29,7 @@ export default function ApprovalPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ApprovalTabType>("agent");
   const { permissions } = useContext(AuthContext);
+  const setNoticeData = useAlertStore((state) => state.setNoticeData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   /* ================= MODAL & ACTIONS MANAGEMENT ================= */
@@ -66,6 +68,14 @@ export default function ApprovalPage() {
     approved: agents.filter((a) => a.status === "approved").length,
     rejected: agents.filter((a) => a.status === "rejected").length,
   };
+
+  useEffect(() => {
+    if (counts.pending > 0) {
+      setNoticeData({
+        title: `${counts.pending} publish request(s) awaiting your approval.`,
+      });
+    }
+  }, [counts.pending, setNoticeData]);
 
   /* ================= EVENT HANDLERS ================= */
   const handleApproveClick = (agent: ApprovalAgent) => {
