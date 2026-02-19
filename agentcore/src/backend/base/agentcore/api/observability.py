@@ -13,6 +13,8 @@ Features:
 """
 
 import os
+import json
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any
 from collections import defaultdict
@@ -31,6 +33,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
+
+
+# Process-local caches to reduce repeated high-latency Langfuse calls.
+_LANGFUSE_CLIENT_CACHE: dict[str, Any] = {"fingerprint": None, "client": None}
+_TRACE_FETCH_CACHE: dict[str, dict[str, Any]] = {}
+_TRACE_CACHE_TTL_SECONDS = 12.0
+_TRACE_CACHE_STALE_SECONDS = 90.0
+_TRACE_METRICS_CACHE: dict[str, dict[str, Any]] = {}
+_TRACE_METRICS_CACHE_TTL_SECONDS = 60.0
 
 
 # =============================================================================
@@ -179,6 +190,8 @@ class SessionsListResponse(BaseModel):
     """List of sessions."""
     sessions: list[SessionListItem]
     total: int
+    truncated: bool = False
+    fetched_trace_count: int = 0
 
 
 class ModelUsageItem(BaseModel):
@@ -224,6 +237,9 @@ class MetricsResponse(BaseModel):
     by_date: list[DailyUsageItem] = []
     # Top agents/traces by usage
     top_agents: list[dict] = []
+    # Truncation info - lets UI know if data is incomplete
+    truncated: bool = False
+    fetched_trace_count: int = 0
 
 
 class LangfuseStatusResponse(BaseModel):
@@ -258,6 +274,13 @@ def get_langfuse_client():
     if not all([secret_key, public_key, base_url]):
         logger.warning("Langfuse credentials not configured. Need LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_BASE_URL (or LANGFUSE_HOST)")
         return None
+
+    # Reuse an initialized client for the same credentials to avoid repeated
+    # auth checks and connection setup on each request.
+    fingerprint = f"{public_key}:{base_url}:{len(secret_key)}"
+    cached = _LANGFUSE_CLIENT_CACHE.get("client")
+    if cached is not None and _LANGFUSE_CLIENT_CACHE.get("fingerprint") == fingerprint:
+        return cached
 
     try:
         # Use Langfuse class directly for data fetching (works in both v2 and v3)
@@ -324,13 +347,19 @@ def get_langfuse_client():
         else:
             logger.info(f"Using Langfuse SDK v2 ({sdk_version})")
 
+        _LANGFUSE_CLIENT_CACHE["fingerprint"] = fingerprint
+        _LANGFUSE_CLIENT_CACHE["client"] = client
         return client
 
     except ImportError:
         logger.warning("Langfuse package not installed")
+        _LANGFUSE_CLIENT_CACHE["fingerprint"] = None
+        _LANGFUSE_CLIENT_CACHE["client"] = None
         return None
     except Exception as e:
         logger.error(f"Failed to create Langfuse client: {e}")
+        _LANGFUSE_CLIENT_CACHE["fingerprint"] = None
+        _LANGFUSE_CLIENT_CACHE["client"] = None
         return None
 
 
@@ -353,26 +382,57 @@ def is_v3_client(client) -> bool:
     )
 
 
-def _extract_trace_user_id(trace_obj: Any) -> str | None:
-    """Extract user id from top-level fields or metadata/tags."""
-    user_id = get_attr(trace_obj, 'user_id', 'userId', 'sender', 'user')
-    if user_id:
-        return str(user_id)
-
-    metadata = get_attr(trace_obj, 'metadata', 'meta')
+def _normalize_metadata(metadata: Any) -> dict[str, Any]:
+    """Normalize metadata into a dictionary when possible."""
     if isinstance(metadata, dict):
-        meta_user = metadata.get('user_id') or metadata.get('userId')
-        if meta_user:
-            return str(meta_user)
+        return metadata
+    if isinstance(metadata, str):
+        try:
+            parsed = json.loads(metadata)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
 
-    tags = get_attr(trace_obj, 'tags', 'labels') or []
+
+def _extract_trace_user_ids(trace_obj: Any) -> set[str]:
+    """Extract all possible user-id candidates from a trace."""
+    user_ids: set[str] = set()
+
+    direct_user = get_attr(trace_obj, "user_id", "userId", "sender", "user")
+    if direct_user:
+        user_ids.add(str(direct_user))
+
+    metadata = _normalize_metadata(get_attr(trace_obj, "metadata", "meta"))
+    for key in (
+        "user_id",
+        "userId",
+        "app_user_id",
+        "created_by_user_id",
+        "owner_user_id",
+    ):
+        value = metadata.get(key)
+        if value:
+            user_ids.add(str(value))
+
+    tags = get_attr(trace_obj, "tags", "labels") or []
     if isinstance(tags, list):
         for tag in tags:
-            if isinstance(tag, str) and tag.startswith("user_id:"):
-                value = tag.split(":", 1)[1].strip()
-                if value:
-                    return value
-    return None
+            if not isinstance(tag, str):
+                continue
+            for prefix in ("user_id:", "app_user_id:", "created_by_user_id:"):
+                if tag.startswith(prefix):
+                    value = tag.split(":", 1)[1].strip()
+                    if value:
+                        user_ids.add(value)
+    return user_ids
+
+
+def _extract_trace_user_id(trace_obj: Any) -> str | None:
+    """Extract one user id from a trace (best effort)."""
+    user_ids = _extract_trace_user_ids(trace_obj)
+    return next(iter(user_ids), None)
 
 
 def get_attr(obj, *attrs, default=None):
@@ -412,6 +472,191 @@ def calculate_latency_ms(start_time, end_time) -> float | None:
     return None
 
 
+def _trace_cache_key(
+    user_id: str,
+    from_timestamp: datetime | None,
+    to_timestamp: datetime | None,
+    name: str | None,
+    tags: list[str] | None,
+) -> str:
+    tags_key = ",".join(sorted(tags or []))
+    from_key = from_timestamp.isoformat() if from_timestamp else ""
+    to_key = to_timestamp.isoformat() if to_timestamp else ""
+    return f"{user_id}|{from_key}|{to_key}|{name or ''}|{tags_key}"
+
+
+def _cache_traces(cache_key: str, traces: list[Any]) -> None:
+    _TRACE_FETCH_CACHE[cache_key] = {
+        "ts": time.monotonic(),
+        "traces": traces,
+    }
+    # Bound memory use for long-running processes.
+    if len(_TRACE_FETCH_CACHE) > 256:
+        oldest_key = min(
+            _TRACE_FETCH_CACHE.items(),
+            key=lambda item: float(item[1].get("ts", 0)),
+        )[0]
+        _TRACE_FETCH_CACHE.pop(oldest_key, None)
+
+
+def _extract_trace_metrics(trace: Any) -> tuple[int, int, int, float, float | None, list[str], int]:
+    """Read aggregate metrics from trace-level fields without N+1 observation calls."""
+    total_tokens = int(get_attr(trace, "totalTokens", "total_tokens", default=0) or 0)
+    input_tokens = int(get_attr(trace, "inputTokens", "input_tokens", "promptTokens", default=0) or 0)
+    output_tokens = int(get_attr(trace, "outputTokens", "output_tokens", "completionTokens", default=0) or 0)
+    if not total_tokens and (input_tokens or output_tokens):
+        total_tokens = input_tokens + output_tokens
+    if total_tokens and input_tokens == 0 and output_tokens == 0:
+        # Trace-level input/output breakdown may be unavailable; preserve total.
+        input_tokens = total_tokens
+
+    total_cost = float(
+        get_attr(
+            trace,
+            "calculated_total_cost",
+            "calculatedTotalCost",
+            "total_cost",
+            "totalCost",
+            default=0,
+        )
+        or 0
+    )
+
+    latency_raw = get_attr(trace, "latency_ms", "latencyMs", "latency", default=None)
+    latency_ms: float | None = None
+    if latency_raw is not None:
+        try:
+            latency_ms = float(latency_raw)
+        except (TypeError, ValueError):
+            latency_ms = None
+
+    metadata = _normalize_metadata(get_attr(trace, "metadata", "meta"))
+    models = []
+    model_candidates = [
+        get_attr(trace, "model"),
+        metadata.get("model"),
+        metadata.get("model_name"),
+        metadata.get("generation_model"),
+    ]
+    for candidate in model_candidates:
+        if candidate:
+            value = str(candidate)
+            if value not in models:
+                models.append(value)
+
+    level = str(get_attr(trace, "level", default="") or "").upper()
+    error_count = 1 if level in {"ERROR", "WARNING"} else 0
+    return total_tokens, input_tokens, output_tokens, total_cost, latency_ms, models, error_count
+
+
+def _get_trace_id(trace: Any) -> str:
+    return str(get_attr(trace, "id", "trace_id", "traceId", default="") or "")
+
+
+def _get_trace_observation_count(trace: Any) -> int:
+    return int(get_attr(trace, "observation_count", "observationCount", default=0) or 0)
+
+
+def _get_trace_metrics(
+    client: Any,
+    trace: Any,
+    *,
+    allow_observation_fallback: bool = True,
+    fallback_budget: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Get trace metrics with optional observation fallback for missing fields."""
+    trace_id = _get_trace_id(trace)
+    now_mono = time.monotonic()
+
+    if trace_id:
+        cached = _TRACE_METRICS_CACHE.get(trace_id)
+        if cached and (now_mono - float(cached.get("ts", 0))) <= _TRACE_METRICS_CACHE_TTL_SECONDS:
+            return dict(cached.get("metrics", {}))
+
+    (
+        total_tokens,
+        input_tokens,
+        output_tokens,
+        total_cost,
+        latency_ms,
+        models,
+        error_count,
+    ) = _extract_trace_metrics(trace)
+    observation_count = _get_trace_observation_count(trace)
+
+    metrics: dict[str, Any] = {
+        "total_tokens": int(total_tokens or 0),
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
+        "total_cost": float(total_cost or 0.0),
+        "latency_ms": latency_ms,
+        "models": list(models),
+        "error_count": int(error_count or 0),
+        "observation_count": int(observation_count or 0),
+    }
+
+    needs_fallback = (
+        allow_observation_fallback
+        and bool(trace_id)
+        and (
+            metrics["total_tokens"] <= 0
+            or (metrics["input_tokens"] <= 0 and metrics["output_tokens"] <= 0)
+            or metrics["total_cost"] <= 0
+            or not metrics["models"]
+            or metrics["observation_count"] <= 0
+        )
+    )
+    if needs_fallback and fallback_budget is not None and fallback_budget.get("remaining", 0) <= 0:
+        needs_fallback = False
+
+    if needs_fallback and trace_id:
+        if fallback_budget is not None:
+            fallback_budget["remaining"] = max(0, fallback_budget.get("remaining", 0) - 1)
+        try:
+            raw_observations = fetch_observations_for_trace(client, trace_id)
+            parsed_obs = [parse_observation(obs) for obs in raw_observations]
+            if parsed_obs:
+                obs_total_tokens = sum(o.total_tokens for o in parsed_obs)
+                obs_input_tokens = sum(o.input_tokens for o in parsed_obs)
+                obs_output_tokens = sum(o.output_tokens for o in parsed_obs)
+                obs_total_cost = sum(o.total_cost for o in parsed_obs)
+                obs_latencies = [o.latency_ms for o in parsed_obs if o.latency_ms is not None]
+                obs_models = []
+                for obs in parsed_obs:
+                    if obs.model and obs.model not in obs_models:
+                        obs_models.append(obs.model)
+                obs_error_count = sum(1 for o in parsed_obs if (o.level or "").upper() in {"ERROR", "WARNING"})
+
+                if metrics["total_tokens"] <= 0:
+                    metrics["total_tokens"] = int(obs_total_tokens or 0)
+                if metrics["input_tokens"] <= 0 and metrics["output_tokens"] <= 0:
+                    metrics["input_tokens"] = int(obs_input_tokens or 0)
+                    metrics["output_tokens"] = int(obs_output_tokens or 0)
+                if metrics["total_cost"] <= 0:
+                    metrics["total_cost"] = float(obs_total_cost or 0.0)
+                if metrics["latency_ms"] is None and obs_latencies:
+                    metrics["latency_ms"] = max(obs_latencies)
+                if not metrics["models"] and obs_models:
+                    metrics["models"] = obs_models
+                metrics["error_count"] = max(metrics["error_count"], int(obs_error_count or 0))
+                metrics["observation_count"] = max(metrics["observation_count"], len(parsed_obs))
+        except Exception:
+            pass
+
+    if trace_id:
+        _TRACE_METRICS_CACHE[trace_id] = {
+            "ts": now_mono,
+            "metrics": metrics,
+        }
+        if len(_TRACE_METRICS_CACHE) > 1024:
+            oldest_key = min(
+                _TRACE_METRICS_CACHE.items(),
+                key=lambda item: float(item[1].get("ts", 0)),
+            )[0]
+            _TRACE_METRICS_CACHE.pop(oldest_key, None)
+    return metrics
+
+
 def fetch_traces_from_langfuse(
     client,
     user_id: str,
@@ -420,6 +665,8 @@ def fetch_traces_from_langfuse(
     to_timestamp: datetime | None = None,
     name: str | None = None,
     tags: list[str] | None = None,
+    session_id: str | None = None,
+    fetch_all: bool = False,
 ) -> list:
     """
     Fetch traces from Langfuse using the appropriate SDK method.
@@ -431,25 +678,40 @@ def fetch_traces_from_langfuse(
     Args:
         client: Langfuse client
         user_id: User ID to filter by
-        limit: Maximum number of traces to fetch
+        limit: Maximum number of traces to fetch (ignored if fetch_all=True)
         from_timestamp: Start date filter (inclusive)
         to_timestamp: End date filter (inclusive)
         name: Filter traces by name (partial match)
         tags: Filter traces by tags
+        session_id: Filter traces by session ID
+        fetch_all: If True, paginate until ALL traces are fetched (up to safety cap of 5000)
     """
     trace_data = []
+    # When fetch_all is True, use a high cap but still paginate
+    effective_limit = 5000 if fetch_all else limit
     # Langfuse API has a max limit of 100 per request
-    page_size = min(100, limit)
+    page_size = min(100, effective_limit)
+    cache_key = _trace_cache_key(user_id, from_timestamp, to_timestamp, name, tags)
+    now_mono = time.monotonic()
+    cached_entry = _TRACE_FETCH_CACHE.get(cache_key)
+    stale_traces: list[Any] = []
+    if cached_entry:
+        cached_age = now_mono - float(cached_entry.get("ts", 0))
+        cached_traces = cached_entry.get("traces", []) or []
+        if cached_age <= _TRACE_CACHE_TTL_SECONDS and cached_traces:
+            return list(cached_traces)[:limit]
+        if cached_age <= _TRACE_CACHE_STALE_SECONDS and cached_traces:
+            stale_traces = list(cached_traces)
 
     sdk_version = getattr(client, '_sdk_version', 'unknown')
-    logger.info(f"Langfuse SDK version: {sdk_version}, is_v3: {is_v3_client(client)}")
-    logger.info(f"Looking for traces with user_id: {user_id}, limit={limit}, page_size={page_size}")
+    logger.debug(f"Langfuse SDK version: {sdk_version}, is_v3: {is_v3_client(client)}")
+    logger.debug(f"Looking for traces with user_id: {user_id}, limit={limit}, page_size={page_size}")
     if from_timestamp:
-        logger.info(f"  from_timestamp: {from_timestamp}")
+        logger.debug(f"  from_timestamp: {from_timestamp}")
     if to_timestamp:
-        logger.info(f"  to_timestamp: {to_timestamp}")
+        logger.debug(f"  to_timestamp: {to_timestamp}")
     if name:
-        logger.info(f"  name filter: {name}")
+        logger.debug(f"  name filter: {name}")
 
     # ==========================================================================
     # Primary method: fetch_traces() - works in both v2 and v3
@@ -458,13 +720,15 @@ def fetch_traces_from_langfuse(
         try:
             page = 1
             all_traces = []
-            max_pages = (limit + page_size - 1) // page_size
+            max_pages = (effective_limit + page_size - 1) // page_size
 
             filter_kwargs = {"user_id": user_id, "limit": page_size}
             if from_timestamp:
                 filter_kwargs["from_timestamp"] = from_timestamp
             if to_timestamp:
                 filter_kwargs["to_timestamp"] = to_timestamp
+            if session_id:
+                filter_kwargs["session_id"] = session_id
             if name:
                 filter_kwargs["name"] = name
             if tags:
@@ -495,11 +759,12 @@ def fetch_traces_from_langfuse(
                 page += 1
 
             trace_data = all_traces
-            logger.info(f"fetch_traces returned {len(trace_data)} traces for user_id={user_id}")
+            logger.debug(f"fetch_traces returned {len(trace_data)} traces for user_id={user_id}")
 
             if trace_data:
                 first = trace_data[0]
                 logger.debug(f"Sample trace: type={type(first)}, user_id={get_attr(first, 'user_id', 'userId')}")
+                _cache_traces(cache_key, trace_data)
                 return trace_data
 
         except Exception as e:
@@ -520,9 +785,10 @@ def fetch_traces_from_langfuse(
 
         if trace_api and hasattr(trace_api, 'list'):
             try:
-                logger.info("Trying v3 fallback: client.api.trace(s).list")
+                logger.debug("Trying v3 fallback: client.api.trace(s).list")
                 all_traces = []
                 page = 1
+                used_variant: dict[str, Any] | None = None
 
                 # Try both snake_case and camelCase filters for compatibility.
                 filter_variants = [
@@ -534,7 +800,7 @@ def fetch_traces_from_langfuse(
                 for variant in filter_variants:
                     all_traces = []
                     page = 1
-                    while len(all_traces) < limit:
+                    while len(all_traces) < effective_limit:
                         list_kwargs = {"limit": page_size, "page": page}
                         list_kwargs.update(variant)
                         if from_timestamp:
@@ -567,16 +833,27 @@ def fetch_traces_from_langfuse(
                         page += 1
 
                     if all_traces:
+                        used_variant = variant
                         break
 
                 # Apply client-side user filtering (handles traces where user_id is stored in metadata/tags).
                 if all_traces:
-                    trace_data = [t for t in all_traces if str(_extract_trace_user_id(t) or '') == str(user_id)]
+                    trace_data = []
+                    for trace_obj in all_traces:
+                        extracted_uids = _extract_trace_user_ids(trace_obj)
+                        if str(user_id) in extracted_uids:
+                            trace_data.append(trace_obj)
+                            continue
+                        # If server-side user filter was accepted, keep rows with missing
+                        # user metadata to avoid dropping valid traces returned by API.
+                        if not extracted_uids and used_variant and ("user_id" in used_variant or "userId" in used_variant):
+                            trace_data.append(trace_obj)
                 else:
                     trace_data = []
 
-                logger.info(f"v3 api.trace(s).list returned {len(trace_data)} traces for user_id={user_id}")
+                logger.debug(f"v3 api.trace(s).list returned {len(trace_data)} traces for user_id={user_id}")
                 if trace_data:
+                    _cache_traces(cache_key, trace_data)
                     return trace_data
             except Exception as e:
                 logger.warning(f"v3 api.trace(s).list failed: {e}")
@@ -585,7 +862,7 @@ def fetch_traces_from_langfuse(
     # ==========================================================================
     # Fallback: fetch without user_id filter and filter manually
     # ==========================================================================
-    max_pages = (limit + page_size - 1) // page_size  # ceil division
+    max_pages = (effective_limit + page_size - 1) // page_size  # ceil division
     if hasattr(client, 'fetch_traces'):
         try:
             page = 1
@@ -597,7 +874,7 @@ def fetch_traces_from_langfuse(
                 fallback_kwargs["to_timestamp"] = to_timestamp
 
             while page <= max_pages:
-                logger.info(f"Fallback fetching page {page} without user filter, limit={page_size}")
+                logger.debug(f"Fallback fetching page {page} without user filter, limit={page_size}")
                 response = client.fetch_traces(**fallback_kwargs, page=page)
 
                 page_traces = []
@@ -618,23 +895,24 @@ def fetch_traces_from_langfuse(
 
                 page += 1
 
-            logger.info(f"Fallback got {len(all_traces)} total traces, filtering by user_id={user_id}")
+            logger.debug(f"Fallback got {len(all_traces)} total traces, filtering by user_id={user_id}")
 
             # Filter by user_id
-            trace_data = [t for t in all_traces if str(_extract_trace_user_id(t) or '') == str(user_id)]
-            logger.info(f"After user_id filter: {len(trace_data)} traces")
+            trace_data = [t for t in all_traces if str(user_id) in _extract_trace_user_ids(t)]
+            logger.debug(f"After user_id filter: {len(trace_data)} traces")
 
             # Apply client-side name filter if provided (partial match)
             if name and trace_data:
                 name_lower = name.lower()
                 trace_data = [t for t in trace_data if name_lower in (get_attr(t, 'name') or '').lower()]
-                logger.info(f"After name filter: {len(trace_data)} traces")
+                logger.debug(f"After name filter: {len(trace_data)} traces")
 
             if trace_data:
+                _cache_traces(cache_key, trace_data)
                 return trace_data
             elif all_traces:
                 sample_uids = set(
-                    str(_extract_trace_user_id(t) or '')
+                    str(next(iter(_extract_trace_user_ids(t)), '') or '')
                     for t in all_traces[:20]
                     if _extract_trace_user_id(t)
                 )
@@ -648,19 +926,53 @@ def fetch_traces_from_langfuse(
     # ==========================================================================
     if hasattr(client, 'client') and hasattr(client.client, 'traces'):
         try:
-            logger.info(f"Attempting direct client.traces.list(user_id={user_id})")
+            logger.debug(f"Attempting direct client.traces.list(user_id={user_id})")
             response = client.client.traces.list(user_id=user_id, limit=page_size)
             if hasattr(response, 'data'):
                 trace_data = response.data or []
             elif isinstance(response, list):
                 trace_data = response
-            logger.info(f"Direct traces API returned {len(trace_data)} traces")
+            logger.debug(f"Direct traces API returned {len(trace_data)} traces")
             if trace_data:
+                _cache_traces(cache_key, trace_data)
                 return trace_data
         except Exception as e:
             logger.debug(f"Direct traces API failed: {e}")
 
-    logger.warning(f"All methods failed to fetch traces for user_id={user_id}")
+    # Date-filter fallback: some SDK/API combinations return intermittent empty
+    # results for date-filtered list calls. Retry without date filter and
+    # apply the date window client-side.
+    if not trace_data and (from_timestamp or to_timestamp):
+        try:
+            unfiltered = fetch_traces_from_langfuse(
+                client,
+                user_id=user_id,
+                limit=limit,
+                from_timestamp=None,
+                to_timestamp=None,
+                name=name,
+                tags=tags,
+            )
+            if unfiltered:
+                filtered: list[Any] = []
+                for trace_obj in unfiltered:
+                    ts = parse_datetime(get_attr(trace_obj, "timestamp"))
+                    if from_timestamp and (not ts or ts < from_timestamp):
+                        continue
+                    if to_timestamp and (not ts or ts > to_timestamp):
+                        continue
+                    filtered.append(trace_obj)
+                if filtered:
+                    _cache_traces(cache_key, filtered)
+                    return filtered[:effective_limit]
+        except Exception as e:
+            logger.debug(f"Date-filter fallback failed: {e}")
+
+    if stale_traces:
+        logger.debug("Using stale trace cache for user_id={} due empty/failed fresh fetch", user_id)
+        return stale_traces[:effective_limit]
+
+    logger.debug(f"All methods failed to fetch traces for user_id={user_id}")
     return trace_data
 
 
@@ -671,16 +983,38 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
     """
     observations = []
 
+    def _response_to_list(response: Any) -> list:
+        if hasattr(response, "data"):
+            return response.data or []
+        if isinstance(response, list):
+            return response
+        if isinstance(response, dict):
+            return response.get("data", []) or []
+        return []
+
+    def _try_call(method: Any) -> list:
+        if not callable(method):
+            return []
+        variants = [
+            {"trace_id": trace_id, "limit": 100},
+            {"traceId": trace_id, "limit": 100},
+            {"trace": trace_id, "limit": 100},
+        ]
+        for kwargs in variants:
+            try:
+                rows = _response_to_list(method(**kwargs))
+                if rows:
+                    return rows
+            except TypeError:
+                continue
+            except Exception:
+                continue
+        return []
+
     # Primary method: fetch_observations() - works in both v2 and v3
     if hasattr(client, 'fetch_observations'):
         try:
-            response = client.fetch_observations(trace_id=trace_id, limit=100)
-            if hasattr(response, 'data'):
-                observations = response.data or []
-            elif isinstance(response, list):
-                observations = response
-            elif isinstance(response, dict) and 'data' in response:
-                observations = response.get('data', [])
+            observations = _try_call(client.fetch_observations)
             if observations:
                 return observations
         except Exception as e:
@@ -691,11 +1025,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
         obs_client = client.api.observations
         if hasattr(obs_client, 'get_many'):
             try:
-                response = obs_client.get_many(trace_id=trace_id, limit=100)
-                if hasattr(response, 'data'):
-                    observations = response.data or []
-                elif isinstance(response, list):
-                    observations = response
+                observations = _try_call(obs_client.get_many)
                 if observations:
                     return observations
             except Exception as e:
@@ -703,11 +1033,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
 
         if hasattr(obs_client, 'list'):
             try:
-                response = obs_client.list(trace_id=trace_id, limit=100)
-                if hasattr(response, 'data'):
-                    observations = response.data or []
-                elif isinstance(response, list):
-                    observations = response
+                observations = _try_call(obs_client.list)
                 if observations:
                     return observations
             except Exception as e:
@@ -718,11 +1044,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
         obs_v2_client = client.api.observations_v_2
         if hasattr(obs_v2_client, 'get_many'):
             try:
-                response = obs_v2_client.get_many(trace_id=trace_id, limit=100)
-                if hasattr(response, 'data'):
-                    observations = response.data or []
-                elif isinstance(response, list):
-                    observations = response
+                observations = _try_call(obs_v2_client.get_many)
                 if observations:
                     return observations
             except Exception as e:
@@ -731,11 +1053,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
     # Fallback: Try direct client observations API
     if hasattr(client, 'client') and hasattr(client.client, 'observations'):
         try:
-            response = client.client.observations.list(trace_id=trace_id, limit=100)
-            if hasattr(response, 'data'):
-                observations = response.data or []
-            elif isinstance(response, list):
-                observations = response
+            observations = _try_call(client.client.observations.list)
             if observations:
                 return observations
         except Exception as e:
@@ -927,7 +1245,7 @@ def parse_observation(obs: Any) -> ObservationResponse:
 
 def parse_trace_to_list_item(trace: Any, observations: list | None = None) -> TraceListItem:
     """Parse a trace into a list item (lighter format)."""
-    trace_id = get_attr(trace, 'id', default='')
+    trace_id = get_attr(trace, 'id', 'trace_id', 'traceId', default='')
     timestamp = parse_datetime(get_attr(trace, 'timestamp'))
 
     # If we have observations, aggregate from them
@@ -951,6 +1269,12 @@ def parse_trace_to_list_item(trace: Any, observations: list | None = None) -> Tr
         total_cost = float(get_attr(trace,
             'calculated_total_cost', 'calculatedTotalCost',
             'total_cost', 'totalCost', default=0) or 0)
+        latency_raw = get_attr(trace, "latency_ms", "latencyMs", "latency", default=None)
+        if latency_raw is not None:
+            try:
+                latencies.append(float(latency_raw))
+            except (TypeError, ValueError):
+                pass
 
     # Calculate trace-level latency from first/last observation or trace times
     latency_ms = max(latencies) if latencies else None
@@ -1230,7 +1554,7 @@ async def get_user_traces(
         # This eliminates the N+1 query problem - observations are fetched only in detail view
         traces = []
         for trace in raw_traces:
-            trace_id = get_attr(trace, 'id')
+            trace_id = get_attr(trace, 'id', 'trace_id', 'traceId')
             if not trace_id:
                 continue
             # Use trace-level metrics, don't fetch observations for list view
@@ -1301,13 +1625,31 @@ async def get_trace_detail(
             except Exception as e:
                 logger.debug(f"v3 traces.get failed: {e}")
 
+        # Last resort: scan recent traces and match by id variants.
+        if not trace:
+            recent_traces = fetch_traces_from_langfuse(
+                client,
+                str(current_user.id),
+                limit=300,
+            )
+            for candidate in recent_traces:
+                candidate_id = str(get_attr(candidate, "id", "trace_id", "traceId", default="") or "")
+                if candidate_id == str(trace_id):
+                    trace = candidate
+                    break
+
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
 
         # Security check
-        trace_user_id = get_attr(trace, 'user_id', 'userId')
-        if trace_user_id and str(trace_user_id) != str(current_user.id):
+        trace_user_ids = _extract_trace_user_ids(trace)
+        if trace_user_ids and str(current_user.id) not in trace_user_ids:
             raise HTTPException(status_code=404, detail="Trace not found")
+        trace_user_id = (
+            str(current_user.id)
+            if str(current_user.id) in trace_user_ids
+            else (next(iter(trace_user_ids)) if trace_user_ids else None)
+        )
 
         requested_trace_id = str(trace_id)
         resolved_trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default=trace_id) or trace_id)
@@ -1341,6 +1683,16 @@ async def get_trace_detail(
             end_times = [o.end_time for o in observations if o.end_time]
             if start_times and end_times:
                 latency_ms = (max(end_times) - min(start_times)).total_seconds() * 1000
+        else:
+            # Fallback to trace-level metrics if observations are unavailable.
+            trace_metrics = _get_trace_metrics(client, trace, allow_observation_fallback=False)
+            total_tokens = int(trace_metrics["total_tokens"])
+            input_tokens = int(trace_metrics["input_tokens"])
+            output_tokens = int(trace_metrics["output_tokens"])
+            total_cost = float(trace_metrics["total_cost"])
+            latency_ms = trace_metrics["latency_ms"]
+            if not models_used:
+                models_used = list(trace_metrics["models"])
 
         # Fetch evaluation scores for this trace
         scores: list[ScoreItem] = []
@@ -1430,6 +1782,7 @@ async def get_user_sessions(
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to 7 days ago.")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD). Defaults to today.")] = None,
     search: Annotated[str | None, Query(description="Search by session ID or trace name")] = None,
+    fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
 ) -> SessionsListResponse:
     """
     Get chat sessions for the current user with aggregated metrics.
@@ -1468,14 +1821,18 @@ async def get_user_sessions(
             # Default to last 7 days
             from_timestamp = now - timedelta(days=7)
 
-        # Fetch traces with date filters - limit to reasonable amount
+        trace_limit = 500
+        # Fetch traces with date filters
         raw_traces = fetch_traces_from_langfuse(
-            client, user_id, limit=200,
+            client, user_id, limit=trace_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
+            fetch_all=fetch_all,
         )
 
-        # Group by session - use trace-level metrics (NO observation fetching)
+        is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
+
+        # Group by session - use trace-level metrics (NO observation fetching for performance)
         sessions_data: dict[str, dict] = {}
 
         for trace in raw_traces:
@@ -1485,11 +1842,17 @@ async def get_user_sessions(
 
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
 
-            # Use trace-level metrics instead of fetching observations (eliminates N+1)
-            trace_tokens = get_attr(trace, 'totalTokens', 'total_tokens', default=0) or 0
-            trace_cost = float(get_attr(trace,
-                'calculated_total_cost', 'calculatedTotalCost',
-                'total_cost', 'totalCost', default=0) or 0)
+            trace_tokens = int(get_attr(trace, 'totalTokens', 'total_tokens', default=0) or 0)
+            trace_cost = float(get_attr(trace, 'calculated_total_cost', 'calculatedTotalCost', 'total_cost', default=0) or 0)
+            trace_model = get_attr(trace, 'model', default=None)
+            start_time = parse_datetime(get_attr(trace, 'start_time', 'startTime', 'timestamp'))
+            end_time = parse_datetime(get_attr(trace, 'end_time', 'endTime'))
+            if start_time and end_time and end_time > start_time:
+                trace_latency_ms: float | None = (end_time - start_time).total_seconds() * 1000
+            else:
+                trace_latency_ms = None
+            trace_status = get_attr(trace, 'level', 'status', default='') or ''
+            trace_error_count = 1 if str(trace_status).upper() in ('ERROR', 'WARNING') else 0
 
             if session_id not in sessions_data:
                 sessions_data[session_id] = {
@@ -1499,11 +1862,18 @@ async def get_user_sessions(
                     "total_cost": 0.0,
                     "timestamps": [],
                     "models": set(),
+                    "latencies": [],
+                    "error_count": 0,
                 }
 
             sessions_data[session_id]["trace_count"] += 1
             sessions_data[session_id]["total_tokens"] += trace_tokens
             sessions_data[session_id]["total_cost"] += trace_cost
+            if trace_model:
+                sessions_data[session_id]["models"].add(trace_model)
+            sessions_data[session_id]["error_count"] += trace_error_count
+            if trace_latency_ms is not None:
+                sessions_data[session_id]["latencies"].append(trace_latency_ms)
             if timestamp:
                 sessions_data[session_id]["timestamps"].append(timestamp)
 
@@ -1511,14 +1881,20 @@ async def get_user_sessions(
         sessions = []
         for sid, data in sessions_data.items():
             timestamps = data["timestamps"]
+            latencies = data["latencies"]
+            avg_latency = (sum(latencies) / len(latencies)) if latencies else None
+            error_count = int(data.get("error_count", 0))
             sessions.append(SessionListItem(
                 session_id=sid,
                 trace_count=data["trace_count"],
                 total_tokens=data["total_tokens"],
                 total_cost=data["total_cost"],
+                avg_latency_ms=avg_latency,
                 first_trace_at=min(timestamps) if timestamps else None,
                 last_trace_at=max(timestamps) if timestamps else None,
                 models_used=list(data["models"]),
+                error_count=error_count,
+                has_errors=error_count > 0,
             ))
 
         # Apply search filter (client-side search by session ID)
@@ -1531,7 +1907,12 @@ async def get_user_sessions(
         total_count = len(sessions)
         sessions = sessions[:limit]
 
-        return SessionsListResponse(sessions=sessions, total=total_count)
+        return SessionsListResponse(
+            sessions=sessions,
+            total=total_count,
+            truncated=is_truncated,
+            fetched_trace_count=len(raw_traces),
+        )
 
     except HTTPException:
         raise
@@ -1544,6 +1925,8 @@ async def get_user_sessions(
 async def get_session_detail(
     session_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
+    to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
 ) -> SessionDetailResponse:
     """
     Get detailed session information including all traces and per-model breakdown.
@@ -1555,10 +1938,35 @@ async def get_session_detail(
     try:
         user_id = str(current_user.id)
 
-        # Fetch traces for this user
-        raw_traces = fetch_traces_from_langfuse(client, user_id, limit=100)
+        # Parse optional date filters
+        now = datetime.now(timezone.utc)
+        if to_date:
+            try:
+                to_timestamp = datetime.strptime(to_date, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
+        else:
+            to_timestamp = None
 
-        # Filter to this session
+        if from_date:
+            try:
+                from_timestamp = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
+        else:
+            from_timestamp = None
+
+        # Fetch traces directly filtered by session_id
+        raw_traces = fetch_traces_from_langfuse(
+            client, user_id, limit=100,
+            session_id=session_id,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+        )
+
+        # Filter to this session (defensive in case session_id filter not supported by SDK)
         session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
 
         if not session_traces:
@@ -1576,7 +1984,7 @@ async def get_session_detail(
         timestamps = []
 
         for trace in session_traces:
-            trace_id = get_attr(trace, 'id')
+            trace_id = _get_trace_id(trace)
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
             if timestamp:
                 timestamps.append(timestamp)
@@ -1654,6 +2062,7 @@ async def get_user_metrics(
     models: Annotated[str | None, Query(description="Comma-separated model names to filter")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC (e.g., 330 for IST)")] = None,
     include_model_breakdown: Annotated[bool, Query(description="Include per-model breakdown (slower)")] = False,
+    fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
 ) -> MetricsResponse:
     """
     Get comprehensive aggregated metrics for the current user.
@@ -1699,18 +2108,23 @@ async def get_user_metrics(
         if models:
             model_filter = [m.strip() for m in models.split(",") if m.strip()]
 
-        # Fetch traces with date filters - limit to reasonable amount for performance
+        # Fetch traces with date filters
+        trace_limit = 500
         raw_traces = fetch_traces_from_langfuse(
             client,
             user_id,
-            limit=150,  # Reduced from 500 for faster loading
+            limit=trace_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
             name=search,
+            fetch_all=fetch_all,
         )
+
+        is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
 
         # Aggregate metrics
         total_traces = len(raw_traces)
+        fallback_budget = {"remaining": min(120, total_traces)}
         total_observations = 0
         total_tokens = 0
         input_tokens = 0
@@ -1749,28 +2163,41 @@ async def get_user_metrics(
                 date_str = timestamp.strftime('%Y-%m-%d') if timestamp else 'Unknown'
             daily_data[date_str]["trace_count"] += 1
 
-            # Get trace-level cost (Langfuse stores this at trace level)
-            trace_cost = float(get_attr(trace,
-                'calculated_total_cost', 'calculatedTotalCost',
-                'total_cost', 'totalCost', default=0) or 0)
+            trace_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=not include_model_breakdown,
+                fallback_budget=fallback_budget,
+            )
+            trace_tokens = int(trace_metrics["total_tokens"])
+            trace_input_tokens = int(trace_metrics["input_tokens"])
+            trace_output_tokens = int(trace_metrics["output_tokens"])
+            trace_cost = float(trace_metrics["total_cost"])
+            trace_latency_ms = trace_metrics["latency_ms"]
+            trace_models = list(trace_metrics["models"])
 
-            # Always fetch observations for accurate token counting
-            # Tokens are stored at observation level in Langfuse, not trace level
+            # Best-effort model filter using trace-level model fields.
+            if model_filter and trace_models:
+                if not any(model_name in model_filter for model_name in trace_models):
+                    continue
+
             parsed_obs = []
-            try:
-                observations = fetch_observations_for_trace(client, str(trace_id))
-                parsed_obs = [parse_observation(obs) for obs in observations]
-            except Exception:
-                parsed_obs = []
+            if include_model_breakdown:
+                try:
+                    observations = fetch_observations_for_trace(client, str(trace_id))
+                    parsed_obs = [parse_observation(obs) for obs in observations]
+                except Exception:
+                    parsed_obs = []
 
-            # Calculate tokens from observations (accurate)
-            trace_tokens = sum(obs.total_tokens for obs in parsed_obs)
-            trace_input_tokens = sum(obs.input_tokens for obs in parsed_obs)
-            trace_output_tokens = sum(obs.output_tokens for obs in parsed_obs)
-
-            # Fall back to trace-level tokens if no observations found
-            if trace_tokens == 0 and not parsed_obs:
-                trace_tokens = get_attr(trace, 'totalTokens', 'total_tokens', default=0) or 0
+                # Replace trace-level totals with observation totals when available.
+                if parsed_obs:
+                    trace_tokens = sum(obs.total_tokens for obs in parsed_obs)
+                    trace_input_tokens = sum(obs.input_tokens for obs in parsed_obs)
+                    trace_output_tokens = sum(obs.output_tokens for obs in parsed_obs)
+                    if trace_latency_ms is None:
+                        obs_latencies = [obs.latency_ms for obs in parsed_obs if obs.latency_ms]
+                        if obs_latencies:
+                            trace_latency_ms = max(obs_latencies)
 
             total_tokens += trace_tokens
             input_tokens += trace_input_tokens
@@ -1782,27 +2209,41 @@ async def get_user_metrics(
             agent_data[trace_name]["tokens"] += trace_tokens
             agent_data[trace_name]["cost"] += trace_cost
 
-            # Process observations
-            total_observations += len(parsed_obs)
-            daily_data[date_str]["observation_count"] += len(parsed_obs)
+            if include_model_breakdown:
+                total_observations += len(parsed_obs)
+                daily_data[date_str]["observation_count"] += len(parsed_obs)
 
-            for obs in parsed_obs:
-                # Apply model filter if specified
-                if model_filter and obs.model:
-                    if obs.model not in model_filter:
+                for obs in parsed_obs:
+                    # Apply model filter if specified
+                    if model_filter and obs.model and obs.model not in model_filter:
                         continue
 
-                if obs.latency_ms:
-                    latencies.append(obs.latency_ms)
-
-                if obs.model:
-                    model_data[obs.model]["call_count"] += 1
-                    model_data[obs.model]["total_tokens"] += obs.total_tokens
-                    model_data[obs.model]["input_tokens"] += obs.input_tokens
-                    model_data[obs.model]["output_tokens"] += obs.output_tokens
-                    model_data[obs.model]["total_cost"] += obs.total_cost
                     if obs.latency_ms:
-                        model_data[obs.model]["latencies"].append(obs.latency_ms)
+                        latencies.append(obs.latency_ms)
+
+                    if obs.model:
+                        model_data[obs.model]["call_count"] += 1
+                        model_data[obs.model]["total_tokens"] += obs.total_tokens
+                        model_data[obs.model]["input_tokens"] += obs.input_tokens
+                        model_data[obs.model]["output_tokens"] += obs.output_tokens
+                        model_data[obs.model]["total_cost"] += obs.total_cost
+                        if obs.latency_ms:
+                            model_data[obs.model]["latencies"].append(obs.latency_ms)
+            else:
+                # Fast path for dashboard loading.
+                trace_obs_count = int(trace_metrics["observation_count"] or 0)
+                total_observations += trace_obs_count
+                daily_data[date_str]["observation_count"] += trace_obs_count
+                if trace_latency_ms:
+                    latencies.append(trace_latency_ms)
+                for model_name in trace_models:
+                    model_data[model_name]["call_count"] += 1
+                    model_data[model_name]["total_tokens"] += trace_tokens
+                    model_data[model_name]["input_tokens"] += trace_input_tokens
+                    model_data[model_name]["output_tokens"] += trace_output_tokens
+                    model_data[model_name]["total_cost"] += trace_cost
+                    if trace_latency_ms:
+                        model_data[model_name]["latencies"].append(trace_latency_ms)
 
         # Calculate performance metrics
         avg_latency = sum(latencies) / len(latencies) if latencies else None
@@ -1840,7 +2281,7 @@ async def get_user_metrics(
                 ))
         by_date = by_date[-days:]  # Keep only last N days
 
-        # Build top agents
+        # Build top agents (aggregated by trace name)
         top_agents = [
             {"name": name, "count": data["count"], "tokens": data["tokens"], "cost": data["cost"]}
             for name, data in sorted(agent_data.items(), key=lambda x: x[1]["count"], reverse=True)[:10]
@@ -1859,6 +2300,8 @@ async def get_user_metrics(
             by_model=by_model,
             by_date=by_date,
             top_agents=top_agents,
+            truncated=is_truncated,
+            fetched_trace_count=len(raw_traces),
         )
 
     except HTTPException:
@@ -1894,6 +2337,8 @@ class AgentListResponse(BaseModel):
     """List of agents/agents."""
     agents: list[AgentListItem]
     total: int
+    truncated: bool = False
+    fetched_trace_count: int = 0
 
 
 class AgentDetailResponse(BaseModel):
@@ -1935,6 +2380,8 @@ class ProjectListResponse(BaseModel):
     """List of projects."""
     projects: list[ProjectListItem]
     total: int
+    truncated: bool = False
+    fetched_trace_count: int = 0
 
 
 class ProjectDetailResponse(BaseModel):
@@ -1967,7 +2414,7 @@ def extract_agent_project_info(trace) -> tuple[str | None, str | None, str | Non
 
     Returns: (agent_id, agent_name, project_id, project_name)
     """
-    metadata = get_attr(trace, 'metadata', default={}) or {}
+    metadata = _normalize_metadata(get_attr(trace, 'metadata', default={}) or {})
     tags = get_attr(trace, 'tags', default=[]) or []
 
     # Try to get from metadata first (more reliable)
@@ -2028,7 +2475,7 @@ def _match_trace_to_agent(trace, agents_by_id: dict, agents_by_name: dict) -> tu
     Returns: (agent_id, agent_name) or (None, None) if no match
     """
     trace_name = get_attr(trace, 'name')
-    metadata = get_attr(trace, 'metadata', default={}) or {}
+    metadata = _normalize_metadata(get_attr(trace, 'metadata', default={}) or {})
     tags = get_attr(trace, 'tags', default=[]) or []
 
     # Skip vertex-level traces
@@ -2071,6 +2518,15 @@ def _match_trace_to_agent(trace, agents_by_id: dict, agents_by_name: dict) -> tu
     return None, None
 
 
+def _user_agents_stmt(user_id):
+    """Build a user-agent query compatible with schemas that may not expose `is_component`."""
+    stmt = select(Agent).where(Agent.user_id == user_id)
+    is_component_col = getattr(Agent, "is_component", None)
+    if is_component_col is not None:
+        stmt = stmt.where((is_component_col == False) | (is_component_col.is_(None)))  # noqa: E712
+    return stmt
+
+
 @router.get("/agents")
 async def get_user_agents(
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -2078,6 +2534,7 @@ async def get_user_agents(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
+    fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
 ) -> AgentListResponse:
     """
     Get all agents/agents for the current user with aggregated metrics.
@@ -2093,11 +2550,7 @@ async def get_user_agents(
         logger.info(f"Fetching agents for user_id: {user_id}")
 
         # Get all user agents from database (source of truth)
-        agents_result = await session.exec(
-            select(Agent).where(
-                Agent.user_id == current_user.id,
-            )
-        )
+        agents_result = await session.exec(_user_agents_stmt(current_user.id))
         user_agents = agents_result.all()
 
         # Build lookup dictionaries
@@ -2105,20 +2558,20 @@ async def get_user_agents(
         agents_by_name = {f.name: f for f in user_agents}
 
         # Get all folders (projects) that contain these agents
-        project_ids = set(f.project_id for f in user_agents if f.project_id)
+        folder_ids = set(f.folder_id for f in user_agents if f.folder_id)
         folders_by_id: dict[str, Folder] = {}
-        if project_ids:
+        if folder_ids:
             folders_result = await session.exec(
-                select(Folder).where(Folder.id.in_(project_ids))
+                select(Folder).where(Folder.id.in_(folder_ids))
             )
             folders_by_id = {str(f.id): f for f in folders_result.all()}
 
         # Build agent_id to folder mapping
         agent_to_folder: dict[str, tuple[str | None, str | None]] = {}
         for agent in user_agents:
-            project_id = str(agent.project_id) if agent.project_id else None
-            folder_name = folders_by_id.get(project_id).name if project_id and project_id in folders_by_id else None
-            agent_to_folder[str(agent.id)] = (project_id, folder_name)
+            folder_id = str(agent.folder_id) if agent.folder_id else None
+            folder_name = folders_by_id.get(folder_id).name if folder_id and folder_id in folders_by_id else None
+            agent_to_folder[str(agent.id)] = (folder_id, folder_name)
 
         logger.info(f"Found {len(user_agents)} agents in database for user")
 
@@ -2139,11 +2592,15 @@ async def get_user_agents(
                 raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
 
         # Fetch all traces from Langfuse
+        trace_limit = 500
         raw_traces = fetch_traces_from_langfuse(
-            client, user_id, limit=100,
+            client, user_id, limit=trace_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
+            fetch_all=fetch_all,
         )
+
+        is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
 
         logger.info(f"Found {len(raw_traces)} traces from Langfuse")
 
@@ -2170,6 +2627,7 @@ async def get_user_agents(
         # Pass 2: Aggregate ALL traces by session, grouping by agent
         agents_data: dict[str, dict] = {}
         processed_traces: set[str] = set()
+        fallback_budget = {"remaining": min(120, len(raw_traces))}
 
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id')
@@ -2195,18 +2653,20 @@ async def get_user_agents(
             if not agent_id:
                 continue  # Skip traces not associated with any agent
 
-            # Fetch observations for this trace
-            try:
-                observations = fetch_observations_for_trace(client, str(trace_id))
-                parsed_obs = [parse_observation(obs) for obs in observations]
-            except:
-                parsed_obs = []
-
-            trace_tokens = sum(o.total_tokens for o in parsed_obs)
-            trace_cost = sum(o.total_cost for o in parsed_obs)
-            models = set(o.model for o in parsed_obs if o.model)
-            latencies = [o.latency_ms for o in parsed_obs if o.latency_ms]
-            error_count = sum(1 for o in parsed_obs if o.level in ("ERROR", "WARNING"))
+            trace_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=True,
+                fallback_budget=fallback_budget,
+            )
+            trace_tokens = int(trace_metrics["total_tokens"])
+            trace_cost = float(trace_metrics["total_cost"])
+            trace_latency_ms = trace_metrics["latency_ms"]
+            trace_models = list(trace_metrics["models"])
+            trace_error_count = int(trace_metrics["error_count"])
+            models = set(trace_models)
+            latencies = [trace_latency_ms] if trace_latency_ms is not None else []
+            error_count = trace_error_count
 
             if agent_id not in agents_data:
                 agents_data[agent_id] = {
@@ -2267,7 +2727,12 @@ async def get_user_agents(
         total_count = len(agents)
         agents = agents[:limit]
 
-        return AgentListResponse(agents=agents, total=total_count)
+        return AgentListResponse(
+            agents=agents,
+            total=total_count,
+            truncated=is_truncated,
+            fetched_trace_count=len(raw_traces),
+        )
 
     except HTTPException:
         raise
@@ -2538,6 +3003,9 @@ async def get_user_projects(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
+    to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
+    fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
 ) -> ProjectListResponse:
     """
     Get all projects (folders) for the current user with aggregated metrics.
@@ -2550,6 +3018,21 @@ async def get_user_projects(
         user_id = str(current_user.id)
         logger.info(f"Fetching projects for user_id: {user_id}")
 
+        from_timestamp = None
+        to_timestamp = None
+        if from_date:
+            try:
+                from_timestamp = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
+        if to_date:
+            try:
+                to_timestamp = datetime.strptime(to_date, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
+
         # Get all user folders from database
         folders_result = await session.exec(
             select(Folder).where(Folder.user_id == current_user.id)
@@ -2557,25 +3040,33 @@ async def get_user_projects(
         user_folders = folders_result.all()
 
         # Get all user agents
-        agents_result = await session.exec(
-            select(Agent).where(
-                Agent.user_id == current_user.id,
-            )
-        )
+        agents_result = await session.exec(_user_agents_stmt(current_user.id))
         user_agents = agents_result.all()
 
         # Build folder lookup and agent-to-folder mapping
         folders_by_id = {str(f.id): f for f in user_folders}
         agent_to_folder: dict[str, str] = {}
         for agent in user_agents:
-            if agent.project_id:
-                agent_to_folder[str(agent.id)] = str(agent.project_id)
+            if agent.folder_id:
+                agent_to_folder[str(agent.id)] = str(agent.folder_id)
 
         agents_by_id = {str(f.id): f for f in user_agents}
         agents_by_name = {f.name: f for f in user_agents}
 
         # Fetch all traces
-        raw_traces = fetch_traces_from_langfuse(client, user_id, limit=100)
+        trace_limit = 500
+        raw_traces = fetch_traces_from_langfuse(
+            client,
+            user_id,
+            limit=trace_limit,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            fetch_all=fetch_all,
+        )
+
+        is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
+
+        fallback_budget = {"remaining": min(120, len(raw_traces))}
 
         # Aggregate by project
         projects_data: dict[str, dict] = {}
@@ -2587,28 +3078,26 @@ async def get_user_projects(
                 continue
 
             # Get folder for this agent
-            project_id = agent_to_folder.get(matched_fid)
-            if not project_id:
+            folder_id = agent_to_folder.get(matched_fid)
+            if not folder_id:
                 continue
 
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
             session_id = get_attr(trace, 'session_id', 'sessionId')
 
-            # Fetch observations
-            trace_id = get_attr(trace, 'id')
-            try:
-                observations = fetch_observations_for_trace(client, str(trace_id))
-                parsed_obs = [parse_observation(obs) for obs in observations]
-            except:
-                parsed_obs = []
+            trace_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=True,
+                fallback_budget=fallback_budget,
+            )
+            trace_tokens = int(trace_metrics["total_tokens"])
+            trace_cost = float(trace_metrics["total_cost"])
 
-            trace_tokens = sum(o.total_tokens for o in parsed_obs)
-            trace_cost = sum(o.total_cost for o in parsed_obs)
-
-            if project_id not in projects_data:
-                folder = folders_by_id.get(project_id)
-                projects_data[project_id] = {
-                    "project_id": project_id,
+            if folder_id not in projects_data:
+                folder = folders_by_id.get(folder_id)
+                projects_data[folder_id] = {
+                    "project_id": folder_id,
                     "project_name": folder.name if folder else None,
                     "agents": set(),
                     "trace_count": 0,
@@ -2618,14 +3107,14 @@ async def get_user_projects(
                     "timestamps": [],
                 }
 
-            projects_data[project_id]["agents"].add(matched_fid)
-            projects_data[project_id]["trace_count"] += 1
-            projects_data[project_id]["total_tokens"] += trace_tokens
-            projects_data[project_id]["total_cost"] += trace_cost
+            projects_data[folder_id]["agents"].add(matched_fid)
+            projects_data[folder_id]["trace_count"] += 1
+            projects_data[folder_id]["total_tokens"] += trace_tokens
+            projects_data[folder_id]["total_cost"] += trace_cost
             if session_id:
-                projects_data[project_id]["sessions"].add(session_id)
+                projects_data[folder_id]["sessions"].add(session_id)
             if timestamp:
-                projects_data[project_id]["timestamps"].append(timestamp)
+                projects_data[folder_id]["timestamps"].append(timestamp)
 
         # Build response
         projects = []
@@ -2646,7 +3135,12 @@ async def get_user_projects(
         total_count = len(projects)
         projects = projects[:limit]
 
-        return ProjectListResponse(projects=projects, total=total_count)
+        return ProjectListResponse(
+            projects=projects,
+            total=total_count,
+            truncated=is_truncated,
+            fetched_trace_count=len(raw_traces),
+        )
 
     except HTTPException:
         raise
@@ -2691,12 +3185,8 @@ async def get_project_detail(
         project_name = folder.name
 
         # Get agents in this folder
-        agents_result = await session.exec(
-            select(Agent).where(
-                Agent.user_id == current_user.id,
-                Agent.project_id == folder.id,
-            )
-        )
+        agents_stmt = _user_agents_stmt(current_user.id).where(Agent.folder_id == folder.id)
+        agents_result = await session.exec(agents_stmt)
         folder_agents = agents_result.all()
 
         agents_by_id = {str(f.id): f for f in folder_agents}
