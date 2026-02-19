@@ -30,13 +30,7 @@ const AgentToolbarOptions = ({
         
       </div>
       <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
-        <PublishButton
-          hasIO={hasIO}
-          open={open}
-          setOpen={setOpen}
-          canvasOpen
-        />
-        
+        <PublishButton hasIO={hasIO} />
       </div>
       {/* <PublishDropdown
         openApiModal={openApiModal}
