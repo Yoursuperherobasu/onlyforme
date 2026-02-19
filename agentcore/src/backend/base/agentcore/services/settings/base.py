@@ -136,14 +136,16 @@ class Settings(BaseSettings):
     cache_type: Literal["async", "redis", "memory"] = "redis"
     """The cache type can be 'async', 'redis' or 'memory'. Default is 'redis' for distributed caching."""
     """The cache type can be 'async' or 'redis'."""
-    redis_host: str = "rdatabase.redis.cache.windows.net"
+    redis_host: str = "newrediscachedb.redis.cache.windows.net"
     redis_port: int = 6380
     redis_db: int = 0
     redis_url: str | None = None
-    redis_password: str = "eJxRreaYdSS7j4FX6MCUhuyHNn6cHO14XAzCaE7dLqk="
+    redis_password: str = "fYNFRYrtcDx1fXEGz2hXr4SQRFtBKpgm0AzCaLrURyo="
     redis_ssl: bool = True
     cache_expire: int = 3600
     redis_cache_expire: int = 3600
+    
+
     """The cache expire in seconds."""
     # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault
 
