@@ -391,6 +391,5 @@ async def _assert_role_in_scope(session: DbSession, current_user: User, role: Ro
 
 
 def _ensure_access_control_actor(current_user: User) -> None:
-    if normalize_role(current_user.role) not in {"super_admin", "root"}:
-        raise HTTPException(status_code=403, detail="Access Control is restricted to root or super admin users.")
-
+    if normalize_role(current_user.role) != "root":
+        raise HTTPException(status_code=403, detail="Access Control is restricted to root users only.")

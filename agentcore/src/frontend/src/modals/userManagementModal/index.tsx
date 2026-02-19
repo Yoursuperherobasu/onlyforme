@@ -6,7 +6,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { CONTROL_NEW_USER } from "../../constants/constants";
 import { AuthContext } from "../../contexts/authContext";
-import { useGetRoles, useGetUsers } from "../../controllers/API/queries/auth";
+import { useGetAssignableRoles, useGetUsers } from "../../controllers/API/queries/auth";
 import type {
   inputHandlerEventType,
   UserInputType,
@@ -46,7 +46,7 @@ export default function UserManagementModal({
   const [departmentAdminError, setDepartmentAdminError] = useState("");
   const [organizationError, setOrganizationError] = useState("");
   const [isDeptAdminLoading, setIsDeptAdminLoading] = useState(false);
-  const { mutate: mutateGetRoles } = useGetRoles();
+  const { mutate: mutateGetAssignableRoles } = useGetAssignableRoles();
   const { mutate: mutateGetUsers } = useGetUsers({});
   const [inputState, setInputState] = useState<UserInputType>(CONTROL_NEW_USER);
   const { userData } = useContext(AuthContext);
@@ -88,18 +88,10 @@ export default function UserManagementModal({
 
   useEffect(() => {
     if (open) {
-      mutateGetRoles(undefined, {
-        onSuccess: (roles) => {
-          const roleNames = (roles || []).map((r) => r.name);
-          const fallbackRoles = [
-            "root",
-            "super_admin",
-            "department_admin",
-            "developer",
-            "business_user",
-            "consumer",
-          ];
-          const merged = roleNames.length > 0 ? roleNames : fallbackRoles;
+      mutateGetAssignableRoles(undefined, {
+        onSuccess: (roleNames) => {
+          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
+          const merged = (roleNames || []).length > 0 ? (roleNames || []) : fallbackRoles;
           const withSelected = merged.includes(selectedRole)
             ? merged
             : [...merged, selectedRole];
@@ -107,7 +99,7 @@ export default function UserManagementModal({
         },
         onError: () => {
           // Fallback roles if API fails
-          const fallbackRoles = ["root", "super_admin", "department_admin", "developer", "business_user", "consumer"];
+          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
           setAvailableRoles(fallbackRoles);
         },
       });
@@ -190,7 +182,10 @@ export default function UserManagementModal({
     if (isRootAdmin) {
       baseRoles = ["super_admin"];
     } else if (isSuperAdmin) {
-      baseRoles = ["department_admin", "developer", "business_user", "consumer"];
+      baseRoles =
+        availableRoles.length > 0
+          ? availableRoles.filter((role) => !["root", "super_admin"].includes(role))
+          : ["department_admin", "developer", "business_user", "consumer"];
     } else if (isDepartmentAdminCreator) {
       baseRoles = ["developer", "business_user", "consumer"];
     } else if (availableRoles.length > 0) {
