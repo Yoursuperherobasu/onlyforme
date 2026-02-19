@@ -7,13 +7,7 @@ load_dotenv(find_dotenv())
 from alembic import context
 from sqlalchemy import pool, text
 from sqlalchemy.ext.asyncio import create_async_engine
-
-
-def include_object(obj, name, type_, reflected, compare_to):
-    """Filter callback used by Alembic autogenerate / check."""
-    return True
-
-
+ 
 # Lazy import to avoid Python 3.9 compatibility issues with TypeVar syntax
 def get_target_metadata():
     """Lazy load target metadata to avoid import errors on Python 3.9."""
@@ -71,7 +65,6 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,
         prepare_threshold=None,
-        include_object=include_object,
     )
  
     with context.begin_transaction():
@@ -81,8 +74,7 @@ def run_migrations_offline() -> None:
 def _do_run_migrations(connection):
     target_metadata = get_target_metadata()
     context.configure(
-        connection=connection, target_metadata=target_metadata, render_as_batch=True, prepare_threshold=None,
-        include_object=include_object,
+        connection=connection, target_metadata=target_metadata, render_as_batch=True, prepare_threshold=None
     )
     with context.begin_transaction():
         if connection.dialect.name == "postgresql":

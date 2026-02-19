@@ -28,7 +28,12 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _table_exists(bind, table_name: str) -> bool:
+    return table_name in sa.inspect(bind).get_table_names()
+
+
 def upgrade() -> None:
+    bind = op.get_bind()
     # ===================================================================
     # 1. Create enum types (idempotent)
     # ===================================================================
@@ -88,113 +93,122 @@ def upgrade() -> None:
     op.execute(sa.text('CREATE INDEX IF NOT EXISTS ix_user_country ON "user" (country)'))
     op.execute(sa.text('CREATE INDEX IF NOT EXISTS ix_user_department_name ON "user" (department_name)'))
 
+    # Merged-history safety:
+    # If organization already exists, equivalent tenancy/deployment schema has already been
+    # introduced by another migration branch. Skip the legacy bootstrap in this revision.
+    if _table_exists(bind, "organization"):
+        return
+
     # ===================================================================
     # 3. Create 'organization' table
     # ===================================================================
-    op.create_table(
-        "organization",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("tier", sa.Text(), nullable=False, server_default=sa.text("'standard'")),
-        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'active'")),
-        sa.Column("owner_user_id", sa.Uuid(), nullable=False),
-        sa.Column("created_by", sa.Uuid(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_by", sa.Uuid(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.PrimaryKeyConstraint("id"),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"]),
-        sa.ForeignKeyConstraint(["created_by"], ["user.id"]),
-        sa.ForeignKeyConstraint(["updated_by"], ["user.id"]),
-    )
+    if not _table_exists(bind, "organization"):
+        op.create_table(
+            "organization",
+            sa.Column("id", sa.Uuid(), nullable=False),
+            sa.Column("name", sa.String(length=255), nullable=False),
+            sa.Column("description", sa.Text(), nullable=True),
+            sa.Column("tier", sa.Text(), nullable=False, server_default=sa.text("'standard'")),
+            sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'active'")),
+            sa.Column("owner_user_id", sa.Uuid(), nullable=False),
+            sa.Column("created_by", sa.Uuid(), nullable=False),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_by", sa.Uuid(), nullable=True),
+            sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.PrimaryKeyConstraint("id"),
+            sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"]),
+            sa.ForeignKeyConstraint(["created_by"], ["user.id"]),
+            sa.ForeignKeyConstraint(["updated_by"], ["user.id"]),
+        )
 
-    op.execute(sa.text(
-        "ALTER TABLE organization ALTER COLUMN tier DROP DEFAULT; "
-        "ALTER TABLE organization ALTER COLUMN tier TYPE org_tier_enum USING tier::org_tier_enum; "
-        "ALTER TABLE organization ALTER COLUMN tier SET DEFAULT 'standard';"
-    ))
-    op.execute(sa.text(
-        "ALTER TABLE organization ALTER COLUMN status DROP DEFAULT; "
-        "ALTER TABLE organization ALTER COLUMN status TYPE org_status_enum USING status::org_status_enum; "
-        "ALTER TABLE organization ALTER COLUMN status SET DEFAULT 'active';"
-    ))
+        op.execute(sa.text(
+            "ALTER TABLE organization ALTER COLUMN tier DROP DEFAULT; "
+            "ALTER TABLE organization ALTER COLUMN tier TYPE org_tier_enum USING tier::org_tier_enum; "
+            "ALTER TABLE organization ALTER COLUMN tier SET DEFAULT 'standard';"
+        ))
+        op.execute(sa.text(
+            "ALTER TABLE organization ALTER COLUMN status DROP DEFAULT; "
+            "ALTER TABLE organization ALTER COLUMN status TYPE org_status_enum USING status::org_status_enum; "
+            "ALTER TABLE organization ALTER COLUMN status SET DEFAULT 'active';"
+        ))
 
-    op.create_index("ix_organization_name", "organization", ["name"], unique=True)
+        op.create_index("ix_organization_name", "organization", ["name"], unique=True)
 
     # ===================================================================
     # 4. Create 'department' table
     # ===================================================================
-    op.create_table(
-        "department",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("org_id", sa.Uuid(), nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("code", sa.String(length=50), nullable=True),
-        sa.Column("parent_dept_id", sa.Uuid(), nullable=True),
-        sa.Column("admin_user_id", sa.Uuid(), nullable=False),
-        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'active'")),
-        sa.Column("created_by", sa.Uuid(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_by", sa.Uuid(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.PrimaryKeyConstraint("id"),
-        sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
-        sa.ForeignKeyConstraint(["parent_dept_id"], ["department.id"]),
-        sa.ForeignKeyConstraint(["admin_user_id"], ["user.id"]),
-        sa.ForeignKeyConstraint(["created_by"], ["user.id"]),
-        sa.ForeignKeyConstraint(["updated_by"], ["user.id"]),
-        sa.UniqueConstraint("org_id", "name", name="uq_department_org_name"),
-    )
+    if not _table_exists(bind, "department"):
+        op.create_table(
+            "department",
+            sa.Column("id", sa.Uuid(), nullable=False),
+            sa.Column("org_id", sa.Uuid(), nullable=False),
+            sa.Column("name", sa.String(length=255), nullable=False),
+            sa.Column("description", sa.Text(), nullable=True),
+            sa.Column("code", sa.String(length=50), nullable=True),
+            sa.Column("parent_dept_id", sa.Uuid(), nullable=True),
+            sa.Column("admin_user_id", sa.Uuid(), nullable=False),
+            sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'active'")),
+            sa.Column("created_by", sa.Uuid(), nullable=False),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_by", sa.Uuid(), nullable=True),
+            sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.PrimaryKeyConstraint("id"),
+            sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
+            sa.ForeignKeyConstraint(["parent_dept_id"], ["department.id"]),
+            sa.ForeignKeyConstraint(["admin_user_id"], ["user.id"]),
+            sa.ForeignKeyConstraint(["created_by"], ["user.id"]),
+            sa.ForeignKeyConstraint(["updated_by"], ["user.id"]),
+            sa.UniqueConstraint("org_id", "name", name="uq_department_org_name"),
+        )
 
-    op.execute(sa.text(
-        "ALTER TABLE department ALTER COLUMN status DROP DEFAULT; "
-        "ALTER TABLE department ALTER COLUMN status TYPE dept_status_enum USING status::dept_status_enum; "
-        "ALTER TABLE department ALTER COLUMN status SET DEFAULT 'active';"
-    ))
+        op.execute(sa.text(
+            "ALTER TABLE department ALTER COLUMN status DROP DEFAULT; "
+            "ALTER TABLE department ALTER COLUMN status TYPE dept_status_enum USING status::dept_status_enum; "
+            "ALTER TABLE department ALTER COLUMN status SET DEFAULT 'active';"
+        ))
 
-    op.create_index("ix_department_org_id", "department", ["org_id"], unique=False)
-    op.create_index("ix_department_admin_user_id", "department", ["admin_user_id"], unique=False)
+        op.create_index("ix_department_org_id", "department", ["org_id"], unique=False)
+        op.create_index("ix_department_admin_user_id", "department", ["admin_user_id"], unique=False)
 
     # ===================================================================
     # 5. Create 'project' table
     # ===================================================================
-    op.create_table(
-        "project",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("org_id", sa.Uuid(), nullable=False),
-        sa.Column("dept_id", sa.Uuid(), nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("parent_project_id", sa.Uuid(), nullable=True),
-        sa.Column("owner_user_id", sa.Uuid(), nullable=False),
-        sa.Column("tags", sa.JSON(), nullable=True),
-        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'active'")),
-        sa.Column("created_by", sa.Uuid(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_by", sa.Uuid(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.PrimaryKeyConstraint("id"),
-        sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
-        sa.ForeignKeyConstraint(["dept_id"], ["department.id"]),
-        sa.ForeignKeyConstraint(["parent_project_id"], ["project.id"]),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"]),
-        sa.ForeignKeyConstraint(["created_by"], ["user.id"]),
-        sa.ForeignKeyConstraint(["updated_by"], ["user.id"]),
-        sa.UniqueConstraint("dept_id", "name", name="uq_project_dept_name"),
-    )
+    if not _table_exists(bind, "project"):
+        op.create_table(
+            "project",
+            sa.Column("id", sa.Uuid(), nullable=False),
+            sa.Column("org_id", sa.Uuid(), nullable=False),
+            sa.Column("dept_id", sa.Uuid(), nullable=False),
+            sa.Column("name", sa.String(length=255), nullable=False),
+            sa.Column("description", sa.Text(), nullable=True),
+            sa.Column("parent_project_id", sa.Uuid(), nullable=True),
+            sa.Column("owner_user_id", sa.Uuid(), nullable=False),
+            sa.Column("tags", sa.JSON(), nullable=True),
+            sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'active'")),
+            sa.Column("created_by", sa.Uuid(), nullable=False),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_by", sa.Uuid(), nullable=True),
+            sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.PrimaryKeyConstraint("id"),
+            sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
+            sa.ForeignKeyConstraint(["dept_id"], ["department.id"]),
+            sa.ForeignKeyConstraint(["parent_project_id"], ["project.id"]),
+            sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"]),
+            sa.ForeignKeyConstraint(["created_by"], ["user.id"]),
+            sa.ForeignKeyConstraint(["updated_by"], ["user.id"]),
+            sa.UniqueConstraint("dept_id", "name", name="uq_project_dept_name"),
+        )
 
-    op.execute(sa.text(
-        "ALTER TABLE project ALTER COLUMN status DROP DEFAULT; "
-        "ALTER TABLE project ALTER COLUMN status TYPE project_status_enum USING status::project_status_enum; "
-        "ALTER TABLE project ALTER COLUMN status SET DEFAULT 'active';"
-    ))
+        op.execute(sa.text(
+            "ALTER TABLE project ALTER COLUMN status DROP DEFAULT; "
+            "ALTER TABLE project ALTER COLUMN status TYPE project_status_enum USING status::project_status_enum; "
+            "ALTER TABLE project ALTER COLUMN status SET DEFAULT 'active';"
+        ))
 
-    op.create_index("ix_project_org_id", "project", ["org_id"], unique=False)
-    op.create_index("ix_project_dept_id", "project", ["dept_id"], unique=False)
-    op.create_index("ix_project_name", "project", ["name"], unique=False)
-    op.create_index("ix_project_owner_user_id", "project", ["owner_user_id"], unique=False)
+        op.create_index("ix_project_org_id", "project", ["org_id"], unique=False)
+        op.create_index("ix_project_dept_id", "project", ["dept_id"], unique=False)
+        op.create_index("ix_project_name", "project", ["name"], unique=False)
+        op.create_index("ix_project_owner_user_id", "project", ["owner_user_id"], unique=False)
 
     # ===================================================================
     # 6. Create 'approval_request' table
