@@ -14,7 +14,7 @@ export const ProtectedAccessControlRoute = ({
     return <LoadingPage />;
   }
 
-  const canAccess = role === "super_admin" || role === "root";
+  const canAccess = role === "root";
 
   if (!canAccess) {
     return (
@@ -24,4 +24,3 @@ export const ProtectedAccessControlRoute = ({
 
   return children;
 };
-

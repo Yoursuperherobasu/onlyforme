@@ -29,6 +29,34 @@ ACTIVE_ORG_STATUSES = {"accepted", "active"}
 ACTIVE_DEPT_STATUS = "active"
 
 
+async def _assignable_roles_for_creator(session: DbSession, creator_role: str) -> list[str]:
+    role_rows = (
+        await session.exec(
+            select(Role).where(Role.is_active.is_(True)).order_by(Role.name)
+        )
+    ).all()
+    global_role_names = [normalize_role(role.name) for role in role_rows]
+
+    if creator_role == "root":
+        return [role for role in global_role_names if role == "super_admin"]
+
+    if creator_role == "super_admin":
+        return [
+            role
+            for role in global_role_names
+            if role not in {"root", "super_admin"}
+        ]
+
+    if creator_role == "department_admin":
+        return [
+            role
+            for role in global_role_names
+            if role in {"developer", "business_user", "consumer"}
+        ]
+
+    return []
+
+
 async def _get_role_entity(session: DbSession, role_name: str) -> Role:
     normalized = normalize_role(role_name)
     role = (await session.exec(select(Role).where(Role.name == normalized))).first()
@@ -214,22 +242,18 @@ async def add_user(
         creator_email = getattr(current_user, "username", None)
         creator_role = normalize_role(getattr(current_user, "role", "developer"))
         target_role = normalize_role(new_user.role)
+        assignable_roles = await _assignable_roles_for_creator(session, creator_role)
         new_user.creator_email = creator_email
         new_user.creator_role = creator_role
         new_user.role = target_role
 
-        if creator_role == "root":
-            if target_role != "super_admin":
-                raise HTTPException(status_code=403, detail="Root admin can only create super admin users.")
-            if not user.organization_name:
-                raise HTTPException(status_code=400, detail="Organization name is required.")
-        elif creator_role == "super_admin":
-            if target_role not in {"department_admin", "developer", "business_user", "consumer"}:
-                raise HTTPException(status_code=403, detail="Super admin can only create department or business users.")
-        elif creator_role == "department_admin":
-            if target_role not in {"developer", "business_user", "consumer"}:
-                raise HTTPException(status_code=403, detail="Department admin can only create department users.")
-        else:
+        if target_role not in assignable_roles:
+            raise HTTPException(status_code=403, detail="Selected role is not assignable by current user.")
+
+        if creator_role == "root" and not user.organization_name:
+            raise HTTPException(status_code=400, detail="Organization name is required.")
+
+        if creator_role not in {"root", "super_admin", "department_admin"}:
             raise HTTPException(status_code=403, detail="Only admins can create users.")
 
         new_user.password = get_password_hash(user.password)
@@ -377,6 +401,15 @@ async def add_user(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     return new_user
+
+
+@router.get("/assignable-roles", response_model=list[str])
+async def list_assignable_roles(
+    session: DbSession,
+    current_user: User = Depends(PermissionChecker(["view_admin_page"])),
+) -> list[str]:
+    creator_role = normalize_role(getattr(current_user, "role", "developer"))
+    return await _assignable_roles_for_creator(session, creator_role)
 
 
 @router.get("/whoami", response_model=UserReadWithPermissions)

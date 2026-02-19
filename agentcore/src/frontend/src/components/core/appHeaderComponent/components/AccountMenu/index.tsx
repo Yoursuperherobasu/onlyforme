@@ -86,7 +86,7 @@ export const AccountMenu = () => {
                 </HeaderMenuItemButton>
               </div>
             )}
-            {(role === "super_admin" || role === "root") && (
+            {role === "root" && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {
@@ -133,4 +133,3 @@ export const AccountMenu = () => {
     </HeaderMenu>
   );
 };
-
