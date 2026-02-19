@@ -190,6 +190,7 @@ class DatabaseService(Service):
         model_mapping: dict[str, type[SQLModel]] = {
             "agent": models.Agent,
             "user": models.User,
+            "model_registry": models.ModelRegistry,
             # Add other SQLModel classes here
         }
 

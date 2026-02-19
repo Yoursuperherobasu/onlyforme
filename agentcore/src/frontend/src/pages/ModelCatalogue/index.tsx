@@ -1,13 +1,15 @@
 import {
   Plus,
-  BarChart3,
   MoreVertical,
   Edit2,
   Trash2,
   Search,
+  Loader2,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { ModelType } from "@/types/models/models";
+import { useContext, useEffect, useState } from "react";
+import type { ModelType, ModelEnvironment } from "@/types/models/models";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,187 +19,133 @@ import {
 import { Button } from "@/components/ui/button";
 import EditModelModal from "./components/edit-model-modal";
 import { getProviderIcon } from "@/utils/logo_provider";
-import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
+import useAlertStore from "@/stores/alertStore";
+import {
+  useGetRegistryModels,
+  useDeleteRegistryModel,
+} from "@/controllers/API/queries/models";
 
+type ProviderFilter = "all" | "openai" | "azure" | "anthropic" | "google" | "groq" | "openai_compatible";
+type EnvFilter = "all" | ModelEnvironment;
 
-interface ModelCardsViewProps {
-  models: ModelType[];
-  setOpenModal?: (open: boolean) => void; // optional now
-  setSearch: (search: string) => void;
-  onEditModel?: (model: ModelType) => void;
-  onDeleteModel?: (model: ModelType) => void;
-}
+const PROVIDER_LABELS: Record<string, string> = {
+  all: "All",
+  openai: "OpenAI",
+  azure: "Azure",
+  anthropic: "Anthropic",
+  google: "Google",
+  groq: "Groq",
+  openai_compatible: "Custom",
+};
 
-type ProviderType = "all" | "google" | "openai" | "anthropic" | "meta";
+const ENV_LABELS: Record<string, string> = {
+  all: "All Envs",
+  test: "Test",
+  uat: "UAT",
+  prod: "Prod",
+};
 
-export default function ModelCardsView({
-  models,
-  setSearch,
-  onEditModel,
-  onDeleteModel,
-}: ModelCardsViewProps): JSX.Element {
-  const [filter, setFilter] = useState<ProviderType>("all");
+const ENV_BADGE_CLASSES: Record<string, string> = {
+  test: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+  uat: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  prod: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+};
+
+export default function ModelCatalogue(): JSX.Element {
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
+  const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelType | null>(null);
+  const [deleteConfirmModel, setDeleteConfirmModel] = useState<ModelType | null>(null);
 
-  /* ---------------------------------- Dummy Models ---------------------------------- */
+  const { permissions } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
-  const DUMMY_MODELS: ModelType[] = [
-    {
-      id: "1",
-      name: "Gemini 2.0 Flash",
-      description: "Fastest multimodal model with breakthrough speed",
-      provider: "google",
-      contextWindow: "1M tokens",
-      pricing: "$0.10 / 1M tokens",
-      category: "Multimodal",
-      isCustom: false,
-    },
-    {
-      id: "4",
-      name: "GPT-4 Turbo",
-      description: "Most capable GPT-4 model with vision capabilities",
-      provider: "openai",
-      contextWindow: "128K tokens",
-      pricing: "$10 / 1M tokens",
-      category: "Multimodal",
-      isCustom: false,
-    },
-    {
-      id: "8",
-      name: "Claude 3 Opus",
-      description: "Most powerful model for highly complex tasks",
-      provider: "anthropic",
-      contextWindow: "200K tokens",
-      pricing: "$15 / 1M tokens",
-      category: "Text",
-      isCustom: false,
-    },
-    {
-      id: "11",
-      name: "Gemini 2.0 Flash",
-      description: "Fastest multimodal model with breakthrough speed",
-      provider: "google",
-      contextWindow: "1M tokens",
-      pricing: "$0.10 / 1M tokens",
-      category: "Multimodal",
-      isCustom: false,
-    },
-    {
-      id: "14",
-      name: "GPT-4 Turbo",
-      description: "Most capable GPT-4 model with vision capabilities",
-      provider: "openai",
-      contextWindow: "128K tokens",
-      pricing: "$10 / 1M tokens",
-      category: "Multimodal",
-      isCustom: false,
-    },
-    {
-      id: "10",
-      name: "Claude 3 Opus",
-      description: "Most powerful model for highly complex tasks",
-      provider: "anthropic",
-      contextWindow: "200K tokens",
-      pricing: "$15 / 1M tokens",
-      category: "Text",
-      isCustom: false,
-    },
-    {
-      id: "21",
-      name: "Gemini 2.0 Flash",
-      description: "Fastest multimodal model with breakthrough speed",
-      provider: "google",
-      contextWindow: "1M tokens",
-      pricing: "$0.10 / 1M tokens",
-      category: "Multimodal",
-      isCustom: false,
-    },
-    {
-      id: "24",
-      name: "GPT-4 Turbo",
-      description: "Most capable GPT-4 model with vision capabilities",
-      provider: "openai",
-      contextWindow: "128K tokens",
-      pricing: "$10 / 1M tokens",
-      category: "Multimodal",
-      isCustom: false,
-    },
-    {
-      id: "28",
-      name: "Claude 3 Opus",
-      description: "Most powerful model for highly complex tasks",
-      provider: "anthropic",
-      contextWindow: "200K tokens",
-      pricing: "$15 / 1M tokens",
-      category: "Text",
-      isCustom: false,
-    },
-  ];
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
 
-  const displayModels = models?.length ? models : DUMMY_MODELS;
+  // Fetch models from API
+  const { data: models, isLoading, isError } = useGetRegistryModels({
+    active_only: false,
+  });
 
+  const deleteMutation = useDeleteRegistryModel();
 
-
-  const { permissions, role } = useContext(AuthContext);
-    const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const displayModels = models ?? [];
 
   /* ---------------------------------- Filtering ---------------------------------- */
 
   const filteredModels = displayModels.filter((model) => {
-    const matchesFilter = filter === "all" || model.provider === filter;
+    const matchesProvider =
+      providerFilter === "all" || model.provider === providerFilter;
+    const matchesEnv =
+      envFilter === "all" || model.environment === envFilter;
     const matchesSearch =
       !searchQuery ||
-      model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      model.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      model.model_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       model.description?.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return matchesFilter && matchesSearch;
+    return matchesProvider && matchesEnv && matchesSearch;
   });
 
-  /* ---------------------------------- Debounced Search ---------------------------------- */
-
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchQuery), 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery, setSearch]);
-
   /* ---------------------------------- Helpers ---------------------------------- */
-
 
   const getProviderLogo = (provider: string) => {
     const iconSrc = getProviderIcon(provider);
     return (
-      <img 
-        src={iconSrc} 
-        alt={`${provider} icon`} 
+      <img
+        src={iconSrc}
+        alt={`${provider} icon`}
         className="h-4 w-4 object-contain"
       />
     );
   };
 
-
   const getProviderName = (provider: string) =>
-    ({ google: "Google", openai: "OpenAI", anthropic: "Anthropic", meta: "Meta" }[
-      provider
-    ] ?? provider);
+    PROVIDER_LABELS[provider] ?? provider;
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirmModel) return;
+    try {
+      await deleteMutation.mutateAsync({ id: deleteConfirmModel.id });
+      setSuccessData({ title: `Model "${deleteConfirmModel.display_name}" deleted.` });
+    } catch {
+      setErrorData({ title: "Failed to delete model." });
+    }
+    setDeleteConfirmModel(null);
+  };
+
+  /* ---------------------------------- Capabilities badges ---------------------------------- */
+
+  const capabilityBadges = (model: ModelType) => {
+    const caps = model.capabilities;
+    if (!caps) return null;
+    const badges: string[] = [];
+    if (caps.supports_streaming) badges.push("Streaming");
+    if (caps.supports_tool_calling) badges.push("Tools");
+    if (caps.supports_vision) badges.push("Vision");
+    if (caps.supports_thinking) badges.push("Thinking");
+    if (caps.context_window) badges.push(`${(caps.context_window / 1000).toFixed(0)}K ctx`);
+    return badges;
+  };
 
   /* ---------------------------------- JSX ---------------------------------- */
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* Header - Fixed */}
+      {/* Header */}
       <div className="flex-shrink-0 flex items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            
             <h1 className="text-2xl font-semibold">Model Registry</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Browse and manage AI models
+            Onboard, browse, and manage AI models across environments
           </p>
         </div>
 
@@ -212,149 +160,269 @@ export default function ModelCardsView({
             />
           </div>
 
-          <ShadTooltip 
-  content={!can("add_new_model") ? "You don't have permission to add custom models" : ""}
->
-  <span className="inline-block">
-    <Button
-      onClick={() => {
-        setSelectedModel(null); // create mode
-        setIsEditModalOpen(true);
-      }}
-      disabled={!can("add_new_model")}
-    >
-      <Plus className="mr-2 h-4 w-4" />
-      Add Custom Model
-    </Button>
-  </span>
-</ShadTooltip>
+          <ShadTooltip
+            content={
+              !can("add_new_model")
+                ? "You don't have permission to add models"
+                : ""
+            }
+          >
+            <span className="inline-block">
+              <Button
+                onClick={() => {
+                  setSelectedModel(null);
+                  setIsEditModalOpen(true);
+                }}
+                disabled={!can("add_new_model")}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Model
+              </Button>
+            </span>
+          </ShadTooltip>
         </div>
       </div>
 
-      {/* Filters - Fixed */}
-      <div className="flex-shrink-0 flex gap-3 border-b px-8 py-4">
-        {(["all", "google", "openai", "anthropic", "meta"] as ProviderType[]).map(
-          (type) => (
+      {/* Filters */}
+      <div className="flex-shrink-0 flex items-center gap-6 border-b px-8 py-4">
+        {/* Provider filter */}
+        <div className="flex gap-2">
+          {(Object.keys(PROVIDER_LABELS) as ProviderFilter[]).map((type) => (
             <Button
               key={type}
-              variant={filter === type ? "default" : "outline"}
-              onClick={() => setFilter(type)}
+              size="sm"
+              variant={providerFilter === type ? "default" : "outline"}
+              onClick={() => setProviderFilter(type)}
             >
-              {type.charAt(0).toUpperCase() + type.slice(1)}
+              {PROVIDER_LABELS[type]}
             </Button>
-          )
+          ))}
+        </div>
+
+        <div className="h-6 w-px bg-border" />
+
+        {/* Environment filter */}
+        <div className="flex gap-2">
+          {(Object.keys(ENV_LABELS) as EnvFilter[]).map((env) => (
+            <Button
+              key={env}
+              size="sm"
+              variant={envFilter === env ? "default" : "outline"}
+              onClick={() => setEnvFilter(env)}
+            >
+              {ENV_LABELS[env]}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-auto p-8">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : isError ? (
+          <div className="flex items-center justify-center py-20 text-destructive">
+            Failed to load models. Please try again.
+          </div>
+        ) : (
+          <>
+            <div className="rounded-lg border bg-card overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-muted/50">
+                  <tr>
+                    {[
+                      "Model",
+                      "Provider",
+                      "Model ID",
+                      "Environment",
+                      "Capabilities",
+                      "Status",
+                      "Actions",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y">
+                  {filteredModels.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-6 py-12 text-center text-sm text-muted-foreground"
+                      >
+                        {displayModels.length === 0
+                          ? "No models onboarded yet. Click 'Add Model' to get started."
+                          : "No models match the current filters."}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredModels.map((model) => (
+                      <tr key={model.id} className="group hover:bg-muted/50">
+                        {/* Model Name */}
+                        <td className="px-6 py-4">
+                          <div className="font-semibold">
+                            {model.display_name}
+                          </div>
+                          {model.description && (
+                            <div className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                              {model.description}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Provider */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-8 w-8 items-center justify-center rounded border">
+                              {getProviderLogo(model.provider)}
+                            </div>
+                            <span className="text-sm">
+                              {getProviderName(model.provider)}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Model ID */}
+                        <td className="px-6 py-4 text-sm font-mono text-muted-foreground">
+                          {model.model_name}
+                        </td>
+
+                        {/* Environment */}
+                        <td className="px-6 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium uppercase ${
+                              ENV_BADGE_CLASSES[model.environment] ?? "bg-gray-100 text-gray-700"
+                            }`}
+                          >
+                            {model.environment}
+                          </span>
+                        </td>
+
+                        {/* Capabilities */}
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1">
+                            {capabilityBadges(model)?.map((badge) => (
+                              <span
+                                key={badge}
+                                className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium"
+                              >
+                                {badge}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-6 py-4">
+                          {model.is_active ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
+                              <CheckCircle className="h-3.5 w-3.5" />
+                              Active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                              <XCircle className="h-3.5 w-3.5" />
+                              Inactive
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-6 py-4">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                <MoreVertical className="h-4 w-4" />
+                              </button>
+                            </DropdownMenuTrigger>
+
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedModel(model);
+                                  setIsEditModalOpen(true);
+                                }}
+                              >
+                                <Edit2 className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => setDeleteConfirmModel(model)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-6 text-center text-sm text-muted-foreground">
+              Showing {filteredModels.length} of {displayModels.length} models
+            </div>
+          </>
         )}
       </div>
 
-      {/* Table - Scrollable */}
-      <div className="flex-1 overflow-auto p-8">
-        <div className="rounded-lg border bg-card overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-muted/50">
-              <tr>
-                {[
-                  "Model Name",
-                  "Provider",
-                  "Context",
-                  "Pricing",
-                  "Category",
-                  "Actions",
-                ].map((h) => (
-                  <th key={h} className="px-6 py-4 text-left text-xs uppercase">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody className="divide-y">
-              {filteredModels.map((model) => (
-                <tr key={model.id} className="group hover:bg-muted/50">
-                  <td className="px-6 py-4">
-                    <div className="font-semibold">{model.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {model.description}
-                    </div>
-                  </td>
-
-                  <td className="px-6 py-4 flex items-center gap-2">
-                    <div className="h-8 w-8 rounded border flex items-center justify-center">
-                      {getProviderLogo(model.provider)}
-                    </div>
-                    {getProviderName(model.provider)}
-                  </td>
-
-                  <td className="px-6 py-4 text-sm text-muted-foreground">
-                    {model.contextWindow}
-                  </td>
-
-                  <td className="px-6 py-4 text-sm text-muted-foreground">
-                    {model.pricing}
-                  </td>
-
-                  <td className="px-6 py-4">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            model.category === "Multimodal"
-                              ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
-                              : model.category === "Text"
-                                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                          }`}
-                        >
-                          {model.category}
-                        </span>
-                      </td>
-
-                  <td className="px-6 py-4">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button className="opacity-0 group-hover:opacity-100">
-                          <MoreVertical className="h-4 w-4" />
-                        </button>
-                      </DropdownMenuTrigger>
-
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setSelectedModel(model);
-                            setIsEditModalOpen(true);
-                            onEditModel?.(model);
-                          }}
-                        >
-                          <Edit2 className="mr-2 h-4 w-4" />
-                          Configure
-                        </DropdownMenuItem>
-
-                        {model.isCustom && (
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => onDeleteModel?.(model)}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          Showing {filteredModels.length} of {displayModels.length} models
-        </div>
-      </div>
-
-      {/* Modal */}
+      {/* Edit/Create Modal */}
       <EditModelModal
         open={isEditModalOpen}
         onOpenChange={setIsEditModalOpen}
         model={selectedModel}
       />
+
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirmModel && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm"
+            onClick={() => setDeleteConfirmModel(null)}
+          />
+          <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-card p-6 shadow-lg">
+            <h3 className="text-lg font-semibold">Delete Model</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Are you sure you want to delete{" "}
+              <strong>{deleteConfirmModel.display_name}</strong>? This action
+              cannot be undone.
+            </p>
+            <div className="mt-6 flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setDeleteConfirmModel(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={handleDeleteConfirm}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Delete
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
