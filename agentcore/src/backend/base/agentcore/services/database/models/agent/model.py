@@ -140,6 +140,7 @@ class Agent(AgentBase, table=True):  # type: ignore[call-arg]
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
     project_id: UUID | None = Field(default=None, foreign_key="project.id", nullable=True, index=True)
+    deleted_at: datetime | None = Field(default=None, nullable=True)
     # Backward-compatible alias. Keep until all call sites migrate to project_id.
     folder_id: ClassVar[Any] = synonym("project_id")
     fs_path: str | None = Field(default=None, nullable=True)

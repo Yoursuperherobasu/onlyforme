@@ -32,6 +32,24 @@ def _table_exists(bind, table_name: str) -> bool:
     return table_name in sa.inspect(bind).get_table_names()
 
 
+def _has_column(bind, table_name: str, column_name: str) -> bool:
+    if not _table_exists(bind, table_name):
+        return False
+    return any(c["name"] == column_name for c in sa.inspect(bind).get_columns(table_name))
+
+
+def _has_index(bind, table_name: str, index_name: str) -> bool:
+    if not _table_exists(bind, table_name):
+        return False
+    return any(i["name"] == index_name for i in sa.inspect(bind).get_indexes(table_name))
+
+
+def _has_fk(bind, table_name: str, fk_name: str) -> bool:
+    if not _table_exists(bind, table_name):
+        return False
+    return any(fk.get("name") == fk_name for fk in sa.inspect(bind).get_foreign_keys(table_name))
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     # ===================================================================
@@ -580,29 +598,42 @@ def upgrade() -> None:
     # ===================================================================
     # 16. Alter 'agent' table — add new columns
     # ===================================================================
-    op.add_column("agent", sa.Column("org_id", sa.Uuid(), nullable=True))
-    op.add_column("agent", sa.Column("dept_id", sa.Uuid(), nullable=True))
-    op.add_column("agent", sa.Column("project_id", sa.Uuid(), nullable=True))
-    op.add_column("agent", sa.Column("lifecycle_status", sa.Text(), nullable=True))
-    op.add_column("agent", sa.Column("cloned_from_deployment_id", sa.Uuid(), nullable=True))
-    op.add_column("agent", sa.Column("deleted_at", sa.DateTime(), nullable=True))
+    if _table_exists(bind, "agent") and not _has_column(bind, "agent", "org_id"):
+        op.add_column("agent", sa.Column("org_id", sa.Uuid(), nullable=True))
+    if _table_exists(bind, "agent") and not _has_column(bind, "agent", "dept_id"):
+        op.add_column("agent", sa.Column("dept_id", sa.Uuid(), nullable=True))
+    if _table_exists(bind, "agent") and not _has_column(bind, "agent", "project_id"):
+        op.add_column("agent", sa.Column("project_id", sa.Uuid(), nullable=True))
+    if _table_exists(bind, "agent") and not _has_column(bind, "agent", "lifecycle_status"):
+        op.add_column("agent", sa.Column("lifecycle_status", sa.Text(), nullable=True))
+    if _table_exists(bind, "agent") and not _has_column(bind, "agent", "cloned_from_deployment_id"):
+        op.add_column("agent", sa.Column("cloned_from_deployment_id", sa.Uuid(), nullable=True))
+    if _table_exists(bind, "agent") and not _has_column(bind, "agent", "deleted_at"):
+        op.add_column("agent", sa.Column("deleted_at", sa.DateTime(), nullable=True))
 
     # Set default value for lifecycle_status for existing rows, then apply enum
-    op.execute(sa.text("UPDATE agent SET lifecycle_status = 'DRAFT' WHERE lifecycle_status IS NULL"))
-    op.execute(sa.text("ALTER TABLE agent ALTER COLUMN lifecycle_status SET NOT NULL"))
-    op.execute(sa.text(
-        "ALTER TABLE agent ALTER COLUMN lifecycle_status TYPE lifecycle_status_enum "
-        "USING lifecycle_status::lifecycle_status_enum;"
-    ))
-    op.execute(sa.text("ALTER TABLE agent ALTER COLUMN lifecycle_status SET DEFAULT 'DRAFT'"))
+    if _table_exists(bind, "agent") and _has_column(bind, "agent", "lifecycle_status"):
+        op.execute(sa.text("UPDATE agent SET lifecycle_status = 'DRAFT' WHERE lifecycle_status IS NULL"))
+        op.execute(sa.text("ALTER TABLE agent ALTER COLUMN lifecycle_status SET NOT NULL"))
+        op.execute(sa.text(
+            "ALTER TABLE agent ALTER COLUMN lifecycle_status TYPE lifecycle_status_enum "
+            "USING lifecycle_status::lifecycle_status_enum;"
+        ))
+        op.execute(sa.text("ALTER TABLE agent ALTER COLUMN lifecycle_status SET DEFAULT 'DRAFT'"))
 
     # Add FKs and indexes
-    op.create_foreign_key("fk_agent_org_id", "agent", "organization", ["org_id"], ["id"])
-    op.create_foreign_key("fk_agent_dept_id", "agent", "department", ["dept_id"], ["id"])
-    op.create_foreign_key("fk_agent_project_id", "agent", "project", ["project_id"], ["id"])
-    op.create_index("ix_agent_org_id", "agent", ["org_id"], unique=False)
-    op.create_index("ix_agent_dept_id", "agent", ["dept_id"], unique=False)
-    op.create_index("ix_agent_project_id", "agent", ["project_id"], unique=False)
+    if _table_exists(bind, "agent") and _table_exists(bind, "organization") and _has_column(bind, "agent", "org_id") and not _has_fk(bind, "agent", "fk_agent_org_id"):
+        op.create_foreign_key("fk_agent_org_id", "agent", "organization", ["org_id"], ["id"])
+    if _table_exists(bind, "agent") and _table_exists(bind, "department") and _has_column(bind, "agent", "dept_id") and not _has_fk(bind, "agent", "fk_agent_dept_id"):
+        op.create_foreign_key("fk_agent_dept_id", "agent", "department", ["dept_id"], ["id"])
+    if _table_exists(bind, "agent") and _table_exists(bind, "project") and _has_column(bind, "agent", "project_id") and not _has_fk(bind, "agent", "fk_agent_project_id"):
+        op.create_foreign_key("fk_agent_project_id", "agent", "project", ["project_id"], ["id"])
+    if _table_exists(bind, "agent") and _has_column(bind, "agent", "org_id") and not _has_index(bind, "agent", "ix_agent_org_id"):
+        op.create_index("ix_agent_org_id", "agent", ["org_id"], unique=False)
+    if _table_exists(bind, "agent") and _has_column(bind, "agent", "dept_id") and not _has_index(bind, "agent", "ix_agent_dept_id"):
+        op.create_index("ix_agent_dept_id", "agent", ["dept_id"], unique=False)
+    if _table_exists(bind, "agent") and _has_column(bind, "agent", "project_id") and not _has_index(bind, "agent", "ix_agent_project_id"):
+        op.create_index("ix_agent_project_id", "agent", ["project_id"], unique=False)
 
 
 def downgrade() -> None:

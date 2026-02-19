@@ -127,8 +127,8 @@ class ConversationProdTable(ConversationProdBase, table=True):  # type: ignore[c
     id: UUID = Field(default_factory=uuid4, primary_key=True)
 
     agent_id: UUID | None = Field(default=None, index=True)
-    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
-    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
     deployment_id: UUID | None = Field(
         default=None,
         foreign_key="agent_deployment_prod.id",

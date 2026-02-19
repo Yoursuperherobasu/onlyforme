@@ -39,8 +39,8 @@ class AgentBundleBase(SQLModel):
     __mapper_args__ = {"confirm_deleted_rows": False}
 
     agent_id: UUID = Field(foreign_key="agent.id", index=True, nullable=False)
-    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
-    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
     deployment_id: UUID = Field(
         nullable=False,
         index=True,

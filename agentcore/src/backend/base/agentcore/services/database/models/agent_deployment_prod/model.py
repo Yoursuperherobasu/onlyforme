@@ -49,8 +49,8 @@ class AgentDeploymentProdBase(SQLModel):
     __mapper_args__ = {"confirm_deleted_rows": False}
 
     agent_id: UUID = Field(foreign_key="agent.id", index=True, nullable=False)
-    org_id: UUID = Field(foreign_key="organization.id", index=True, nullable=False)
-    dept_id: UUID | None = Field(default=None, foreign_key="department.id", index=True, nullable=True)
+    org_id: UUID = Field(foreign_key="organization.id", nullable=False, index=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
     promoted_from_uat_id: UUID | None = Field(
         default=None,
         foreign_key="agent_deployment_uat.id",
