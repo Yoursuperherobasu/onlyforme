@@ -12,21 +12,6 @@ export interface Score {
   user_id?: string;
 }
 
-export interface AnalyticsMetric {
-  name: string;
-  count: number;
-  average: number;
-  min: number;
-  max: number;
-  p50?: number;
-  p90?: number;
-}
-
-export interface EvaluationAnalytics {
-  total_scores: number;
-  by_name: AnalyticsMetric[];
-}
-
 export interface EvaluationStatus {
   langfuse_available: boolean;
   llm_judge_available: boolean;
@@ -108,12 +93,25 @@ export interface EvaluationDatasetRunDetail {
   items: EvaluationDatasetRunItemDetail[];
 }
 
+export interface DatasetCsvImportError {
+  row: number;
+  message: string;
+}
+
+export interface DatasetCsvImportResponse {
+  dataset_name: string;
+  total_rows: number;
+  created_count: number;
+  failed_count: number;
+  skipped_count: number;
+  errors: DatasetCsvImportError[];
+}
+
 export interface DatasetExperimentJob {
   job_id: string;
   status: string;
   dataset_name: string;
   experiment_name: string;
-  run_name?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
   error?: string | null;
@@ -122,7 +120,10 @@ export interface DatasetExperimentJob {
     dataset_run_url?: string | null;
     run_name?: string | null;
     item_count?: number;
-    metrics?: Record<string, { count: number; avg: number; min: number; max: number }>;
+    metrics?: Record<
+      string,
+      { count: number; avg: number; min: number; max: number }
+    >;
   } | null;
 }
 
@@ -147,44 +148,29 @@ export const createEvaluationScore = async (data: {
   return response.data;
 };
 
-export const runLLMJudge = async (data: {
-  trace_id: string;
-  criteria: string;
-  model?: string;
-  name?: string;
-}) => {
-  const response = await api.post("/api/evaluation/judge", data);
-  return response.data;
-};
-
-export const getEvaluationAnalytics = async () => {
-  const response = await api.get("/api/evaluation/analytics");
-  return response.data;
-};
-
 export const getEvaluationStatus = async () => {
   const response = await api.get("/api/evaluation/status");
   return response.data;
 };
 
-export const getPendingReviews = async (params: {
-  limit?: number;
-  trace_id?: string;
-  agent_name?: string;
-  session_id?: string;
-  user_id_filter?: string;
-  ts_from?: string;
-  ts_to?: string;
-} = { limit: 20 }) => {
+export const getPendingReviews = async (
+  params: {
+    limit?: number;
+    trace_id?: string;
+    agent_name?: string;
+    session_id?: string;
+    user_id_filter?: string;
+    ts_from?: string;
+    ts_to?: string;
+  } = { limit: 20 },
+) => {
   const response = await api.get("/api/evaluation/traces/pending", { params });
   return response.data;
 };
 
-export const getEvaluationDatasets = async (params: {
-  limit?: number;
-  page?: number;
-  search?: string;
-} = { limit: 50 }) => {
+export const getEvaluationDatasets = async (
+  params: { limit?: number; page?: number; search?: string } = { limit: 50 },
+) => {
   const response = await api.get("/api/evaluation/datasets", { params });
   return response.data as {
     items: EvaluationDataset[];
@@ -203,6 +189,20 @@ export const createEvaluationDataset = async (data: {
   return response.data as EvaluationDataset;
 };
 
+export const deleteEvaluationDataset = async (datasetName: string) => {
+  const response = await api.delete(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}`,
+  );
+  return response.data as {
+    status: "deleted" | "purged";
+    dataset_name: string;
+    dataset_deleted: boolean;
+    runs_deleted: number;
+    items_deleted: number;
+    errors?: string[];
+  };
+};
+
 export const getEvaluationDatasetItems = async (
   datasetName: string,
   params: {
@@ -211,7 +211,10 @@ export const getEvaluationDatasetItems = async (
     source_trace_id?: string;
   } = { limit: 50 },
 ) => {
-  const response = await api.get(`/api/evaluation/datasets/${encodeURIComponent(datasetName)}/items`, { params });
+  const response = await api.get(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}/items`,
+    { params },
+  );
   return response.data as {
     items: EvaluationDatasetItem[];
     total: number;
@@ -232,8 +235,43 @@ export const createEvaluationDatasetItem = async (
     use_trace_output_as_expected?: boolean;
   },
 ) => {
-  const response = await api.post(`/api/evaluation/datasets/${encodeURIComponent(datasetName)}/items`, data);
+  const response = await api.post(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}/items`,
+    data,
+  );
   return response.data as EvaluationDatasetItem;
+};
+
+export const uploadEvaluationDatasetItemsCsv = async (
+  datasetName: string,
+  file: File,
+) => {
+  const formData = new FormData();
+  formData.append("csv_file", file);
+  const response = await api.post(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}/items/upload-csv`,
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    },
+  );
+  return response.data as DatasetCsvImportResponse;
+};
+
+export const deleteEvaluationDatasetItem = async (
+  datasetName: string,
+  itemId: string,
+) => {
+  const response = await api.delete(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}/items/${encodeURIComponent(itemId)}`,
+  );
+  return response.data as {
+    status: string;
+    dataset_name: string;
+    item_id: string;
+  };
 };
 
 export const getEvaluationDatasetRuns = async (
@@ -243,7 +281,10 @@ export const getEvaluationDatasetRuns = async (
     page?: number;
   } = { limit: 50 },
 ) => {
-  const response = await api.get(`/api/evaluation/datasets/${encodeURIComponent(datasetName)}/runs`, { params });
+  const response = await api.get(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}/runs`,
+    { params },
+  );
   return response.data as {
     items: EvaluationDatasetRun[];
     total: number;
@@ -267,32 +308,53 @@ export const getEvaluationDatasetRunDetail = async (
   return response.data as EvaluationDatasetRunDetail;
 };
 
+export const deleteEvaluationDatasetRun = async (
+  datasetName: string,
+  runId: string,
+) => {
+  const response = await api.delete(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}/runs/${encodeURIComponent(runId)}`,
+  );
+  return response.data as {
+    status: string;
+    dataset_name: string;
+    run_id: string;
+    run_name?: string;
+  };
+};
+
 export const runEvaluationDatasetExperiment = async (
   datasetName: string,
   data: {
     experiment_name: string;
-    run_name?: string;
     description?: string;
     agent_id?: string;
+    generation_model?: string;
+    generation_model_api_key?: string;
     evaluator_config_id?: string;
+    preset_id?: string;
+    evaluator_name?: string;
     criteria?: string;
-    model?: string;
-    model_api_key?: string;
-    max_concurrency?: number;
+    judge_model?: string;
+    judge_model_api_key?: string;
   },
 ) => {
-  const response = await api.post(`/api/evaluation/datasets/${encodeURIComponent(datasetName)}/experiments`, data);
+  const response = await api.post(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}/experiments`,
+    data,
+  );
   return response.data as {
     job_id: string;
     dataset_name: string;
     experiment_name: string;
-    run_name?: string;
     status: string;
   };
 };
 
 export const getDatasetExperimentJob = async (jobId: string) => {
-  const response = await api.get(`/api/evaluation/datasets/experiments/${encodeURIComponent(jobId)}`);
+  const response = await api.get(
+    `/api/evaluation/datasets/experiments/${encodeURIComponent(jobId)}`,
+  );
   return response.data as DatasetExperimentJob;
 };
 
@@ -305,8 +367,6 @@ export interface EvaluatorConfig {
   target?: string[];
   ground_truth?: string;
   trace_id?: string;
-  agent_id?: string;
-  agent_ids?: string[];
   agent_id?: string;
   agent_ids?: string[];
   agent_name?: string;
@@ -344,9 +404,15 @@ export const getEvaluationPresets = async () => {
   return response.data as EvaluationPreset[];
 };
 
-export const previewEvaluation = async (data: { trace_id: string; criteria: string; model?: string }) => {
-  const response = await api.post("/api/evaluation/preview", data);
-  return response.data as { system_prompt: string; user_prompt: string; trace: any };
+export const runEvaluator = async (id: string) => {
+  const response = await api.post(`/api/evaluation/configs/${id}/run`);
+  return response.data as {
+    status: "queued" | "noop";
+    config_id: string;
+    enqueued: number;
+    target?: string[];
+    message?: string;
+  };
 };
 
 export const getAvailableModels = async () => {
