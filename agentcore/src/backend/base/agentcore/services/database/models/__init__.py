@@ -23,6 +23,8 @@ from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
+from .timeout_settings import TimeoutSettings
+from .guardrail_catalogue import GuardrailCatalogue
 
 __all__ = [
     "Agent",
@@ -55,6 +57,8 @@ __all__ = [
     "TransactionUATTable",
     "VectorDBCatalogue",
     "KnowledgeBase",
+    "TimeoutSettings",
+    "GuardrailCatalogue",
     "TransactionTable",
     "TransactionUATTable",
     "User",
