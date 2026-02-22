@@ -84,6 +84,32 @@ class LangGraphAdapter:
         # Context for shared state (used by conditional router, loops, etc.)
         self.context: dict[str, Any] = {}
         
+        # When True, skip writing to dev tables (conversation, transaction,
+        # vertex_build).  Set by the orchestration chat so that only the
+        # orch-specific tables receive data.
+        self.skip_dev_logging: bool = False
+
+        # Orchestrator context — when set, transactions are logged to the
+        # orch_transaction table instead of the dev transaction table.
+        self.orch_session_id: str | None = None
+        self.orch_deployment_id: str | None = None
+        self.orch_org_id: str | None = None
+        self.orch_dept_id: str | None = None
+
+        # PROD deployment context — when set, transactions are also logged
+        # to the transaction_prod table (for control-panel metrics).
+        # Set by orch chat AND /api/run?env=prod.
+        self.prod_deployment_id: str | None = None
+        self.prod_org_id: str | None = None
+        self.prod_dept_id: str | None = None
+
+        # UAT deployment context — when set, transactions are also logged
+        # to the transaction_uat table (for control-panel metrics).
+        # Set by /api/run?env=uat.
+        self.uat_deployment_id: str | None = None
+        self.uat_org_id: str | None = None
+        self.uat_dept_id: str | None = None
+
         # LangGraph components
         self.workflow: StateGraph | None = None
         self.compiled_app: Any = None
@@ -601,6 +627,33 @@ class LangGraphAdapter:
             
             await self.tracing_service.end_tracers(outputs=outputs, error=error)
     
+    def _topological_order(self) -> list[str]:
+        """Return vertex IDs in topological (dependency-first) order."""
+        from collections import deque
+
+        in_degree: dict[str, int] = {vid: 0 for vid in self.vertex_map}
+        for vid, preds in self.predecessor_map.items():
+            if vid in in_degree:
+                in_degree[vid] = len([p for p in preds if p in self.vertex_map])
+
+        queue = deque(vid for vid, d in in_degree.items() if d == 0)
+        order: list[str] = []
+        while queue:
+            vid = queue.popleft()
+            order.append(vid)
+            for successor_id in self.successor_map.get(vid, []):
+                if successor_id in in_degree:
+                    in_degree[successor_id] -= 1
+                    if in_degree[successor_id] == 0:
+                        queue.append(successor_id)
+
+        # Append any remaining vertices (e.g. in cycles) that weren't visited
+        for vid in self.vertex_map:
+            if vid not in order:
+                order.append(vid)
+
+        return order
+
     async def arun(
         self,
         inputs: list[dict[str, str]],
@@ -613,10 +666,12 @@ class LangGraphAdapter:
         fallback_to_env_vars: bool = False,
         event_manager = None,
     ):
-        """Run the graph with given inputs
-        
-        It executes the graph by building each output vertex.
-        
+        """Run the graph with given inputs.
+
+        Builds all vertices in topological (dependency-first) order so that
+        each vertex can resolve its parameters from already-built predecessors,
+        then collects results from the requested output vertices.
+
         Args:
             inputs: List of input dictionaries (e.g., [{"input_value": "hello"}])
             inputs_components: Optional list of component filters for each input
@@ -626,58 +681,68 @@ class LangGraphAdapter:
             stream: Whether to stream results (not implemented for LangGraph)
             fallback_to_env_vars: Whether to fallback to environment variables
             event_manager: Optional event manager
-            
+
         Returns:
             List of RunOutputs objects with inputs and outputs
         """
         from agentcore.graph_langgraph.schema import RunOutputs
         from agentcore.services.deps import get_chat_service
-        
+
         if session_id:
             self._session_id = session_id
             self.session_id = session_id
-        
+
         # Initialize run
         await self.initialize_run()
-        
+
         # Get chat service for caching
         chat_service = get_chat_service()
-        
+
+        # Determine the correct topological build order once
+        topo_order = self._topological_order()
+
         vertex_outputs = []
-        
+
         # Process each input
         for idx, run_inputs in enumerate(inputs):
             input_components = inputs_components[idx] if inputs_components and idx < len(inputs_components) else []
-            
-            # Determine which outputs to build
+
+            # Determine which outputs to collect
             if outputs:
-                output_ids = outputs
+                output_ids = set(outputs)
             else:
-                output_ids = [v.id for v in self.vertices if v.is_output]
-            
-            # Build each output vertex (this will recursively build dependencies)
-            run_outputs = []
-            for output_id in output_ids:
+                output_ids = {v.id for v in self.vertices if v.is_output}
+
+            # Build ALL vertices in topological order so that predecessors
+            # are built before their dependents (mirrors the Playground flow).
+            build_kwargs = dict(
+                user_id=self.user_id,
+                inputs_dict=run_inputs,
+                get_cache=chat_service.get_cache,
+                set_cache=chat_service.set_cache,
+                fallback_to_env_vars=fallback_to_env_vars,
+                event_manager=event_manager,
+            )
+
+            built_results: dict[str, object] = {}
+            for vertex_id in topo_order:
                 try:
-                    result = await self.build_vertex(
-                        vertex_id=output_id,
-                        user_id=self.user_id,
-                        inputs_dict=run_inputs,
-                        get_cache=chat_service.get_cache,
-                        set_cache=chat_service.set_cache,
-                        fallback_to_env_vars=fallback_to_env_vars,
-                        event_manager=event_manager,
+                    result = await self.build_vertex(vertex_id=vertex_id, **build_kwargs)
+                    built_results[vertex_id] = (
+                        result.result_dict if hasattr(result, 'result_dict') else result
                     )
-                    run_outputs.append(result.result_dict if hasattr(result, 'result_dict') else result)
-                except Exception as e:
-                    logger.exception(f"Error building output vertex {output_id}")
-                    run_outputs.append(None)
-            
+                except Exception:
+                    logger.exception(f"Error building vertex {vertex_id}")
+                    built_results[vertex_id] = None
+
+            # Collect results only for the requested output vertices
+            run_outputs = [built_results.get(oid) for oid in (outputs or list(output_ids))]
+
             vertex_outputs.append(RunOutputs(inputs=run_inputs, outputs=run_outputs))
-        
+
         # End traces
         await self.end_all_traces_in_context()
-        
+
         return vertex_outputs
     
     async def build_vertex(self, vertex_id: str, **kwargs):
@@ -783,13 +848,13 @@ class LangGraphAdapter:
                 )
                 
                 # Log transaction to database (for Logs UI)
-                if self.agent_id:
+                if self.agent_id and not self.skip_dev_logging:
                     try:
                         from agentcore.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
-                        
+
                         # Prepare inputs
                         inputs_for_log = _vertex_to_primitive_dict(vertex.raw_params)
-                        
+
                         # Prepare outputs - use built_result which contains the actual output
                         outputs_for_log = None
                         if vertex.built_result is not None:
@@ -803,7 +868,7 @@ class LangGraphAdapter:
                                     result_dict = vertex.built_result.__dict__
                                 else:
                                     result_dict = {"result": str(vertex.built_result)}
-                                
+
                                 # Handle pandas DataFrames
                                 for key, value in list(result_dict.items()):
                                     if isinstance(value, pd.DataFrame):
@@ -812,14 +877,14 @@ class LangGraphAdapter:
                             except Exception as e:
                                 logger.debug(f"Error preparing outputs for {vertex.id}: {e}")
                                 outputs_for_log = {"result": str(vertex.built_result)}
-                        
+
                         # Get target vertices from outgoing edges
                         target_ids = []
                         if hasattr(vertex, 'outgoing_edges'):
                             for edge in vertex.outgoing_edges:
                                 if hasattr(edge, 'target') and hasattr(edge.target, 'id'):
                                     target_ids.append(edge.target.id)
-                        
+
                         # Log transaction for each target (or None if no targets)
                         if target_ids:
                             for target_id in target_ids:
@@ -845,9 +910,163 @@ class LangGraphAdapter:
                             )
                     except Exception as log_error:
                         logger.warning(f"Failed to log transaction for {vertex.id}: {log_error}")
-                
+
+                # Log to orch_transaction when running under orchestrator
+                if self.agent_id and self.skip_dev_logging and self.orch_session_id:
+                    try:
+                        from uuid import UUID as _UUID
+                        from agentcore.graph_langgraph.logging import _vertex_to_primitive_dict
+                        from agentcore.serialization.serialization import serialize, get_max_text_length, get_max_items_length
+                        from agentcore.services.database.models.orch_transaction.model import OrchTransactionTable
+                        from agentcore.services.database.models.orch_transaction.crud import orch_log_transaction
+                        from agentcore.services.database.utils import session_getter
+                        from agentcore.services.deps import get_db_service
+
+                        _ml = get_max_text_length()
+                        _mi = get_max_items_length()
+                        orch_inputs = serialize(
+                            _vertex_to_primitive_dict(vertex.raw_params),
+                            max_length=_ml, max_items=_mi,
+                        ) if vertex.raw_params else None
+                        orch_outputs = serialize(
+                            vertex.built_result, max_length=_ml, max_items=_mi,
+                        ) if vertex.built_result is not None else None
+
+                        target_ids = []
+                        if hasattr(vertex, 'outgoing_edges'):
+                            for edge in vertex.outgoing_edges:
+                                if hasattr(edge, 'target') and hasattr(edge.target, 'id'):
+                                    target_ids.append(edge.target.id)
+
+                        agent_uuid = self.agent_id if isinstance(self.agent_id, _UUID) else _UUID(self.agent_id)
+                        dep_uuid = _UUID(self.orch_deployment_id) if self.orch_deployment_id else None
+                        org_uuid = _UUID(self.orch_org_id) if self.orch_org_id else None
+                        dept_uuid = _UUID(self.orch_dept_id) if self.orch_dept_id else None
+
+                        targets = target_ids if target_ids else [None]
+                        async with session_getter(get_db_service()) as db:
+                            for tid in targets:
+                                txn = OrchTransactionTable(
+                                    vertex_id=vertex.id,
+                                    target_id=tid,
+                                    inputs=orch_inputs,
+                                    outputs=orch_outputs,
+                                    status="success",
+                                    error=None,
+                                    agent_id=agent_uuid,
+                                    session_id=self.orch_session_id,
+                                    deployment_id=dep_uuid,
+                                    org_id=org_uuid,
+                                    dept_id=dept_uuid,
+                                )
+                                await orch_log_transaction(txn, db)
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log orch transaction for {vertex.id}: {log_error}")
+
+                # Log to transaction_prod when running from a PROD deployment
+                if self.agent_id and self.prod_deployment_id:
+                    try:
+                        from uuid import UUID as _UUID
+                        from agentcore.graph_langgraph.logging import _vertex_to_primitive_dict
+                        from agentcore.serialization.serialization import serialize, get_max_text_length, get_max_items_length
+                        from agentcore.services.database.models.transaction_prod.model import TransactionProdTable
+                        from agentcore.services.database.models.transaction_prod.crud import log_transaction_prod
+                        from agentcore.services.database.utils import session_getter
+                        from agentcore.services.deps import get_db_service
+
+                        _ml = get_max_text_length()
+                        _mi = get_max_items_length()
+                        prod_inputs = serialize(
+                            _vertex_to_primitive_dict(vertex.raw_params),
+                            max_length=_ml, max_items=_mi,
+                        ) if vertex.raw_params else None
+                        prod_outputs = serialize(
+                            vertex.built_result, max_length=_ml, max_items=_mi,
+                        ) if vertex.built_result is not None else None
+
+                        agent_uuid = self.agent_id if isinstance(self.agent_id, _UUID) else _UUID(self.agent_id)
+                        dep_uuid = _UUID(self.prod_deployment_id)
+                        org_uuid = _UUID(self.prod_org_id) if self.prod_org_id else None
+                        dept_uuid = _UUID(self.prod_dept_id) if self.prod_dept_id else None
+
+                        target_ids = []
+                        if hasattr(vertex, 'outgoing_edges'):
+                            for edge in vertex.outgoing_edges:
+                                if hasattr(edge, 'target') and hasattr(edge.target, 'id'):
+                                    target_ids.append(edge.target.id)
+
+                        targets = target_ids if target_ids else [None]
+                        async with session_getter(get_db_service()) as db:
+                            for tid in targets:
+                                prod_txn = TransactionProdTable(
+                                    vertex_id=vertex.id,
+                                    target_id=tid,
+                                    inputs=prod_inputs,
+                                    outputs=prod_outputs,
+                                    status="success",
+                                    error=None,
+                                    agent_id=agent_uuid,
+                                    deployment_id=dep_uuid,
+                                    org_id=org_uuid,
+                                    dept_id=dept_uuid,
+                                )
+                                await log_transaction_prod(prod_txn, db)
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log transaction_prod for {vertex.id}: {log_error}")
+
+                # Log to transaction_uat when running from a UAT deployment
+                if self.agent_id and self.uat_deployment_id:
+                    try:
+                        from uuid import UUID as _UUID
+                        from agentcore.graph_langgraph.logging import _vertex_to_primitive_dict
+                        from agentcore.serialization.serialization import serialize, get_max_text_length, get_max_items_length
+                        from agentcore.services.database.models.transaction_uat.model import TransactionUATTable
+                        from agentcore.services.database.models.transaction_uat.crud import log_transaction_uat
+                        from agentcore.services.database.utils import session_getter
+                        from agentcore.services.deps import get_db_service
+
+                        _ml = get_max_text_length()
+                        _mi = get_max_items_length()
+                        uat_inputs = serialize(
+                            _vertex_to_primitive_dict(vertex.raw_params),
+                            max_length=_ml, max_items=_mi,
+                        ) if vertex.raw_params else None
+                        uat_outputs = serialize(
+                            vertex.built_result, max_length=_ml, max_items=_mi,
+                        ) if vertex.built_result is not None else None
+
+                        agent_uuid = self.agent_id if isinstance(self.agent_id, _UUID) else _UUID(self.agent_id)
+                        dep_uuid = _UUID(self.uat_deployment_id)
+                        org_uuid = _UUID(self.uat_org_id) if self.uat_org_id else None
+                        dept_uuid = _UUID(self.uat_dept_id) if self.uat_dept_id else None
+
+                        target_ids = []
+                        if hasattr(vertex, 'outgoing_edges'):
+                            for edge in vertex.outgoing_edges:
+                                if hasattr(edge, 'target') and hasattr(edge.target, 'id'):
+                                    target_ids.append(edge.target.id)
+
+                        targets = target_ids if target_ids else [None]
+                        async with session_getter(get_db_service()) as db:
+                            for tid in targets:
+                                uat_txn = TransactionUATTable(
+                                    vertex_id=vertex.id,
+                                    target_id=tid,
+                                    inputs=uat_inputs,
+                                    outputs=uat_outputs,
+                                    status="success",
+                                    error=None,
+                                    agent_id=agent_uuid,
+                                    deployment_id=dep_uuid,
+                                    org_id=org_uuid,
+                                    dept_id=dept_uuid,
+                                )
+                                await log_transaction_uat(uat_txn, db)
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log transaction_uat for {vertex.id}: {log_error}")
+
                 # Log successful vertex build to database
-                if self.agent_id:
+                if self.agent_id and not self.skip_dev_logging:
                     try:
                         from uuid import UUID
                         from agentcore.graph_langgraph.logging import log_vertex_build
@@ -883,12 +1102,12 @@ class LangGraphAdapter:
             
             except Exception as build_error:
                 # Log failed transaction to database
-                if self.agent_id:
+                if self.agent_id and not self.skip_dev_logging:
                     try:
                         from agentcore.graph_langgraph.logging import log_transaction, _vertex_to_primitive_dict
-                        
+
                         inputs_for_log = _vertex_to_primitive_dict(vertex.raw_params)
-                        
+
                         await log_transaction(
                             agent_id=self.agent_id,
                             vertex_id=vertex.id,
@@ -900,9 +1119,115 @@ class LangGraphAdapter:
                         )
                     except Exception as log_error:
                         logger.warning(f"Failed to log transaction error for {vertex.id}: {log_error}")
-                
+
+                # Log failed transaction to orch_transaction
+                if self.agent_id and self.skip_dev_logging and self.orch_session_id:
+                    try:
+                        from uuid import UUID as _UUID
+                        from agentcore.graph_langgraph.logging import _vertex_to_primitive_dict
+                        from agentcore.serialization.serialization import serialize, get_max_text_length, get_max_items_length
+                        from agentcore.services.database.models.orch_transaction.model import OrchTransactionTable
+                        from agentcore.services.database.models.orch_transaction.crud import orch_log_transaction
+                        from agentcore.services.database.utils import session_getter
+                        from agentcore.services.deps import get_db_service
+
+                        orch_inputs = serialize(
+                            _vertex_to_primitive_dict(vertex.raw_params),
+                            max_length=get_max_text_length(),
+                            max_items=get_max_items_length(),
+                        ) if vertex.raw_params else None
+                        agent_uuid = self.agent_id if isinstance(self.agent_id, _UUID) else _UUID(self.agent_id)
+
+                        async with session_getter(get_db_service()) as db:
+                            txn = OrchTransactionTable(
+                                vertex_id=vertex.id,
+                                target_id=None,
+                                inputs=orch_inputs,
+                                outputs=None,
+                                status="error",
+                                error=str(build_error),
+                                agent_id=agent_uuid,
+                                session_id=self.orch_session_id,
+                                deployment_id=_UUID(self.orch_deployment_id) if self.orch_deployment_id else None,
+                                org_id=_UUID(self.orch_org_id) if self.orch_org_id else None,
+                                dept_id=_UUID(self.orch_dept_id) if self.orch_dept_id else None,
+                            )
+                            await orch_log_transaction(txn, db)
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log orch transaction error for {vertex.id}: {log_error}")
+
+                # Log failed transaction to transaction_prod
+                if self.agent_id and self.prod_deployment_id:
+                    try:
+                        from uuid import UUID as _UUID
+                        from agentcore.graph_langgraph.logging import _vertex_to_primitive_dict
+                        from agentcore.serialization.serialization import serialize, get_max_text_length, get_max_items_length
+                        from agentcore.services.database.models.transaction_prod.model import TransactionProdTable
+                        from agentcore.services.database.models.transaction_prod.crud import log_transaction_prod
+                        from agentcore.services.database.utils import session_getter
+                        from agentcore.services.deps import get_db_service
+
+                        prod_inputs = serialize(
+                            _vertex_to_primitive_dict(vertex.raw_params),
+                            max_length=get_max_text_length(),
+                            max_items=get_max_items_length(),
+                        ) if vertex.raw_params else None
+                        agent_uuid = self.agent_id if isinstance(self.agent_id, _UUID) else _UUID(self.agent_id)
+
+                        async with session_getter(get_db_service()) as db:
+                            prod_txn = TransactionProdTable(
+                                vertex_id=vertex.id,
+                                target_id=None,
+                                inputs=prod_inputs,
+                                outputs=None,
+                                status="error",
+                                error=str(build_error),
+                                agent_id=agent_uuid,
+                                deployment_id=_UUID(self.prod_deployment_id),
+                                org_id=_UUID(self.prod_org_id) if self.prod_org_id else None,
+                                dept_id=_UUID(self.prod_dept_id) if self.prod_dept_id else None,
+                            )
+                            await log_transaction_prod(prod_txn, db)
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log transaction_prod error for {vertex.id}: {log_error}")
+
+                # Log failed transaction to transaction_uat
+                if self.agent_id and self.uat_deployment_id:
+                    try:
+                        from uuid import UUID as _UUID
+                        from agentcore.graph_langgraph.logging import _vertex_to_primitive_dict
+                        from agentcore.serialization.serialization import serialize, get_max_text_length, get_max_items_length
+                        from agentcore.services.database.models.transaction_uat.model import TransactionUATTable
+                        from agentcore.services.database.models.transaction_uat.crud import log_transaction_uat
+                        from agentcore.services.database.utils import session_getter
+                        from agentcore.services.deps import get_db_service
+
+                        uat_inputs = serialize(
+                            _vertex_to_primitive_dict(vertex.raw_params),
+                            max_length=get_max_text_length(),
+                            max_items=get_max_items_length(),
+                        ) if vertex.raw_params else None
+                        agent_uuid = self.agent_id if isinstance(self.agent_id, _UUID) else _UUID(self.agent_id)
+
+                        async with session_getter(get_db_service()) as db:
+                            uat_txn = TransactionUATTable(
+                                vertex_id=vertex.id,
+                                target_id=None,
+                                inputs=uat_inputs,
+                                outputs=None,
+                                status="error",
+                                error=str(build_error),
+                                agent_id=agent_uuid,
+                                deployment_id=_UUID(self.uat_deployment_id),
+                                org_id=_UUID(self.uat_org_id) if self.uat_org_id else None,
+                                dept_id=_UUID(self.uat_dept_id) if self.uat_dept_id else None,
+                            )
+                            await log_transaction_uat(uat_txn, db)
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log transaction_uat error for {vertex.id}: {log_error}")
+
                 # Log failed vertex build to database
-                if self.agent_id:
+                if self.agent_id and not self.skip_dev_logging:
                     try:
                         from uuid import UUID
                         from agentcore.graph_langgraph.logging import log_vertex_build

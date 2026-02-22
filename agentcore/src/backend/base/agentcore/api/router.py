@@ -29,6 +29,7 @@ from agentcore.api.cache import router as cache_router
 from agentcore.api.control_panel import router as control_panel_router
 from agentcore.api.knowledge_bases import router as knowledge_bases_router
 from agentcore.api.model_registry import router as model_registry_router
+from agentcore.api.orchestrator import router as orchestrator_router
 router = APIRouter(
     prefix="/api",
 )
@@ -61,3 +62,4 @@ router.include_router(control_panel_router)
 router.include_router(cache_router)
 router.include_router(knowledge_bases_router)
 router.include_router(model_registry_router)
+router.include_router(orchestrator_router)
