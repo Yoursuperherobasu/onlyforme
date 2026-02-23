@@ -128,17 +128,17 @@ const router = createBrowserRouter(
                   <Route
                     path="guardrails"
                     element={
-                      
+                      <ProtectedPermissionRoute permission="view_guardrail_page">
                         <GuardrailsView />
-             
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
                     path="vector-db"
                     element={
-                      
+                      <ProtectedPermissionRoute permission="view_vectordb_page">
                         <VectorDBView />
-                   
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
@@ -160,9 +160,9 @@ const router = createBrowserRouter(
                   <Route
                     path="timeout-settings"
                     element={
-                      
+                      <ProtectedAccessControlRoute>
                         <TimeoutSettings />
-                    
+                      </ProtectedAccessControlRoute>
                     }
                   />
                   

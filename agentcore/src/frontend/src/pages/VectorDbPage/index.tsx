@@ -1,21 +1,10 @@
 import {
-  Plus,
-  Database,
-  MoreVertical,
-  Edit2,
-  Trash2,
   Search,
-  Settings,
   Activity,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
+import Loading from "@/components/ui/loading";
+import { useGetVectorDBCatalogue } from "@/controllers/API/queries/vector-db/use-get-vector-db-catalogue";
 import { getProviderIcon } from "@/utils/logo_provider";
 
 interface VectorDBType {
@@ -32,8 +21,8 @@ interface VectorDBType {
 }
 
 interface VectorDBViewProps {
-  vectorDBs: VectorDBType[];
-  setSearch: (search: string) => void;
+  vectorDBs?: VectorDBType[];
+  setSearch?: (search: string) => void;
   onEditVectorDB?: (vectorDB: VectorDBType) => void;
   onDeleteVectorDB?: (vectorDB: VectorDBType) => void;
   onConfigureVectorDB?: (vectorDB: VectorDBType) => void;
@@ -42,14 +31,19 @@ interface VectorDBViewProps {
 type DeploymentType = "all" | "saas" | "self-hosted" | "hybrid";
 
 export default function VectorDBView({
-  vectorDBs,
-  setSearch,
+  vectorDBs = [],
+  setSearch = () => {},
   onEditVectorDB,
   onDeleteVectorDB,
   onConfigureVectorDB,
 }: VectorDBViewProps): JSX.Element {
   const [filter, setFilter] = useState<DeploymentType>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const {
+    data: dbVectorDBs,
+    isLoading,
+    error,
+  } = useGetVectorDBCatalogue();
 
 
   const getProviderLogo = (provider: string) => {
@@ -63,25 +57,7 @@ export default function VectorDBView({
       );
     };
 
-  /* ---------------------------------- Dummy Vector DBs ---------------------------------- */
-
-  const DUMMY_VECTOR_DBS: VectorDBType[] = [
-    {
-      id: "1",
-      name: "Pinecone (Azure SaaS)",
-      description: "Fully managed vector database from Pinecone.",
-      provider: "Pinecone",
-      deployment: "SaaS",
-      dimensions: "1536",
-      indexType: "HNSW",
-      status: "connected",
-      vectorCount: "2.4M",
-      isCustom: false,
-    },
-    
-  ];
-
-  const displayVectorDBs = vectorDBs?.length ? vectorDBs : DUMMY_VECTOR_DBS;
+  const displayVectorDBs = vectorDBs?.length ? vectorDBs : (dbVectorDBs ?? []);
 
   /* ---------------------------------- Filtering ---------------------------------- */
 
@@ -167,11 +143,6 @@ export default function VectorDBView({
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
-
-          <Button variant="default">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Vector Database
-          </Button>
         </div>
       </div>
 
@@ -179,127 +150,135 @@ export default function VectorDBView({
 
       {/* Table - Scrollable */}
       <div className="flex-1 overflow-auto p-8">
-        <div className="overflow-x-auto rounded-lg border border-border bg-card">
-          <table className="w-full">
-            <thead className="bg-muted/50">
-              <tr className="border-b border-border">
-                {[
-                  "Database Name",
-                  "Provider",
-                  "Deployment",
-                  "Dimensions",
-                  "Index Type",
-                  "Status",
-                  "Vectors",
-                  
-                ].map((h) => (
-                  <th
-                    key={h}
-                    className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-border">
-              {filteredVectorDBs.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={9}
-                    className="px-6 py-12 text-center text-muted-foreground"
-                  >
-                    No vector databases found matching your criteria
-                  </td>
-                </tr>
-              ) : (
-                filteredVectorDBs.map((db) => (
-                  <tr key={db.id} className="group hover:bg-muted/50">
-                    {/* Database Name */}
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="font-semibold">{db.name}</div>
-                        {db.isCustom && (
-                          <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                            Custom
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {db.description}
-                      </div>
-                    </td>
-
-                    {/* Provider */}
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="h-8 w-8 rounded border flex items-center justify-center">
-                        {getProviderLogo(db.provider)}
-                        </div>
-                        <span className="text-sm">{db.provider}</span>
-                      </div>
-                    </td>
-
-                    {/* Deployment */}
-                    <td className="px-6 py-4">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getDeploymentBadgeColor(db.deployment)}`}
+        {isLoading ? (
+          <div className="flex h-full w-full items-center justify-center">
+            <Loading />
+          </div>
+        ) : (
+          <>
+            {!!error && (
+              <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                Failed to load vector databases from database.
+              </div>
+            )}
+            <div className="overflow-x-auto rounded-lg border border-border bg-card">
+              <table className="w-full">
+                <thead className="bg-muted/50">
+                  <tr className="border-b border-border">
+                    {[
+                      "Database Name",
+                      "Provider",
+                      "Deployment",
+                      "Dimensions",
+                      "Index Type",
+                      "Status",
+                      "Vectors",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                       >
-                        {db.deployment}
-                      </span>
-                    </td>
-
-                    {/* Dimensions */}
-                    <td className="px-6 py-4">
-                      <span className="text-sm text-muted-foreground">
-                        {db.dimensions}
-                      </span>
-                    </td>
-
-                    {/* Index Type */}
-                    <td className="px-6 py-4">
-                      <span className="text-sm font-mono text-muted-foreground">
-                        {db.indexType}
-                      </span>
-                    </td>
-
-                    
-                     {/* Status */}
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`h-2 w-2 rounded-full ${getStatusColor(db.status)}`}
-                        ></span>
-                        <span className="text-sm">
-                          {getStatusLabel(db.status)}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Vector Count */}
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1">
-                        <Activity className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-sm font-medium">
-                          {db.vectorCount}
-                        </span>
-                      </div>
-                    </td>
-
-            
-                    
+                        {h}
+                      </th>
+                    ))}
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
 
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          Showing {filteredVectorDBs.length} of {displayVectorDBs.length} vector
-          databases
-        </div>
+                <tbody className="divide-y divide-border">
+                  {filteredVectorDBs.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={9}
+                        className="px-6 py-12 text-center text-muted-foreground"
+                      >
+                        No vector databases found matching your criteria
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredVectorDBs.map((db) => (
+                      <tr key={db.id} className="group hover:bg-muted/50">
+                        {/* Database Name */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className="font-semibold">{db.name}</div>
+                            {db.isCustom && (
+                              <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                                Custom
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {db.description}
+                          </div>
+                        </td>
+
+                        {/* Provider */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-8 w-8 items-center justify-center rounded border">
+                              {getProviderLogo(db.provider)}
+                            </div>
+                            <span className="text-sm">{db.provider}</span>
+                          </div>
+                        </td>
+
+                        {/* Deployment */}
+                        <td className="px-6 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getDeploymentBadgeColor(db.deployment)}`}
+                          >
+                            {db.deployment}
+                          </span>
+                        </td>
+
+                        {/* Dimensions */}
+                        <td className="px-6 py-4">
+                          <span className="text-sm text-muted-foreground">
+                            {db.dimensions}
+                          </span>
+                        </td>
+
+                        {/* Index Type */}
+                        <td className="px-6 py-4">
+                          <span className="text-sm font-mono text-muted-foreground">
+                            {db.indexType}
+                          </span>
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`h-2 w-2 rounded-full ${getStatusColor(db.status)}`}
+                            ></span>
+                            <span className="text-sm">
+                              {getStatusLabel(db.status)}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Vector Count */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-1">
+                            <Activity className="h-3 w-3 text-muted-foreground" />
+                            <span className="text-sm font-medium">
+                              {db.vectorCount}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-6 text-center text-sm text-muted-foreground">
+              Showing {filteredVectorDBs.length} of {displayVectorDBs.length} vector
+              databases
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

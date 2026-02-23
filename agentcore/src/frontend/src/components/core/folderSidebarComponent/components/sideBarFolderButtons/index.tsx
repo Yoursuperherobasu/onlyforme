@@ -642,7 +642,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {can("view_platform_configs") && (
+        {role === "root" && can("view_platform_configs") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"

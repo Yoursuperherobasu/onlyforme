@@ -30,6 +30,9 @@ from agentcore.api.control_panel import router as control_panel_router
 from agentcore.api.knowledge_bases import router as knowledge_bases_router
 from agentcore.api.model_registry import router as model_registry_router
 from agentcore.api.orchestrator import router as orchestrator_router
+from agentcore.api.vector_db_catalogue import router as vector_db_catalogue_router
+from agentcore.api.timeout_settings import router as timeout_settings_router
+from agentcore.api.guardrails_catalogue import router as guardrails_catalogue_router
 router = APIRouter(
     prefix="/api",
 )
@@ -63,3 +66,6 @@ router.include_router(cache_router)
 router.include_router(knowledge_bases_router)
 router.include_router(model_registry_router)
 router.include_router(orchestrator_router)
+router.include_router(vector_db_catalogue_router)
+router.include_router(timeout_settings_router)
+router.include_router(guardrails_catalogue_router)
