@@ -182,8 +182,12 @@ export default function AgentOrchestrator() {
     new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const highlightMentions = (text: string) => {
-    // Match @mention (word chars, underscores, hyphens) but stop at first space
-    return text.split(/(@[\w-]+)/g).map((part, i) =>
+    // Build a regex that matches any known @agent_name (including spaces)
+    // so "@smart agent" is bolded as one unit, not just "@smart".
+    if (agents.length === 0) return [text];
+    const escaped = agents.map((a) => a.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const pattern = new RegExp(`(@(?:${escaped.join("|")}))`, "gi");
+    return text.split(pattern).map((part, i) =>
       part.startsWith("@") ? (
         <span key={i} className="font-semibold text-primary">
           {part}
@@ -470,7 +474,7 @@ export default function AgentOrchestrator() {
                 >
                   <button
                     onClick={() => handleSelectSession(chat.session_id)}
-                    className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-2 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
+                    className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-2 py-2.5 pr-8 text-left text-sm text-foreground hover:bg-accent ${
                       currentSessionId === chat.session_id ? "bg-accent" : ""
                     }`}
                   >

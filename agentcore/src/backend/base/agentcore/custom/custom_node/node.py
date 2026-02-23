@@ -1518,14 +1518,6 @@ class Node(ExecutableNode):
         return stored_message
 
     async def _store_message(self, message: Message) -> Message:
-        # Skip dev table storage when running from orchestration chat
-        if hasattr(self, "graph") and getattr(self.graph, "skip_dev_logging", False):
-            # Assign a synthetic id so callers (e.g. send_message) can safely
-            # access stored_message.id without hitting an AttributeError.
-            if "id" not in message.data:
-                message.data["id"] = str(uuid4())
-            return message
-
         agent_id: str | None = None
         if hasattr(self, "graph"):
             # Convert UUID to str if needed
