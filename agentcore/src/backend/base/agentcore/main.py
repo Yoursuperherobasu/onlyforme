@@ -54,10 +54,7 @@ if TYPE_CHECKING:
 # Ignore Pydantic deprecation warnings from Langchain
 warnings.filterwarnings("ignore", category=PydanticDeprecatedSince20)
 
-# Suppress noisy "Failed to detach context" errors from OpenTelemetry.
-# These are harmless — they occur when Langfuse span context managers are
-# garbage-collected across asyncio task boundaries.  Traces still arrive
-# in Langfuse; only the OTel ContextVar cleanup fails.
+
 import logging as _stdlib_logging
 
 
@@ -220,24 +217,9 @@ def create_app():
         allow_headers=["*"],
     )
 
-    # ── ASGI middleware (streaming-safe) ──────────────────────────────
-    # IMPORTANT: @app.middleware("http") uses BaseHTTPMiddleware which
-    # buffers the entire response body, breaking streaming (NDJSON/SSE).
-    # These use raw ASGI to pass streaming responses through unbuffered.
-    # The security checks are identical to the original implementation.
 
     class BoundaryCheckMiddleware:
-        """Validates multipart boundary for /api/files/upload requests.
-
-        Raw ASGI middleware — passes all other requests through without
-        touching the response, so StreamingResponse works correctly.
-
-        Security checks (unchanged from original):
-        - Content-Type must be multipart/form-data with boundary
-        - Boundary must match ^[\\w\\-]{1,70}$ regex
-        - Body must start/end with correct boundary markers
-        """
-
+     
         def __init__(self, app):
             self.app = app
 
