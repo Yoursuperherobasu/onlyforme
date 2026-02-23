@@ -594,33 +594,6 @@ class LangGraphAdapter:
             
             await self.tracing_service.end_tracers(outputs=outputs, error=error)
     
-    def _topological_order(self) -> list[str]:
-        """Return vertex IDs in topological (dependency-first) order."""
-        from collections import deque
-
-        in_degree: dict[str, int] = {vid: 0 for vid in self.vertex_map}
-        for vid, preds in self.predecessor_map.items():
-            if vid in in_degree:
-                in_degree[vid] = len([p for p in preds if p in self.vertex_map])
-
-        queue = deque(vid for vid, d in in_degree.items() if d == 0)
-        order: list[str] = []
-        while queue:
-            vid = queue.popleft()
-            order.append(vid)
-            for successor_id in self.successor_map.get(vid, []):
-                if successor_id in in_degree:
-                    in_degree[successor_id] -= 1
-                    if in_degree[successor_id] == 0:
-                        queue.append(successor_id)
-
-        # Append any remaining vertices (e.g. in cycles) that weren't visited
-        for vid in self.vertex_map:
-            if vid not in order:
-                order.append(vid)
-
-        return order
-
     async def arun(
         self,
         inputs: list[dict[str, str]],
@@ -1799,60 +1772,6 @@ class LangGraphAdapter:
     def reset_activated_vertices(self) -> None:
         """Reset the activated vertices list."""
         self.activated_vertices = []
-    
-    def activate_state_vertices(self, name: str, caller: str) -> None:
-        """Activates vertices associated with a given state name.
-
-        Marks vertices with the specified state name, as well as their successors and related
-        predecessors. The state manager is then updated with the new state record.
-        
-        Args:
-            name: The state name to match
-            caller: The caller vertex ID
-        """
-        from agentcore.graph_langgraph.schema import VertexStates
-        
-        vertices_ids = set()
-        new_predecessor_map = {}
-        activated_vertices = []
-        
-        for vertex_id in self.is_state_vertices:
-            caller_vertex = self.get_vertex(caller)
-            vertex = self.get_vertex(vertex_id)
-            if vertex_id == caller or vertex.display_name == caller_vertex.display_name:
-                continue
-            ctx_key = vertex.raw_params.get("context_key")
-            # Check is_state attribute instead of isinstance(vertex, StateVertex)
-            if isinstance(ctx_key, str) and name in ctx_key and vertex_id != caller and getattr(vertex, 'is_state', False):
-                activated_vertices.append(vertex_id)
-                vertices_ids.add(vertex_id)
-                successors = self.get_all_successors(vertex, flat=True)
-                
-                # Update run_manager.run_predecessors because we are activating vertices
-                successors_predecessors = set()
-                for sucessor in successors:
-                    successors_predecessors.update(self.get_all_predecessors(sucessor))
-
-                edges_set = set()
-                for _vertex in [vertex, *successors, *successors_predecessors]:
-                    edges_set.update(_vertex.edges)
-                    if _vertex.state == VertexStates.INACTIVE:
-                        _vertex.set_state("ACTIVE")
-
-                    vertices_ids.add(_vertex.id)
-                edges = list(edges_set)
-                predecessor_map, _ = self.build_adjacency_maps(edges)
-                new_predecessor_map.update(predecessor_map)
-
-        vertices_ids.update(new_predecessor_map.keys())
-        vertices_ids.update(v_id for value_list in new_predecessor_map.values() for v_id in value_list)
-
-        self.activated_vertices = activated_vertices
-        self.vertices_to_run.update(vertices_ids)
-        self.run_manager.update_run_state(
-            run_predecessors=new_predecessor_map,
-            vertices_to_run=self.vertices_to_run,
-        )
     
     def get_all_successors(self, vertex: LangGraphVertex, *, recursive=True, flat=True, visited=None):
         """Returns all successors of a given vertex, optionally recursively and as a flat or nested list.
