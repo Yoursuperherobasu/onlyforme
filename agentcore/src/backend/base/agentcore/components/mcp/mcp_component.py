@@ -64,9 +64,9 @@ class MCPToolsNode(NodeWithCache):
         "tool",
     ]
 
-    display_name = "MCP Tools"
-    description = "Connect to an MCP server to use its tools."
-    icon = "Mcp"
+    display_name = "MCP Connector"
+    description = "Use tools from a registered MCP server."
+    icon = "Server"
     name = "MCPTools"
 
     inputs = [

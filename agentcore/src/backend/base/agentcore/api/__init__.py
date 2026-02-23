@@ -22,6 +22,8 @@ from agentcore.api.validate import router as validate_router
 from agentcore.api.variable import router as variables_router
 from agentcore.api.files_user import router as files_router_v2
 from agentcore.api.mcp_config import router as mcp_router_v2
+from agentcore.api.a2a import router as a2a_router
+from agentcore.api.teams import router as teams_router
 
 __all__ = [
     "api_key_router",
@@ -48,4 +50,6 @@ __all__ = [
     "users_router",
     "validate_router",
     "variables_router",
+    "a2a_router",
+    "teams_router",
 ]

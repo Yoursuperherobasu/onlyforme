@@ -163,7 +163,7 @@ export default function McpComponent({
                   ? "Loading servers..."
                   : selectedItem[0]?.name
                     ? selectedItem[0]?.name
-                    : "Select a server..."}
+                    : "Choose a server..."}
               </span>
               <ForwardedIconComponent
                 name={!showSaveButton ? "ChevronsUpDown" : "X"}
@@ -188,7 +188,7 @@ export default function McpComponent({
         </div>
       ) : (
         <Button size="sm" onClick={handleAddButtonClick}>
-          <span>Add MCP Server</span>
+          <span>Register MCP Server</span>
         </Button>
       )}
       {options && (
@@ -204,10 +204,10 @@ export default function McpComponent({
             id={id}
             value={name}
             editNode={editNode}
-            headerSearchPlaceholder="Search MCP Servers..."
+            headerSearchPlaceholder="Find a server..."
             handleOnNewValue={handleOnNewValue}
             disabled={disabled}
-            addButtonText="Add MCP Server"
+            addButtonText="Register MCP Server"
             onAddButtonClick={handleAddButtonClick}
           />
           <AddMcpServerModal

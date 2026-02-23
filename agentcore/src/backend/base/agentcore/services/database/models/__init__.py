@@ -25,6 +25,7 @@ from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
 from .timeout_settings import TimeoutSettings
 from .guardrail_catalogue import GuardrailCatalogue
+from .teams_app import TeamsApp
 
 __all__ = [
     "Agent",
@@ -59,6 +60,7 @@ __all__ = [
     "KnowledgeBase",
     "TimeoutSettings",
     "GuardrailCatalogue",
+    "TeamsApp",
     "TransactionTable",
     "TransactionUATTable",
     "User",

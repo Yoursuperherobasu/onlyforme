@@ -201,6 +201,13 @@ def get_chat_service() -> ChatService:
 
 
 
+def get_teams_service():
+    """Retrieves the TeamsService instance from the service manager."""
+    from agentcore.services.teams.factory import TeamsServiceFactory
+
+    return get_service(ServiceType.TEAMS_SERVICE, TeamsServiceFactory())
+
+
 def get_queue_service() -> JobQueueService:
     """Retrieves the QueueService instance from the service manager."""
     from agentcore.services.job_queue.factory import JobQueueServiceFactory

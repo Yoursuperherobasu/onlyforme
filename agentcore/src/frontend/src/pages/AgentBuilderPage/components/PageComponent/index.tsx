@@ -81,10 +81,12 @@ import {
 } from "./MemoizedComponents";
 import getRandomName from "./utils/get-random-name";
 import isWrappedWithClass from "./utils/is-wrapped-with-class";
+import A2ANode from "@/CustomNodes/A2ANode";
 
 const nodeTypes = {
   genericNode: GenericNode,
   noteNode: NoteNode,
+  a2aNode: A2ANode,
 };
 
 const edgeTypes = {

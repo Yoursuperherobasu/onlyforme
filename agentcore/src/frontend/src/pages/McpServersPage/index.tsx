@@ -96,7 +96,7 @@ export default function MCPServersPage() {
             data-testid="add-mcp-server-button-page"
           >
             <Plus className="mr-2 h-4 w-4" />
-            Add MCP Server
+            Register MCP Server
           </Button>
         </div>
       </div>
@@ -124,7 +124,7 @@ export default function MCPServersPage() {
                   onClick={() => setAddOpen(true)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Add MCP Server
+                  Register MCP Server
                 </Button>
               )}
             </div>
