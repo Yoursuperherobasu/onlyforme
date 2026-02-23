@@ -9,14 +9,18 @@ from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlmodel import col, select
+from sqlalchemy import and_, or_
 
 from agentcore.api.schemas import UploadFileResponse
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.file.model import File as UserFile
+from agentcore.services.database.models.knowledge_base.model import KnowledgeBase
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.deps import get_settings_service, get_storage_service
 from agentcore.services.storage.service import StorageService
 
@@ -28,6 +32,88 @@ router = APIRouter(tags=["Files"], prefix="/files")
 # Set the static name of the MCP servers file
 MCP_SERVERS_FILE = "_mcp_servers"
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
+
+
+async def _get_scope_memberships(session: DbSession, user_id: uuid.UUID) -> tuple[set[uuid.UUID], set[uuid.UUID]]:
+    org_rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+            )
+        )
+    ).all()
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    return set(org_rows), set(dept_rows)
+
+
+async def _resolve_default_tenant_scope(session: DbSession, user_id: uuid.UUID) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+    org_ids, dept_ids = await _get_scope_memberships(session, user_id)
+    org_id = sorted(org_ids, key=str)[0] if org_ids else None
+    dept_id = sorted(dept_ids, key=str)[0] if dept_ids else None
+    return org_id, dept_id
+
+
+async def _get_or_create_knowledge_base(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    knowledge_base_name: str,
+) -> KnowledgeBase:
+    org_id, dept_id = await _resolve_default_tenant_scope(session, current_user.id)
+    existing = (
+        await session.exec(
+            select(KnowledgeBase).where(
+                KnowledgeBase.name == knowledge_base_name,
+                KnowledgeBase.org_id == org_id,
+                KnowledgeBase.dept_id == dept_id,
+            )
+        )
+    ).first()
+    if existing:
+        return existing
+
+    kb = KnowledgeBase(
+        name=knowledge_base_name,
+        org_id=org_id,
+        dept_id=dept_id,
+        created_by=current_user.id,
+    )
+    session.add(kb)
+    await session.flush()
+    return kb
+
+
+async def _build_file_visibility_filters(session: DbSession, current_user: CurrentActiveUser):
+    role = getattr(current_user, "role", None)
+    org_ids, dept_ids = await _get_scope_memberships(session, current_user.id)
+
+    filters = [UserFile.user_id == current_user.id]
+
+    if getattr(current_user, "is_superuser", False) or role in {"root", "super_admin"}:
+        if org_ids:
+            filters.append(UserFile.org_id.in_(list(org_ids)))
+        return filters
+
+    if role == "department_admin":
+        if dept_ids:
+            filters.append(UserFile.dept_id.in_(list(dept_ids)))
+        elif org_ids:
+            filters.append(and_(UserFile.org_id.in_(list(org_ids)), UserFile.dept_id.is_(None)))
+        return filters
+
+    if dept_ids:
+        filters.append(UserFile.dept_id.in_(list(dept_ids)))
+    if org_ids:
+        filters.append(and_(UserFile.org_id.in_(list(org_ids)), UserFile.dept_id.is_(None)))
+    return filters
 
 
 async def byte_stream_generator(file_input, chunk_size: int = 8192) -> AsyncGenerator[bytes, None]:
@@ -51,17 +137,14 @@ async def byte_stream_generator(file_input, chunk_size: int = 8192) -> AsyncGene
 
 async def fetch_file_object(file_id: uuid.UUID, current_user: CurrentActiveUser, session: DbSession):
     # Fetch the file from the DB
-    stmt = select(UserFile).where(UserFile.id == file_id)
+    visibility_filters = await _build_file_visibility_filters(session, current_user)
+    stmt = select(UserFile).where(UserFile.id == file_id).where(or_(*visibility_filters))
     results = await session.exec(stmt)
     file = results.first()
 
     # Check if the file exists
     if not file:
         raise HTTPException(status_code=404, detail="File not found")
-
-    # Make sure the user has access to the file
-    if file.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You don't have access to this file")
 
     return file
 
@@ -81,6 +164,22 @@ async def save_file_routine(file, storage_service, current_user: CurrentActiveUs
     return file_id, file_name
 
 
+def sanitize_knowledge_base_name(raw_name: str) -> str:
+    """Sanitize user-provided folder names for safe storage usage."""
+    clean_name = raw_name.strip()
+    clean_name = clean_name.replace("\\", "_").replace("/", "_")
+    clean_name = re.sub(r"[^A-Za-z0-9 _.-]", "_", clean_name)
+    return re.sub(r"\s+", " ", clean_name).strip(" .")
+
+
+def get_storage_relative_path(file_path: str, user_id: uuid.UUID) -> str:
+    """Convert stored DB path into storage-relative path under user root."""
+    user_prefix = f"{user_id}/"
+    if file_path.startswith(user_prefix):
+        return file_path[len(user_prefix) :]
+    return file_path
+
+
 @router.post("", status_code=HTTPStatus.CREATED)
 @router.post("/", status_code=HTTPStatus.CREATED)
 async def upload_user_file(
@@ -89,6 +188,7 @@ async def upload_user_file(
     current_user: CurrentActiveUser,
     storage_service=Depends(get_storage_service),
     settings_service=Depends(get_settings_service),
+    knowledge_base_name: Annotated[str | None, Form()] = None,
 ) -> UploadFileResponse:
 
     """Upload a file for the current user and track it in the database."""
@@ -146,10 +246,26 @@ async def upload_user_file(
             # Create the unique filename with extension for storage
             unique_filename = f"{root_filename}.{file_extension}" if file_extension else root_filename
 
+        safe_knowledge_base_name = ""
+        knowledge_base: KnowledgeBase | None = None
+        if knowledge_base_name:
+            safe_knowledge_base_name = sanitize_knowledge_base_name(knowledge_base_name)
+            if not safe_knowledge_base_name:
+                raise HTTPException(status_code=400, detail="Invalid knowledge base name")
+            knowledge_base = await _get_or_create_knowledge_base(
+                session=session,
+                current_user=current_user,
+                knowledge_base_name=safe_knowledge_base_name,
+            )
+
+        storage_file_name = (
+            f"{safe_knowledge_base_name}/{unique_filename}" if safe_knowledge_base_name else unique_filename
+        )
+
         # Read file content and save with unique filename
         try:
             file_id, stored_file_name = await save_file_routine(
-                file, storage_service, current_user, file_name=unique_filename
+                file, storage_service, current_user, file_name=storage_file_name
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error saving file: {e}") from e
@@ -161,17 +277,23 @@ async def upload_user_file(
         )
 
         # Create a new file record
+        org_id, dept_id = await _resolve_default_tenant_scope(session, current_user.id)
         new_file = UserFile(
             id=file_id,
             user_id=current_user.id,
+            org_id=knowledge_base.org_id if knowledge_base else org_id,
+            dept_id=knowledge_base.dept_id if knowledge_base else dept_id,
+            knowledge_base_id=knowledge_base.id if knowledge_base else None,
             name=root_filename,
-            path=f"{current_user.id}/{stored_file_name}",
+            path=f"{current_user.id}/{storage_file_name}",
             size=file_size,
         )
         session.add(new_file)
 
         await session.commit()
         await session.refresh(new_file)
+    except HTTPException:
+        raise
     except Exception as e:
         # Optionally, you could also delete the file from disk if the DB insert fails.
         raise HTTPException(status_code=500, detail=f"Database error: {e}") from e
@@ -247,8 +369,8 @@ async def list_files(
 ) -> list[UserFile]:
     """List the files available to the current user."""
     try:
-
-        stmt = select(UserFile).where(UserFile.user_id == current_user.id)
+        visibility_filters = await _build_file_visibility_filters(session, current_user)
+        stmt = select(UserFile).where(or_(*visibility_filters))
         results = await session.exec(stmt)
 
         full_list = list(results)
@@ -268,8 +390,9 @@ async def delete_files_batch(
 ):
     """Delete multiple files by their IDs."""
     try:
+        visibility_filters = await _build_file_visibility_filters(session, current_user)
         # Fetch all files from the DB
-        stmt = select(UserFile).where(col(UserFile.id).in_(file_ids), col(UserFile.user_id) == current_user.id)
+        stmt = select(UserFile).where(col(UserFile.id).in_(file_ids), or_(*visibility_filters))
         results = await session.exec(stmt)
         files = results.all()
 
@@ -278,7 +401,8 @@ async def delete_files_batch(
 
         # Delete all files from the storage service
         for file in files:
-            await storage_service.delete_file(agent_id=str(current_user.id), file_name=file.path)
+            storage_path = get_storage_relative_path(file.path, current_user.id)
+            await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
             await session.delete(file)
 
         # Delete all files from the database
@@ -300,8 +424,9 @@ async def download_files_batch(
 ):
     """Download multiple files as a zip file by their IDs."""
     try:
+        visibility_filters = await _build_file_visibility_filters(session, current_user)
         # Fetch all files from the DB
-        stmt = select(UserFile).where(col(UserFile.id).in_(file_ids), col(UserFile.user_id) == current_user.id)
+        stmt = select(UserFile).where(col(UserFile.id).in_(file_ids), or_(*visibility_filters))
         results = await session.exec(stmt)
         files = results.all()
 
@@ -315,8 +440,9 @@ async def download_files_batch(
         with zipfile.ZipFile(zip_stream, "w") as zip_file:
             for file in files:
                 # Get the file content from storage
+                storage_path = get_storage_relative_path(file.path, current_user.id)
                 file_content = await storage_service.get_file(
-                    agent_id=str(current_user.id), file_name=file.path.split("/")[-1]
+                    agent_id=str(current_user.id), file_name=storage_path
                 )
 
                 # Get the file extension from the original filename
@@ -407,11 +533,10 @@ async def download_file(
         if not file:
             raise HTTPException(status_code=404, detail="File not found")
 
-        # Get the basename of the file path
-        file_name = file.path.split("/")[-1]
+        storage_path = get_storage_relative_path(file.path, current_user.id)
 
         # Get file stream
-        file_stream = await storage_service.get_file(agent_id=str(current_user.id), file_name=file_name)
+        file_stream = await storage_service.get_file(agent_id=str(current_user.id), file_name=storage_path)
 
         if file_stream is None:
             raise HTTPException(status_code=404, detail="File stream not available")
@@ -476,7 +601,8 @@ async def delete_file(
             raise HTTPException(status_code=404, detail="File not found")
 
         # Delete the file from the storage service
-        await storage_service.delete_file(agent_id=str(current_user.id), file_name=file_to_delete.path)
+        storage_path = get_storage_relative_path(file_to_delete.path, current_user.id)
+        await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
 
         # Delete from the database
         await session.delete(file_to_delete)
@@ -501,14 +627,16 @@ async def delete_all_files(
 ):
     """Delete all files for the current user."""
     try:
+        visibility_filters = await _build_file_visibility_filters(session, current_user)
         # Fetch all files from the DB
-        stmt = select(UserFile).where(UserFile.user_id == current_user.id)
+        stmt = select(UserFile).where(or_(*visibility_filters))
         results = await session.exec(stmt)
         files = results.all()
 
         # Delete all files from the storage service
         for file in files:
-            await storage_service.delete_file(agent_id=str(current_user.id), file_name=file.path)
+            storage_path = get_storage_relative_path(file.path, current_user.id)
+            await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
             await session.delete(file)
 
         # Delete all files from the database

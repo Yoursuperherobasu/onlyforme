@@ -8,14 +8,13 @@ export const ProtectedAccessControlRoute = ({
   children: JSX.Element;
 }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const permissions = useAuthStore((state) => state.permissions);
+  const role = useAuthStore((state) => state.role);
 
   if (!isAuthenticated) {
     return <LoadingPage />;
   }
 
-  const canAccess = permissions.includes("view_access_control_page") ||
-    permissions.includes("manage_roles");
+  const canAccess = role === "root";
 
   if (!canAccess) {
     return (

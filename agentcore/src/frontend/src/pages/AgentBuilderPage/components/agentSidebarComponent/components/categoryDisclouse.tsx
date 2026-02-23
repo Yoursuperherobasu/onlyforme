@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/disclosure";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import type { APIClassType } from "@/types/api";
+import { getCategoryAccentColor } from "../helpers/get-category-accent-color";
 import SidebarItemsList from "./sidebarItemsList";
 import { useTranslation } from 'react-i18next';
 
@@ -46,6 +47,8 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
 
   const { t } = useTranslation();
   const isOpen = openCategories.includes(item.name);
+  const itemCount = Object.keys(dataFilter[item.name] ?? {}).length;
+  const accentColor = getCategoryAccentColor(item.name, nodeColors);
   const handleOpenChange = useCallback(
     (isOpen: boolean) => {
       setOpenCategories((prev) =>
@@ -64,14 +67,23 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
               role="button"
               tabIndex={0}
               onKeyDown={handleKeyDownInput}
-              className="user-select-none flex cursor-pointer items-center gap-2"
+              className="user-select-none flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/80"
+              style={{ borderLeft: `2px solid ${accentColor}` }}
             >
-              <ForwardedIconComponent
-                name={item.icon}
-                className="h-4 w-4 group-aria-expanded/collapsible:text-accent-pink-foreground"
-              />
-              <span className="flex-1 group-aria-expanded/collapsible:font-semibold">
+              <span style={{ color: accentColor }}>
+                <ForwardedIconComponent
+                  name={item.icon}
+                  className="h-4 w-4"
+                />
+              </span>
+              <span
+                className="flex-1 font-semibold"
+                style={{ color: accentColor }}
+              >
                 {t(item.display_name)}
+              </span>
+              <span className="text-xs font-bold" style={{ color: accentColor }}>
+                {itemCount}
               </span>
               <ForwardedIconComponent
                 name="ChevronRight"

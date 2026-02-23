@@ -16,6 +16,8 @@ class TransactionBase(SQLModel):
     status: str = Field(nullable=False)
     error: str | None = Field(default=None)
     agent_id: UUID = Field()
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
 
     # Needed for Column(JSON)
     class Config:

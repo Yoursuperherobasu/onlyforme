@@ -3,14 +3,19 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncGenerator
+
+from collections.abc import AsyncGenerator
+from enum import Enum
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Annotated
+from uuid import UUID
 
 import sqlalchemy as sa
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from loguru import logger
+from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, parse_value
 from agentcore.api.v1_schemas import (
@@ -40,11 +45,14 @@ from agentcore.processing.process import process_tweaks, run_graph_internal
 from agentcore.services.auth.utils import api_key_security, get_current_active_user
 from agentcore.services.database.models.agent.model import Agent, AgentRead
 from agentcore.services.database.models.agent.utils import get_all_webhook_components_in_agent
+from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
+from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
 from agentcore.services.database.models.user.model import User, UserRead
-from agentcore.services.deps import get_settings_service, get_telemetry_service
+from agentcore.services.deps import get_settings_service, get_telemetry_service, session_scope
 from agentcore.services.telemetry.schema import RunPayload
 from agentcore.utils.compression import compress_response
 from agentcore.utils.version import get_version_info
+
 
 if TYPE_CHECKING:
     from agentcore.events.event_manager import EventManager
@@ -52,6 +60,70 @@ if TYPE_CHECKING:
 
 router = APIRouter(tags=["Base"])
 
+# ---------------------------------------------------------------------------
+# Environment enum & helper for resolving agent data from dev / uat / prod
+# ---------------------------------------------------------------------------
+
+class RunEnvironment(str, Enum):
+    """Environment to run the agent from."""
+    DEV = "dev"    # Read from `agent` table (draft / live editor version)
+    UAT = "uat"    # Read from `agent_deployment_uat` table
+    PROD = "prod"  # Read from `agent_deployment_prod` table
+
+
+async def _resolve_agent_data_for_env(
+    agent_id: UUID,
+    env: RunEnvironment,
+    version: str,
+) -> dict:
+    """Return the flow JSON (nodes/edges) for the requested environment & version.
+    - **dev**  → reads ``agent.data`` directly (current draft). Version is ignored.
+    - **uat**  → reads ``agent_deployment_uat.agent_snapshot`` for the given version.
+    - **prod** → reads ``agent_deployment_prod.agent_snapshot`` for the given version.
+    Returns:
+        dict: The flow data dict containing {"nodes": [...], "edges": [...]}.
+    Raises:
+        HTTPException 404 if no matching published record is found.
+    """
+    async with session_scope() as session:
+        if env == RunEnvironment.DEV:
+            agent = await session.get(Agent, agent_id)
+            if not agent or not agent.data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Agent {agent_id} not found or has no data",
+                )
+            return agent.data
+
+        if env == RunEnvironment.UAT:
+            stmt = (
+                select(AgentDeploymentUAT)
+                .where(AgentDeploymentUAT.agent_id == agent_id)
+                .where(AgentDeploymentUAT.version_number == int(version.lstrip("v")))
+                .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+            )
+            record = (await session.exec(stmt)).first()
+            if not record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No PUBLISHED UAT version '{version}' found for agent {agent_id}",
+                )
+            return record.agent_snapshot
+
+        # env == RunEnvironment.PROD
+        stmt = (
+            select(AgentDeploymentProd)
+            .where(AgentDeploymentProd.agent_id == agent_id)
+            .where(AgentDeploymentProd.version_number == int(version.lstrip("v")))
+            .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
+        )
+        record = (await session.exec(stmt)).first()
+        if not record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No PUBLISHED PROD version '{version}' found for agent {agent_id}",
+            )
+        return record.agent_snapshot
 
 @router.get("/all", dependencies=[Depends(get_current_active_user)])
 async def get_all():
@@ -279,27 +351,38 @@ async def simplified_run_agent(
     input_request: SimplifiedAPIRequest | None = None,
     stream: bool = False,
     api_key_user: Annotated[UserRead, Depends(api_key_security)],
+env: RunEnvironment = Query(
+        description="Environment to run the agent from: dev (draft from agent table), uat (agent_deployment_uat), or prod (agent_deployment_prod)",
+    ),
+    version: str = Query(
+        description="Version to run (e.g. 'v1', 'v2'). For env=dev this is ignored but still required.",
+    ),
 ):
-    """Executes a specified agent by ID with support for streaming and telemetry.
+    """Executes a specified flow by ID with environment and version selection.
 
     This endpoint executes a agent identified by ID or name, with options for streaming the response
     and tracking execution metrics. It handles both streaming and non-streaming execution modes.
 
     Args:
-        background_tasks (BackgroundTasks): FastAPI background task manager
-        agent (AgentRead | None): The agent to execute, loaded via dependency
-        input_request (SimplifiedAPIRequest | None): Input parameters for the agent
-        stream (bool): Whether to stream the response
-        api_key_user (UserRead): Authenticated user from API key
-        request (Request): The incoming HTTP request
+        background_tasks: FastAPI background task manager
+        flow: The flow to execute, loaded via dependency
+        input_request: Input parameters for the flow
+        stream: Whether to stream the response
+        api_key_user: Authenticated user from API key
+        env: Environment — dev (agent table), uat (publish_uat), prod (publish_prod)
+        version: Published version string (e.g. 'v1'). Ignored when env=dev.
 
     Returns:
-        Union[StreamingResponse, RunResponse]: Either a streaming response for real-time results
-        or a RunResponse with the complete execution results
+        Union[StreamingResponse, RunResponse]
 
     Raises:
         HTTPException: For agent not found (404) or invalid input (400)
         APIException: For internal execution errors (500)
+
+    Examples:
+        POST /run/my-agent?env=dev&version=v1       → runs draft from agent table
+        POST /run/my-agent?env=uat&version=v2       → runs UAT published version v2
+        POST /run/my-agent?env=prod&version=v3      → runs PROD published version v3
 
     Notes:
         - Supports both streaming and non-streaming execution modes
@@ -315,6 +398,10 @@ async def simplified_run_agent(
     input_request = input_request if input_request is not None else SimplifiedAPIRequest()
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
+    # --- Resolve flow data from the correct environment / version ---
+    agent.data= await _resolve_agent_data_for_env(
+        agent_id=agent.id, env=env, version=version
+    )
     start_time = time.perf_counter()
 
     if stream:
@@ -398,6 +485,12 @@ async def webhook_run_agent(
     user: Annotated[User, Depends(get_user_by_agent_id_or_endpoint_name)],
     request: Request,
     background_tasks: BackgroundTasks,
+    env: RunEnvironment = Query(
+        description="Environment to run the agent from: dev (draft), uat, or prod",
+    ),
+    version: str = Query(
+        description="Version to run (e.g. 'v1'). Ignored when env=dev.",
+    ),
 ):
     """Run a agent using a webhook request.
 

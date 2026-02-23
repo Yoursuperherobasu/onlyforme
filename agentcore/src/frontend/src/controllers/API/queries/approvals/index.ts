@@ -7,6 +7,8 @@
 
 export { useGetApprovals } from "./use-get-approvals";
 export type { ApprovalAgent } from "./use-get-approvals";
+export { useGetApprovalDetails } from "./use-get-approval-details";
+export type { ApprovalDetails } from "./use-get-approval-details";
 
 export { useApproveAgent } from "./use-approve-agent";
 

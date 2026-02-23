@@ -1,11 +1,14 @@
 import {
   Search,
-  Workflow,
   X
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
-import { useEffect, useState } from "react";
+import CustomLoader from "@/customization/components/custom-loader";
+import { useGetControlPanelAgents } from "@/controllers/API/queries/control-panel";
+
+type EnvironmentTab = "UAT" | "PROD";
 
 interface WorkagentType {
   id: string;
@@ -22,150 +25,61 @@ interface WorkagentType {
 
 interface WorkflowsViewProps {
   workflows?: WorkagentType[];
-  setSearch: (search: string) => void;
+  setSearch?: (search: string) => void;
   onWorkagentClick?: (workflow: WorkagentType) => void;
 }
 
+function formatDateTime(value?: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString();
+}
+
 export default function WorkflowsView({
-  workflows,
+  workflows = [],
   setSearch,
   onWorkagentClick,
 }: WorkflowsViewProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<EnvironmentTab>("UAT");
   const [workflowStates, setWorkagentStates] = useState<{
     [key: string]: { status: boolean; enabled: boolean };
   }>({});
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
-  /* ---------------------------------- Dummy workflows ---------------------------------- */
+  const { data, isLoading } = useGetControlPanelAgents(
+    {
+      env: activeTab.toLowerCase() as "uat" | "prod",
+      search: searchQuery || undefined,
+      page: 1,
+      size: 100,
+    },
+    {
+      refetchInterval: 30000,
+      keepPreviousData: true,
+    },
+  );
 
-  const DUMMY_WORKAGENTS: WorkagentType[] = [
-    {
-      id: "1",
-      name: "Customer Support Chatbot",
-      description: "Intelligent chatbot for customer inquiries",
-      user: "Sarah Mitchell",
-      department: "Customer Support",
-      created: "Aug 28, 10:26 AM",
-      lastRun: "Jan 20, 8:34 AM",
-      failedRuns: 5,
-      status: false,
-      enabled: true,
-    },
-    {
-      id: "2",
-      name: "Document Analysis Pipeline",
-      description: "Extract insights from PDF documents",
-      user: "Michael Chen",
-      department: "Data Science",
-      created: "Aug 15, 2:14 PM",
-      lastRun: "Jan 20, 10:34 AM",
-      failedRuns: 2,
-      status: true,
-      enabled: true,
-    },
-    {
-      id: "3",
-      name: "Content Generation Agent",
-      description: "Multi-agent system for generating blog posts",
-      user: "Emily Rodriguez",
-      department: "Marketing",
-      created: "Jul 22, 9:45 AM",
-      lastRun: "Jan 20, 10:29 AM",
-      failedRuns: 18,
-      status: false,
-      enabled: false,
-    },
-    {
-      id: "4",
-      name: "Data Processing Workagent",
-      description: "Automated ETL pipeline with AI-powered data cleaning",
-      user: "David Kumar",
-      department: "Data Engineering",
-      created: "Jul 10, 4:30 PM",
-      lastRun: "Jan 20, 9:15 AM",
-      failedRuns: 7,
-      status: true,
-      enabled: true,
-    },
-    {
-      id: "5",
-      name: "Sentiment Analysis API",
-      description: "Real-time sentiment analysis for customer feedback",
-      user: "Jessica Park",
-      department: "Analytics",
-      created: "Jun 18, 11:20 AM",
-      lastRun: "Jan 20, 9:34 AM",
-      failedRuns: null,
-      status: false,
-      enabled: true,
-    },
-    {
-      id: "6",
-      name: "Research Agent",
-      description: "Deep research and knowledge synthesis",
-      user: "Thomas Anderson",
-      department: "R&D",
-      created: "May 5, 3:15 PM",
-      lastRun: "Jan 20, 10:24 AM",
-      failedRuns: 23,
-      status: false,
-      enabled: false,
-    },
-    {
-      id: "7",
-      name: "Email Marketing Automation",
-      description: "Personalized email campaigns with A/B testing",
-      user: "Amanda Wilson",
-      department: "Marketing",
-      created: "Apr 12, 1:45 PM",
-      lastRun: "Jan 17, 2:20 PM",
-      failedRuns: 1,
-      status: false,
-      enabled: true,
-    },
-    {
-      id: "8",
-      name: "Code Review Assistant",
-      description: "Automated code analysis and suggestions",
-      user: "Robert Taylor",
-      department: "Engineering",
-      created: "Mar 8, 9:30 AM",
-      lastRun: "Jan 20, 10:15 AM",
-      failedRuns: 34,
-      status: true,
-      enabled: true,
-    },
-    {
-      id: "9",
-      name: "Image Classification Bot",
-      description: "Visual recognition and categorization",
-      user: "Olivia Martinez",
-      department: "Machine Learning",
-      created: "Feb 14, 3:00 PM",
-      lastRun: "Jan 20, 10:04 AM",
-      failedRuns: 11,
-      status: false,
-      enabled: true,
-    },
-    {
-      id: "10",
-      name: "Sales Lead Qualifier",
-      description: "Intelligent lead scoring and qualification",
-      user: "James Patterson",
-      department: "Sales",
-      created: "Jan 5, 11:15 AM",
-      lastRun: "Jan 20, 8:45 AM",
-      failedRuns: null,
-      status: true,
-      enabled: true,
-    },
-  ];
+  const displayworkflows = useMemo(() => {
+    if (workflows?.length) {
+      return workflows;
+    }
 
-  const displayworkflows = workflows?.length ? workflows : DUMMY_WORKAGENTS;
-
-  /* ---------------------------------- Initialize States ---------------------------------- */
+    return (data?.items ?? []).map((item) => ({
+      id: item.deploy_id,
+      name: item.agent_name,
+      description: item.agent_description ?? "",
+      user: item.creator_name ?? "-",
+      department: item.creator_department ?? "-",
+      created: formatDateTime(item.created_at),
+      lastRun: formatDateTime(item.last_run),
+      failedRuns: item.failed_runs ?? 0,
+      status: item.is_active,
+      enabled: item.is_enabled,
+    }));
+  }, [workflows, data?.items]);
 
   useEffect(() => {
     const initialStates: { [key: string]: { status: boolean; enabled: boolean } } = {};
@@ -176,9 +90,7 @@ export default function WorkflowsView({
       };
     });
     setWorkagentStates(initialStates);
-  }, []);
-
-  /* ---------------------------------- Toggle Handlers ---------------------------------- */
+  }, [displayworkflows]);
 
   const handleStatusToggle = (workflowId: string) => {
     setWorkagentStates((prev) => ({
@@ -200,8 +112,6 @@ export default function WorkflowsView({
     }));
   };
 
-  /* ---------------------------------- Filtering ---------------------------------- */
-
   const filteredworkflows = displayworkflows.filter((workflow) => {
     const matchesSearch =
       !searchQuery ||
@@ -213,27 +123,46 @@ export default function WorkflowsView({
     return matchesSearch;
   });
 
-  /* ---------------------------------- Debounced Search ---------------------------------- */
-
   useEffect(() => {
+    if (!setSearch) return;
     const timer = setTimeout(() => setSearch(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery, setSearch]);
 
-  /* ---------------------------------- JSX ---------------------------------- */
-
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* Header - Fixed */}
-      <div className="flex-shrink-0 px-8 py-6 border-b">
-        <div className="flex items-center gap-3 mb-6">
-          
+      <div className="flex-shrink-0 border-b px-8 py-6">
+        <div className="mb-4 flex items-center gap-3">
           <h1 className="text-2xl font-semibold">Agent Control Panel</h1>
         </div>
 
-        {/* Search */}
+        <div className="mb-6 inline-flex rounded-lg border bg-muted/30 p-1">
+          <button
+            type="button"
+            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === "UAT"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setActiveTab("UAT")}
+          >
+            UAT
+          </button>
+          <button
+            type="button"
+            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === "PROD"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setActiveTab("PROD")}
+          >
+            PROD
+          </button>
+        </div>
+
         <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
             placeholder="Search agents..."
@@ -244,11 +173,10 @@ export default function WorkflowsView({
         </div>
       </div>
 
-      {/* Table - Scrollable */}
       <div className="flex-1 overflow-auto p-8">
-        <div className="rounded-lg border bg-card overflow-hidden">
+        <div className="overflow-hidden rounded-lg border bg-card">
           <table className="w-full">
-            <thead className="bg-muted/50 border-b">
+            <thead className="border-b bg-muted/50">
               <tr>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   Agent Name
@@ -269,114 +197,119 @@ export default function WorkflowsView({
                   Failed Runs
                 </th>
                 {can("start_stop_agent") && (
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Start/Stop
-                </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                    Start/Stop
+                  </th>
                 )}
                 {can("enable_disable_agent") && (
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Enable/Disable
-                </th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                    Enable/Disable
+                  </th>
                 )}
               </tr>
             </thead>
 
             <tbody className="divide-y">
-              {filteredworkflows.map((workflow) => (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-10 text-center">
+                    <div className="flex items-center justify-center">
+                      <CustomLoader />
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredworkflows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-10 text-center text-sm text-muted-foreground">
+                    No deployed agents found
+                  </td>
+                </tr>
+              ) : (
+                filteredworkflows.map((workflow) => (
                 <tr
                   key={workflow.id}
-                  className="hover:bg-muted/50 transition-colors cursor-pointer"
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
                   onClick={() => onWorkagentClick?.(workflow)}
                 >
                   <td className="px-6 py-4">
                     <div className="font-semibold">{workflow.name}</div>
-                    <div className="text-xs text-muted-foreground mt-1">
+                    <div className="mt-1 text-xs text-muted-foreground">
                       {workflow.description}
                     </div>
                   </td>
 
-                  <td className="px-6 py-4 text-sm">
-                    {workflow.user}
-                  </td>
+                  <td className="px-6 py-4 text-sm">{workflow.user}</td>
 
-                  <td className="px-6 py-4 text-sm">
-                    {workflow.department}
-                  </td>
+                  <td className="px-6 py-4 text-sm">{workflow.department}</td>
 
-                  <td className="px-6 py-4 text-sm text-muted-foreground">
-                    {workflow.created}
-                  </td>
+                  <td className="px-6 py-4 text-sm text-muted-foreground">{workflow.created}</td>
 
-                  <td className="px-6 py-4 text-sm text-muted-foreground">
-                    {workflow.lastRun}
-                  </td>
+                  <td className="px-6 py-4 text-sm text-muted-foreground">{workflow.lastRun}</td>
 
                   <td className="px-6 py-4">
                     {workflow.failedRuns !== null ? (
                       <div className="flex items-center gap-1.5 text-sm text-red-500">
                         <span className="flex h-5 w-5 items-center justify-center rounded-full border border-red-500">
-                         <X className="h-3 w-3" />
+                          <X className="h-3 w-3" />
                         </span>
                         <span className="font-medium">{workflow.failedRuns}</span>
                       </div>
                     ) : (
-                      <span className="text-sm text-muted-foreground">—</span>
+                      <span className="text-sm text-muted-foreground">-</span>
                     )}
                   </td>
                   {can("start_stop_agent") && (
-                  <td className="px-6 py-4">
-                    <button
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                        workflowStates[workflow.id]?.status ? "bg-blue-600" : "bg-muted"
-                      }`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStatusToggle(workflow.id);
-                      }}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          workflowStates[workflow.id]?.status ? "translate-x-6" : "translate-x-1"
+                    <td className="px-6 py-4">
+                      <button
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          workflowStates[workflow.id]?.status ? "bg-blue-600" : "bg-muted"
                         }`}
-                      />
-                    </button>
-                  </td>
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStatusToggle(workflow.id);
+                        }}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            workflowStates[workflow.id]?.status ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
+                    </td>
                   )}
                   {can("enable_disable_agent") && (
-                  <td className="px-6 py-4">
-                    <button
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                        workflowStates[workflow.id]?.enabled ? "bg-green-500" : "bg-muted"
-                      }`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEnabledToggle(workflow.id);
-                      }}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          workflowStates[workflow.id]?.enabled ? "translate-x-6" : "translate-x-1"
+                    <td className="px-6 py-4">
+                      <button
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          workflowStates[workflow.id]?.enabled ? "bg-green-500" : "bg-muted"
                         }`}
-                      />
-                    </button>
-                  </td>
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEnabledToggle(workflow.id);
+                        }}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            workflowStates[workflow.id]?.enabled ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
+                    </td>
                   )}
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
         <div className="mt-6 flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
-            Rows per page
-          </div>
+          <div className="text-sm text-muted-foreground">Rows per page</div>
           <div className="flex items-center gap-2">
-            <button className="px-4 py-2 rounded-lg border bg-card hover:bg-muted text-sm">
+            <button className="rounded-lg border bg-card px-4 py-2 text-sm hover:bg-muted">
               Previous
             </button>
-            <button className="px-4 py-2 rounded-lg border bg-card hover:bg-muted text-sm">
+            <button className="rounded-lg border bg-card px-4 py-2 text-sm hover:bg-muted">
               Next
             </button>
           </div>

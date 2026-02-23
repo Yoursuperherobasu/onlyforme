@@ -6,7 +6,7 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 interface DeleteFoldersParams {
-  folder_id: string;
+  project_id: string;
 }
 
 export const useDeleteFolders: useMutationFunctionType<
@@ -18,11 +18,11 @@ export const useDeleteFolders: useMutationFunctionType<
   const folders = useFolderStore((state) => state.folders);
 
   const deleteFolder = async ({
-    folder_id,
+    project_id,
   }: DeleteFoldersParams): Promise<any> => {
-    await api.delete(`${getURL("PROJECTS")}/${folder_id}`);
-    setFolders(folders.filter((f) => f.id !== folder_id));
-    return folder_id;
+    await api.delete(`${getURL("PROJECTS")}/${project_id}`);
+    setFolders(folders.filter((f) => f.id !== project_id));
+    return project_id;
   };
 
   const mutation: UseMutationResult<

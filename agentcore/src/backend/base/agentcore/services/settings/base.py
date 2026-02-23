@@ -132,16 +132,20 @@ class Settings(BaseSettings):
     Controlled by AGENTCORE_USE_NOOP_DATABASE env variable."""
 
     # cache configuration
-    cache_type: Literal["async", "redis", "memory"] = "async"
+    #cache_type: Literal["async", "redis", "memory"] = "async"
+    cache_type: Literal["async", "redis", "memory"] = "redis"
+    """The cache type can be 'async', 'redis' or 'memory'. Default is 'redis' for distributed caching."""
     """The cache type can be 'async' or 'redis'."""
-    redis_host: str = "rdatabase.redis.cache.windows.net"
+    redis_host: str = "newrediscachedb.redis.cache.windows.net"
     redis_port: int = 6380
     redis_db: int = 0
     redis_url: str | None = None
-    redis_password: str = "eJxRreaYdSS7j4FX6MCUhuyHNn6cHO14XAzCaE7dLqk="
+    redis_password: str = "fYNFRYrtcDx1fXEGz2hXr4SQRFtBKpgm0AzCaLrURyo="
     redis_ssl: bool = True
     cache_expire: int = 3600
     redis_cache_expire: int = 3600
+    
+
     """The cache expire in seconds."""
     # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault
 
@@ -308,21 +312,17 @@ class Settings(BaseSettings):
     @classmethod
     def set_agentcore_dir(cls, value):
         if not value:
-            from platformdirs import user_cache_dir
-
-            # Define the app name and author
-            app_name = "agentcore"
-            app_author = "agentcore"
-
-            # Get the cache directory for the application
-            cache_dir = user_cache_dir(app_name, app_author)
-
-            # Create a .agentcore directory inside the cache directory
-            value = Path(cache_dir)
+            # Default storage root for uploaded knowledge/files inside the backend tree.
+            value = Path(__file__).resolve().parents[4] / "knowledge_base_storage"
             value.mkdir(parents=True, exist_ok=True)
 
         if isinstance(value, str):
             value = Path(value)
+
+        # Make relative CONFIG_DIR stable regardless of process working directory.
+        if not value.is_absolute():
+            value = Path(__file__).resolve().parents[4] / value
+
         if not value.exists():
             value.mkdir(parents=True, exist_ok=True)
 

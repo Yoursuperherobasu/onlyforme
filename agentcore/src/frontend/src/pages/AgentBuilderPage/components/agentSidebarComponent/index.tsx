@@ -18,7 +18,6 @@ import { useTranslation } from 'react-i18next';
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
 import SkeletonGroup from "@/components/ui/skeletonGroup";
@@ -41,7 +40,6 @@ import { CategoryGroup } from "./components/categoryGroup";
 import NoResultsMessage from "./components/emptySearchComponent";
 import McpSidebarGroup from "./components/McpSidebarGroup";
 import MemoizedSidebarGroup from "./components/sidebarBundles";
-import SidebarMenuButtons from "./components/sidebarFooterButtons";
 import { SidebarHeaderComponent } from "./components/sidebarHeader";
 import { applyBetaFilter } from "./helpers/apply-beta-filter";
 import { applyComponentFilter } from "./helpers/apply-component-filter";
@@ -591,6 +589,9 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
             filterName={filterName}
             filterDescription={filterDescription}
             resetFilters={resetFilters}
+            customComponent={customComponent}
+            addComponent={addComponent}
+            isLoading={Boolean(isLoading)}
           />
 
           <SidebarContent
@@ -662,17 +663,6 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
               </>
             )}
           </SidebarContent>
-          {ENABLE_NEW_SIDEBAR &&
-          activeSection === "mcp" &&
-          !hasMcpServers ? null : (
-            <SidebarFooter className="border-t group-data-[collapsible=icon]:hidden p-1 gap-1">
-              <SidebarMenuButtons
-                customComponent={customComponent}
-                addComponent={addComponent}
-                isLoading={isLoading}
-              />
-            </SidebarFooter>
-          )}
         </div>
       </div>
     </Sidebar>

@@ -47,6 +47,11 @@ export function AgentCard({
 
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const submittedDisplay = (() => {
+    const dt = new Date(submitted);
+    if (Number.isNaN(dt.getTime())) return submitted;
+    return dt.toLocaleString();
+  })();
 
   return (
     <div className="rounded-lg border border-border bg-card p-6 transition-shadow hover:shadow-md">
@@ -81,7 +86,7 @@ export function AgentCard({
         </div>
         <div>
           <div className="text-xs text-muted-foreground">Submitted</div>
-          <div className="font-medium">{submitted}</div>
+          <div className="font-medium">{submittedDisplay}</div>
         </div>
       </div>
 
@@ -112,13 +117,13 @@ export function AgentCard({
         {status === "pending" && (
           <div className="ml-auto flex items-center gap-2">
            <ShadTooltip 
-  content={!can("approve_reject_page") ? "You don't have permission to reject" : ""}
+  content={!can("prod_publish_approval_required") ? "You don't have permission to reject" : ""}
 >
   <span className="inline-block">
     <Button
       variant="outline"
       onClick={onReject}
-      disabled={!can("approve_reject_page")}
+      disabled={!can("prod_publish_approval_required")}
       className="
         gap-2
         border-red-500 text-red-600
@@ -134,7 +139,7 @@ export function AgentCard({
 </ShadTooltip>
            
           <ShadTooltip 
-  content={!can("approve_reject_page") ? "You don't have permission to approve" : ""}
+  content={!can("prod_publish_approval_required") ? "You don't have permission to approve" : ""}
 >
             <Button
               variant="outline"
@@ -150,7 +155,7 @@ export function AgentCard({
     dark:disabled:!border-green-700
     dark:hover:!bg-green-950/30 dark:hover:!text-green-400
   "
-  disabled={!can("approve_reject_page")}
+  disabled={!can("prod_publish_approval_required")}
             >
               <CheckCircle2 className="h-4 w-4" />
               Approve

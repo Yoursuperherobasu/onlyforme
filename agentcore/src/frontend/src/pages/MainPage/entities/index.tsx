@@ -10,7 +10,7 @@ export type FolderType = {
 };
 
 export type PaginatedFolderType = {
-  folder: {
+  project: {
     name: string;
     description: string;
     id?: string | null;

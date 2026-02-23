@@ -18,7 +18,7 @@ interface GetAgentsParams {
   components_only?: boolean;
   get_all?: boolean;
   header_agents?: boolean;
-  folder_id?: string;
+  project_id?: string;
   remove_example_agents?: boolean;
   page?: number;
   size?: number;

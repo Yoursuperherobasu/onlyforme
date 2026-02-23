@@ -7,6 +7,7 @@ import { UseRequestProcessor } from "../../services/request-processor";
 interface ApproveAgentParams {
   agentId: string;
   comments: string;
+  attachments?: File[];
 }
 
 /**
@@ -22,13 +23,18 @@ export const useApproveAgent: useMutationFunctionType<
   const approveAgentFn = async (
     params: ApproveAgentParams,
   ): Promise<void> => {
-    const payload = {
-      comments: params.comments,
-    };
+    const formData = new FormData();
+    formData.append("comments", params.comments ?? "");
+    for (const file of params.attachments ?? []) {
+      formData.append("attachments", file);
+    }
 
     await api.post(
       `${getURL("APPROVALS")}/${params.agentId}/approve`,
-      payload,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+      },
     );
   };
 

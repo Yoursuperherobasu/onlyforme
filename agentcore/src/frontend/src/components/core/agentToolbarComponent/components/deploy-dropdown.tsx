@@ -38,7 +38,7 @@ export default function PublishDropdown({
   const currentAgent = useAgentsManagerStore((state) => state.currentAgent);
   const agentId = currentAgent?.id;
   const agentName = currentAgent?.name;
-  const folderId = currentAgent?.folder_id;
+  const folderId = currentAgent?.project_id;
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { mutateAsync } = usePatchUpdateAgent();
   const agents = useAgentsManagerStore((state) => state.agents);

@@ -16,12 +16,138 @@ import { api } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
 import { AuthContext } from "@/contexts/authContext";
 
-type PermissionGroup = {
+type PermissionSection = {
   name: string;
+  permissionKeys: string[];
   items: Permission[];
 };
 
-const normalizeGroup = (group?: string | null) => group || "Other";
+type PermissionPage = {
+  name: string;
+  sections: PermissionSection[];
+};
+
+const EXCEL_PERMISSION_STRUCTURE: Array<{
+  page: string;
+  sections: Array<{ name: string; keys: string[] }>;
+}> = [
+  { page: "Dashboard", sections: [{ name: "Page Access", keys: ["view_dashboard"] }] },
+  {
+    page: "Projects",
+    sections: [
+      { name: "Page Access", keys: ["view_projects_page"] },
+      {
+        name: "Actions",
+        keys: ["prod_publish_approval_required", "prod_publish_approval_not_required"],
+      },
+    ],
+  },
+  {
+    page: "Review & Approval",
+    sections: [
+      { name: "Page Access", keys: ["view_approval_page"] },
+      { name: "Actions", keys: ["view_agent", "view_model", "view_mcp"] },
+    ],
+  },
+  {
+    page: "Agent Registry",
+    sections: [
+      { name: "Page Access", keys: ["view_published_agents"] },
+      { name: "Actions", keys: ["copy_agents", "view_only_agent"] },
+    ],
+  },
+  {
+    page: "Model Registry",
+    sections: [
+      { name: "Page Access", keys: ["view_models"] },
+      { name: "Actions", keys: ["add_new_model", "request_new_model", "retire_model"] },
+    ],
+  },
+  {
+    page: "Agent Control Panel",
+    sections: [
+      { name: "Page Access", keys: ["view_control_panel"] },
+      {
+        name: "Actions",
+        keys: ["share_agent", "start_stop_agent", "enable_disable_agent"],
+      },
+    ],
+  },
+  {
+    page: "Orchestration Chat",
+    sections: [
+      { name: "Page Access", keys: ["view_orchastration_page"] },
+      { name: "Actions", keys: ["interact_agents"] },
+    ],
+  },
+  { page: "Observability", sections: [{ name: "Page Access", keys: ["view_observability_page"] }] },
+  { page: "Evaluation", sections: [{ name: "Page Access", keys: ["view_evaluation_page"] }] },
+  { page: "Guardrails Catalogue", sections: [{ name: "Page Access", keys: ["view_guardrail_page"] }] },
+  { page: "VectorDB Catalogue", sections: [{ name: "Page Access", keys: ["view_vectordb_page"] }] },
+  {
+    page: "MCP Servers",
+    sections: [
+      { name: "Page Access", keys: ["view_mcp_page"] },
+      { name: "Actions", keys: ["add_new_mcp", "retire_mcp", "request_new_mcp"] },
+    ],
+  },
+  {
+    page: "Knowledge Base Management",
+    sections: [
+      { name: "Page Access", keys: ["view_knowledge_base"] },
+      { name: "Actions", keys: ["add_new_knowledge"] },
+    ],
+  },
+  {
+    page: "Platform Configurations",
+    sections: [
+      { name: "Page Access", keys: ["view_platform_configs"] },
+      { name: "Actions", keys: ["edit_platform_configs"] },
+    ],
+  },
+  { page: "Admin Page", sections: [{ name: "Page Access", keys: ["view_admin_page"] }] },
+  { page: "Access Control", sections: [{ name: "Page Access", keys: ["view_access_control_page"] }] },
+];
+
+const EXCEL_PERMISSION_KEYS = new Set(
+  EXCEL_PERMISSION_STRUCTURE.flatMap((page) => page.sections.flatMap((section) => section.keys)),
+);
+
+const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
+  manage_users: ["view_admin_page"],
+  manage_roles: ["view_access_control_page"],
+  view_orchestrator_page: ["view_orchastration_page"],
+  view_traces: ["view_observability_page"],
+  view_evaluation: ["view_evaluation_page"],
+  view_guardrails: ["view_guardrail_page"],
+  view_vector_db: ["view_vectordb_page"],
+  view_vectorDb_page: ["view_vectordb_page"],
+  view_vector_db_page: ["view_vectordb_page"],
+  view_mcp_servers_page: ["view_mcp_page"],
+  view_mcp_page: ["view_mcp"],
+  view_model_catalogue_page: ["view_models"],
+  view_agent_catalogue_page: ["view_published_agents"],
+  view_guardrails_page: ["view_guardrail_page"],
+  view_observability_dashboard: ["view_observability_page"],
+  view_knowledge_base_management: ["view_knowledge_base"],
+  approve_reject_page: ["prod_publish_approval_required"],
+  view_approval_page: ["view_agent", "view_model", "view_mcp"],
+};
+
+const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {
+  const expanded: string[] = [];
+  permissionKeys.forEach((key) => {
+    if (!expanded.includes(key)) {
+      expanded.push(key);
+    }
+    (ROLE_PERMISSION_ALIASES[key] || []).forEach((alias) => {
+      if (!expanded.includes(alias)) {
+        expanded.push(alias);
+      }
+    });
+  });
+  return expanded;
+};
 
 export default function AccessControlPage() {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -48,6 +174,16 @@ export default function AccessControlPage() {
     () => roles.find((r) => r.id === selectedRoleId) || null,
     [roles, selectedRoleId]
   );
+  const validPermissionKeys = useMemo(
+    () => new Set(permissions.map((perm) => perm.key)),
+    [permissions],
+  );
+
+  const toSavablePermissions = useCallback(
+    (permissionKeys: string[]) =>
+      Array.from(new Set(permissionKeys)).filter((key) => validPermissionKeys.has(key)),
+    [validPermissionKeys],
+  );
 
   // Load permissions and roles
   const loadData = useCallback(async (force = false) => {
@@ -68,16 +204,27 @@ export default function AccessControlPage() {
 
       const permissionsData: Permission[] = permissionsRes?.data ?? [];
       const rolesData: Role[] = rolesRes?.data ?? [];
+      const availablePermissionKeys = new Set(
+        permissionsData
+          .filter((perm) => EXCEL_PERMISSION_KEYS.has(perm.key))
+          .map((perm) => perm.key),
+      );
 
       console.log("Permissions loaded successfully:", permissionsData);
       console.log("Roles loaded successfully:", rolesData);
 
-      setPermissions(permissionsData);
-      setRoles(rolesData);
+      setPermissions(permissionsData.filter((perm) => EXCEL_PERMISSION_KEYS.has(perm.key)));
+      const normalizedRoles = rolesData.map((role) => ({
+        ...role,
+        permissions: expandRolePermissionsForUi(role.permissions || []).filter((key) =>
+          availablePermissionKeys.has(key),
+        ),
+      }));
+      setRoles(normalizedRoles);
 
-      if (rolesData.length > 0) {
-        setSelectedRoleId(rolesData[0].id);
-        setDraftPermissions(rolesData[0].permissions || []);
+      if (normalizedRoles.length > 0) {
+        setSelectedRoleId(normalizedRoles[0].id);
+        setDraftPermissions(normalizedRoles[0].permissions || []);
       }
     } catch (error: any) {
       console.error("Failed to load access control data:", error);
@@ -99,23 +246,24 @@ export default function AccessControlPage() {
   // Update draft permissions when selected role changes
   useEffect(() => {
     if (selectedRole) {
-      setDraftPermissions(selectedRole.permissions || []);
+      setDraftPermissions(toSavablePermissions(selectedRole.permissions || []));
     }
-  }, [selectedRole]);
+  }, [selectedRole, toSavablePermissions]);
 
-  const permissionGroups: PermissionGroup[] = useMemo(() => {
-    const groups = new Map<string, Permission[]>();
-    permissions.forEach((perm) => {
-      const group = normalizeGroup(perm.group);
-      if (!groups.has(group)) groups.set(group, []);
-      groups.get(group)!.push(perm);
-    });
-    return Array.from(groups.entries())
-      .map(([name, items]) => ({
-        name,
-        items: items.sort((a, b) => a.name.localeCompare(b.name)),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+  const permissionPages: PermissionPage[] = useMemo(() => {
+    const permissionByKey = new Map(permissions.map((perm) => [perm.key, perm]));
+    return EXCEL_PERMISSION_STRUCTURE.map((page) => ({
+      name: page.page,
+      sections: page.sections
+        .map((section) => ({
+          name: section.name,
+          permissionKeys: section.keys,
+          items: section.keys
+            .map((key) => permissionByKey.get(key))
+            .filter((item): item is Permission => Boolean(item)),
+        }))
+        .filter((section) => section.items.length > 0),
+    })).filter((page) => page.sections.length > 0);
   }, [permissions]);
 
   const hasChanges = useMemo(() => {
@@ -139,12 +287,17 @@ export default function AccessControlPage() {
 
   const handleSavePermissions = () => {
     if (!selectedRole) return;
+    const payloadPermissions = toSavablePermissions(draftPermissions);
     mutateUpdateRolePermissions(
-      { role_id: selectedRole.id, permissions: draftPermissions },
+      { role_id: selectedRole.id, permissions: payloadPermissions },
       {
         onSuccess: (role) => {
+          const normalizedRole = {
+            ...role,
+            permissions: toSavablePermissions(expandRolePermissionsForUi(role.permissions || [])),
+          };
           setRoles((prev) =>
-            prev.map((r) => (r.id === role.id ? role : r)),
+            prev.map((r) => (r.id === normalizedRole.id ? normalizedRole : r)),
           );
           setSuccessData({ title: "Permissions updated successfully" });
           getUser();
@@ -162,17 +315,22 @@ export default function AccessControlPage() {
 
   const handleCreateRole = () => {
     if (!newRoleName.trim()) return;
+    const payloadPermissions = toSavablePermissions(newRolePermissions);
     mutateCreateRole(
       {
         name: newRoleName.trim(),
         description: newRoleDescription.trim() || null,
-        permissions: newRolePermissions,
+        permissions: payloadPermissions,
       },
       {
         onSuccess: (role) => {
-          setRoles((prev) => [...prev, role]);
-          setSelectedRoleId(role.id);
-          setDraftPermissions(role.permissions || []);
+          const normalizedRole = {
+            ...role,
+            permissions: toSavablePermissions(expandRolePermissionsForUi(role.permissions || [])),
+          };
+          setRoles((prev) => [...prev, normalizedRole]);
+          setSelectedRoleId(normalizedRole.id);
+          setDraftPermissions(normalizedRole.permissions || []);
           setIsCreateOpen(false);
           setNewRoleName("");
           setNewRoleDescription("");
@@ -215,6 +373,78 @@ export default function AccessControlPage() {
           });
         },
       },
+    );
+  };
+
+  const renderPermissionHierarchy = (
+    selectedKeys: string[],
+    onToggle: (key: string, checked: boolean) => void,
+  ) => {
+    if (permissionPages.length === 0) {
+      return (
+        <div className="text-sm text-muted-foreground text-center py-6">
+          No permissions available.
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-hidden rounded-md border">
+        <div className="grid grid-cols-12 bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
+          <div className="col-span-3">Pages</div>
+          <div className="col-span-3">Tabs / Sections</div>
+          <div className="col-span-6">Permissions / Actions</div>
+        </div>
+        <div className="max-h-[60vh] overflow-auto">
+          {permissionPages.map((page) => (
+            <div key={page.name} className="grid grid-cols-12 border-t first:border-t-0">
+              <div className="col-span-3 border-r px-3 py-3 text-sm font-semibold">
+                {page.name}
+              </div>
+              <div className="col-span-9">
+                {page.sections.map((section) => (
+                  <div
+                    key={`${page.name}-${section.name}`}
+                    className="grid grid-cols-9 border-b last:border-b-0"
+                  >
+                    <div className="col-span-3 border-r px-3 py-3 text-sm text-muted-foreground">
+                      {section.name}
+                    </div>
+                    <div className="col-span-6 px-3 py-3">
+                      <div className="grid grid-cols-1 gap-2">
+                        {section.items.map((perm) => (
+                          <label
+                            key={perm.key}
+                            className="flex items-start gap-2 text-sm cursor-pointer"
+                          >
+                            <Checkbox
+                              checked={selectedKeys.includes(perm.key)}
+                              onCheckedChange={(checked) =>
+                                onToggle(perm.key, Boolean(checked))
+                              }
+                            />
+                            <span>
+                              {perm.name}
+                              <span className="block text-xs text-muted-foreground font-mono">
+                                {perm.key}
+                              </span>
+                              {perm.description && (
+                                <span className="block text-xs text-muted-foreground">
+                                  {perm.description}
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     );
   };
 
@@ -278,47 +508,10 @@ export default function AccessControlPage() {
                         <div className="mb-2 text-sm font-medium">
                           Permissions
                         </div>
-                        <div className="max-h-[45vh] overflow-auto rounded-md border p-3">
-                          {permissionGroups.length === 0 ? (
-                            <div className="text-sm text-muted-foreground text-center py-4">
-                              No permissions available
-                            </div>
-                          ) : (
-                            permissionGroups.map((group) => (
-                              <div key={group.name} className="mb-4 last:mb-0">
-                                <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
-                                  {group.name}
-                                </div>
-                                <div className="grid grid-cols-1 gap-2">
-                                  {group.items.map((perm) => (
-                                    <label
-                                      key={perm.key}
-                                      className="flex items-start gap-2 text-sm cursor-pointer"
-                                    >
-                                      <Checkbox
-                                        checked={newRolePermissions.includes(perm.key)}
-                                        onCheckedChange={(checked) =>
-                                          toggleNewRolePermission(
-                                            perm.key,
-                                            Boolean(checked),
-                                          )
-                                        }
-                                      />
-                                      <span>
-                                        {perm.name}
-                                        {perm.description && (
-                                          <span className="block text-xs text-muted-foreground">
-                                            {perm.description}
-                                          </span>
-                                        )}
-                                      </span>
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
+                        {renderPermissionHierarchy(
+                          newRolePermissions,
+                          toggleNewRolePermission,
+                        )}
                       </div>
                     </div>
                   </BaseModal.Content>
@@ -382,7 +575,7 @@ export default function AccessControlPage() {
             <div className="col-span-12 lg:col-span-8">
               <div className="flex items-center justify-between pb-3">
                 <div className="text-sm font-medium">
-                  Permissions for {selectedRole?.name || "—"}
+                  Permissions for {selectedRole?.name || "-"}
                 </div>
                 <Button
                   variant="primary"
@@ -394,44 +587,7 @@ export default function AccessControlPage() {
               </div>
               <div className="rounded-md border p-4">
                 {selectedRole ? (
-                  <div className="max-h-[65vh] overflow-auto pr-2">
-                    {permissionGroups.length === 0 ? (
-                      <div className="text-sm text-muted-foreground text-center py-6">
-                        No permissions available.
-                      </div>
-                    ) : (
-                      permissionGroups.map((group) => (
-                        <div key={group.name} className="mb-6 last:mb-0">
-                          <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
-                            {group.name}
-                          </div>
-                          <div className="grid grid-cols-1 gap-2">
-                            {group.items.map((perm) => (
-                              <label 
-                                key={perm.key} 
-                                className="flex items-start gap-2 text-sm cursor-pointer"
-                              >
-                                <Checkbox
-                                  checked={draftPermissions.includes(perm.key)}
-                                  onCheckedChange={(checked) =>
-                                    toggleDraftPermission(perm.key, Boolean(checked))
-                                  }
-                                />
-                                <span>
-                                  {perm.name}
-                                  {perm.description && (
-                                    <span className="block text-xs text-muted-foreground">
-                                      {perm.description}
-                                    </span>
-                                  )}
-                                </span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
+                  renderPermissionHierarchy(draftPermissions, toggleDraftPermission)
                 ) : (
                   <div className="text-sm text-muted-foreground text-center py-6">
                     Select a role to view and edit permissions.
@@ -445,3 +601,4 @@ export default function AccessControlPage() {
     </PageLayout>
   );
 }
+

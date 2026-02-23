@@ -434,6 +434,8 @@ export type UserInputType = {
   role?: string;
   department_admin_email?: string;
   department_name?: string;
+  organization_name?: string;
+  organization_description?: string;
   id?: string;
   create_at?: string;
   updated_at?: string;

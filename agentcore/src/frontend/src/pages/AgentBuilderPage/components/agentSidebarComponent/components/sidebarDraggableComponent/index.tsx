@@ -21,7 +21,7 @@ import {
   createAgentComponent,
   downloadNode,
   getNodeId,
-} from "../../../../../../utils/reactflowUtils";
+} from "../../../../../../utils/reactFlowUtils";
 import { cn, removeCountFromString } from "../../../../../../utils/utils";
 import { useTranslation } from 'react-i18next';
 
@@ -158,6 +158,8 @@ export const SidebarDraggableComponent = forwardRef(
               <ForwardedIconComponent
                 name={icon}
                 className="h-5 w-5 shrink-0"
+                iconColor={color}
+                stroke={color}
               />
               <div className="flex flex-1 items-center overflow-hidden">
                 <ShadTooltip content={display_name} styleClasses="z-50">
@@ -250,4 +252,3 @@ export const SidebarDraggableComponent = forwardRef(
 );
 
 export default SidebarDraggableComponent;
-

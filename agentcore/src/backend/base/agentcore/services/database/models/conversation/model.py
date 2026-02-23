@@ -130,6 +130,8 @@ class ConversationTable(ConversationBase, table=True):  # type: ignore[call-arg]
     id: UUID = Field(default_factory=uuid4, primary_key=True)
 
     agent_id: UUID | None = Field(default=None)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
     files: list[str] = Field(sa_column=Column(JSON))
     properties: dict | Properties = Field(default_factory=lambda: Properties().model_dump(), sa_column=Column(JSON))  # type: ignore[assignment]
     category: str = Field(sa_column=Column(Text))
@@ -175,6 +177,8 @@ class ConversationTable(ConversationBase, table=True):  # type: ignore[call-arg]
 class ConversationRead(ConversationBase):
     id: UUID
     agent_id: UUID | None = Field()
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
 
 
 class ConversationCreate(ConversationBase):

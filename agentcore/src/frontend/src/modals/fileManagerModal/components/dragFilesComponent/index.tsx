@@ -10,10 +10,12 @@ export default function DragFilesComponent({
   onUpload,
   types,
   isList,
+  knowledgeBaseName,
 }: {
   onUpload: (filesPaths: string[]) => void;
   types: string[];
   isList: boolean;
+  knowledgeBaseName?: string;
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const uploadFile = useUploadFile({
@@ -47,12 +49,19 @@ export default function DragFilesComponent({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    if (!knowledgeBaseName?.trim()) {
+      setErrorData({
+        title: "Knowledge base name is required",
+      });
+      return;
+    }
 
     const droppedFiles = Array.from(e.dataTransfer.files);
     if (droppedFiles.length > 0) {
       try {
         const filesIds = await uploadFile({
           files: droppedFiles,
+          knowledgeBaseName,
         });
         if (filesIds.length > 0) {
           onUpload(filesIds);
@@ -72,8 +81,16 @@ export default function DragFilesComponent({
   };
 
   const handleClick = async () => {
+    if (!knowledgeBaseName?.trim()) {
+      setErrorData({
+        title: "Knowledge base name is required",
+      });
+      return;
+    }
     try {
-      const filesIds = await uploadFile({});
+      const filesIds = await uploadFile({
+        knowledgeBaseName,
+      });
       if (filesIds.length > 0) {
         onUpload(filesIds);
         setSuccessData({

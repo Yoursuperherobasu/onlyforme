@@ -6,7 +6,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { CONTROL_NEW_USER } from "../../constants/constants";
 import { AuthContext } from "../../contexts/authContext";
-import { useGetRoles, useGetUsers } from "../../controllers/API/queries/auth";
+import { useGetAssignableRoles, useGetUsers } from "../../controllers/API/queries/auth";
 import type {
   inputHandlerEventType,
   UserInputType,
@@ -41,13 +41,21 @@ export default function UserManagementModal({
   const [departmentAdmins, setDepartmentAdmins] = useState<Users[]>([]);
   const [departmentAdminEmail, setDepartmentAdminEmail] = useState("");
   const [departmentName, setDepartmentName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [organizationDescription, setOrganizationDescription] = useState("");
   const [departmentAdminError, setDepartmentAdminError] = useState("");
+  const [organizationError, setOrganizationError] = useState("");
   const [isDeptAdminLoading, setIsDeptAdminLoading] = useState(false);
-  const { mutate: mutateGetRoles } = useGetRoles();
+  const { mutate: mutateGetAssignableRoles } = useGetAssignableRoles();
   const { mutate: mutateGetUsers } = useGetUsers({});
   const [inputState, setInputState] = useState<UserInputType>(CONTROL_NEW_USER);
   const { userData } = useContext(AuthContext);
   const deptAdminFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const getDefaultRoleForCreator = () => {
+    if (userData?.role === "root") return "super_admin";
+    return "business_user";
+  };
 
   function handleInput({
     target: { name, value },
@@ -66,7 +74,10 @@ export default function UserManagementModal({
         setSelectedRole(nextRole);
         setDepartmentAdminEmail(data.department_admin_email ?? "");
         setDepartmentName(data.department_name ?? "");
+        setOrganizationName(data.organization_name ?? "");
+        setOrganizationDescription(data.organization_description ?? "");
         setDepartmentAdminError("");
+        setOrganizationError("");
 
         handleInput({ target: { name: "username", value: data.username } });
         handleInput({ target: { name: "is_active", value: data.is_active } });
@@ -77,16 +88,10 @@ export default function UserManagementModal({
 
   useEffect(() => {
     if (open) {
-      mutateGetRoles(undefined, {
-        onSuccess: (roles) => {
-          const roleNames = (roles || []).map((r) => r.name);
-          const fallbackRoles = [
-            "super_admin",
-            "department_admin",
-            "developer",
-            "business_user",
-          ];
-          const merged = roleNames.length > 0 ? roleNames : fallbackRoles;
+      mutateGetAssignableRoles(undefined, {
+        onSuccess: (roleNames) => {
+          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
+          const merged = (roleNames || []).length > 0 ? (roleNames || []) : fallbackRoles;
           const withSelected = merged.includes(selectedRole)
             ? merged
             : [...merged, selectedRole];
@@ -94,7 +99,7 @@ export default function UserManagementModal({
         },
         onError: () => {
           // Fallback roles if API fails
-          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user"];
+          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
           setAvailableRoles(fallbackRoles);
         },
       });
@@ -130,15 +135,19 @@ export default function UserManagementModal({
   }, []);
 
   function resetForm() {
+    const defaultRole = getDefaultRoleForCreator();
     setPassword("");
     setUserName("");
     setConfirmPassword("");
     setIsActive(false);
-    setSelectedRole("business_user");
+    setSelectedRole(defaultRole);
     setDepartmentAdminEmail("");
     setDepartmentName("");
+    setOrganizationName("");
+    setOrganizationDescription("");
     setDepartmentAdminError("");
-    setInputState(CONTROL_NEW_USER);
+    setOrganizationError("");
+    setInputState({ ...CONTROL_NEW_USER, role: defaultRole });
   }
 
   function handleRoleChange(selectedRole: string) {
@@ -159,16 +168,36 @@ export default function UserManagementModal({
     return role.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
   }
 
-  const effectiveRole = selectedRole || "business_user";
+  const isRootAdmin = userData?.role === "root";
+  const effectiveRole = isRootAdmin ? "super_admin" : (selectedRole || "business_user");
   const isSuperAdmin = userData?.role === "super_admin";
   const isDepartmentAdminCreator = userData?.role === "department_admin";
+  const isCreatingSuperAdmin = effectiveRole === "super_admin";
   const isCreatingDepartmentAdmin = effectiveRole === "department_admin";
+  const requiresOrganizationBootstrap = isRootAdmin && isCreatingSuperAdmin;
   const requiresDepartmentAdminSelection =
     isSuperAdmin && !isCreatingDepartmentAdmin;
-  const rolesToRender =
-    availableRoles.length > 0
-      ? Array.from(new Set([...availableRoles, effectiveRole].filter(Boolean)))
-      : ["super_admin", "department_admin", "developer", "business_user"];
+  const rolesToRender = (() => {
+    let baseRoles: string[] = [];
+    if (isRootAdmin) {
+      baseRoles = ["super_admin"];
+    } else if (isSuperAdmin) {
+      baseRoles =
+        availableRoles.length > 0
+          ? availableRoles.filter((role) => !["root", "super_admin"].includes(role))
+          : ["department_admin", "developer", "business_user", "consumer"];
+    } else if (isDepartmentAdminCreator) {
+      baseRoles = ["developer", "business_user", "consumer"];
+    } else if (availableRoles.length > 0) {
+      baseRoles = availableRoles;
+    } else {
+      baseRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
+    }
+    if (isRootAdmin) {
+      return ["super_admin"];
+    }
+    return Array.from(new Set([...baseRoles, effectiveRole].filter(Boolean)));
+  })();
 
   const departmentAdminOptions = useMemo(
     () =>
@@ -245,6 +274,11 @@ export default function UserManagementModal({
               event.preventDefault();
               return;
             }
+            if (requiresOrganizationBootstrap && !organizationName.trim()) {
+              setOrganizationError("Organization name is required.");
+              event.preventDefault();
+              return;
+            }
             const submitData = {
               ...inputState,
               username,
@@ -266,6 +300,10 @@ export default function UserManagementModal({
                 (userData as any)?.department_name || "";
             } else if (requiresDepartmentAdminSelection) {
               submitData.department_admin_email = departmentAdminEmail;
+            }
+            if (requiresOrganizationBootstrap) {
+              submitData.organization_name = organizationName.trim();
+              submitData.organization_description = organizationDescription.trim();
             }
             
             resetForm();
@@ -491,6 +529,52 @@ export default function UserManagementModal({
                   </Form.Control>
                 </div>
               </Form.Field>
+            )}
+            {requiresOrganizationBootstrap && (
+              <div className="grid gap-4">
+                <Form.Field name="organization_name">
+                  <div className="flex flex-col">
+                    <Form.Label className="data-[invalid]:label-invalid mb-2">
+                      Organization Name{" "}
+                      <span className="font-medium text-destructive">*</span>
+                    </Form.Label>
+                    <Form.Control asChild>
+                      <input
+                        onChange={({ target: { value } }) => {
+                          setOrganizationName(value);
+                          setOrganizationError("");
+                        }}
+                        value={organizationName}
+                        className="primary-input"
+                        required
+                        placeholder="Organization name"
+                      />
+                    </Form.Control>
+                    {organizationError && (
+                      <div className="mt-1 text-xs text-destructive">
+                        {organizationError}
+                      </div>
+                    )}
+                  </div>
+                </Form.Field>
+                <Form.Field name="organization_description">
+                  <div className="flex flex-col">
+                    <Form.Label className="data-[invalid]:label-invalid mb-2">
+                      Organization Description
+                    </Form.Label>
+                    <Form.Control asChild>
+                      <input
+                        onChange={({ target: { value } }) => {
+                          setOrganizationDescription(value);
+                        }}
+                        value={organizationDescription}
+                        className="primary-input"
+                        placeholder="Optional description"
+                      />
+                    </Form.Control>
+                  </div>
+                </Form.Field>
+              </div>
             )}
 
             {requiresDepartmentAdminSelection && (

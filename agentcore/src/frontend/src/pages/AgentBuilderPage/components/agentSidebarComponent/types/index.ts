@@ -82,6 +82,9 @@ export interface SidebarHeaderComponentProps {
   filterName: string;
   filterDescription: string;
   resetFilters: () => void;
+  customComponent?: APIClassType | null;
+  addComponent?: (component: APIClassType, name: string) => void;
+  isLoading?: boolean;
 }
 
 export interface UniqueInputsComponents {

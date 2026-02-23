@@ -1,10 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ICON_STROKE_WIDTH } from "@/constants/constants";
 import { useGetFilesV2 } from "@/controllers/API/queries/file-management";
+import { useGetKnowledgeBases } from "@/controllers/API/queries/knowledge-bases/use-get-knowledge-bases";
 import { usePostUploadFile } from "@/controllers/API/queries/files/use-post-upload-file";
 import { ENABLE_FILE_MANAGEMENT } from "@/customization/feature-flags";
 import { createFileUpload } from "@/helpers/create-file-upload";
-import FileManagerModal from "@/modals/fileManagerModal";
+import BaseModal from "@/modals/baseModal";
 import FilesRendererComponent from "@/modals/fileManagerModal/components/filesRendererComponent";
 import useFileSizeValidator from "@/shared/hooks/use-file-size-validator";
 import { cn } from "@/utils/utils";
@@ -18,6 +19,7 @@ import IconComponent, {
   ForwardedIconComponent,
 } from "../../../../common/genericIconComponent";
 import { Button } from "../../../../ui/button";
+import { Input } from "../../../../ui/input";
 import type { FileComponentType, InputProps } from "../../types";
 
 export default function InputFileComponent({
@@ -53,6 +55,18 @@ export default function InputFileComponent({
   }
 
   const { mutateAsync, isPending } = usePostUploadFile();
+  const [isKnowledgeBaseModalOpen, setIsKnowledgeBaseModalOpen] =
+    useState(false);
+  const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<
+    string[]
+  >([]);
+  const [expandedSelectedKbIds, setExpandedSelectedKbIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [expandedModalKbIds, setExpandedModalKbIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [knowledgeBaseSearch, setKnowledgeBaseSearch] = useState("");
 
   const handleButtonClick = (): void => {
     createFileUpload({ multiple: isList, accept: fileTypes?.join(",") }).then(
@@ -146,6 +160,30 @@ export default function InputFileComponent({
   const { data: files } = useGetFilesV2({
     enabled: !!ENABLE_FILE_MANAGEMENT,
   });
+  const { data: knowledgeBases } = useGetKnowledgeBases({
+    enabled: !!ENABLE_FILE_MANAGEMENT,
+  });
+
+  const knowledgeBaseFileGroups = useMemo(() => {
+    if (!knowledgeBases || !files) return [];
+    return knowledgeBases.map((kb) => ({
+      id: kb.id,
+      name: kb.name,
+      files: files.filter((file) => file.knowledge_base_id === kb.id),
+    }));
+  }, [knowledgeBases, files]);
+
+  const filteredKnowledgeBaseFileGroups = useMemo(() => {
+    const query = knowledgeBaseSearch.trim().toLowerCase();
+    if (!query) return knowledgeBaseFileGroups;
+    return knowledgeBaseFileGroups.filter((group) => {
+      const kbNameMatch = group.name.toLowerCase().includes(query);
+      const fileNameMatch = group.files.some((file) =>
+        file.name.toLowerCase().includes(query),
+      );
+      return kbNameMatch || fileNameMatch;
+    });
+  }, [knowledgeBaseFileGroups, knowledgeBaseSearch]);
 
   const selectedFiles = (
     isList
@@ -159,41 +197,72 @@ export default function InputFileComponent({
         : [file_path ?? ""]
   ).filter((value) => value !== "");
 
+  const selectedKnowledgeBaseNames = useMemo(() => {
+    if (!files || !knowledgeBases) return [];
+    const kbIds = new Set(
+      files
+        .filter((file) => selectedFiles.includes(file.path))
+        .map((file) => file.knowledge_base_id)
+        .filter((kbId): kbId is string => typeof kbId === "string"),
+    );
+    return knowledgeBases
+      .filter((kb) => kbIds.has(kb.id))
+      .map((kb) => kb.name);
+  }, [files, knowledgeBases, selectedFiles]);
+
+  const selectedKnowledgeBaseGroups = useMemo(() => {
+    if (!files || !knowledgeBases) return [];
+    const groupedByKb = new Map<
+      string,
+      { id: string; name: string; files: any[] }
+    >();
+    files
+      .filter((file) => selectedFiles.includes(file.path))
+      .forEach((file) => {
+        if (!file.knowledge_base_id) return;
+        const kb = knowledgeBases.find((item) => item.id === file.knowledge_base_id);
+        if (!kb) return;
+        const existing = groupedByKb.get(kb.id);
+        if (existing) {
+          existing.files.push(file);
+        } else {
+          groupedByKb.set(kb.id, {
+            id: kb.id,
+            name: kb.name,
+            files: [file],
+          });
+        }
+      });
+    return Array.from(groupedByKb.values());
+  }, [files, knowledgeBases, selectedFiles]);
+
+  const applyKnowledgeBaseSelection = (kbIds: string[]) => {
+    if (!files || !knowledgeBases) return;
+    const scopedFiles = files.filter(
+      (file) => file.knowledge_base_id && kbIds.includes(file.knowledge_base_id),
+    );
+    const filePaths = scopedFiles.map((file) => file.path);
+    const kbNames = knowledgeBases
+      .filter((kb) => kbIds.includes(kb.id))
+      .map((kb) => kb.name);
+
+    handleOnNewValue({
+      value: isList ? kbNames : (kbNames[0] ?? ""),
+      file_path: isList ? filePaths : (filePaths[0] ?? ""),
+    });
+  };
+
   useEffect(() => {
     if (files !== undefined && !tempFile) {
-      if (isList) {
-        if (
-          Array.isArray(value) &&
-          value.every((v) => files?.find((f) => f.name === v)) &&
-          Array.isArray(file_path) &&
-          file_path.every((v) => files?.find((f) => f.path === v))
-        ) {
-          return;
-        }
-      } else {
-        if (
-          typeof value === "string" &&
-          files?.find((f) => f.name === value) &&
-          typeof file_path === "string" &&
-          files?.find((f) => f.path === file_path)
-        ) {
-          return;
-        }
-      }
+      const validSelectedFiles = files.filter((f) => selectedFiles.includes(f.path));
+      if (validSelectedFiles.length === selectedFiles.length) return;
+
       handleOnNewValue({
-        value: isList
-          ? (files
-              ?.filter((f) => selectedFiles.includes(f.path))
-              .map((f) => f.name) ?? [])
-          : (files?.find((f) => selectedFiles.includes(f.path))?.name ?? ""),
-        file_path: isList
-          ? (files
-              ?.filter((f) => selectedFiles.includes(f.path))
-              .map((f) => f.path) ?? [])
-          : (files?.find((f) => selectedFiles.includes(f.path))?.path ?? ""),
+        value: isList ? selectedKnowledgeBaseNames : (selectedKnowledgeBaseNames[0] ?? ""),
+        file_path: isList ? validSelectedFiles.map((f) => f.path) : (validSelectedFiles[0]?.path ?? ""),
       });
     }
-  }, [files, value, file_path]);
+  }, [files, file_path, selectedFiles, selectedKnowledgeBaseNames, isList]);
 
   return (
     <div className="w-full">
@@ -203,77 +272,209 @@ export default function InputFileComponent({
             files && (
               <div className="relative flex w-full flex-col gap-2">
                 <div className="nopan nowheel flex max-h-44 flex-col overflow-y-auto">
-                  <FilesRendererComponent
-                    files={files.filter((file) =>
-                      selectedFiles.includes(file.path),
-                    )}
-                    handleRemove={(path) => {
-                      const newSelectedFiles = selectedFiles.filter(
-                        (file) => file !== path,
+                  <div className="flex flex-col gap-2">
+                    {selectedKnowledgeBaseGroups.map((group) => {
+                      const isExpanded = expandedSelectedKbIds[group.id] ?? true;
+                      return (
+                        <div key={group.id} className="rounded-md border bg-background">
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <button
+                              type="button"
+                              className="flex items-center gap-2 text-sm font-semibold"
+                              onClick={() =>
+                                setExpandedSelectedKbIds((prev) => ({
+                                  ...prev,
+                                  [group.id]: !isExpanded,
+                                }))
+                              }
+                            >
+                              <ForwardedIconComponent
+                                name={isExpanded ? "ChevronDown" : "ChevronRight"}
+                                className="h-4 w-4"
+                              />
+                              <ForwardedIconComponent name="Database" className="h-4 w-4" />
+                              <span>{group.name}</span>
+                              <span className="text-xs text-muted-foreground">
+                                ({group.files.length} files)
+                              </span>
+                            </button>
+                            <Button
+                              variant="ghost"
+                              size="iconMd"
+                              onClick={() => {
+                                const remainingFiles = selectedFiles.filter(
+                                  (path) =>
+                                    !group.files.some((groupFile) => groupFile.path === path),
+                                );
+                                const remainingKbGroups = selectedKnowledgeBaseGroups.filter(
+                                  (kbGroup) => kbGroup.id !== group.id,
+                                );
+                                handleOnNewValue({
+                                  value: isList
+                                    ? remainingKbGroups.map((kbGroup) => kbGroup.name)
+                                    : (remainingKbGroups[0]?.name ?? ""),
+                                  file_path: isList
+                                    ? remainingFiles
+                                    : (remainingFiles[0] ?? ""),
+                                });
+                              }}
+                            >
+                              <ForwardedIconComponent name="X" className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          {isExpanded && (
+                            <div className="border-t px-3 py-2">
+                              <FilesRendererComponent files={group.files} />
+                            </div>
+                          )}
+                        </div>
                       );
-                      handleOnNewValue({
-                        value: isList
-                          ? newSelectedFiles.map(
-                              (file) =>
-                                files.find((f) => f.path === file)?.name,
-                            )
-                          : (files.find((f) => f.path == newSelectedFiles[0]) ??
-                            ""),
-                        file_path: isList
-                          ? newSelectedFiles
-                          : (newSelectedFiles[0] ?? ""),
-                      });
+                    })}
+                  </div>
+                </div>
+                <BaseModal
+                  size="small"
+                  className="h-[68vh]"
+                  open={isKnowledgeBaseModalOpen}
+                  setOpen={(open) => {
+                    setIsKnowledgeBaseModalOpen(open);
+                    if (!open) {
+                      setKnowledgeBaseSearch("");
+                    }
+                  }}
+                  onSubmit={() => {
+                    applyKnowledgeBaseSelection(selectedKnowledgeBaseIds);
+                    setIsKnowledgeBaseModalOpen(false);
+                    setKnowledgeBaseSearch("");
+                  }}
+                >
+                  <BaseModal.Header description="Select one or more knowledge bases.">
+                    Select Knowledge Base
+                  </BaseModal.Header>
+                  <BaseModal.Content className="gap-2 overflow-auto">
+                    <Input
+                      icon="Search"
+                      placeholder="Search knowledge bases"
+                      value={knowledgeBaseSearch}
+                      onChange={(event) =>
+                        setKnowledgeBaseSearch(event.target.value)
+                      }
+                      data-testid="search-knowledge-base-select-input"
+                    />
+                    {filteredKnowledgeBaseFileGroups.map((group) => {
+                      const isSelected = selectedKnowledgeBaseIds.includes(group.id);
+                      const isExpanded = expandedModalKbIds[group.id] ?? false;
+                      return (
+                        <div
+                          key={group.id}
+                          className={cn(
+                            "rounded-md border",
+                            isSelected && "border-primary bg-muted/30",
+                          )}
+                        >
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <button
+                              type="button"
+                              className="flex min-w-0 items-center gap-2 text-left"
+                              onClick={() =>
+                                setExpandedModalKbIds((prev) => ({
+                                  ...prev,
+                                  [group.id]: !isExpanded,
+                                }))
+                              }
+                            >
+                              <ForwardedIconComponent
+                                name={isExpanded ? "ChevronDown" : "ChevronRight"}
+                                className="h-4 w-4"
+                              />
+                              <span className="truncate font-medium">{group.name}</span>
+                              <span className="text-xs text-muted-foreground">
+                                ({group.files.length} files)
+                              </span>
+                            </button>
+                            <Button
+                              size="sm"
+                              variant={isSelected ? "default" : "outline"}
+                              onClick={() => {
+                                if (isList) {
+                                  setSelectedKnowledgeBaseIds((prev) =>
+                                    isSelected
+                                      ? prev.filter((id) => id !== group.id)
+                                      : [...prev, group.id],
+                                  );
+                                } else {
+                                  setSelectedKnowledgeBaseIds(
+                                    isSelected ? [] : [group.id],
+                                  );
+                                }
+                              }}
+                            >
+                              {isSelected ? "Selected" : "Select"}
+                            </Button>
+                          </div>
+                          {isExpanded && (
+                            <div className="border-t px-3 py-2">
+                              {group.files.length > 0 ? (
+                                <FilesRendererComponent files={group.files} />
+                              ) : (
+                                <div className="text-xs text-muted-foreground">
+                                  No files in this knowledge base.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {filteredKnowledgeBaseFileGroups.length === 0 && (
+                      <div className="text-sm text-muted-foreground">
+                        No knowledge bases found.
+                      </div>
+                    )}
+                  </BaseModal.Content>
+                  <BaseModal.Footer
+                    submit={{
+                      label: "Select",
+                      disabled: selectedKnowledgeBaseIds.length === 0,
+                      dataTestId: "select-knowledge-base-modal-button",
                     }}
                   />
-                </div>
-                <FileManagerModal
-                  files={files}
-                  selectedFiles={selectedFiles}
-                  handleSubmit={(selectedFiles) => {
-                    handleOnNewValue({
-                      value: isList
-                        ? selectedFiles.map(
-                            (file) => files.find((f) => f.path === file)?.name,
-                          )
-                        : (files.find((f) => f.path == selectedFiles[0]) ?? ""),
-                      file_path: isList
-                        ? selectedFiles
-                        : (selectedFiles[0] ?? ""),
-                    });
-                  }}
-                  disabled={isDisabled}
-                  types={fileTypes}
-                  isList={isList}
-                >
-                  {(selectedFiles.length === 0 || isList) && (
-                    <div data-testid="input-file-component" className="w-full">
-                      <Button
-                        disabled={isDisabled}
-                        variant={
-                          selectedFiles.length !== 0 ? "ghost" : "default"
-                        }
-                        size={selectedFiles.length !== 0 ? "iconMd" : "default"}
-                        className={cn(
-                          selectedFiles.length !== 0
-                            ? "hit-area-icon absolute -top-8 right-0"
-                            : "w-full",
-                          "font-semibold",
-                        )}
-                        data-testid="button_open_file_management"
-                      >
-                        {selectedFiles.length !== 0 ? (
-                          <ForwardedIconComponent
-                            name="Plus"
-                            className="icon-size"
-                            strokeWidth={ICON_STROKE_WIDTH}
-                          />
-                        ) : (
-                          <div>Select file{isList ? "s" : ""}</div>
-                        )}
-                      </Button>
-                    </div>
-                  )}
-                </FileManagerModal>
+                </BaseModal>
+                {(selectedFiles.length === 0 || isList) && (
+                  <div data-testid="input-file-component" className="w-full">
+                    <Button
+                      disabled={isDisabled}
+                      onClick={() => {
+                        const existingKbIds =
+                          files
+                            ?.filter((f) => selectedFiles.includes(f.path))
+                            .map((f) => f.knowledge_base_id)
+                            .filter((kbId): kbId is string => !!kbId) ?? [];
+                        setSelectedKnowledgeBaseIds(Array.from(new Set(existingKbIds)));
+                        setIsKnowledgeBaseModalOpen(true);
+                      }}
+                      variant={selectedFiles.length !== 0 ? "ghost" : "default"}
+                      size={selectedFiles.length !== 0 ? "iconMd" : "default"}
+                      className={cn(
+                        selectedFiles.length !== 0
+                          ? "hit-area-icon absolute -top-8 right-0"
+                          : "w-full",
+                        "font-semibold",
+                      )}
+                      data-testid="button_open_file_management"
+                    >
+                      {selectedFiles.length !== 0 ? (
+                        <ForwardedIconComponent
+                          name="Plus"
+                          className="icon-size"
+                          strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                      ) : (
+                        <div>Select knowledge base{isList ? "s" : ""}</div>
+                      )}
+                    </Button>
+                  </div>
+                )}
               </div>
             )
           ) : (

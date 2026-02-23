@@ -1,23 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
+import { Play, Plus } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -26,66 +9,93 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Play, Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import {
-  getEvaluationAnalytics,
-  getEvaluationScores,
-  getEvaluationStatus,
-  getPendingReviews,
-  getAvailableModels,
-  runLLMJudge,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import useAlertStore from "@/stores/alertStore";
+import { useModelStore } from "@/stores/modelStore";
+import {
+  createEvaluationDataset,
+  createEvaluationDatasetItem,
   createEvaluationScore,
   createEvaluator,
-  getAgents,
-  getEvaluationPresets,
-  getEvaluationDatasets,
-  createEvaluationDataset,
-  getEvaluationDatasetItems,
-  createEvaluationDatasetItem,
-  getEvaluationDatasetRuns,
-  getEvaluationDatasetRunDetail,
-  runEvaluationDatasetExperiment,
-  getDatasetExperimentJob,
-  listEvaluators,
-  previewEvaluation,
-  updateEvaluator,
+  DatasetExperimentJob,
+  deleteEvaluationDataset,
+  deleteEvaluationDatasetItem,
+  deleteEvaluationDatasetRun,
   deleteEvaluator,
   EvaluationDataset,
   EvaluationDatasetItem,
   EvaluationDatasetRun,
   EvaluationDatasetRunDetail,
-  DatasetExperimentJob,
-  EvaluationAnalytics,
   EvaluationPreset,
   EvaluationStatus,
+  getAgents,
+  getDatasetExperimentJob,
+  getEvaluationDatasetItems,
+  getEvaluationDatasetRunDetail,
+  getEvaluationDatasetRuns,
+  getEvaluationDatasets,
+  getEvaluationPresets,
+  getEvaluationScores,
+  getEvaluationStatus,
+  getPendingReviews,
+  listEvaluators,
+  runEvaluator,
+  runEvaluationDatasetExperiment,
   Score,
   TraceForReview,
+  uploadEvaluationDatasetItemsCsv,
+  updateEvaluator,
 } from "../../controllers/API/evaluation";
-import useAlertStore from "@/stores/alertStore";
-import { useModelStore } from "@/stores/modelStore";
 
 const FALLBACK_PRESETS: EvaluationPreset[] = [
   {
     id: "correctness",
     name: "Correctness",
-    criteria: "Evaluate the correctness of the generation against the ground truth on a scale 0-1.",
+    criteria:
+      "Evaluate the correctness of the generation against the ground truth on a scale 0-1.",
     requires_ground_truth: true,
   },
   {
     id: "helpfulness",
     name: "Helpfulness",
-    criteria: "Evaluate how helpful the output is in addressing the user's input on a scale 0-1.",
+    criteria:
+      "Evaluate how helpful the output is in addressing the user's input on a scale 0-1.",
     requires_ground_truth: false,
   },
 ];
 
+const DATASET_PROMPT_TEMPLATE = `Input:
+Query: {{query}}
+Generation: {{generation}}
+Ground Truth: {{ground_truth}}`;
+
+const ensureDatasetPromptTemplate = (criteria?: string | null): string => {
+  const text = (criteria || "").trim();
+  if (!text) return DATASET_PROMPT_TEMPLATE;
+  const normalized = text.toLowerCase().replace(/\s+/g, " ");
+  if (
+    normalized.includes("query: {{query}}") &&
+    normalized.includes("generation: {{generation}}") &&
+    normalized.includes("ground truth: {{ground_truth}}")
+  ) {
+    return text;
+  }
+  return `${text}\n\n${DATASET_PROMPT_TEMPLATE}`;
+};
+
 export default function EvaluationPage() {
-  const [activeTab, setActiveTab] = useState("overview");
-  const [analytics, setAnalytics] = useState<EvaluationAnalytics | null>(null);
+  const [activeTab, setActiveTab] = useState("judges");
   const [status, setStatus] = useState<EvaluationStatus | null>(null);
   const [recentScores, setRecentScores] = useState<Score[]>([]);
   const [pendingTraces, setPendingTraces] = useState<TraceForReview[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [scoreFilters, setScoreFilters] = useState({ trace_id: "", name: "" });
   const [presets, setPresets] = useState<EvaluationPreset[]>([]);
   const [savedEvaluators, setSavedEvaluators] = useState<Array<any>>([]);
@@ -95,59 +105,82 @@ export default function EvaluationPage() {
   const [datasetItems, setDatasetItems] = useState<EvaluationDatasetItem[]>([]);
   const [datasetRuns, setDatasetRuns] = useState<EvaluationDatasetRun[]>([]);
   const [datasetsLoading, setDatasetsLoading] = useState<boolean>(false);
-  const [datasetExperimentJob, setDatasetExperimentJob] = useState<DatasetExperimentJob | null>(null);
+  const [datasetCsvFile, setDatasetCsvFile] = useState<File | null>(null);
+  const [datasetCsvUploading, setDatasetCsvUploading] = useState<boolean>(false);
+  const [datasetCsvInputKey, setDatasetCsvInputKey] = useState<number>(0);
+  const [datasetExperimentJob, setDatasetExperimentJob] =
+    useState<DatasetExperimentJob | null>(null);
   const [isRunDetailOpen, setIsRunDetailOpen] = useState<boolean>(false);
+  const [isDatasetItemsDialogOpen, setIsDatasetItemsDialogOpen] =
+    useState<boolean>(false);
   const [runDetailLoading, setRunDetailLoading] = useState<boolean>(false);
-  const [selectedRunDetail, setSelectedRunDetail] = useState<EvaluationDatasetRunDetail | null>(null);
+  const [selectedRunDetail, setSelectedRunDetail] =
+    useState<EvaluationDatasetRunDetail | null>(null);
   const [datasetForm, setDatasetForm] = useState({ name: "", description: "" });
   const [datasetItemForm, setDatasetItemForm] = useState({
     input: "",
     expected_output: "",
+    metadata: "",
     trace_id: "",
     source_trace_id: "",
   });
   const [datasetExperimentForm, setDatasetExperimentForm] = useState({
     experiment_name: "",
-    run_name: "",
     description: "",
     agent_id: "",
+    generation_model: "",
+    generation_model_api_key: "",
     evaluator_config_id: "",
+    preset_id: "",
+    evaluator_name: "",
     criteria: "",
-    model: "",
-    max_concurrency: "10",
+    judge_model: "",
+    judge_model_api_key: "",
   });
-  const [datasetModelApiKey, setDatasetModelApiKey] = useState<string>("");
-  
+
   // Dialog States
   const [isJudgeDialogOpen, setIsJudgeDialogOpen] = useState(false);
   const [isScoreDialogOpen, setIsScoreDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [runningEvaluatorId, setRunningEvaluatorId] = useState<string | null>(
+    null,
+  );
+  const fetchSeqRef = useRef(0);
 
-  const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [modelApiKey, setModelApiKey] = useState<string>("");
   const [agentList, setAgentList] = useState<any[]>([]);
   const storeModels = useModelStore((s) => s.models);
-  const [savedModelKeys, setSavedModelKeys] = useState<Record<string, string>>({});
+  const [savedModelKeys, setSavedModelKeys] = useState<Record<string, string>>(
+    {},
+  );
+
+  // Per-tab fetch guards — prevent redundant refetches on every tab revisit
+  const hasFetchedScoresRef = useRef(false);
+  const hasFetchedDatasetsRef = useRef(false);
   const loadSavedModelKeys = () => {
     try {
-      const raw = localStorage.getItem('evaluation_model_keys');
-      if (!raw) return {} as Record<string,string>;
-      const parsed = JSON.parse(raw || '{}');
+      const raw = localStorage.getItem("evaluation_model_keys");
+      if (!raw) return {} as Record<string, string>;
+      const parsed = JSON.parse(raw || "{}");
       setSavedModelKeys(parsed || {});
       return parsed || {};
     } catch (e) {
-      return {} as Record<string,string>;
+      return {} as Record<string, string>;
     }
   };
   const saveModelKey = (modelId: string, key: string) => {
     const next = { ...(savedModelKeys || {}), [modelId]: key };
     setSavedModelKeys(next);
-    try { localStorage.setItem('evaluation_model_keys', JSON.stringify(next)); } catch (e) { console.debug(e); }
+    try {
+      localStorage.setItem("evaluation_model_keys", JSON.stringify(next));
+    } catch {
+      // ignore storage errors
+    }
   };
-  
+
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
-  const [filterSessionId, setFilterSessionId] = useState<string>('');
-  const [filterTraceId, setFilterTraceId] = useState<string>('');
+  const [filterSessionId, setFilterSessionId] = useState<string>("");
+  const [filterTraceId, setFilterTraceId] = useState<string>("");
   const [runOnNew, setRunOnNew] = useState<boolean>(true);
   const [runOnExisting, setRunOnExisting] = useState<boolean>(true);
 
@@ -156,17 +189,43 @@ export default function EvaluationPage() {
   const setNoticeData = useAlertStore((state) => state.setNoticeData);
 
   // Form Data
-  const [judgeForm, setJudgeForm] = useState({ trace_id: "", criteria: "", model: "gpt-4o", name: "", preset_id: "", saved_evaluator_id: "", model_name: "" });
+  const [judgeForm, setJudgeForm] = useState({
+    trace_id: "",
+    criteria: "",
+    model: "gpt-4o",
+    name: "",
+    preset_id: "",
+    saved_evaluator_id: "",
+    model_name: "",
+  });
   const [groundTruth, setGroundTruth] = useState("");
-  const [scoreForm, setScoreForm] = useState({ trace_id: "", name: "", value: "0.5", comment: "" });
+  const [scoreForm, setScoreForm] = useState({
+    trace_id: "",
+    name: "",
+    value: "0.5",
+    comment: "",
+  });
   const selectedPreset = useMemo(
     () => presets.find((preset) => preset.id === judgeForm.preset_id),
     [presets, judgeForm.preset_id],
   );
+  const selectedDatasetPreset = useMemo(
+    () =>
+      presets.find((preset) => preset.id === datasetExperimentForm.preset_id),
+    [presets, datasetExperimentForm.preset_id],
+  );
   const requiresGroundTruth = Boolean(selectedPreset?.requires_ground_truth);
 
   const resetForms = () => {
-    setJudgeForm({ trace_id: "", criteria: "", model: "gpt-4o", name: "", preset_id: "", saved_evaluator_id: "", model_name: "" });
+    setJudgeForm({
+      trace_id: "",
+      criteria: "",
+      model: "gpt-4o",
+      name: "",
+      preset_id: "",
+      saved_evaluator_id: "",
+      model_name: "",
+    });
     setGroundTruth("");
     setSelectedAgentIds([]);
     setFilterSessionId("");
@@ -176,26 +235,14 @@ export default function EvaluationPage() {
     setScoreForm({ trace_id: "", name: "", value: "0.5", comment: "" });
   };
 
-  const shortId = (id?: string | null) => (id ? `${id.substring(0, 8)}...` : "-");
-  const safePendingTraces = Array.isArray(pendingTraces) ? pendingTraces.filter((trace) => Boolean(trace?.id)) : [];
+  const shortId = (id?: string | null) =>
+    id ? `${id.substring(0, 8)}...` : "-";
+  const safePendingTraces = Array.isArray(pendingTraces)
+    ? pendingTraces.filter((trace) => Boolean(trace?.id))
+    : [];
 
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  const pollScoresForTrace = async (traceId: string, attempts = 5, delayMs = 2000) => {
-    for (let i = 0; i < attempts; i += 1) {
-      await sleep(delayMs);
-      try {
-        const scoresData = await getEvaluationScores({ trace_id: traceId, limit: 5 });
-        if (scoresData?.items?.length) {
-          await fetchData();
-          return true;
-        }
-      } catch {
-        // ignore and continue polling
-      }
-    }
-    return false;
-  };
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
 
   const parseJsonOrString = (value: string): unknown => {
     const trimmed = value.trim();
@@ -228,21 +275,27 @@ export default function EvaluationPage() {
         setSelectedDatasetName("");
         setDatasetItems([]);
         setDatasetRuns([]);
+        setIsDatasetItemsDialogOpen(false);
         return;
       }
 
-      const hasCurrent = keepSelection && items.some((dataset) => dataset.name === selectedDatasetName);
-      const nextDatasetName = hasCurrent ? selectedDatasetName : items[0].name;
-      if (nextDatasetName !== selectedDatasetName) {
-        setSelectedDatasetName(nextDatasetName);
+      const hasCurrent =
+        keepSelection &&
+        items.some((dataset) => dataset.name === selectedDatasetName);
+      if (hasCurrent && selectedDatasetName) {
+        await fetchDatasetDetails(selectedDatasetName);
       } else {
-        await fetchDatasetDetails(nextDatasetName);
+        setSelectedDatasetName("");
+        setDatasetItems([]);
+        setDatasetRuns([]);
+        setIsDatasetItemsDialogOpen(false);
       }
     } catch (error) {
       console.error("Failed to fetch datasets", error);
       setDatasets([]);
       setDatasetItems([]);
       setDatasetRuns([]);
+      setIsDatasetItemsDialogOpen(false);
     } finally {
       setDatasetsLoading(false);
     }
@@ -262,13 +315,19 @@ export default function EvaluationPage() {
       ]);
 
       if (itemsResult.status === "fulfilled") {
-        setDatasetItems(Array.isArray(itemsResult.value?.items) ? itemsResult.value.items : []);
+        setDatasetItems(
+          Array.isArray(itemsResult.value?.items)
+            ? itemsResult.value.items
+            : [],
+        );
       } else {
         setDatasetItems([]);
       }
 
       if (runsResult.status === "fulfilled") {
-        setDatasetRuns(Array.isArray(runsResult.value?.items) ? runsResult.value.items : []);
+        setDatasetRuns(
+          Array.isArray(runsResult.value?.items) ? runsResult.value.items : [],
+        );
       } else {
         setDatasetRuns([]);
       }
@@ -279,7 +338,11 @@ export default function EvaluationPage() {
     }
   };
 
-  const pollDatasetJob = async (jobId: string, attempts = 30, delayMs = 2000) => {
+  const pollDatasetJob = async (
+    jobId: string,
+    attempts = 30,
+    delayMs = 2000,
+  ) => {
     for (let i = 0; i < attempts; i += 1) {
       await sleep(delayMs);
       try {
@@ -296,8 +359,8 @@ export default function EvaluationPage() {
   };
 
   useEffect(() => {
-    fetchData();
-    fetchDatasets(false);
+    // Only load data required by the default "judges" tab on mount.
+    // Scores and Datasets are loaded lazily when their tabs become active.
     getEvaluationPresets()
       .then((items) => {
         if (Array.isArray(items)) {
@@ -313,8 +376,10 @@ export default function EvaluationPage() {
     listEvaluators()
       .then((items) => {
         if (Array.isArray(items)) return setSavedEvaluators(items as any);
-        if (items && Array.isArray((items as any).items)) return setSavedEvaluators((items as any).items);
-        if (items && Array.isArray((items as any).data)) return setSavedEvaluators((items as any).data);
+        if (items && Array.isArray((items as any).items))
+          return setSavedEvaluators((items as any).items);
+        if (items && Array.isArray((items as any).data))
+          return setSavedEvaluators((items as any).data);
         return setSavedEvaluators([]);
       })
       .catch(() => {
@@ -322,13 +387,13 @@ export default function EvaluationPage() {
       });
     getAgents()
       .then((agents) => {
-        const normalized = agents && Array.isArray(agents.data) ? agents.data : Array.isArray(agents) ? agents : [];
+        const normalized =
+          agents && Array.isArray(agents.data)
+            ? agents.data
+            : Array.isArray(agents)
+              ? agents
+              : [];
         setAgentList(normalized);
-        if (normalized.length > 0) {
-          setAvailableModels(normalized);
-        } else if (storeModels?.length) {
-          setAvailableModels(storeModels);
-        }
       })
       .catch(() => {
         setAgentList([]);
@@ -341,82 +406,154 @@ export default function EvaluationPage() {
     let mounted = true;
     (async () => {
       try {
-        console.debug("Fetching pending reviews for judge dialog");
         const val = await getPendingReviews({ limit: 100 });
         if (!mounted) return;
         if (Array.isArray(val)) {
           setPendingTraces(val);
-          console.debug("Pending traces fetched:", val.length);
         } else if (val && Array.isArray((val as any).items)) {
           setPendingTraces((val as any).items);
-          console.debug("Pending traces fetched (items):", (val as any).items.length);
         } else if (val && Array.isArray((val as any).data)) {
           setPendingTraces((val as any).data);
-          console.debug("Pending traces fetched (data):", (val as any).data.length);
         } else {
           setPendingTraces([]);
-        }
-        // Load agents (also used as model catalogue). Fetch only once to avoid duplicate requests.
-        try {
-          const agents = await getAgents();
-          const normalized = agents && Array.isArray(agents.data) ? agents.data : Array.isArray(agents) ? agents : [];
-          setAgentList(normalized);
-          // For availableModels, prefer storeModels fallback; if agents look like models, expose them too
-          if (normalized.length > 0) {
-            setAvailableModels(normalized);
-          } else if (storeModels?.length) {
-            setAvailableModels(storeModels);
-          } else {
-            setAvailableModels([]);
-          }
-        } catch (e) {
-          console.debug("Failed to load agents/models", e);
-          setAgentList([]);
-          setAvailableModels(storeModels?.length ? storeModels : []);
         }
         // load saved model API keys and prefill if available
         try {
           const keys = loadSavedModelKeys();
-          const modelName = (judgeForm.model_name && judgeForm.model_name.trim()) || judgeForm.model;
+          const modelName =
+            (judgeForm.model_name && judgeForm.model_name.trim()) ||
+            judgeForm.model;
           if (keys && modelName && keys[modelName]) {
             setModelApiKey(keys[modelName]);
           }
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+          /* ignore */
+        }
       } catch (e) {
         console.error("Failed fetching pending traces:", e);
         setPendingTraces([]);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [isJudgeDialogOpen]);
 
+  // Lazy-load scores data only when the Scores tab becomes active
   useEffect(() => {
-    if (activeTab !== "datasets") return;
-    fetchDatasets(true);
+    if (activeTab !== "scores") return;
+    if (!hasFetchedScoresRef.current) {
+      hasFetchedScoresRef.current = true;
+      fetchData();
+    }
   }, [activeTab]);
 
+  // Lazy-load dataset list and details only when the Datasets tab becomes active
   useEffect(() => {
     if (activeTab !== "datasets") return;
-    fetchDatasetDetails(selectedDatasetName);
+    if (!hasFetchedDatasetsRef.current) {
+      hasFetchedDatasetsRef.current = true;
+      fetchDatasets(true);
+    } else if (selectedDatasetName) {
+      fetchDatasetDetails(selectedDatasetName);
+    }
   }, [activeTab, selectedDatasetName]);
 
-  const fetchData = async () => {
+  useEffect(() => {
+    if (!datasetExperimentForm.preset_id) return;
+    const preset = presets.find(
+      (item) => item.id === datasetExperimentForm.preset_id,
+    );
+    if (!preset) return;
+
+    const nextCriteria = ensureDatasetPromptTemplate(preset.criteria);
+    setDatasetExperimentForm((prev) => {
+      if (
+        prev.evaluator_name === preset.name &&
+        prev.criteria === nextCriteria
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        evaluator_name: preset.name,
+        criteria: nextCriteria,
+      };
+    });
+  }, [datasetExperimentForm.preset_id, presets]);
+
+  useEffect(() => {
+    if (!datasetExperimentForm.evaluator_config_id) return;
+    const evaluator = savedEvaluators.find(
+      (item) => item.id === datasetExperimentForm.evaluator_config_id,
+    );
+    if (!evaluator) return;
+
+    const nextCriteria = ensureDatasetPromptTemplate(evaluator.criteria || "");
+    const nextPresetId = evaluator.preset_id || "";
+    const nextJudgeModel = evaluator.model || "";
+    const nextName = evaluator.name || "";
+    setDatasetExperimentForm((prev) => {
+      if (
+        prev.criteria === nextCriteria &&
+        prev.preset_id === nextPresetId &&
+        prev.judge_model === nextJudgeModel &&
+        prev.evaluator_name === nextName
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        criteria: nextCriteria,
+        preset_id: nextPresetId,
+        judge_model: nextJudgeModel,
+        evaluator_name: nextName,
+      };
+    });
+  }, [datasetExperimentForm.evaluator_config_id, savedEvaluators]);
+
+  const fetchData = async (
+    filters: { trace_id: string; name: string } = scoreFilters,
+  ) => {
+    const scoreQuery: {
+      limit: number;
+      trace_id?: string;
+      name?: string;
+    } = { limit: 20 };
+    const traceId = filters.trace_id.trim();
+    const metricName = filters.name.trim();
+    if (traceId) scoreQuery.trace_id = traceId;
+    if (metricName) scoreQuery.name = metricName;
+
+    // Single fetch — no retry delays; show empty state immediately rather than
+    // blocking the UI for 3+ seconds waiting for data that may not exist yet.
+    const requestSeq = ++fetchSeqRef.current;
     setLoading(true);
     try {
-      const [analyticsResult, scoresResult, pendingResult, statusResult] = await Promise.allSettled([
-        getEvaluationAnalytics(),
-        getEvaluationScores({ limit: 20, ...scoreFilters }),
+      const [scoresResult, pendingResult, statusResult] = await Promise.allSettled([
+        getEvaluationScores(scoreQuery),
         getPendingReviews({ limit: 20 }),
         getEvaluationStatus(),
       ]);
-
-      if (analyticsResult.status === "fulfilled") {
-        setAnalytics(analyticsResult.value);
-      }
       if (scoresResult.status === "fulfilled") {
-        setRecentScores(scoresResult.value.items ?? []);
+        const nextScores = Array.isArray(scoresResult.value?.items)
+          ? scoresResult.value.items
+          : [];
+        if (requestSeq !== fetchSeqRef.current) return;
+        setRecentScores((prevScores) => {
+          if (
+            !traceId &&
+            !metricName &&
+            nextScores.length === 0 &&
+            prevScores.length > 0
+          ) {
+            return prevScores;
+          }
+          return nextScores;
+        });
       }
       if (pendingResult.status === "fulfilled") {
+        if (requestSeq !== fetchSeqRef.current) return;
         const val = pendingResult.value;
         if (Array.isArray(val)) {
           setPendingTraces(val);
@@ -429,40 +566,50 @@ export default function EvaluationPage() {
         }
       }
       if (statusResult.status === "fulfilled") {
+        if (requestSeq !== fetchSeqRef.current) return;
         setStatus(statusResult.value);
       }
     } catch (error) {
       console.error("Failed to fetch evaluation data", error);
     } finally {
-      setLoading(false);
+      if (requestSeq === fetchSeqRef.current) {
+        setLoading(false);
+      }
     }
   };
 
   const handleRunJudge = async () => {
     // For this UI change we only support creating/running evaluators for 'new' and/or 'existing' traces
     if (!runOnNew && !runOnExisting) {
-      setErrorData({ title: 'Select at least one target: New Traces or Existing Traces.' });
+      setErrorData({
+        title: "Select at least one target: New Traces or Existing Traces.",
+      });
       return;
     }
     if (!judgeForm.criteria || judgeForm.criteria.trim() === "") {
-      setErrorData({ title: 'Provide evaluation criteria.' });
+      setErrorData({ title: "Provide evaluation criteria." });
       return;
     }
     if (requiresGroundTruth && !groundTruth.trim()) {
-      setErrorData({ title: 'Ground truth is required for the selected preset.' });
+      setErrorData({
+        title: "Ground truth is required for the selected preset.",
+      });
       return;
     }
     setIsSubmitting(true);
     try {
       // If both selected, create evaluator targeting both (backend should accept array or handle 'both')
       const targets: string[] = [];
-      if (runOnExisting) targets.push('existing');
-      if (runOnNew) targets.push('new');
+      if (runOnExisting) targets.push("existing");
+      if (runOnNew) targets.push("new");
 
-      const modelName = (judgeForm.model_name && judgeForm.model_name.trim()) || judgeForm.model;
+      const modelName =
+        (judgeForm.model_name && judgeForm.model_name.trim()) ||
+        judgeForm.model;
       const payload: any = {
-        name: judgeForm.name?.trim() || `LLM Judge - ${new Date().toISOString()}`,
-        criteria: judgeForm.criteria || '',
+        name:
+          judgeForm.name?.trim() || `LLM Judge - ${new Date().toISOString()}`,
+        criteria: judgeForm.criteria || "",
         model: modelName,
         preset_id: judgeForm.preset_id || undefined,
         target: targets.length === 1 ? targets[0] : targets,
@@ -473,7 +620,8 @@ export default function EvaluationPage() {
         // persist locally under the chosen model name
         if (modelName) saveModelKey(modelName, modelApiKey);
       }
-      if (selectedAgentIds && selectedAgentIds.length) payload.agent_ids = selectedAgentIds;
+      if (selectedAgentIds && selectedAgentIds.length)
+        payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
 
@@ -485,41 +633,29 @@ export default function EvaluationPage() {
       try {
         const items = await listEvaluators();
         if (Array.isArray(items)) setSavedEvaluators(items as any);
-        else if (items && Array.isArray((items as any).items)) setSavedEvaluators((items as any).items);
-        else if (items && Array.isArray((items as any).data)) setSavedEvaluators((items as any).data);
+        else if (items && Array.isArray((items as any).items))
+          setSavedEvaluators((items as any).items);
+        else if (items && Array.isArray((items as any).data))
+          setSavedEvaluators((items as any).data);
       } catch (e) {
         // ignore
       }
       if (runOnExisting && !runOnNew) {
-        setNoticeData({ title: 'Evaluator created and existing traces queued for evaluation.' });
+        setNoticeData({
+          title: "Evaluator created and existing traces queued for evaluation.",
+        });
       } else if (runOnNew && !runOnExisting) {
-        setSuccessData({ title: 'Evaluator saved and will apply to new traces.' });
+        setSuccessData({
+          title: "Evaluator saved and will apply to new traces.",
+        });
       } else {
-        setSuccessData({ title: 'Evaluator created for selected targets.' });
+        setSuccessData({ title: "Evaluator created for selected targets." });
       }
     } catch (error) {
-      console.error('Failed to run judge', error);
-      setErrorData({ title: 'Failed to run LLM Judge' });
+      console.error("Failed to run judge", error);
+      setErrorData({ title: "Failed to run LLM Judge" });
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [previewData, setPreviewData] = useState<{ system_prompt?: string; user_prompt?: string; trace?: any } | null>(null);
-
-  const handlePreview = async () => {
-    if (!judgeForm.trace_id || !judgeForm.criteria) {
-      setErrorData({ title: "Provide trace ID and criteria to preview" });
-      return;
-    }
-    try {
-      const modelName = (judgeForm.model_name && judgeForm.model_name.trim()) || judgeForm.model;
-      const data = await previewEvaluation({ trace_id: judgeForm.trace_id, criteria: judgeForm.criteria, model: modelName });
-      setPreviewData(data);
-      setIsPreviewOpen(true);
-    } catch (e) {
-      setErrorData({ title: "Preview failed" });
     }
   };
 
@@ -529,14 +665,18 @@ export default function EvaluationPage() {
       return;
     }
     if (requiresGroundTruth && !groundTruth.trim()) {
-      setErrorData({ title: "Ground truth is required for the selected preset." });
+      setErrorData({
+        title: "Ground truth is required for the selected preset.",
+      });
       return;
     }
     try {
       const targets: string[] = [];
-      if (runOnExisting) targets.push('existing');
-      if (runOnNew) targets.push('new');
-      const modelName = (judgeForm.model_name && judgeForm.model_name.trim()) || judgeForm.model;
+      if (runOnExisting) targets.push("existing");
+      if (runOnNew) targets.push("new");
+      const modelName =
+        (judgeForm.model_name && judgeForm.model_name.trim()) ||
+        judgeForm.model;
       const payload: any = {
         name: judgeForm.name,
         criteria: judgeForm.criteria,
@@ -546,7 +686,8 @@ export default function EvaluationPage() {
       else if (targets.length > 1) payload.target = targets;
       if (judgeForm.preset_id) payload.preset_id = judgeForm.preset_id;
       if (groundTruth.trim()) payload.ground_truth = groundTruth.trim();
-      if (selectedAgentIds && selectedAgentIds.length) payload.agent_ids = selectedAgentIds;
+      if (selectedAgentIds && selectedAgentIds.length)
+        payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
       if (modelApiKey && modelName) {
@@ -556,22 +697,26 @@ export default function EvaluationPage() {
 
       if (editingEvaluator) {
         const updated = await updateEvaluator(editingEvaluator, payload);
-        setSavedEvaluators((s) => s.map((it) => (it.id === updated.id ? updated : it)));
+        setSavedEvaluators((s) =>
+          s.map((it) => (it.id === updated.id ? updated : it)),
+        );
         setSuccessData({ title: "Evaluator updated" });
         setEditingEvaluator(null);
       } else {
         const created = await createEvaluator(payload);
-          // Refresh saved evaluators from server to ensure list is consistent
-          try {
-            const items = await listEvaluators();
-            if (Array.isArray(items)) setSavedEvaluators(items as any);
-            else if (items && Array.isArray((items as any).items)) setSavedEvaluators((items as any).items);
-            else if (items && Array.isArray((items as any).data)) setSavedEvaluators((items as any).data);
-          } catch (e) {
-            // fallback to adding created item
-            setSavedEvaluators((s) => [created, ...s]);
-          }
-          setSuccessData({ title: "Evaluator saved" });
+        // Refresh saved evaluators from server to ensure list is consistent
+        try {
+          const items = await listEvaluators();
+          if (Array.isArray(items)) setSavedEvaluators(items as any);
+          else if (items && Array.isArray((items as any).items))
+            setSavedEvaluators((items as any).items);
+          else if (items && Array.isArray((items as any).data))
+            setSavedEvaluators((items as any).data);
+        } catch (e) {
+          // fallback to adding created item
+          setSavedEvaluators((s) => [created, ...s]);
+        }
+        setSuccessData({ title: "Evaluator saved" });
       }
     } catch (e) {
       setErrorData({ title: "Failed to save evaluator" });
@@ -598,8 +743,7 @@ export default function EvaluationPage() {
       setRunOnExisting(target.includes("existing"));
       setRunOnNew(target.includes("new"));
     }
-    // Load from agent_ids (new) or agent_ids (old) for backward compatibility
-    const agentIds = Array.isArray(s.agent_ids) ? s.agent_ids : (Array.isArray(s.agent_ids) ? s.agent_ids : []);
+    const agentIds = Array.isArray(s.agent_ids) ? s.agent_ids : [];
     setSelectedAgentIds(agentIds);
     setFilterSessionId(s.session_id || "");
     setFilterTraceId(s.trace_id || "");
@@ -623,6 +767,38 @@ export default function EvaluationPage() {
     }
   };
 
+  const handleRunSavedEvaluator = async (id: string) => {
+    if (!id || runningEvaluatorId === id) return;
+    setRunningEvaluatorId(id);
+    try {
+      const result = await runEvaluator(id);
+      const enqueued = Number(result?.enqueued ?? 0);
+      if (result?.status === "noop") {
+        setNoticeData({
+          title:
+            result?.message ||
+            "Evaluator is configured for new traces only and will run automatically on new traces.",
+        });
+      } else if (enqueued > 0) {
+        setSuccessData({
+          title: `Evaluator queued for ${enqueued} existing trace${
+            enqueued === 1 ? "" : "s"
+          }.`,
+        });
+      } else {
+        setNoticeData({
+          title: "No matching existing traces found for this evaluator.",
+        });
+      }
+      await fetchData();
+    } catch (error) {
+      console.error("Failed to run saved evaluator", error);
+      setErrorData({ title: "Failed to run evaluator" });
+    } finally {
+      setRunningEvaluatorId((current) => (current === id ? null : current));
+    }
+  };
+
   const handleCreateScore = async () => {
     if (!scoreForm.trace_id || !scoreForm.name) return;
     setIsSubmitting(true);
@@ -631,7 +807,7 @@ export default function EvaluationPage() {
         trace_id: scoreForm.trace_id,
         name: scoreForm.name,
         value: parseFloat(scoreForm.value),
-        comment: scoreForm.comment
+        comment: scoreForm.comment,
       });
       setIsScoreDialogOpen(false);
       resetForms();
@@ -667,6 +843,42 @@ export default function EvaluationPage() {
     }
   };
 
+  const handleDeleteDataset = async () => {
+    if (!selectedDatasetName) {
+      setErrorData({ title: "Select a dataset first" });
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete dataset '${selectedDatasetName}'? This will remove all dataset items and experiment runs.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      const result = await deleteEvaluationDataset(selectedDatasetName);
+      if (result.status === "deleted") {
+        setSuccessData({ title: `Dataset '${selectedDatasetName}' deleted` });
+      } else {
+        setNoticeData({
+          title: `Dataset '${selectedDatasetName}' purged (container retained by Langfuse SDK).`,
+        });
+      }
+      setIsDatasetItemsDialogOpen(false);
+      await fetchDatasets(false);
+    } catch (error) {
+      console.error("Failed to delete dataset", error);
+      setErrorData({ title: "Failed to delete dataset" });
+    }
+  };
+
+  const handleOpenDatasetItemsDialog = async (datasetName: string) => {
+    if (!datasetName) return;
+    setSelectedDatasetName(datasetName);
+    setIsDatasetItemsDialogOpen(true);
+    if (datasetName === selectedDatasetName) {
+      await fetchDatasetDetails(datasetName);
+    }
+  };
+
   const handleAddDatasetItem = async () => {
     if (!selectedDatasetName) {
       setErrorData({ title: "Select a dataset first" });
@@ -676,25 +888,94 @@ export default function EvaluationPage() {
     const payload: Record<string, unknown> = {};
     const parsedInput = parseJsonOrString(datasetItemForm.input);
     const parsedExpected = parseJsonOrString(datasetItemForm.expected_output);
+    const parsedMetadata = parseJsonOrString(datasetItemForm.metadata);
 
     if (parsedInput !== undefined) payload.input = parsedInput;
     if (parsedExpected !== undefined) payload.expected_output = parsedExpected;
-    if (datasetItemForm.source_trace_id.trim()) payload.source_trace_id = datasetItemForm.source_trace_id.trim();
-    if (datasetItemForm.trace_id.trim()) payload.trace_id = datasetItemForm.trace_id.trim();
+    if (parsedMetadata !== undefined) payload.metadata = parsedMetadata;
+    if (datasetItemForm.source_trace_id.trim())
+      payload.source_trace_id = datasetItemForm.source_trace_id.trim();
+    if (datasetItemForm.trace_id.trim())
+      payload.trace_id = datasetItemForm.trace_id.trim();
 
     if (Object.keys(payload).length === 0) {
-      setErrorData({ title: "Provide item input/expected output or choose a trace" });
+      setErrorData({
+        title: "Provide item input/expected output or choose a trace",
+      });
       return;
     }
 
     try {
       await createEvaluationDatasetItem(selectedDatasetName, payload);
-      setDatasetItemForm({ input: "", expected_output: "", trace_id: "", source_trace_id: "" });
+      setDatasetItemForm({
+        input: "",
+        expected_output: "",
+        metadata: "",
+        trace_id: "",
+        source_trace_id: "",
+      });
       setSuccessData({ title: "Dataset item added" });
       await fetchDatasetDetails(selectedDatasetName);
     } catch (error) {
       console.error("Failed to create dataset item", error);
       setErrorData({ title: "Failed to create dataset item" });
+    }
+  };
+
+  const handleUploadDatasetCsv = async () => {
+    if (!selectedDatasetName) {
+      setErrorData({ title: "Select a dataset first" });
+      return;
+    }
+    if (!datasetCsvFile) {
+      setErrorData({ title: "Choose a CSV file first" });
+      return;
+    }
+
+    setDatasetCsvUploading(true);
+    try {
+      const result = await uploadEvaluationDatasetItemsCsv(
+        selectedDatasetName,
+        datasetCsvFile,
+      );
+      await fetchDatasetDetails(selectedDatasetName);
+      setDatasetCsvFile(null);
+      setDatasetCsvInputKey((prev) => prev + 1);
+
+      if (result.failed_count > 0) {
+        const firstError = result.errors?.[0];
+        setNoticeData({
+          title: `CSV imported with partial failures: ${result.created_count} created, ${result.failed_count} failed, ${result.skipped_count} skipped.`,
+          list: firstError
+            ? [`Row ${firstError.row}: ${firstError.message}`]
+            : undefined,
+        });
+      } else {
+        setSuccessData({
+          title: `CSV imported successfully: ${result.created_count} items created.`,
+        });
+      }
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.detail || error?.message || "CSV import failed";
+      console.error("Failed to import dataset CSV", error);
+      setErrorData({ title: String(detail) });
+    } finally {
+      setDatasetCsvUploading(false);
+    }
+  };
+
+  const handleDeleteDatasetItem = async (itemId: string) => {
+    if (!selectedDatasetName) return;
+    const confirmed = window.confirm(`Delete dataset item '${itemId}'?`);
+    if (!confirmed) return;
+    try {
+      await deleteEvaluationDatasetItem(selectedDatasetName, itemId);
+      setSuccessData({ title: "Dataset item deleted" });
+      await fetchDatasetDetails(selectedDatasetName);
+    } catch (error) {
+      console.error("Failed to delete dataset item", error);
+      setErrorData({ title: "Failed to delete dataset item" });
     }
   };
 
@@ -707,39 +988,72 @@ export default function EvaluationPage() {
       setErrorData({ title: "Experiment name is required" });
       return;
     }
-
-    const maxConcurrencyParsed = Number.parseInt(datasetExperimentForm.max_concurrency || "10", 10);
-    const maxConcurrency = Number.isFinite(maxConcurrencyParsed) && maxConcurrencyParsed > 0 ? maxConcurrencyParsed : 10;
+    const hasAgent = Boolean(datasetExperimentForm.agent_id);
+    const generationModel = datasetExperimentForm.generation_model.trim();
+    const generationModelApiKey =
+      datasetExperimentForm.generation_model_api_key.trim();
+    if (!hasAgent && !generationModel) {
+      setErrorData({
+        title:
+          "Select an agent or provide a generation model to run the dataset.",
+      });
+      return;
+    }
+    if (!hasAgent && !generationModelApiKey) {
+      setErrorData({
+        title:
+          "Generation model API key is required when running without an agent.",
+      });
+      return;
+    }
 
     try {
+      const datasetNameAtRun = selectedDatasetName;
       const job = await runEvaluationDatasetExperiment(selectedDatasetName, {
         experiment_name: datasetExperimentForm.experiment_name.trim(),
-        run_name: datasetExperimentForm.run_name.trim() || undefined,
         description: datasetExperimentForm.description.trim() || undefined,
         agent_id: datasetExperimentForm.agent_id || undefined,
-        evaluator_config_id: datasetExperimentForm.evaluator_config_id || undefined,
-        criteria: datasetExperimentForm.criteria.trim() || undefined,
-        model: datasetExperimentForm.model.trim() || undefined,
-        model_api_key: datasetModelApiKey.trim() || undefined,
-        max_concurrency: maxConcurrency,
+        generation_model: hasAgent ? undefined : generationModel || undefined,
+        generation_model_api_key: hasAgent
+          ? undefined
+          : generationModelApiKey || undefined,
+        evaluator_config_id:
+          datasetExperimentForm.evaluator_config_id || undefined,
+        preset_id: datasetExperimentForm.preset_id || undefined,
+        evaluator_name:
+          datasetExperimentForm.evaluator_name.trim() || undefined,
+        criteria: datasetExperimentForm.criteria.trim()
+          ? ensureDatasetPromptTemplate(datasetExperimentForm.criteria.trim())
+          : undefined,
+        judge_model: datasetExperimentForm.judge_model.trim() || undefined,
+        judge_model_api_key:
+          datasetExperimentForm.judge_model_api_key.trim() || undefined,
       });
 
       setDatasetExperimentJob({
         job_id: job.job_id,
         dataset_name: job.dataset_name,
         experiment_name: job.experiment_name,
-        run_name: job.run_name,
         status: job.status,
       });
-      setNoticeData({ title: "Dataset experiment queued. Running in background." });
+      setNoticeData({
+        title: "Dataset experiment queued. Running in background.",
+      });
 
-      const finalJob = await pollDatasetJob(job.job_id);
-      if (finalJob?.status === "completed") {
-        setSuccessData({ title: "Dataset experiment completed" });
-        await fetchDatasetDetails(selectedDatasetName);
-      } else if (finalJob?.status === "failed") {
-        setErrorData({ title: finalJob.error || "Dataset experiment failed" });
-      }
+      void pollDatasetJob(job.job_id, 900, 2000).then(async (finalJob) => {
+        if (finalJob?.status === "completed") {
+          setSuccessData({
+            title: `Experiment "${finalJob.experiment_name}" completed`,
+          });
+          await fetchDatasetDetails(datasetNameAtRun);
+          return;
+        }
+        if (finalJob?.status === "failed") {
+          setErrorData({
+            title: finalJob.error || "Dataset experiment failed",
+          });
+        }
+      });
     } catch (error) {
       console.error("Failed to run dataset experiment", error);
       setErrorData({ title: "Failed to run dataset experiment" });
@@ -752,10 +1066,14 @@ export default function EvaluationPage() {
     setRunDetailLoading(true);
     setSelectedRunDetail(null);
     try {
-      const detail = await getEvaluationDatasetRunDetail(selectedDatasetName, run.id, {
-        item_limit: 100,
-        score_limit: 50,
-      });
+      const detail = await getEvaluationDatasetRunDetail(
+        selectedDatasetName,
+        run.id,
+        {
+          item_limit: 100,
+          score_limit: 50,
+        },
+      );
       setSelectedRunDetail(detail);
     } catch (error) {
       console.error("Failed to fetch run detail", error);
@@ -766,78 +1084,25 @@ export default function EvaluationPage() {
     }
   };
 
-  // --- Render Helpers ---
-
-  const renderOverview = () => {
-    if (!analytics) return <div>Loading...</div>;
-    const metrics = analytics?.by_name ?? [];
-
-    return (
-      <div className="flex flex-col gap-6">
-        {/* KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Total Evaluations</h3>
-            <p className="text-3xl font-bold mt-2">{analytics.total_scores}</p>
-          </div>
-          <div className="p-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Metrics Tracked</h3>
-            <p className="text-3xl font-bold mt-2">{metrics.length}</p>
-          </div>
-          <div className="p-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Avg Quality</h3>
-            <p className="text-3xl font-bold mt-2">
-              {(
-                metrics.reduce((acc, curr) => acc + curr.average, 0) /
-                (metrics.length || 1)
-              ).toFixed(2)}
-            </p>
-          </div>
-        </div>
-
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="p-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-            <h3 className="text-lg font-semibold mb-4">Average Scores by Metric</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={metrics}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" />
-                  <YAxis domain={[0, 1]} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#fff' }}
-                  />
-                  <Bar dataKey="average" fill="#4f46e5" radius={[4, 4, 0, 0]}>
-                    {metrics.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.average > 0.7 ? "#10b981" : entry.average > 0.4 ? "#f59e0b" : "#ef4444"} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="p-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-            <h3 className="text-lg font-semibold mb-4">Evaluation Volume</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={metrics}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#fff' }}
-                  />
-                  <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+  const handleDeleteDatasetRun = async (run: EvaluationDatasetRun) => {
+    if (!selectedDatasetName || !run?.id) return;
+    const confirmed = window.confirm(`Delete run '${run.name || run.id}'?`);
+    if (!confirmed) return;
+    try {
+      await deleteEvaluationDatasetRun(selectedDatasetName, run.id);
+      setSuccessData({ title: "Run deleted" });
+      if (selectedRunDetail?.run?.id === run.id) {
+        setIsRunDetailOpen(false);
+        setSelectedRunDetail(null);
+      }
+      await fetchDatasetDetails(selectedDatasetName);
+    } catch (error) {
+      console.error("Failed to delete run", error);
+      setErrorData({ title: "Failed to delete run" });
+    }
   };
+
+  // --- Render Helpers ---
 
   const renderScoresList = () => {
     return (
@@ -845,15 +1110,11 @@ export default function EvaluationPage() {
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
           <h3 className="font-medium">Recent Scores</h3>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={fetchData}
-            >
+            <Button size="sm" variant="outline" onClick={() => fetchData()}>
               Refresh
             </Button>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               onClick={() => setIsScoreDialogOpen(true)}
               className="flex items-center gap-2"
             >
@@ -866,27 +1127,28 @@ export default function EvaluationPage() {
             <Input
               placeholder="Filter by Trace ID"
               value={scoreFilters.trace_id}
-              onChange={(e) => setScoreFilters({ ...scoreFilters, trace_id: e.target.value })}
+              onChange={(e) =>
+                setScoreFilters({ ...scoreFilters, trace_id: e.target.value })
+              }
             />
             <Input
               placeholder="Filter by Metric Name"
               value={scoreFilters.name}
-              onChange={(e) => setScoreFilters({ ...scoreFilters, name: e.target.value })}
+              onChange={(e) =>
+                setScoreFilters({ ...scoreFilters, name: e.target.value })
+              }
             />
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={fetchData}
-                className="flex-1"
-              >
+              <Button size="sm" onClick={() => fetchData()} className="flex-1">
                 Apply Filters
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  setScoreFilters({ trace_id: "", name: "" });
-                  fetchData();
+                  const cleared = { trace_id: "", name: "" };
+                  setScoreFilters(cleared);
+                  fetchData(cleared);
                 }}
               >
                 Clear
@@ -904,28 +1166,42 @@ export default function EvaluationPage() {
                 <th className="px-6 py-3">Metric</th>
                 <th className="px-6 py-3">Evaluation Score</th>
                 <th className="px-6 py-3">Source</th>
-                  <th className="px-6 py-3">Comment</th>
-                  <th className="px-6 py-3">Action</th>
+                <th className="px-6 py-3">Comment</th>
               </tr>
             </thead>
             <tbody>
               {recentScores.map((score) => (
-                  <tr key={score.id ?? `${score.trace_id}-${score.name}-${score.created_at ?? ""}`} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
+                <tr
+                  key={
+                    score.id ??
+                    `${score.trace_id}-${score.name}-${score.created_at ?? ""}`
+                  }
+                  className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                >
                   <td className="px-6 py-4">
-                    {score.created_at ? new Date(score.created_at).toLocaleString() : "-"}
+                    {score.created_at
+                      ? new Date(score.created_at).toLocaleString()
+                      : "-"}
                   </td>
                   <td className="px-6 py-4 font-mono text-xs text-blue-600 dark:text-blue-400">
                     <span title={score.trace_id}>{score.trace_id || "-"}</span>
                   </td>
-                  <td className="px-6 py-4 font-medium">{score.agent_name || "-"}</td>
+                  <td className="px-6 py-4 font-medium">
+                    {score.agent_name || "-"}
+                  </td>
                   <td className="px-6 py-4 font-medium">{score.name}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                      score.value > 0.7 ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" :
-                      score.value > 0.4 ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" :
-                      "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-                    }`}>
-                      {score.value.toFixed(2)} ({(score.value * 100).toFixed(0)}%)
+                    <span
+                      className={`px-2 py-1 rounded text-xs font-semibold ${
+                        score.value > 0.7
+                          ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                          : score.value > 0.4
+                            ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+                            : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+                      }`}
+                    >
+                      {score.value.toFixed(2)} ({(score.value * 100).toFixed(0)}
+                      %)
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -933,25 +1209,20 @@ export default function EvaluationPage() {
                       {score.source}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-gray-500 truncate max-w-xs" title={score.comment}>
+                  <td
+                    className="px-6 py-4 text-gray-500 truncate max-w-xs"
+                    title={score.comment}
+                  >
                     {score.comment || "-"}
-                  </td>
-                  <td className="px-6 py-4">
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setJudgeForm({ ...judgeForm, trace_id: score.trace_id || "", criteria: "", name: "" });
-                        setIsJudgeDialogOpen(true);
-                      }}
-                    >
-                      Judge
-                    </Button>
                   </td>
                 </tr>
               ))}
               {recentScores.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
+                  <td
+                    colSpan={7}
+                    className="px-6 py-8 text-center text-gray-500"
+                  >
                     No evaluation scores found.
                   </td>
                 </tr>
@@ -966,7 +1237,7 @@ export default function EvaluationPage() {
   const renderDatasets = () => {
     const agentOptions = (agentList || [])
       .map((agent: any) => {
-        const id = agent?.metadata?.agent_id || agent?.metadata?.agent_id || agent?.id;
+        const id = agent?.metadata?.agent_id || agent?.id;
         if (!id) return null;
         return {
           id: String(id),
@@ -977,45 +1248,67 @@ export default function EvaluationPage() {
 
     return (
       <div className="flex flex-col gap-6">
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
-          <h3 className="text-lg font-semibold mb-3">Datasets</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
-            Build reproducible test sets and run controlled experiments on your agents.
-          </p>
-          <ul className="list-disc pl-6 text-sm text-gray-600 dark:text-gray-300 space-y-1">
-            <li>Create test cases for your application with real production traces.</li>
-            <li>Collaboratively create and collect dataset items with your team.</li>
-            <li>Have a single source of truth for your test data.</li>
-          </ul>
-        </div>
-
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-medium">Dataset Management</h3>
-            <Button size="sm" variant="outline" onClick={() => fetchDatasets(true)} disabled={datasetsLoading}>
-              {datasetsLoading ? "Refreshing..." : "Refresh"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {selectedDatasetName ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDeleteDataset}
+                >
+                  Delete Dataset
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => fetchDatasets(true)}
+                disabled={datasetsLoading}
+              >
+                {datasetsLoading ? "Refreshing..." : "Refresh"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setSelectedDatasetName("");
+                  setDatasetItems([]);
+                  setDatasetRuns([]);
+                  setIsDatasetItemsDialogOpen(false);
+                }}
+                disabled={!selectedDatasetName}
+              >
+                Clear Selection
+              </Button>
+            </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-2">
               <label className="text-sm font-medium">Select Dataset</label>
               <Select
                 value={selectedDatasetName || "__none__"}
-                onValueChange={(value) => setSelectedDatasetName(value === "__none__" ? "" : value)}
+                onValueChange={(value) => {
+                  const nextValue = value === "__none__" ? "" : value;
+                  setSelectedDatasetName(nextValue);
+                  if (!nextValue) {
+                    setDatasetItems([]);
+                    setDatasetRuns([]);
+                    setIsDatasetItemsDialogOpen(false);
+                  }
+                }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Choose dataset" />
                 </SelectTrigger>
                 <SelectContent>
-                  {datasets.length === 0 ? (
-                    <SelectItem value="__none__">No datasets</SelectItem>
-                  ) : (
-                    datasets.map((dataset) => (
-                      <SelectItem key={dataset.id || dataset.name} value={dataset.name}>
-                        {dataset.name}
-                      </SelectItem>
-                    ))
-                  )}
+                  <SelectItem value="__none__">None (unselected)</SelectItem>
+                  {datasets.map((dataset) => (
+                    <SelectItem key={dataset.id || dataset.name} value={dataset.name}>
+                      {dataset.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1024,7 +1317,9 @@ export default function EvaluationPage() {
               <Input
                 placeholder="e.g. support-faq-v1"
                 value={datasetForm.name}
-                onChange={(e) => setDatasetForm({ ...datasetForm, name: e.target.value })}
+                onChange={(e) =>
+                  setDatasetForm({ ...datasetForm, name: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
@@ -1032,7 +1327,12 @@ export default function EvaluationPage() {
               <Input
                 placeholder="Optional description"
                 value={datasetForm.description}
-                onChange={(e) => setDatasetForm({ ...datasetForm, description: e.target.value })}
+                onChange={(e) =>
+                  setDatasetForm({
+                    ...datasetForm,
+                    description: e.target.value,
+                  })
+                }
               />
             </div>
           </div>
@@ -1045,92 +1345,69 @@ export default function EvaluationPage() {
 
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
           <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 className="font-medium">Dataset Items</h3>
-            {selectedDatasetName ? <span className="text-xs text-gray-500">Dataset: {selectedDatasetName}</span> : null}
-          </div>
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Input</label>
-              <textarea
-                className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                placeholder='Text or JSON, e.g. {"question":"What is VAT?"}'
-                value={datasetItemForm.input}
-                onChange={(e) => setDatasetItemForm({ ...datasetItemForm, input: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Expected Output</label>
-              <textarea
-                className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                placeholder="Optional expected output (text or JSON)"
-                value={datasetItemForm.expected_output}
-                onChange={(e) => setDatasetItemForm({ ...datasetItemForm, expected_output: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Add From Existing Trace</label>
-              <Select
-                value={datasetItemForm.trace_id || "__none__"}
-                onValueChange={(value) => setDatasetItemForm({ ...datasetItemForm, trace_id: value === "__none__" ? "" : value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Pick a trace (optional)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
-                  {safePendingTraces.map((trace) => (
-                    <SelectItem key={trace.id} value={trace.id}>
-                      {trace.name || trace.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Source Trace ID (Optional)</label>
-              <Input
-                placeholder="Trace ID reference"
-                value={datasetItemForm.source_trace_id}
-                onChange={(e) => setDatasetItemForm({ ...datasetItemForm, source_trace_id: e.target.value })}
-              />
-            </div>
-            <div className="md:col-span-2">
-              <Button size="sm" onClick={handleAddDatasetItem} disabled={!selectedDatasetName}>
-                <Plus className="h-4 w-4 mr-1" /> Add Dataset Item
-              </Button>
-            </div>
+            <h3 className="font-medium">Dataset List</h3>
+            <span className="text-xs text-gray-500">
+              {datasets.length} dataset{datasets.length === 1 ? "" : "s"}
+            </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
                 <tr>
-                  <th className="px-4 py-3">Timestamp</th>
-                  <th className="px-4 py-3">Item ID</th>
-                  <th className="px-4 py-3">Trace ID</th>
-                  <th className="px-4 py-3">Input</th>
-                  <th className="px-4 py-3">Expected Output</th>
-                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Description</th>
+                  <th className="px-4 py-3">Items</th>
+                  <th className="px-4 py-3">Updated</th>
                 </tr>
               </thead>
               <tbody>
-                {datasetItems.map((item) => (
-                  <tr key={item.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
-                    <td className="px-4 py-3">{item.created_at ? new Date(item.created_at).toLocaleString() : "-"}</td>
-                    <td className="px-4 py-3 font-mono text-xs">{item.id}</td>
-                    <td className="px-4 py-3 font-mono text-xs">{item.source_trace_id || "-"}</td>
-                    <td className="px-4 py-3 max-w-xs truncate" title={stringifyCompact(item.input)}>
-                      {stringifyCompact(item.input)}
-                    </td>
-                    <td className="px-4 py-3 max-w-xs truncate" title={stringifyCompact(item.expected_output)}>
-                      {stringifyCompact(item.expected_output)}
-                    </td>
-                    <td className="px-4 py-3">{item.status || "-"}</td>
-                  </tr>
-                ))}
-                {datasetItems.length === 0 && (
+                {datasets.map((dataset) => {
+                  const isSelected = selectedDatasetName === dataset.name;
+                  return (
+                    <tr
+                      key={dataset.id || dataset.name}
+                      className={`border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${
+                        isSelected ? "bg-red-50 dark:bg-red-950/30" : ""
+                      }`}
+                      onClick={() => void handleOpenDatasetItemsDialog(dataset.name)}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <span className="font-medium">{dataset.name}</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleOpenDatasetItemsDialog(dataset.name);
+                            }}
+                          >
+                            View
+                          </Button>
+                        </div>
+                      </td>
+                      <td
+                        className="px-4 py-3 max-w-xl truncate"
+                        title={dataset.description || ""}
+                      >
+                        {dataset.description || "-"}
+                      </td>
+                      <td className="px-4 py-3">{dataset.item_count ?? "-"}</td>
+                      <td className="px-4 py-3">
+                        {dataset.updated_at
+                          ? new Date(dataset.updated_at).toLocaleString()
+                          : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {datasets.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
-                      No dataset items found.
+                    <td
+                      colSpan={4}
+                      className="px-4 py-6 text-center text-gray-500"
+                    >
+                      No datasets found.
                     </td>
                   </tr>
                 )}
@@ -1142,7 +1419,12 @@ export default function EvaluationPage() {
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
           <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
             <h3 className="font-medium">Run Experiment</h3>
-            <Button size="sm" variant="outline" onClick={() => fetchDatasetDetails(selectedDatasetName)} disabled={!selectedDatasetName}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => fetchDatasetDetails(selectedDatasetName)}
+              disabled={!selectedDatasetName}
+            >
               Refresh Runs
             </Button>
           </div>
@@ -1152,38 +1434,42 @@ export default function EvaluationPage() {
               <Input
                 placeholder="e.g. Agent v2 Regression"
                 value={datasetExperimentForm.experiment_name}
-                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, experiment_name: e.target.value })}
+                onChange={(e) =>
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    experiment_name: e.target.value,
+                  })
+                }
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Run Name</label>
-              <Input
-                placeholder="Optional run name"
-                value={datasetExperimentForm.run_name}
-                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, run_name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Max Concurrency</label>
-              <Input
-                type="number"
-                min="1"
-                max="50"
-                value={datasetExperimentForm.max_concurrency}
-                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, max_concurrency: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Agent (agent)</label>
+              <label className="text-sm font-medium">Agent</label>
               <Select
                 value={datasetExperimentForm.agent_id || "__none__"}
-                onValueChange={(value) => setDatasetExperimentForm({ ...datasetExperimentForm, agent_id: value === "__none__" ? "" : value })}
+                onValueChange={(value) => {
+                  const nextAgentId = value === "__none__" ? "" : value;
+                  const selectedAgent = agentOptions.find(
+                    (agent) => agent.id === nextAgentId,
+                  );
+                  const nextExperimentName =
+                    selectedAgent?.label ||
+                    datasetExperimentForm.experiment_name;
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    agent_id: nextAgentId,
+                    experiment_name: nextAgentId
+                      ? nextExperimentName
+                      : datasetExperimentForm.experiment_name,
+                  });
+                }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Choose agent (optional)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">No agent (use dataset values)</SelectItem>
+                  <SelectItem value="__none__">
+                    No agent (use generation model)
+                  </SelectItem>
                   {agentOptions.map((agent) => (
                     <SelectItem key={agent.id} value={agent.id}>
                       {agent.label}
@@ -1192,11 +1478,50 @@ export default function EvaluationPage() {
                 </SelectContent>
               </Select>
             </div>
+            {!datasetExperimentForm.agent_id ? (
+              <>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    Generation Model
+                  </label>
+                  <Input
+                    placeholder="e.g. gpt-4o-mini"
+                    value={datasetExperimentForm.generation_model}
+                    onChange={(e) =>
+                      setDatasetExperimentForm({
+                        ...datasetExperimentForm,
+                        generation_model: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    Generation Model API Key
+                  </label>
+                  <Input
+                    placeholder="sk-..."
+                    value={datasetExperimentForm.generation_model_api_key}
+                    onChange={(e) =>
+                      setDatasetExperimentForm({
+                        ...datasetExperimentForm,
+                        generation_model_api_key: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </>
+            ) : null}
             <div className="space-y-2">
               <label className="text-sm font-medium">Use Saved Evaluator</label>
               <Select
                 value={datasetExperimentForm.evaluator_config_id || "__none__"}
-                onValueChange={(value) => setDatasetExperimentForm({ ...datasetExperimentForm, evaluator_config_id: value === "__none__" ? "" : value })}
+                onValueChange={(value) =>
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    evaluator_config_id: value === "__none__" ? "" : value,
+                  })
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Optional evaluator" />
@@ -1212,39 +1537,136 @@ export default function EvaluationPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Judge Model (Optional)</label>
-              <Input
-                placeholder="e.g. gpt-4o"
-                value={datasetExperimentForm.model}
-                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, model: e.target.value })}
-              />
+              <label className="text-sm font-medium">
+                Evaluator Template (Preset)
+              </label>
+              <Select
+                value={datasetExperimentForm.preset_id || "__none__"}
+                onValueChange={(value) => {
+                  if (value === "__none__") {
+                    setDatasetExperimentForm({
+                      ...datasetExperimentForm,
+                      preset_id: "",
+                      evaluator_name: "",
+                    });
+                    return;
+                  }
+                  const preset = presets.find((item) => item.id === value);
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    evaluator_config_id: "",
+                    preset_id: value,
+                    evaluator_name: preset?.name || "",
+                    criteria: ensureDatasetPromptTemplate(
+                      preset?.criteria || datasetExperimentForm.criteria,
+                    ),
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose preset template" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  {presets.map((preset) => (
+                    <SelectItem key={preset.id} value={preset.id}>
+                      {preset.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedDatasetPreset?.requires_ground_truth ? (
+                <p className="text-xs text-amber-600">
+                  This preset requires ground truth in dataset item expected
+                  outputs.
+                </p>
+              ) : null}
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium">Criteria (Optional)</label>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Evaluator Name</label>
               <Input
-                placeholder="Optional criteria for LLM evaluator"
-                value={datasetExperimentForm.criteria}
-                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, criteria: e.target.value })}
+                placeholder="e.g. correctness"
+                value={datasetExperimentForm.evaluator_name}
+                onChange={(e) =>
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    evaluator_name: e.target.value,
+                  })
+                }
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Model API Key (Optional)</label>
+              <label className="text-sm font-medium">
+                Judge Model (Optional)
+              </label>
+              <Input
+                placeholder="e.g. gpt-4o"
+                value={datasetExperimentForm.judge_model}
+                onChange={(e) =>
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    judge_model: e.target.value,
+                  })
+                }
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium">
+                Evaluation Criteria Prompt
+              </label>
+              <textarea
+                className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                placeholder="Prompt used by the evaluator"
+                value={datasetExperimentForm.criteria}
+                onChange={(e) =>
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    criteria: e.target.value,
+                  })
+                }
+              />
+              <p className="text-xs text-gray-500">
+                Keep placeholders in prompt: <code>{"{{query}}"}</code>,{" "}
+                <code>{"{{generation}}"}</code>,{" "}
+                <code>{"{{ground_truth}}"}</code>.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Judge Model API Key (Optional)
+              </label>
               <Input
                 placeholder="sk-..."
-                value={datasetModelApiKey}
-                onChange={(e) => setDatasetModelApiKey(e.target.value)}
+                value={datasetExperimentForm.judge_model_api_key}
+                onChange={(e) =>
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    judge_model_api_key: e.target.value,
+                  })
+                }
               />
             </div>
             <div className="space-y-2 md:col-span-3">
-              <label className="text-sm font-medium">Description (Optional)</label>
+              <label className="text-sm font-medium">
+                Description (Optional)
+              </label>
               <Input
                 placeholder="Experiment notes"
                 value={datasetExperimentForm.description}
-                onChange={(e) => setDatasetExperimentForm({ ...datasetExperimentForm, description: e.target.value })}
+                onChange={(e) =>
+                  setDatasetExperimentForm({
+                    ...datasetExperimentForm,
+                    description: e.target.value,
+                  })
+                }
               />
             </div>
             <div className="md:col-span-3">
-              <Button size="sm" onClick={handleRunDatasetExperiment} disabled={!selectedDatasetName}>
+              <Button
+                size="sm"
+                onClick={handleRunDatasetExperiment}
+                disabled={!selectedDatasetName}
+              >
                 <Play className="h-4 w-4 mr-1" /> Run Experiment
               </Button>
             </div>
@@ -1253,8 +1675,31 @@ export default function EvaluationPage() {
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 text-sm">
               <span className="font-medium">Latest Job:</span>{" "}
               <span className="font-mono">{datasetExperimentJob.job_id}</span>{" "}
-              <span className="ml-2">Status: {datasetExperimentJob.status}</span>
-              {datasetExperimentJob.error ? <span className="ml-2 text-red-600">{datasetExperimentJob.error}</span> : null}
+              <span className="ml-2">
+                Status: {datasetExperimentJob.status}
+              </span>
+              {datasetExperimentJob.status === "queued" ||
+              datasetExperimentJob.status === "running" ? (
+                <div className="mt-3">
+                  <div className="h-2 w-full rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                    <div className="h-full w-1/3 bg-[#da2128] animate-pulse" />
+                  </div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    Experiment "{datasetExperimentJob.experiment_name}" is
+                    running in background.
+                  </div>
+                </div>
+              ) : null}
+              {datasetExperimentJob.status === "completed" ? (
+                <div className="mt-2 text-xs text-green-700 dark:text-green-400">
+                  Experiment "{datasetExperimentJob.experiment_name}" completed.
+                </div>
+              ) : null}
+              {datasetExperimentJob.error ? (
+                <span className="ml-2 text-red-600">
+                  {datasetExperimentJob.error}
+                </span>
+              ) : null}
             </div>
           )}
           <div className="overflow-x-auto">
@@ -1275,29 +1720,56 @@ export default function EvaluationPage() {
                     className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
                     onClick={() => handleOpenRunDetail(run)}
                   >
-                    <td className="px-4 py-3">{run.created_at ? new Date(run.created_at).toLocaleString() : "-"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-blue-600 dark:text-blue-400" title="Click to view run details">
+                    <td className="px-4 py-3">
+                      {run.created_at
+                        ? new Date(run.created_at).toLocaleString()
+                        : "-"}
+                    </td>
+                    <td
+                      className="px-4 py-3 font-mono text-xs text-blue-600 dark:text-blue-400"
+                      title="Click to view run details"
+                    >
                       {run.id}
                     </td>
                     <td className="px-4 py-3">{run.name}</td>
-                    <td className="px-4 py-3 max-w-xl truncate" title={run.description || ""}>{run.description || "-"}</td>
+                    <td
+                      className="px-4 py-3 max-w-xl truncate"
+                      title={run.description || ""}
+                    >
+                      {run.description || "-"}
+                    </td>
                     <td className="px-4 py-3">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleOpenRunDetail(run);
-                        }}
-                      >
-                        View
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenRunDetail(run);
+                          }}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteDatasetRun(run);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {datasetRuns.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                    <td
+                      colSpan={5}
+                      className="px-4 py-6 text-center text-gray-500"
+                    >
                       No experiment runs found.
                     </td>
                   </tr>
@@ -1315,212 +1787,277 @@ export default function EvaluationPage() {
       <div className="flex flex-none flex-col justify-between border-b px-6 py-4">
         <div className="flex flex-col gap-1">
           <h2 className="text-2xl font-semibold tracking-tight">Evaluation</h2>
-          <p className="text-sm text-muted-foreground">Monitor quality metrics, run LLM judges, and review traces.</p>
+          <p className="text-sm text-muted-foreground">
+            Monitor quality metrics, run LLM judges, and review traces.
+          </p>
         </div>
       </div>
       <div className="flex-1 overflow-hidden p-6">
         <div className="flex flex-col h-full w-full max-w-[1600px] mx-auto">
-        {/* Tabs Header */}
-        <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "overview"
-                ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-            }`}
-            onClick={() => setActiveTab("overview")}
-          >
-            Overview
-          </button>
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "scores"
-                ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-            }`}
-            onClick={() => setActiveTab("scores")}
-          >
-            Scores
-          </button>
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "judges"
-                ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-            }`}
-            onClick={() => setActiveTab("judges")}
-          >
-            LLM Judges
-          </button>
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "datasets"
-                ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-            }`}
-            onClick={() => setActiveTab("datasets")}
-          >
-            Datasets
-          </button>
-        </div>
+          {/* Tabs Header */}
+          <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
+            <button
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "judges"
+                  ? "border-[#da2128] text-[#da2128]"
+                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              }`}
+              onClick={() => setActiveTab("judges")}
+            >
+              LLM Judges
+            </button>
+            <button
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "datasets"
+                  ? "border-[#da2128] text-[#da2128]"
+                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              }`}
+              onClick={() => setActiveTab("datasets")}
+            >
+              Datasets
+            </button>
+            <button
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "scores"
+                  ? "border-[#da2128] text-[#da2128]"
+                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              }`}
+              onClick={() => setActiveTab("scores")}
+            >
+              Scores
+            </button>
+          </div>
 
-        {/* Tab Content */}
-        <div className="flex-1 overflow-auto">
-          {loading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            </div>
-          ) : (
+          {/* Tab Content */}
+          <div className="flex-1 overflow-auto">
             <>
-              {activeTab === "overview" && renderOverview()}
-              {activeTab === "scores" && renderScoresList()}
-              {activeTab === "judges" && (
-                <div className="flex flex-col gap-6">
-                  <div className="p-8 text-center bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                    <h3 className="text-lg font-medium mb-2">LLM Judges Configuration</h3>
-                    <p className="text-gray-500 mb-6">
-                      Configure automated evaluators to grade your traces based on custom criteria.
-                    </p>
-                    {status && !status.langfuse_available && (
-                      <p className="text-sm text-red-600 dark:text-red-400 mb-4">
-                        Langfuse is not configured. Please set LANGFUSE_* environment variables.
-                      </p>
-                    )}
-                    {status && !status.llm_judge_available && (
-                      <p className="text-sm text-amber-600 dark:text-amber-400 mb-4">
-                        LLM Judge is unavailable. Please install LiteLLM in the backend.
-                      </p>
-                    )}
-                    <button 
-                      onClick={() => {
-                        setEditingEvaluator(null);
-                        resetForms();
-                        setIsJudgeDialogOpen(true);
-                      }}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-2 mx-auto"
-                    >
-                      <Play className="h-4 w-4" />
-                      Create New Judge
-                    </button>
+              {activeTab === "scores" && (
+                loading ? (
+                  <div className="flex flex-col items-center justify-center h-64 gap-3">
+                    <div
+                      className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                      style={{ borderTopColor: "#da2128" }}
+                    />
+                    <p className="text-sm text-gray-500">Loading scores…</p>
                   </div>
+                ) : renderScoresList()
+              )}
+              {activeTab === "judges" && (
+                  <div className="flex flex-col gap-6">
+                    <div className="p-8 text-center bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <h3 className="text-lg font-medium mb-2">
+                        LLM Judges Configuration
+                      </h3>
+                      <p className="text-gray-500 mb-6">
+                        Configure automated evaluators to grade your traces
+                        based on custom criteria.
+                      </p>
+                      {status && !status.langfuse_available && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mb-4">
+                          Langfuse is not configured. Please set LANGFUSE_*
+                          environment variables.
+                        </p>
+                      )}
+                      {status && !status.llm_judge_available && (
+                        <p className="text-sm text-amber-600 dark:text-amber-400 mb-4">
+                          LLM Judge is unavailable. Please install LiteLLM in
+                          the backend.
+                        </p>
+                      )}
+                      <button
+                        onClick={() => {
+                          setEditingEvaluator(null);
+                          resetForms();
+                          setIsJudgeDialogOpen(true);
+                        }}
+                        className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors flex items-center gap-2 mx-auto"
+                      >
+                        <Play className="h-4 w-4" />
+                        Create New Judge
+                      </button>
+                    </div>
 
-                  {/* Saved Evaluators List */}
-                  <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                    <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-                      <h3 className="font-medium">Saved Evaluators</h3>
-                      <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" onClick={async () => {
-                          try { const items = await listEvaluators(); if (Array.isArray(items)) setSavedEvaluators(items as any); else if (items && Array.isArray((items as any).items)) setSavedEvaluators((items as any).items); else if (items && Array.isArray((items as any).data)) setSavedEvaluators((items as any).data); } catch { }
-                        }}>Refresh</Button>
+                    {/* Saved Evaluators List */}
+                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+                      <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                        <h3 className="font-medium">Saved Evaluators</h3>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              try {
+                                const items = await listEvaluators();
+                                if (Array.isArray(items))
+                                  setSavedEvaluators(items as any);
+                                else if (
+                                  items &&
+                                  Array.isArray((items as any).items)
+                                )
+                                  setSavedEvaluators((items as any).items);
+                                else if (
+                                  items &&
+                                  Array.isArray((items as any).data)
+                                )
+                                  setSavedEvaluators((items as any).data);
+                              } catch {}
+                            }}
+                          >
+                            Refresh
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto p-4">
+                        {savedEvaluators.length === 0 ? (
+                          <div className="text-sm text-gray-500">
+                            No saved evaluators.
+                          </div>
+                        ) : (
+                          <table className="w-full text-sm text-left">
+                            <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                              <tr>
+                                <th className="px-4 py-2">Name</th>
+                                <th className="px-4 py-2">Model</th>
+                                <th className="px-4 py-2">Criteria</th>
+                                <th className="px-4 py-2">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {savedEvaluators.map((ev) => (
+                                <tr
+                                  key={ev.id}
+                                  className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                                >
+                                  <td className="px-4 py-3 font-medium">
+                                    {ev.name}
+                                  </td>
+                                  <td className="px-4 py-3">{ev.model}</td>
+                                  <td
+                                    className="px-4 py-3 truncate max-w-xl"
+                                    title={ev.criteria}
+                                  >
+                                    {ev.criteria}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        size="sm"
+                                        onClick={() =>
+                                          handleEditEvaluator(ev.id)
+                                        }
+                                      >
+                                        Edit
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() =>
+                                          handleRunSavedEvaluator(ev.id)
+                                        }
+                                        disabled={runningEvaluatorId === ev.id}
+                                      >
+                                        {runningEvaluatorId === ev.id
+                                          ? "Running..."
+                                          : "Run"}
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={async () => {
+                                          try {
+                                            await handleDeleteEvaluator(ev.id);
+                                          } catch {}
+                                        }}
+                                      >
+                                        Delete
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
                       </div>
                     </div>
-                    <div className="overflow-x-auto p-4">
-                      {savedEvaluators.length === 0 ? (
-                        <div className="text-sm text-gray-500">No saved evaluators.</div>
-                      ) : (
+
+                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+                      <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                        <h3 className="font-medium">Pending Traces</h3>
+                        <Button
+                          size="sm"
+                          onClick={() => fetchData()}
+                          variant="outline"
+                        >
+                          Refresh
+                        </Button>
+                      </div>
+                      <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
                           <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
                             <tr>
-                              <th className="px-4 py-2">Name</th>
-                              <th className="px-4 py-2">Model</th>
-                              <th className="px-4 py-2">Criteria</th>
-                              <th className="px-4 py-2">Action</th>
+                              <th className="px-6 py-3">Trace ID</th>
+                              <th className="px-6 py-3">Name</th>
+                              <th className="px-6 py-3">agent</th>
+                              <th className="px-6 py-3">Scores</th>
+                              <th className="px-6 py-3">Action</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {savedEvaluators.map((ev) => (
-                              <tr key={ev.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
-                                <td className="px-4 py-3 font-medium">{ev.name}</td>
-                                <td className="px-4 py-3">{ev.model}</td>
-                                <td className="px-4 py-3 truncate max-w-xl" title={ev.criteria}>{ev.criteria}</td>
-                                <td className="px-4 py-3">
-                                  <div className="flex items-center gap-2">
-                                    <Button size="sm" onClick={() => handleEditEvaluator(ev.id)}>Edit</Button>
-                                    <Button size="sm" variant="outline" onClick={async () => {
-                                      // Run evaluator immediately by creating a config that targets existing traces
-                                      try {
-                                        const payload: any = { name: ev.name, criteria: ev.criteria, model: ev.model, target: 'existing' };
-                                        if ((ev as any).agent_ids) payload.agent_ids = (ev as any).agent_ids;
-                                        if ((ev as any).agent_id) payload.agent_id = (ev as any).agent_id;
-                                        if ((ev as any).agent_name) payload.agent_name = (ev as any).agent_name;
-                                        if ((ev as any).session_id) payload.session_id = (ev as any).session_id;
-                                        if ((ev as any).trace_id) payload.trace_id = (ev as any).trace_id;
-                                        if ((ev as any).preset_id) payload.preset_id = (ev as any).preset_id;
-                                        if ((ev as any).ground_truth) payload.ground_truth = (ev as any).ground_truth;
-                                        await createEvaluator(payload);
-                                        setSuccessData({ title: 'Evaluator queued for existing traces' });
-                                        // refresh saved list
-                                        try { const items = await listEvaluators(); if (Array.isArray(items)) setSavedEvaluators(items as any); } catch (e) {}
-                                      } catch (e) { setErrorData({ title: 'Failed to run evaluator' }); }
-                                    }}>Run</Button>
-                                    <Button size="sm" variant="ghost" onClick={async () => { try { await handleDeleteEvaluator(ev.id); } catch { } }}>Delete</Button>
-                                  </div>
+                            {safePendingTraces.map((trace) => (
+                              <tr
+                                key={trace.id}
+                                className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                              >
+                                <td className="px-6 py-4 font-mono text-xs text-blue-600 dark:text-blue-400">
+                                  {shortId(trace.id)}
+                                </td>
+                                <td className="px-6 py-4">
+                                  {trace.name || "-"}
+                                </td>
+                                <td className="px-6 py-4">
+                                  {trace.agent_name || "-"}
+                                </td>
+                                <td className="px-6 py-4">
+                                  {trace.has_scores
+                                    ? `${trace.score_count} scores`
+                                    : "No scores"}
+                                </td>
+                                <td className="px-6 py-4">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => {
+                                      setJudgeForm({
+                                        ...judgeForm,
+                                        trace_id: trace.id,
+                                      });
+                                      setIsJudgeDialogOpen(true);
+                                    }}
+                                  >
+                                    Judge
+                                  </Button>
                                 </td>
                               </tr>
                             ))}
+                            {safePendingTraces.length === 0 && (
+                              <tr>
+                                <td
+                                  colSpan={5}
+                                  className="px-6 py-8 text-center text-gray-500"
+                                >
+                                  No pending traces found.
+                                </td>
+                              </tr>
+                            )}
                           </tbody>
                         </table>
-                      )}
+                      </div>
                     </div>
                   </div>
-
-                  <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                    <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-                      <h3 className="font-medium">Pending Traces</h3>
-                      <Button size="sm" onClick={fetchData} variant="outline">Refresh</Button>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
-                          <tr>
-                            <th className="px-6 py-3">Trace ID</th>
-                            <th className="px-6 py-3">Name</th>
-                            <th className="px-6 py-3">agent</th>
-                            <th className="px-6 py-3">Scores</th>
-                            <th className="px-6 py-3">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {safePendingTraces.map((trace) => (
-                            <tr key={trace.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
-                              <td className="px-6 py-4 font-mono text-xs text-blue-600 dark:text-blue-400">
-                                {shortId(trace.id)}
-                              </td>
-                              <td className="px-6 py-4">{trace.name || "-"}</td>
-                              <td className="px-6 py-4">{trace.agent_name || "-"}</td>
-                              <td className="px-6 py-4">
-                                {trace.has_scores ? `${trace.score_count} scores` : "No scores"}
-                              </td>
-                              <td className="px-6 py-4">
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    setJudgeForm({ ...judgeForm, trace_id: trace.id });
-                                    setIsJudgeDialogOpen(true);
-                                  }}
-                                >
-                                  Judge
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                          {safePendingTraces.length === 0 && (
-                            <tr>
-                              <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                                No pending traces found.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-              {activeTab === "datasets" && renderDatasets()}
+                )}
+                {activeTab === "datasets" && renderDatasets()}
             </>
-          )}
-        </div>
+          </div>
         </div>
       </div>
 
@@ -1535,15 +2072,27 @@ export default function EvaluationPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <p className="text-sm text-gray-600">Choose where the evaluator should run.</p>
+              <p className="text-sm text-gray-600">
+                Choose where the evaluator should run.
+              </p>
             </div>
             <div className="space-y-2">
               <label className="flex items-center gap-2">
-                <input type="checkbox" checked={runOnNew} onChange={(e) => setRunOnNew(e.target.checked)} className="form-checkbox" />
+                <input
+                  type="checkbox"
+                  checked={runOnNew}
+                  onChange={(e) => setRunOnNew(e.target.checked)}
+                  className="form-checkbox"
+                />
                 <span className="text-sm">Run on New Traces</span>
               </label>
               <label className="flex items-center gap-2">
-                <input type="checkbox" checked={runOnExisting} onChange={(e) => setRunOnExisting(e.target.checked)} className="form-checkbox" />
+                <input
+                  type="checkbox"
+                  checked={runOnExisting}
+                  onChange={(e) => setRunOnExisting(e.target.checked)}
+                  className="form-checkbox"
+                />
                 <span className="text-sm">Run on Existing Traces</span>
               </label>
             </div>
@@ -1551,21 +2100,35 @@ export default function EvaluationPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Use a Preset</label>
-                <Select value={judgeForm.preset_id} onValueChange={(val) => {
-                  const p = presets.find((x) => x.id === val);
-                  if (p) setJudgeForm({ ...judgeForm, criteria: p.criteria, name: p.name, preset_id: val, saved_evaluator_id: "" });
-                }}>
+                <Select
+                  value={judgeForm.preset_id}
+                  onValueChange={(val) => {
+                    const p = presets.find((x) => x.id === val);
+                    if (p)
+                      setJudgeForm({
+                        ...judgeForm,
+                        criteria: p.criteria,
+                        name: p.name,
+                        preset_id: val,
+                        saved_evaluator_id: "",
+                      });
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Choose a preset" />
                   </SelectTrigger>
                   <SelectContent>
                     {presets.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 {selectedPreset?.requires_ground_truth && (
-                  <p className="text-xs text-amber-600">This preset requires ground truth.</p>
+                  <p className="text-xs text-amber-600">
+                    This preset requires ground truth.
+                  </p>
                 )}
               </div>
 
@@ -1574,20 +2137,36 @@ export default function EvaluationPage() {
                 <div className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm max-h-44 overflow-y-auto">
                   {agentList && agentList.length > 0 ? (
                     agentList.map((f: any) => {
-                      const fid = f.metadata?.agent_id || f.metadata?.agent_id || f.id || f.metadata?.endpoint_name || "";
+                      const fid =
+                        f.metadata?.agent_id ||
+                        f.id ||
+                        f.metadata?.endpoint_name ||
+                        "";
                       if (!fid) return null;
-                      const label = f.metadata?.display_name || f.name || f.metadata?.endpoint_name || f.id || fid;
+                      const label =
+                        f.metadata?.display_name ||
+                        f.name ||
+                        f.metadata?.endpoint_name ||
+                        f.id ||
+                        fid;
                       const checked = selectedAgentIds.includes(fid);
                       return (
-                        <label key={fid} className="flex items-center gap-2 py-1">
+                        <label
+                          key={fid}
+                          className="flex items-center gap-2 py-1"
+                        >
                           <input
                             type="checkbox"
                             checked={checked}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setSelectedAgentIds((s) => Array.from(new Set([...s, fid])));
+                                setSelectedAgentIds((s) =>
+                                  Array.from(new Set([...s, fid])),
+                                );
                               } else {
-                                setSelectedAgentIds((s) => s.filter((x) => x !== fid));
+                                setSelectedAgentIds((s) =>
+                                  s.filter((x) => x !== fid),
+                                );
                               }
                             }}
                             className="form-checkbox"
@@ -1597,36 +2176,60 @@ export default function EvaluationPage() {
                       );
                     })
                   ) : (
-                    <div className="text-sm text-gray-500 py-2">No agents available</div>
+                    <div className="text-sm text-gray-500 py-2">
+                      No agents available
+                    </div>
                   )}
                 </div>
-                <p className="text-xs text-gray-500">Select one or more agents (agents) to target.</p>
+                <p className="text-xs text-gray-500">
+                  Select one or more agents (agents) to target.
+                </p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Judge Model Name</label>
-                <Input placeholder="e.g. gpt-4o or custom" value={judgeForm.model_name} onChange={(e) => setJudgeForm({ ...judgeForm, model_name: e.target.value })} />
-                <p className="text-xs text-gray-500">Name of the LLM to use as judge. If empty, a default model will be used.</p>
+                <Input
+                  placeholder="e.g. gpt-4o or custom"
+                  value={judgeForm.model_name}
+                  onChange={(e) =>
+                    setJudgeForm({ ...judgeForm, model_name: e.target.value })
+                  }
+                />
+                <p className="text-xs text-gray-500">
+                  Name of the LLM to use as judge. If empty, a default model
+                  will be used.
+                </p>
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Model API Key (optional)</label>
+                <label className="text-sm font-medium">
+                  Model API Key (optional)
+                </label>
                 <div className="flex gap-2">
-                  <Input placeholder="sk-..." value={modelApiKey} onChange={(e) => setModelApiKey(e.target.value)} />
+                  <Input
+                    placeholder="sk-..."
+                    value={modelApiKey}
+                    onChange={(e) => setModelApiKey(e.target.value)}
+                  />
                 </div>
-                <p className="text-xs text-gray-500">API key is stored locally in your browser only and will be saved when you Save or Run the evaluator.</p>
+                <p className="text-xs text-gray-500">
+                  API key is stored locally in your browser only and will be
+                  saved when you Save or Run the evaluator.
+                </p>
               </div>
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Evaluation Criteria</label>
-              <textarea 
+              <textarea
                 className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 placeholder="e.g. Is the answer helpful and accurate?"
                 value={judgeForm.criteria}
-                onChange={(e) => setJudgeForm({...judgeForm, criteria: e.target.value})}
+                onChange={(e) =>
+                  setJudgeForm({ ...judgeForm, criteria: e.target.value })
+                }
               />
             </div>
 
@@ -1643,15 +2246,21 @@ export default function EvaluationPage() {
             )}
 
             <div className="flex gap-2">
-              <Button variant="outline" onClick={handlePreview}>Preview</Button>
-              <Button variant="outline" onClick={handleSaveEvaluator}>Save Evaluator</Button>
+              <Button variant="outline" onClick={handleSaveEvaluator}>
+                Save Evaluator
+              </Button>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setEditingEvaluator(null);
-              setIsJudgeDialogOpen(false);
-            }}>Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingEvaluator(null);
+                setIsJudgeDialogOpen(false);
+              }}
+            >
+              Cancel
+            </Button>
             <Button onClick={handleRunJudge} disabled={isSubmitting}>
               {isSubmitting ? "Starting..." : "Run Evaluation"}
             </Button>
@@ -1659,25 +2268,246 @@ export default function EvaluationPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Preview Dialog */}
-      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Evaluation Preview</DialogTitle>
-            <DialogDescription>Preview the evaluation prompt that will be sent to the LLM.</DialogDescription>
+      {/* Dataset Items Dialog */}
+      <Dialog
+        open={isDatasetItemsDialogOpen}
+        onOpenChange={(open) => {
+          setIsDatasetItemsDialogOpen(open);
+          if (!open) {
+            setDatasetCsvFile(null);
+            setDatasetCsvInputKey((prev) => prev + 1);
+          }
+        }}
+      >
+        <DialogContent className="w-[96vw] max-w-6xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6">
+            <DialogTitle>Dataset Items</DialogTitle>
+            <DialogDescription>
+              {selectedDatasetName
+                ? `Manage dataset items for '${selectedDatasetName}'.`
+                : "Select a dataset to view items."}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div>
-              <h4 className="font-medium">System Prompt</h4>
-              <pre className="whitespace-pre-wrap text-xs p-3 bg-gray-100 rounded mt-2">{previewData?.system_prompt}</pre>
+          {selectedDatasetName ? (
+            <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-4 py-2">
+              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Import CSV</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      key={datasetCsvInputKey}
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={(e) =>
+                        setDatasetCsvFile(e.target.files?.[0] || null)
+                      }
+                      className="block w-full max-w-md text-sm file:mr-3 file:rounded-md file:border file:border-gray-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-gray-50"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleUploadDatasetCsv}
+                      disabled={!datasetCsvFile || datasetCsvUploading}
+                    >
+                      {datasetCsvUploading ? "Uploading..." : "Upload CSV"}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Supported headers: <code>input</code>,{" "}
+                    <code>expected_output</code>, <code>metadata</code>,{" "}
+                    <code>trace_id</code>, <code>source_trace_id</code>.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => fetchDatasetDetails(selectedDatasetName)}
+                >
+                  Refresh Items
+                </Button>
+              </div>
+              <div className="border rounded">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Input</label>
+                    <textarea
+                      className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      placeholder='Text or JSON, e.g. {"question":"What is VAT?"}'
+                      value={datasetItemForm.input}
+                      onChange={(e) =>
+                        setDatasetItemForm({
+                          ...datasetItemForm,
+                          input: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      Expected Output
+                    </label>
+                    <textarea
+                      className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      placeholder="Optional expected output (text or JSON)"
+                      value={datasetItemForm.expected_output}
+                      onChange={(e) =>
+                        setDatasetItemForm({
+                          ...datasetItemForm,
+                          expected_output: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      Metadata (Optional)
+                    </label>
+                    <textarea
+                      className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      placeholder='JSON object, e.g. {"tag":"prod-trace","lang":"en"}'
+                      value={datasetItemForm.metadata}
+                      onChange={(e) =>
+                        setDatasetItemForm({
+                          ...datasetItemForm,
+                          metadata: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      Add From Existing Trace
+                    </label>
+                    <Select
+                      value={datasetItemForm.trace_id || "__none__"}
+                      onValueChange={(value) =>
+                        setDatasetItemForm({
+                          ...datasetItemForm,
+                          trace_id: value === "__none__" ? "" : value,
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pick a trace (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">None</SelectItem>
+                        {safePendingTraces.map((trace) => (
+                          <SelectItem key={trace.id} value={trace.id}>
+                            {trace.name || trace.id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      Source Trace ID (Optional)
+                    </label>
+                    <Input
+                      placeholder="Trace ID reference"
+                      value={datasetItemForm.source_trace_id}
+                      onChange={(e) =>
+                        setDatasetItemForm({
+                          ...datasetItemForm,
+                          source_trace_id: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <Button size="sm" onClick={handleAddDatasetItem}>
+                      <Plus className="h-4 w-4 mr-1" /> Add Dataset Item
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-[420px] overflow-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3">Timestamp</th>
+                        <th className="px-4 py-3">Item ID</th>
+                        <th className="px-4 py-3">Trace ID</th>
+                        <th className="px-4 py-3">Input</th>
+                        <th className="px-4 py-3">Expected Output</th>
+                        <th className="px-4 py-3">Metadata</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {datasetItems.map((item) => (
+                        <tr
+                          key={item.id}
+                          className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                        >
+                          <td className="px-4 py-3">
+                            {item.created_at
+                              ? new Date(item.created_at).toLocaleString()
+                              : "-"}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs">
+                            {item.id}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs">
+                            {item.source_trace_id || "-"}
+                          </td>
+                          <td
+                            className="px-4 py-3 max-w-xs truncate"
+                            title={stringifyCompact(item.input)}
+                          >
+                            {stringifyCompact(item.input)}
+                          </td>
+                          <td
+                            className="px-4 py-3 max-w-xs truncate"
+                            title={stringifyCompact(item.expected_output)}
+                          >
+                            {stringifyCompact(item.expected_output)}
+                          </td>
+                          <td
+                            className="px-4 py-3 max-w-xs truncate"
+                            title={stringifyCompact(item.metadata)}
+                          >
+                            {stringifyCompact(item.metadata)}
+                          </td>
+                          <td className="px-4 py-3">{item.status || "-"}</td>
+                          <td className="px-4 py-3">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDeleteDatasetItem(item.id)}
+                            >
+                              Delete
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                      {datasetItems.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={8}
+                            className="px-4 py-6 text-center text-gray-500"
+                          >
+                            No dataset items found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
-            <div>
-              <h4 className="font-medium">User Prompt (with trace)</h4>
-              <pre className="whitespace-pre-wrap text-xs p-3 bg-gray-100 rounded mt-2">{previewData?.user_prompt}</pre>
+          ) : (
+            <div className="flex-1 overflow-y-auto px-6 py-8 text-center text-sm text-gray-500">
+              Select a dataset from the dataset list.
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsPreviewOpen(false)}>Close</Button>
+          )}
+          <DialogFooter className="px-6 pb-6 pt-3 border-t border-gray-200 dark:border-gray-700">
+            <Button
+              variant="outline"
+              onClick={() => setIsDatasetItemsDialogOpen(false)}
+            >
+              Close
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1700,13 +2530,21 @@ export default function EvaluationPage() {
             </DialogDescription>
           </DialogHeader>
           {runDetailLoading ? (
-            <div className="py-8 text-center text-sm text-gray-500">Loading run details...</div>
+            <div className="flex flex-col items-center justify-center py-10 gap-3">
+              <div
+                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                style={{ borderTopColor: "#da2128" }}
+              />
+              <p className="text-sm text-gray-500">Loading run details…</p>
+            </div>
           ) : selectedRunDetail ? (
             <div className="space-y-4 py-2">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                 <div className="rounded border p-3">
                   <div className="text-xs text-gray-500">Run ID</div>
-                  <div className="font-mono break-all">{selectedRunDetail.run.id}</div>
+                  <div className="font-mono break-all">
+                    {selectedRunDetail.run.id}
+                  </div>
                 </div>
                 <div className="rounded border p-3">
                   <div className="text-xs text-gray-500">Run Name</div>
@@ -1732,37 +2570,66 @@ export default function EvaluationPage() {
                   </thead>
                   <tbody>
                     {selectedRunDetail.items.map((item) => (
-                      <tr key={item.id} className="border-b dark:border-gray-700 align-top">
-                        <td className="px-4 py-3 font-mono text-xs">{item.id}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{item.trace_id || "-"}</td>
+                      <tr
+                        key={item.id}
+                        className="border-b dark:border-gray-700 align-top"
+                      >
+                        <td className="px-4 py-3 font-mono text-xs">
+                          {item.id}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs">
+                          {item.trace_id || "-"}
+                        </td>
                         <td className="px-4 py-3">{item.trace_name || "-"}</td>
-                        <td className="px-4 py-3 max-w-[260px] truncate" title={stringifyCompact(item.trace_input)}>
+                        <td
+                          className="px-4 py-3 max-w-[260px] truncate"
+                          title={stringifyCompact(item.trace_input)}
+                        >
                           {stringifyCompact(item.trace_input)}
                         </td>
-                        <td className="px-4 py-3 max-w-[260px] truncate" title={stringifyCompact(item.trace_output)}>
+                        <td
+                          className="px-4 py-3 max-w-[260px] truncate"
+                          title={stringifyCompact(item.trace_output)}
+                        >
                           {stringifyCompact(item.trace_output)}
                         </td>
                         <td className="px-4 py-3">
                           {item.score_count > 0 ? (
                             <div className="space-y-1">
                               {item.scores.slice(0, 4).map((score) => (
-                                <div key={score.id || `${score.name}-${score.created_at || ""}`} className="text-xs">
-                                  <span className="font-medium">{score.name}</span>: {score.value.toFixed(2)}
+                                <div
+                                  key={
+                                    score.id ||
+                                    `${score.name}-${score.created_at || ""}`
+                                  }
+                                  className="text-xs"
+                                >
+                                  <span className="font-medium">
+                                    {score.name}
+                                  </span>
+                                  : {score.value.toFixed(2)}
                                 </div>
                               ))}
                               {item.scores.length > 4 ? (
-                                <div className="text-xs text-gray-500">+{item.scores.length - 4} more</div>
+                                <div className="text-xs text-gray-500">
+                                  +{item.scores.length - 4} more
+                                </div>
                               ) : null}
                             </div>
                           ) : (
-                            <span className="text-xs text-gray-500">No scores</span>
+                            <span className="text-xs text-gray-500">
+                              No scores
+                            </span>
                           )}
                         </td>
                       </tr>
                     ))}
                     {selectedRunDetail.items.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                        <td
+                          colSpan={6}
+                          className="px-4 py-6 text-center text-gray-500"
+                        >
                           No run items found.
                         </td>
                       </tr>
@@ -1772,7 +2639,9 @@ export default function EvaluationPage() {
               </div>
             </div>
           ) : (
-            <div className="py-8 text-center text-sm text-gray-500">No run details available.</div>
+            <div className="py-8 text-center text-sm text-gray-500">
+              No run details available.
+            </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsRunDetailOpen(false)}>
@@ -1787,47 +2656,60 @@ export default function EvaluationPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Manual Score</DialogTitle>
-            <DialogDescription>
-              Manually evaluate a trace.
-            </DialogDescription>
+            <DialogDescription>Manually evaluate a trace.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Trace ID</label>
-              <Input 
-                placeholder="Trace ID" 
+              <Input
+                placeholder="Trace ID"
                 value={scoreForm.trace_id}
-                onChange={(e) => setScoreForm({...scoreForm, trace_id: e.target.value})}
+                onChange={(e) =>
+                  setScoreForm({ ...scoreForm, trace_id: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Metric Name</label>
-              <Input 
-                placeholder="e.g. Accuracy, User Satisfaction" 
+              <Input
+                placeholder="e.g. Accuracy, User Satisfaction"
                 value={scoreForm.name}
-                onChange={(e) => setScoreForm({...scoreForm, name: e.target.value})}
+                onChange={(e) =>
+                  setScoreForm({ ...scoreForm, name: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Score (0.0 - 1.0)</label>
-              <Input 
-                type="number" 
-                min="0" max="1" step="0.1"
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.1"
                 value={scoreForm.value}
-                onChange={(e) => setScoreForm({...scoreForm, value: e.target.value})}
+                onChange={(e) =>
+                  setScoreForm({ ...scoreForm, value: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Comment (Optional)</label>
-              <Input 
-                placeholder="Reasoning..." 
+              <Input
+                placeholder="Reasoning..."
                 value={scoreForm.comment}
-                onChange={(e) => setScoreForm({...scoreForm, comment: e.target.value})}
+                onChange={(e) =>
+                  setScoreForm({ ...scoreForm, comment: e.target.value })
+                }
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsScoreDialogOpen(false)}>Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => setIsScoreDialogOpen(false)}
+            >
+              Cancel
+            </Button>
             <Button onClick={handleCreateScore} disabled={isSubmitting}>
               {isSubmitting ? "Saving..." : "Save Score"}
             </Button>

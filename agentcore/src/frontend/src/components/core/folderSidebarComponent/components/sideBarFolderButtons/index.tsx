@@ -520,7 +520,7 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* Orchestrator */}
-        {can("interact_agents") && (
+        {can("view_orchastration_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
@@ -538,7 +538,7 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* Observability */}
-        {can("view_traces") && (
+        {can("view_observability_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
@@ -556,22 +556,24 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* Evaluation */}
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    size="md"
-                    isActive={pathname.startsWith("/evaluation")}
-                    onClick={() => _navigate("/evaluation")}
-                    className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-                  >
-                    <ForwardedIconComponent
-                      name="Scale"
-                      className="h-4 w-4"
-                    />
-                    Evaluation
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+        {can("view_evaluation_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/evaluation")}
+              onClick={() => _navigate("/evaluation")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Scale"
+                className="h-4 w-4"
+              />
+              Evaluation
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
-        {can("view_guardrails") && (
+        {can("view_guardrail_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
@@ -588,7 +590,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {can("view_vector_db") && (
+        {can("view_vectordb_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
@@ -605,7 +607,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {can("view_mcp") && (
+        {can("view_mcp_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
@@ -623,7 +625,7 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* Timeout Settings */}
-        {can("view_knowledge_base_management") && (
+        {can("view_knowledge_base") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
@@ -640,7 +642,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {can("view_platform_configs") && (
+        {role === "root" && can("view_platform_configs") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"

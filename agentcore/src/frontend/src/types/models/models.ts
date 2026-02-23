@@ -1,23 +1,77 @@
-export type ModelProvider = "google" | "openai" | "anthropic" | "meta";
+export type ModelProvider =
+  | "openai"
+  | "azure"
+  | "anthropic"
+  | "google"
+  | "groq"
+  | "openai_compatible";
 
-export type ModelCategory = "Text" | "Multimodal" | "Vision";
+export type ModelEnvironment = "test" | "uat" | "prod";
+
+export interface ModelCapabilities {
+  supports_streaming?: boolean;
+  supports_thinking?: boolean;
+  supports_vision?: boolean;
+  supports_tool_calling?: boolean;
+  context_window?: number;
+}
 
 export interface ModelType {
   id: string;
-
-  name: string;
+  display_name: string;
   description?: string | null;
-
   provider: ModelProvider;
+  model_name: string;
+  base_url?: string | null;
+  environment: ModelEnvironment;
+  has_api_key: boolean;
+  provider_config?: Record<string, any> | null;
+  capabilities?: ModelCapabilities | null;
+  default_params?: Record<string, any> | null;
+  is_active: boolean;
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
 
-  contextWindow: number;
-  pricing: string;
+export interface ModelCreateRequest {
+  display_name: string;
+  description?: string | null;
+  provider: string;
+  model_name: string;
+  base_url?: string | null;
+  api_key?: string | null;
+  environment?: ModelEnvironment;
+  provider_config?: Record<string, any> | null;
+  capabilities?: ModelCapabilities | null;
+  default_params?: Record<string, any> | null;
+  is_active?: boolean;
+}
 
-  category: ModelCategory;
+export interface ModelUpdateRequest {
+  display_name?: string;
+  description?: string | null;
+  provider?: string;
+  model_name?: string;
+  base_url?: string | null;
+  api_key?: string | null;
+  environment?: ModelEnvironment;
+  provider_config?: Record<string, any> | null;
+  capabilities?: ModelCapabilities | null;
+  default_params?: Record<string, any> | null;
+  is_active?: boolean;
+}
 
-  isCustom: boolean;
+export interface TestConnectionRequest {
+  provider: string;
+  model_name: string;
+  base_url?: string | null;
+  api_key?: string | null;
+  provider_config?: Record<string, any> | null;
+}
 
-  /* Optional backend fields (future-proof) */
-  createdAt?: string;
-  updatedAt?: string;
+export interface TestConnectionResponse {
+  success: boolean;
+  message: string;
+  latency_ms?: number | null;
 }

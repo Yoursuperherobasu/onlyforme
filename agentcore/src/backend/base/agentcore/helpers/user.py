@@ -14,7 +14,7 @@ async def get_user_by_agent_id_or_endpoint_name(agent_id_or_name: str) -> UserRe
             agent_id = UUID(agent_id_or_name)
             agent = await session.get(Agent, agent_id)
         except ValueError:
-            stmt = select(Agent).where(Agent.endpoint_name == agent_id_or_name)
+            stmt = select(Agent).where(Agent.name == agent_id_or_name)
             agent = (await session.exec(stmt)).first()
 
         if agent is None:

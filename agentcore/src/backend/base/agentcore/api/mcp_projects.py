@@ -37,7 +37,9 @@ from agentcore.api.v1_schemas import (
 )
 from agentcore.base.mcp.constants import MAX_MCP_SERVER_NAME_LENGTH
 from agentcore.base.mcp.util import sanitize_mcp_name
-from agentcore.services.database.models import Agent, Folder
+from agentcore.services.database.models import Agent, Project
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.deps import get_settings_service, session_scope
 from agentcore.services.settings.feature_flags import FEATURE_FLAGS
 
@@ -50,6 +52,74 @@ current_project_ctx: ContextVar[UUID | None] = ContextVar("current_project_ctx",
 
 # Create a mapping of project-specific SSE transports
 project_sse_transports = {}
+
+
+async def _get_scope_memberships(session, user_id: UUID) -> tuple[set[UUID], set[UUID]]:
+    org_rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+            )
+        )
+    ).all()
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    return set(org_rows), set(dept_rows)
+
+
+async def _can_access_project(session, current_user, project: Project) -> bool:
+    role = getattr(current_user, "role", None)
+    if project.user_id == current_user.id or project.owner_user_id == current_user.id:
+        return True
+
+    if role in {"super_admin", "root"}:
+        org_ids, _ = await _get_scope_memberships(session, current_user.id)
+        if project.org_id and project.org_id in org_ids:
+            return True
+        owner_id = project.owner_user_id or project.user_id
+        if owner_id and org_ids:
+            owner_membership = (
+                await session.exec(
+                    select(UserOrganizationMembership.id).where(
+                        UserOrganizationMembership.user_id == owner_id,
+                        UserOrganizationMembership.org_id.in_(list(org_ids)),
+                        UserOrganizationMembership.status.in_(["accepted", "active"]),
+                    )
+                )
+            ).first()
+            if owner_membership:
+                return True
+
+    if role == "department_admin":
+        _, dept_ids = await _get_scope_memberships(session, current_user.id)
+        if project.dept_id and project.dept_id in dept_ids:
+            return True
+        owner_id = project.owner_user_id or project.user_id
+        if owner_id and dept_ids:
+            owner_membership = (
+                await session.exec(
+                    select(UserDepartmentMembership.id).where(
+                        UserDepartmentMembership.user_id == owner_id,
+                        UserDepartmentMembership.department_id.in_(list(dept_ids)),
+                        UserDepartmentMembership.status == "active",
+                    )
+                )
+            ).first()
+            if owner_membership:
+                return True
+
+    return False
+
+
+def _is_admin_role(role: str | None) -> bool:
+    return role in {"super_admin", "department_admin", "root"}
 
 
 def get_project_sse(project_id: UUID) -> SseServerTransport:
@@ -74,17 +144,17 @@ async def list_project_tools(
             # Fetch the project first to verify it exists and belongs to the current user
             project = (
                 await session.exec(
-                    select(Folder)
-                    .options(selectinload(Folder.agents))
-                    .where(Folder.id == project_id, Folder.user_id == current_user.id)
+                    select(Project)
+                    .options(selectinload(Project.agents))
+                    .where(Project.id == project_id)
                 )
             ).first()
 
-            if not project:
+            if not project or not await _can_access_project(session, current_user, project):
                 raise HTTPException(status_code=404, detail="Project not found")
 
             # Query agents in the project
-            agents_query = select(Agent).where(Agent.folder_id == project_id, Agent.is_component == False)  # noqa: E712
+            agents_query = select(Agent).where(Agent.project_id == project_id)
 
             # Optionally filter for MCP-enabled agents only
             if mcp_enabled:
@@ -150,10 +220,10 @@ async def handle_project_sse(
     # Verify project exists and user has access
     async with session_scope() as session:
         project = (
-            await session.exec(select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id))
+            await session.exec(select(Project).where(Project.id == project_id))
         ).first()
 
-        if not project:
+        if not project or not await _can_access_project(session, current_user, project):
             raise HTTPException(status_code=404, detail="Project not found")
 
     # Get project-specific SSE transport and MCP server
@@ -200,10 +270,10 @@ async def handle_project_messages(project_id: UUID, request: Request, current_us
     # Verify project exists and user has access
     async with session_scope() as session:
         project = (
-            await session.exec(select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id))
+            await session.exec(select(Project).where(Project.id == project_id))
         ).first()
 
-        if not project:
+        if not project or not await _can_access_project(session, current_user, project):
             raise HTTPException(status_code=404, detail="Project not found")
 
     # Set context variables
@@ -240,13 +310,13 @@ async def update_project_mcp_settings(
             # Fetch the project first to verify it exists and belongs to the current user
             project = (
                 await session.exec(
-                    select(Folder)
-                    .options(selectinload(Folder.agents))
-                    .where(Folder.id == project_id, Folder.user_id == current_user.id)
+                    select(Project)
+                    .options(selectinload(Project.agents))
+                    .where(Project.id == project_id)
                 )
             ).first()
 
-            if not project:
+            if not project or not await _can_access_project(session, current_user, project):
                 raise HTTPException(status_code=404, detail="Project not found")
 
             # Update project-level auth settings
@@ -257,12 +327,14 @@ async def update_project_mcp_settings(
             session.add(project)
 
             # Query agents in the project
-            agents = (await session.exec(select(Agent).where(Agent.folder_id == project_id))).all()
+            agents = (await session.exec(select(Agent).where(Agent.project_id == project_id))).all()
             agents_to_update = {x.id: x for x in request.settings}
 
             updated_agents = []
             for agent in agents:
-                if agent.user_id is None or agent.user_id != current_user.id:
+                if not _is_admin_role(getattr(current_user, "role", None)) and (
+                    agent.user_id is None or agent.user_id != current_user.id
+                ):
                     continue
 
                 if agent.id in agents_to_update:
@@ -352,10 +424,10 @@ async def install_mcp_config(
         # Verify project exists and user has access
         async with session_scope() as session:
             project = (
-                await session.exec(select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id))
+                await session.exec(select(Project).where(Project.id == project_id))
             ).first()
 
-            if not project:
+            if not project or not await _can_access_project(session, current_user, project):
                 raise HTTPException(status_code=404, detail="Project not found")
 
         # Get settings service to build the SSE URL
@@ -554,10 +626,10 @@ async def check_installed_mcp_servers(
         # Verify project exists and user has access
         async with session_scope() as session:
             project = (
-                await session.exec(select(Folder).where(Folder.id == project_id, Folder.user_id == current_user.id))
+                await session.exec(select(Project).where(Project.id == project_id))
             ).first()
 
-            if not project:
+            if not project or not await _can_access_project(session, current_user, project):
                 raise HTTPException(status_code=404, detail="Project not found")
 
         # Project server name pattern (must match the logic in install function)
@@ -744,7 +816,7 @@ async def init_mcp_servers():
     """Initialize MCP servers for all projects."""
     try:
         async with session_scope() as session:
-            projects = (await session.exec(select(Folder))).all()
+            projects = (await session.exec(select(Project))).all()
 
             for project in projects:
                 try:

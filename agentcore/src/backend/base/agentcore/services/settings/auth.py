@@ -27,6 +27,7 @@ class AuthSettings(BaseSettings):
     API_V1_STR: str = "/api"
     AZURE_TENANT_ID: str = "69b98d34-6d85-4ddf-9d5f-6f8767b5f4b7"
     AZURE_CLIENT_ID: str ="d717db80-a34b-43c3-b78b-41322e2058cc"
+    PLATFORM_ROOT_EMAIL: str | None = None
     NEW_USER_IS_ACTIVE: bool = True
     REFRESH_SAME_SITE: Literal["lax", "strict", "none"] = "none"
     """The SameSite attribute of the refresh token cookie."""

@@ -16,7 +16,7 @@ export const ProtectedAdminRoute = ({
   }
 
   // 2️⃣ Centralized admin permission rule
-  const canAccessAdmin = permissions.includes("manage_users");
+  const canAccessAdmin = permissions.includes("view_admin_page");
 
   // 3️⃣ Block if permission missing
   if (!canAccessAdmin) {
@@ -26,3 +26,4 @@ export const ProtectedAdminRoute = ({
   // 4️⃣ Allowed
   return children;
 };
+

@@ -154,10 +154,8 @@ class GraphData(TypedDict):
 
 class GraphDump(TypedDict, total=False):
     data: GraphData
-    is_component: bool
     name: str
     description: str
-    endpoint_name: str
 
 
 class OutputConfigDict(TypedDict):

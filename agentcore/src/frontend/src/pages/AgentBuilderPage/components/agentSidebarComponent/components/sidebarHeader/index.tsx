@@ -1,16 +1,12 @@
 import { memo } from "react";
 
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
-import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import {
   Disclosure,
-  DisclosureContent,
-  DisclosureTrigger,
 } from "@/components/ui/disclosure";
 import { SidebarHeader, SidebarTrigger } from "@/components/ui/sidebar";
 import type { SidebarHeaderComponentProps } from "../../types";
-import FeatureToggles from "../featureTogglesComponent";
 import { SearchInput } from "../searchInput";
 import { SidebarFilterComponent } from "../sidebarFilterComponent";
 import { useTranslation } from 'react-i18next';
@@ -28,14 +24,16 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
   handleInputFocus,
   handleInputBlur,
   handleInputChange,
-  filterType,
-  setFilterEdge,
-  setFilterData,
-  data,
+  filterName,
+  filterDescription,
+  resetFilters,
+  customComponent,
+  addComponent,
+  isLoading = false,
 }: SidebarHeaderComponentProps) {
   const { t } = useTranslation();
   return (
-    <SidebarHeader className="flex w-full flex-col gap-4 p-4 pb-1">
+    <SidebarHeader className="flex w-full flex-col gap-3 p-4 pb-2">
       <Disclosure open={showConfig} onOpenChange={setShowConfig}>
         <div className="flex w-full items-center gap-2">
           <SidebarTrigger className="text-muted-foreground">
@@ -44,9 +42,7 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
           <h3 className="flex-1 cursor-default text-sm font-semibold">
             {t("Components")}
           </h3>
-          
         </div>
-       
       </Disclosure>
       <SearchInput
         searchInputRef={searchInputRef}
@@ -56,15 +52,25 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
         handleInputBlur={handleInputBlur}
         handleInputChange={handleInputChange}
       />
-      {filterType && (
+      <Button
+        unstyled
+        disabled={isLoading}
+        onClick={() => {
+          if (customComponent && addComponent) {
+            addComponent(customComponent, "CustomComponent");
+          }
+        }}
+        data-testid="sidebar-custom-component-button"
+        className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-input bg-background hover:bg-muted"
+      >
+        <ForwardedIconComponent name="Plus" className="h-4 w-4 text-muted-foreground" />
+        <span>{t("Create Custom")}</span>
+      </Button>
+      {filterName && filterDescription && (
         <SidebarFilterComponent
-          isInput={!!filterType.source}
-          type={filterType.type}
-          color={filterType.color}
-          resetFilters={() => {
-            setFilterEdge([]);
-            setFilterData(data);
-          }}
+          name={filterName}
+          description={filterDescription}
+          resetFilters={resetFilters}
         />
       )}
     </SidebarHeader>

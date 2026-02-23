@@ -8,6 +8,7 @@ export * from "./use-post-login-user";
 export * from "./use-post-logout";
 export * from "./use-post-refresh-access";
 export * from "./use-get-roles";
+export * from "./use-get-assignable-roles";
 export * from "./use-get-permissions";
 export * from "./use-post-role";
 export * from "./use-patch-role";

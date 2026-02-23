@@ -1,20 +1,37 @@
-"""
-Approval API Router
+"""Approval API router backed by database tables.
 
-Handles agent approval/rejection workflows.
-Uses sample JSON data (no database).
+This exposes approval requests for approvers (department admins) and lets them
+approve/reject pending PROD publish requests.
 """
 
-from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status
-from pydantic import BaseModel
+from datetime import datetime, timezone
+from uuid import UUID
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from loguru import logger
+from pydantic import BaseModel
+from sqlmodel import select
+
+from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.agent_deployment_prod.model import (
+    AgentDeploymentProd,
+    DeploymentPRODStatusEnum,
+    ProdDeploymentLifecycleEnum,
+)
+from agentcore.services.database.models.agent_registry.model import RegistryDeploymentEnvEnum
+from agentcore.services.database.models.approval_request.model import (
+    ApprovalDecisionEnum,
+    ApprovalRequest,
+)
+from agentcore.services.database.models.folder.model import Folder
+from agentcore.services.database.models.user.model import User
+from agentcore.services.database.registry_service import sync_agent_registry
 
 
 class SubmittedBy(BaseModel):
     name: str
-    avatar: Optional[str] = None
+    avatar: str | None = None
 
 
 class ApprovalAgent(BaseModel):
@@ -27,15 +44,8 @@ class ApprovalAgent(BaseModel):
     submitted: str
     version: str
     recentChanges: str
-
-
-class ApproveRequest(BaseModel):
-    comments: str
-
-
-class RejectRequest(BaseModel):
-    comments: str
-    reason: Optional[str] = None
+    adminComments: str | None = None
+    adminAttachments: list[dict] | None = None
 
 
 class ApprovalResponse(BaseModel):
@@ -44,372 +54,460 @@ class ApprovalResponse(BaseModel):
     agentId: str
     newStatus: str
     timestamp: str
-    approvedBy: Optional[str] = None
+    approvedBy: str | None = None
 
 
-
-SAMPLE_AGENTS = [
-    {
-        "id": "agent-001",
-        "title": "Customer Support Agent",
-        "status": "pending",
-        "description": "Handles customer inquiries with context-aware responses and sentiment analysis.",
-        "submittedBy": {"name": "Max Leiter", "avatar": None},
-        "project": "E-Commerce Platform",
-        "submitted": "2h ago",
-        "version": "v2.1.0",
-        "recentChanges": "Updated NLP model, improved response accuracy",
-    },
-    {
-        "id": "agent-002",
-        "title": "Data Analysis Pipeline",
-        "status": "pending",
-        "description": "Processes large datasets with anomaly detection and insight generation.",
-        "submittedBy": {"name": "Arya Manisha", "avatar": None},
-        "project": "Analytics Dashboard",
-        "submitted": "5h ago",
-        "version": "v1.8.2",
-        "recentChanges": "Added real-time processing",
-    },
-    {
-        "id": "agent-003",
-        "title": "Email Campaign Manager",
-        "status": "pending",
-        "description": "Automates email marketing campaigns with A/B testing and personalization.",
-        "submittedBy": {"name": "Sarah Johnson", "avatar": None},
-        "project": "Marketing Automation",
-        "submitted": "1h ago",
-        "version": "v1.5.0",
-        "recentChanges": "Improved template rendering",
-    },
-]
-
-# In-memory store (simulating database)
-AGENTS_STORE = SAMPLE_AGENTS.copy()
-
-# File uploads storage (simulating file system)
-UPLOADED_FILES = {}
-
-router = APIRouter(
-    prefix="/approvals",
-    tags=["approvals"],
-)
+router = APIRouter(prefix="/approvals", tags=["approvals"])
 
 
-# ============================================================================
-# ENDPOINTS
-# ============================================================================
+def _to_status_label(decision: ApprovalDecisionEnum | None) -> str:
+    if decision is None:
+        return "pending"
+    if decision == ApprovalDecisionEnum.APPROVED:
+        return "approved"
+    return "rejected"
 
-@router.get("", response_model=List[ApprovalAgent])
-async def get_approvals():
-    """
-    GET /api/approvals
-    
-    Fetch all agents awaiting approval.
-    Returns list of agents with pending, approved, or rejected status.
-    """
+
+def _humanize_age(ts: datetime) -> str:
+    now = datetime.now(timezone.utc)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    delta = now - ts
+    total_sec = max(int(delta.total_seconds()), 0)
+    if total_sec < 60:
+        return f"{total_sec}s ago"
+    if total_sec < 3600:
+        return f"{total_sec // 60}m ago"
+    if total_sec < 86400:
+        return f"{total_sec // 3600}h ago"
+    return f"{total_sec // 86400}d ago"
+
+
+def _is_global_approver(user: CurrentActiveUser) -> bool:
+    return str(getattr(user, "role", "")).lower() in {"root", "super_admin"}
+
+
+async def _get_approval_for_action(
+    *,
+    session: DbSession,
+    approval_or_agent_id: str,
+    current_user: CurrentActiveUser,
+) -> ApprovalRequest:
+    req: ApprovalRequest | None = None
+    target_uuid: UUID | None = None
     try:
-        logger.info(f"Fetching all approvals. Total agents: {len(AGENTS_STORE)}")
-        return AGENTS_STORE
+        target_uuid = UUID(approval_or_agent_id)
+    except Exception:
+        target_uuid = None
+
+    if target_uuid:
+        req = (await session.exec(select(ApprovalRequest).where(ApprovalRequest.id == target_uuid))).first()
+
+    if not req and target_uuid:
+        stmt = (
+            select(ApprovalRequest)
+            .where(ApprovalRequest.agent_id == target_uuid)
+            .where(ApprovalRequest.decision == None)  # noqa: E711
+            .order_by(ApprovalRequest.requested_at.desc())
+        )
+        if not _is_global_approver(current_user):
+            stmt = stmt.where(ApprovalRequest.request_to == current_user.id)
+        req = (await session.exec(stmt)).first()
+
+    if not req:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+
+    if not _is_global_approver(current_user) and req.request_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
+
+    return req
+
+
+async def _get_approval_for_view(
+    *,
+    session: DbSession,
+    approval_or_agent_id: str,
+    current_user: CurrentActiveUser,
+) -> ApprovalRequest:
+    req: ApprovalRequest | None = None
+    target_uuid: UUID | None = None
+    try:
+        target_uuid = UUID(approval_or_agent_id)
+    except Exception:
+        target_uuid = None
+
+    if not target_uuid:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+
+    # Direct match by approval request id.
+    req = (await session.exec(select(ApprovalRequest).where(ApprovalRequest.id == target_uuid))).first()
+    if req:
+        if _is_global_approver(current_user) or req.request_to == current_user.id or req.requested_by == current_user.id:
+            return req
+        raise HTTPException(status_code=403, detail="Not allowed to view this approval")
+
+    # Fallback by agent id: latest request visible to user.
+    stmt = select(ApprovalRequest).where(ApprovalRequest.agent_id == target_uuid).order_by(ApprovalRequest.requested_at.desc())
+    if not _is_global_approver(current_user):
+        stmt = stmt.where(
+            (ApprovalRequest.request_to == current_user.id) | (ApprovalRequest.requested_by == current_user.id)
+        )
+    req = (await session.exec(stmt)).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    return req
+
+
+async def _collect_attachment_metadata(
+    *,
+    files: list[UploadFile] | None,
+    now: datetime,
+) -> list[dict]:
+    uploaded_files: list[dict] = []
+    for file in files or []:
+        contents = await file.read()
+        uploaded_files.append(
+            {
+                "filename": file.filename,
+                "size": len(contents),
+                "uploadedAt": now.isoformat(),
+            }
+        )
+    return uploaded_files
+
+
+@router.get("", response_model=list[ApprovalAgent])
+async def get_approvals(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> list[ApprovalAgent]:
+    """Fetch approvals for the current approver."""
+    try:
+        stmt = select(ApprovalRequest).order_by(ApprovalRequest.requested_at.desc())
+        if not _is_global_approver(current_user):
+            stmt = stmt.where(ApprovalRequest.request_to == current_user.id)
+        rows = (await session.exec(stmt)).all()
+
+        payload: list[ApprovalAgent] = []
+        for req in rows:
+            deployment = await session.get(AgentDeploymentProd, req.deployment_id)
+            if not deployment:
+                continue
+
+            requester = await session.get(User, req.requested_by)
+            agent = await session.get(Agent, req.agent_id)
+            project_name = ""
+            if agent and agent.project_id:
+                folder = await session.get(Folder, agent.project_id)
+                if folder:
+                    project_name = folder.name
+
+            title = deployment.agent_name or (agent.name if agent else "Untitled Agent")
+            description = deployment.agent_description or req.publish_description or ""
+            submitter_name = (
+                requester.display_name
+                if requester and requester.display_name
+                else (requester.username if requester else "Unknown")
+            )
+
+            payload.append(
+                ApprovalAgent(
+                    id=str(req.id),
+                    title=title,
+                    status=_to_status_label(req.decision),
+                    description=description,
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    project=project_name,
+                    submitted=(
+                        req.updated_at.replace(tzinfo=timezone.utc).isoformat()
+                        if req.updated_at.tzinfo is None
+                        else req.updated_at.isoformat()
+                    ),
+                    version=f"v{deployment.version_number}",
+                    recentChanges="",  # intentionally blank for now
+                )
+            )
+        return payload
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error fetching approvals: {str(e)}")
+        logger.error(f"Error fetching approvals: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch approvals"
-        )
+            detail="Failed to fetch approvals",
+        ) from e
 
 
 @router.post("/{agent_id}/approve", response_model=ApprovalResponse)
-async def approve_agent(agent_id: str, request: ApproveRequest):
-    """
-    POST /api/approvals/{agent_id}/approve
-    
-    Approve an agent with optional comments.
-    Updates agent status from pending to approved.
-    
-    Request Body:
-        {
-            "comments": "Looks good, approved for deployment"
-        }
-    """
-    try:
-        logger.info(f"Approving agent: {agent_id}")
-        
-        # Find agent in store
-        agent = None
-        for a in AGENTS_STORE:
-            if a["id"] == agent_id:
-                agent = a
-                break
-        
-        if not agent:
-            logger.warning(f"Agent not found: {agent_id}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Agent {agent_id} not found"
-            )
-        
-        # Update agent status
-        agent["status"] = "approved"
-        
-        # Log the approval
-        logger.info(f"Agent {agent_id} approved. Comments: {request.comments}")
-        
-        return ApprovalResponse(
-            success=True,
-            message="Agent approved successfully",
-            agentId=agent_id,
-            newStatus="approved",
-            timestamp=datetime.utcnow().isoformat() + "Z",
-            approvedBy="system@example.com"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error approving agent {agent_id}: {str(e)}")
+async def approve_agent(
+    agent_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    comments: str = Form(default=""),
+    attachments: list[UploadFile] | None = File(default=None),
+) -> ApprovalResponse:
+    """Approve a pending deployment request."""
+    now = datetime.now(timezone.utc)
+    req = await _get_approval_for_action(
+        session=session,
+        approval_or_agent_id=agent_id,
+        current_user=current_user,
+    )
+    if req.decision is not None:
+        raise HTTPException(status_code=400, detail="Approval request already finalized")
+
+    deployment = await session.get(AgentDeploymentProd, req.deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Linked deployment not found")
+
+    uploaded_files = await _collect_attachment_metadata(files=attachments, now=now)
+    if not comments.strip() and not uploaded_files:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to approve agent"
+            status_code=400,
+            detail="Either comments or attachments are required for approval",
         )
+
+    req.decision = ApprovalDecisionEnum.APPROVED
+    req.justification = comments.strip() if comments else None
+    existing = req.file_path if isinstance(req.file_path, dict) else {}
+    existing_files = existing.get("files", [])
+    if uploaded_files:
+        existing["files"] = [*existing_files, *uploaded_files]
+        req.file_path = existing
+    req.reviewed_at = now
+    req.updated_at = now
+    session.add(req)
+
+    deployment.status = DeploymentPRODStatusEnum.PUBLISHED
+    deployment.lifecycle_step = ProdDeploymentLifecycleEnum.PUBLISHED
+    deployment.is_active = True
+    deployment.approval_id = req.id
+    deployment.updated_at = now
+    session.add(deployment)
+
+    # Keep one active PROD version per agent by default.
+    previous = (
+        await session.exec(
+            select(AgentDeploymentProd).where(
+                AgentDeploymentProd.agent_id == deployment.agent_id,
+                AgentDeploymentProd.id != deployment.id,
+                AgentDeploymentProd.is_active == True,  # noqa: E712
+            )
+        )
+    ).all()
+    for rec in previous:
+        rec.is_active = False
+        rec.updated_at = now
+        session.add(rec)
+
+    await session.commit()
+
+    try:
+        await sync_agent_registry(
+            session,
+            agent_id=deployment.agent_id,
+            org_id=deployment.org_id,
+            acted_by=current_user.id,
+            deployment_env=RegistryDeploymentEnvEnum.PROD,
+        )
+        await session.commit()
+    except Exception as reg_err:
+        logger.warning(f"Registry sync failed after approval {req.id}: {reg_err}")
+
+    approver_name = getattr(current_user, "username", None)
+    return ApprovalResponse(
+        success=True,
+        message="Agent approved successfully",
+        agentId=str(req.agent_id),
+        newStatus="approved",
+        timestamp=now.isoformat(),
+        approvedBy=approver_name,
+    )
 
 
 @router.post("/{agent_id}/reject", response_model=ApprovalResponse)
-async def reject_agent(agent_id: str, request: RejectRequest):
-    """
-    POST /api/approvals/{agent_id}/reject
-    
-    Reject an agent with comments and optional reason.
-    Updates agent status from pending to rejected.
-    
-    Request Body:
-        {
-            "comments": "Needs improvement in error handling",
-            "reason": "Security concerns"
-        }
-    """
-    try:
-        logger.info(f"Rejecting agent: {agent_id}")
-        
-        # Find agent in store
-        agent = None
-        for a in AGENTS_STORE:
-            if a["id"] == agent_id:
-                agent = a
-                break
-        
-        if not agent:
-            logger.warning(f"Agent not found: {agent_id}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Agent {agent_id} not found"
-            )
-        
-        # Update agent status
-        agent["status"] = "rejected"
-        
-        # Log the rejection
-        reason = request.reason or "Not specified"
-        logger.info(
-            f"Agent {agent_id} rejected. "
-            f"Reason: {reason}. "
-            f"Comments: {request.comments}"
-        )
-        
-        return ApprovalResponse(
-            success=True,
-            message="Agent rejected",
-            agentId=agent_id,
-            newStatus="rejected",
-            timestamp=datetime.utcnow().isoformat() + "Z",
-            approvedBy="system@example.com"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error rejecting agent {agent_id}: {str(e)}")
+async def reject_agent(
+    agent_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    comments: str = Form(default=""),
+    reason: str | None = Form(default=None),
+    attachments: list[UploadFile] | None = File(default=None),
+) -> ApprovalResponse:
+    """Reject a pending deployment request."""
+    now = datetime.now(timezone.utc)
+    req = await _get_approval_for_action(
+        session=session,
+        approval_or_agent_id=agent_id,
+        current_user=current_user,
+    )
+    if req.decision is not None:
+        raise HTTPException(status_code=400, detail="Approval request already finalized")
+
+    deployment = await session.get(AgentDeploymentProd, req.deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Linked deployment not found")
+
+    uploaded_files = await _collect_attachment_metadata(files=attachments, now=now)
+    if not comments.strip() and not uploaded_files:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reject agent"
+            status_code=400,
+            detail="Either comments or attachments are required for rejection",
         )
+
+    rejection_reason = reason or "Not approved"
+    justification = comments.strip()
+    req.decision = ApprovalDecisionEnum.REJECTED
+    req.justification = f"{rejection_reason}: {justification}" if justification else rejection_reason
+    existing = req.file_path if isinstance(req.file_path, dict) else {}
+    existing_files = existing.get("files", [])
+    if uploaded_files:
+        existing["files"] = [*existing_files, *uploaded_files]
+        req.file_path = existing
+    req.reviewed_at = now
+    req.updated_at = now
+    session.add(req)
+
+    deployment.status = DeploymentPRODStatusEnum.UNPUBLISHED
+    deployment.is_active = False
+    deployment.updated_at = now
+    session.add(deployment)
+
+    await session.commit()
+
+    approver_name = getattr(current_user, "username", None)
+    return ApprovalResponse(
+        success=True,
+        message="Agent rejected",
+        agentId=str(req.agent_id),
+        newStatus="rejected",
+        timestamp=now.isoformat(),
+        approvedBy=approver_name,
+    )
 
 
 @router.post("/{agent_id}/attachments")
 async def upload_attachments(
     agent_id: str,
-    attachments: List[UploadFile] = File(...)
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    attachments: list[UploadFile] = File(...),
 ):
-    """
-    POST /api/approvals/{agent_id}/attachments
-    
-    Upload files/attachments for an agent approval.
-    Stores files in memory (simulating file system).
-    
-    Request:
-        multipart/form-data with "attachments" field containing files
-    
-    Response:
-        {
-            "success": true,
-            "message": "Attachments uploaded successfully",
-            "agentId": "agent-123",
-            "uploadedFiles": [
-                {
-                    "filename": "test-results.pdf",
-                    "size": 2048,
-                    "uploadedAt": "2024-01-30T10:30:00Z",
-                    "url": "/files/attachment-001"
-                }
-            ]
-        }
-    """
-    try:
-        logger.info(f"Uploading attachments for agent: {agent_id}")
-        
-        # Validate agent exists
-        agent_exists = any(a["id"] == agent_id for a in AGENTS_STORE)
-        if not agent_exists:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Agent {agent_id} not found"
-            )
-        
-        uploaded_files = []
-        
-        # Process each uploaded file
-        for file in attachments:
-            # Validate file size (max 10MB)
-            contents = await file.read()
-            file_size = len(contents)
-            
-            if file_size > 10 * 1024 * 1024:  # 10MB
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"File {file.filename} is too large. Max size is 10MB"
-                )
-            
-            # Store file in memory
-            file_id = f"attachment-{len(UPLOADED_FILES) + 1:03d}"
-            UPLOADED_FILES[file_id] = {
+    """Attach metadata of uploaded files to approval request."""
+    req = await _get_approval_for_action(
+        session=session,
+        approval_or_agent_id=agent_id,
+        current_user=current_user,
+    )
+    uploaded_files: list[dict] = []
+    now = datetime.now(timezone.utc)
+    for file in attachments:
+        contents = await file.read()
+        uploaded_files.append(
+            {
                 "filename": file.filename,
-                "content": contents,
-                "size": file_size,
-                "agent_id": agent_id,
+                "size": len(contents),
+                "uploadedAt": now.isoformat(),
             }
-            
-            uploaded_files.append({
-                "filename": file.filename,
-                "size": file_size,
-                "uploadedAt": datetime.utcnow().isoformat() + "Z",
-                "url": f"/files/{file_id}"
-            })
-            
-            logger.info(
-                f"File uploaded: {file.filename} ({file_size} bytes) "
-                f"for agent {agent_id}"
-            )
-        
-        return {
-            "success": True,
-            "message": "Attachments uploaded successfully",
-            "agentId": agent_id,
-            "uploadedFiles": uploaded_files
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error uploading attachments: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload attachments"
         )
 
+    existing = req.file_path if isinstance(req.file_path, dict) else {}
+    existing_files = existing.get("files", [])
+    existing["files"] = [*existing_files, *uploaded_files]
+    req.file_path = existing
+    req.updated_at = now
+    session.add(req)
+    await session.commit()
 
-@router.get("/{agent_id}")
-async def get_agent_details(agent_id: str):
-    """
-    GET /api/approvals/{agent_id}
-    
-    Get detailed information about a specific agent.
-    
-    Response:
-        ApprovalAgent object with full details
-    """
-    try:
-        # Find agent
-        agent = None
-        for a in AGENTS_STORE:
-            if a["id"] == agent_id:
-                agent = a
-                break
-        
-        if not agent:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Agent {agent_id} not found"
-            )
-        
-        return agent
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching agent details: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch agent details"
-        )
+    return {
+        "success": True,
+        "message": "Attachments uploaded successfully",
+        "agentId": str(req.agent_id),
+        "uploadedFiles": uploaded_files,
+    }
+
+
+@router.get("/{agent_id}", response_model=ApprovalAgent)
+async def get_agent_details(
+    agent_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> ApprovalAgent:
+    req = await _get_approval_for_view(
+        session=session,
+        approval_or_agent_id=agent_id,
+        current_user=current_user,
+    )
+    deployment = await session.get(AgentDeploymentProd, req.deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Linked deployment not found")
+    requester = await session.get(User, req.requested_by)
+    agent = await session.get(Agent, req.agent_id)
+    project_name = ""
+    if agent and agent.project_id:
+        folder = await session.get(Folder, agent.project_id)
+        if folder:
+            project_name = folder.name
+
+    return ApprovalAgent(
+        id=str(req.id),
+        title=deployment.agent_name or (agent.name if agent else "Untitled Agent"),
+        status=_to_status_label(req.decision),
+        description=deployment.agent_description or req.publish_description or "",
+        submittedBy=SubmittedBy(
+            name=(requester.display_name if requester and requester.display_name else (requester.username if requester else "Unknown")),
+            avatar=None,
+        ),
+        project=project_name,
+        submitted=(
+            req.updated_at.replace(tzinfo=timezone.utc).isoformat()
+            if req.updated_at.tzinfo is None
+            else req.updated_at.isoformat()
+        ),
+        version=f"v{deployment.version_number}",
+        recentChanges="",  # intentionally blank for now
+        adminComments=req.justification,
+        adminAttachments=(req.file_path.get("files", []) if isinstance(req.file_path, dict) else []),
+    )
 
 
 @router.post("/{agent_id}/reset-status")
-async def reset_agent_status(agent_id: str):
-    """
-    POST /api/approvals/{agent_id}/reset-status
-    
-    Reset agent status back to pending (for testing/demo purposes).
-    Useful for demo/testing the approval agent multiple times.
-    """
-    try:
-        logger.info(f"Resetting agent status: {agent_id}")
-        
-        # Find and update agent
-        agent = None
-        for a in AGENTS_STORE:
-            if a["id"] == agent_id:
-                agent = a
-                break
-        
-        if not agent:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Agent {agent_id} not found"
-            )
-        
-        agent["status"] = "pending"
-        
-        return {
-            "success": True,
-            "message": "Agent status reset to pending",
-            "agentId": agent_id,
-            "newStatus": "pending"
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error resetting agent status: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reset agent status"
-        )
+async def reset_agent_status(
+    agent_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    """Reset status back to pending (kept for testing/demo utility)."""
+    req = await _get_approval_for_action(
+        session=session,
+        approval_or_agent_id=agent_id,
+        current_user=current_user,
+    )
+    deployment = await session.get(AgentDeploymentProd, req.deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Linked deployment not found")
 
+    now = datetime.now(timezone.utc)
+    req.decision = None
+    req.reviewed_at = None
+    req.updated_at = now
+    session.add(req)
 
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
+    deployment.status = DeploymentPRODStatusEnum.PENDING_APPROVAL
+    deployment.is_active = False
+    deployment.updated_at = now
+    session.add(deployment)
 
-def get_router():
-    """Return the approval router for mounting in main app"""
-    return router
+    await session.commit()
+    return {
+        "success": True,
+        "message": "Agent status reset to pending",
+        "agentId": str(req.agent_id),
+        "newStatus": "pending",
+    }

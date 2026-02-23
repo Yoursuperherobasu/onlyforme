@@ -11,9 +11,7 @@ import {
   ENABLE_MCP,
 } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
-import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useFolderStore } from "@/stores/foldersStore";
-import { AgentType } from "@/types/agent";
 import HeaderComponent from "../../components/header";
 import ListComponent from "../../components/list";
 import ListSkeleton from "../../components/listSkeleton";
@@ -47,7 +45,6 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
     folders.find((folder) => folder.id === folderId)?.name ??
     folders[0]?.name ??
     "";
-  const agents = useAgentsManagerStore((state) => state.agents);
 
   useEffect(() => {
     // Only check if we have a folderId and folders have loaded
@@ -72,10 +69,10 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
 
   const data = {
     agents: folderData?.agents?.items ?? [],
-    name: folderData?.folder?.name ?? "",
-    description: folderData?.folder?.description ?? "",
-    parent_id: folderData?.folder?.parent_id ?? "",
-    components: folderData?.folder?.components ?? [],
+    name: folderData?.project?.name ?? "",
+    description: folderData?.project?.description ?? "",
+    parent_id: folderData?.project?.parent_id ?? "",
+    components: folderData?.project?.components ?? [],
     pagination: {
       page: folderData?.agents?.page ?? 1,
       size: folderData?.agents?.size ?? 12,
@@ -98,36 +95,28 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
     setPageIndex(1);
   }, []);
 
+  // Use the paginated folder data (from GET /projects/{id}) to determine
+  // if the folder is empty, rather than the global agents store which may
+  // not have loaded yet or may be stale.
   const isEmptyFolder =
-    agents?.find(
-      (agent) =>
-        agent.folder_id === (folderId ?? myCollectionId) &&
-        (ENABLE_MCP ? agent.is_component === false : true),
-    ) === undefined;
+    !isLoading &&
+    (folderData?.agents?.total ?? 0) === 0 &&
+    !search;
 
   const handleFileDrop = useFileDrop(isEmptyFolder ? undefined : agentType);
 
   useEffect(() => {
+    // If this tab has no items but the other tab does, auto-switch.
+    // Use paginated data instead of global store for accuracy.
     if (
       !isEmptyFolder &&
-      agents?.find(
-        (agent) =>
-          agent.folder_id === (folderId ?? myCollectionId) &&
-          agent.is_component === (agentType === "components"),
-      ) === undefined
+      data.agents.length === 0 &&
+      !isLoading
     ) {
-      const otherTabHasItems =
-        agents?.find(
-          (agent) =>
-            agent.folder_id === (folderId ?? myCollectionId) &&
-            agent.is_component === (agentType === "agents"),
-        ) !== undefined;
-
-      if (otherTabHasItems) {
-        setAgentType(agentType === "agents" ? "components" : "agents");
-      }
+      // Current tab is empty, check if we should switch
+      setAgentType(agentType === "agents" ? "components" : "agents");
     }
-  }, [isEmptyFolder]);
+  }, [isEmptyFolder, data.agents.length, isLoading]);
 
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(

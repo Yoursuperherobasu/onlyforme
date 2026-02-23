@@ -88,8 +88,18 @@ class Parser(Node):
 
         match input_data:
             case list() if all(isinstance(item, Data) for item in input_data):
-                msg = "List of Data objects is not supported."
-                raise ValueError(msg)
+                # ── NEW: merge list of Data into a single Data object ──
+                combined_text = "\n".join(
+                    item.text for item in input_data if item.text
+                )
+                # Merge all data dicts, keep text as the combined text
+                merged_data = {"text": combined_text}
+                for item in input_data:
+                    if item.data:
+                        for k, v in item.data.items():
+                            if k not in merged_data:
+                                merged_data[k] = v
+                return None, Data(text=combined_text, data=merged_data)
             case DataFrame():
                 return input_data, None
             case Data():
@@ -140,3 +150,5 @@ class Parser(Node):
         message = Message(text=result)
         self.status = message
         return message
+    
+    

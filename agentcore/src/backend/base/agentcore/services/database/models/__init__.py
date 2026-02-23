@@ -1,23 +1,65 @@
 from .file import File
 from .agent import Agent
-from .folder import Folder
+from .project import Project
 from .conversation import ConversationTable
-from .publish_record import PublishRecord
+from .model_registry import ModelRegistry
+from .conversation_prod import ConversationProdTable
+from .conversation_uat import ConversationUATTable
 from .transactions import TransactionTable
+from .transaction_prod import TransactionProdTable
+from .transaction_uat import TransactionUATTable
 from .user import User
 from .permission import Permission
 from .role import Role
 from .role_permission import RolePermission
+from .organization import Organization
+from .department import Department
+from .user_organization_membership import UserOrganizationMembership
+from .user_department_membership import UserDepartmentMembership
+from .vector_db_catalogue import VectorDBCatalogue
+from .knowledge_base import KnowledgeBase
+from .agent_bundle import AgentBundle
+from .agent_deployment_prod import AgentDeploymentProd
+from .agent_deployment_uat import AgentDeploymentUAT
+from .agent_registry import AgentRegistry, AgentRegistryRating
+from .approval_request import ApprovalRequest
+from .timeout_settings import TimeoutSettings
+from .guardrail_catalogue import GuardrailCatalogue
 
 __all__ = [
     "Agent",
+    "AgentBundle",
+    "AgentDeploymentProd",
+    "AgentDeploymentUAT",
+    "AgentRegistry",
+    "ApprovalRequest",
+    "ConversationProdTable",
     "ConversationTable",
+    "ConversationProdTable",
+    "ConversationUATTable",
     "File",
-    "Folder",
+    "Project",
     "Permission",
-    "PublishRecord",
+    "ApprovalRequest",
+    "ModelRegistry",
+    "AgentBundle",
+    "AgentDeploymentProd",
+    "AgentDeploymentUAT",
+    "AgentRegistry",
+    "AgentRegistryRating",
     "Role",
     "RolePermission",
+    "Organization",
+    "Department",
+    "UserOrganizationMembership",
+    "UserDepartmentMembership",
+    "TransactionProdTable",
+    "TransactionUATTable",
+    "VectorDBCatalogue",
+    "KnowledgeBase",
+    "TimeoutSettings",
+    "GuardrailCatalogue",
     "TransactionTable",
+    "TransactionUATTable",
     "User",
 ]

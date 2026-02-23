@@ -28,7 +28,7 @@ export type AgentType = {
   gradient?: string;
   tags?: string[];
   icon_bg_color?: string;
-  folder_id?: string;
+  project_id?: string;
   webhook?: boolean;
   locked?: boolean | null;
   public?: boolean;

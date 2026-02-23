@@ -1,5 +1,5 @@
 import { ADJECTIVES, NOUNS } from "../../../../../agent_constants";
-import { getRandomElement } from "../../../../../utils/reactflowUtils";
+import { getRandomElement } from "../../../../../utils/reactFlowUtils";
 import { toTitleCase } from "../../../../../utils/utils";
 
 export default function getRandomName(

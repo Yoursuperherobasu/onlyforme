@@ -68,7 +68,7 @@ export default function CollectionPage(): JSX.Element {
     if (!folderToEdit) return;
 
     deleteFolder(
-      { folder_id: folderToEdit.id },
+      { project_id: folderToEdit.id },
       {
         onSuccess: () => {
           setSuccessData({ title: "Project deleted successfully." });

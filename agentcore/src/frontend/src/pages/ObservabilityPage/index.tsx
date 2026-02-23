@@ -31,19 +31,12 @@ import {
   FolderOpen,
   Bot,
   TrendingUp,
-  TrendingDown,
-  Minus,
-  Zap,
   BarChart3,
   PieChart as PieChartIcon,
   ArrowUpRight,
   ArrowDownRight,
-  CheckCircle2,
   XCircle,
   Timer,
-  Gauge,
-  Eye,
-  RefreshCw,
 } from "lucide-react";
 import {
   LineChart,
@@ -136,6 +129,8 @@ interface Metrics {
   by_model: ModelUsageItem[];
   by_date: DailyUsageItem[];
   top_agents: Array<{ name: string; count: number; tokens: number; cost: number }>;
+  truncated?: boolean;
+  fetched_trace_count?: number;
 }
 
 interface SessionListItem {
@@ -181,6 +176,15 @@ interface ObservationResponse {
   level: string | null;
 }
 
+interface ScoreItem {
+  id: string;
+  name: string;
+  value: number;
+  source?: string | null;
+  comment?: string | null;
+  created_at?: string | null;
+}
+
 interface TraceDetailResponse {
   id: string;
   name: string | null;
@@ -192,6 +196,7 @@ interface TraceDetailResponse {
   total_cost: number;
   latency_ms: number | null;
   observations: ObservationResponse[];
+  scores?: ScoreItem[];
 }
 
 interface SessionDetailResponse {
@@ -377,6 +382,7 @@ interface FetchMetricsParams {
   search?: string;
   models?: string;
   tz_offset?: number;
+  fetch_all?: boolean;
 }
 
 // Get user's timezone offset in minutes (positive for east of UTC, e.g., IST = 330)
@@ -399,6 +405,7 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   if (params.models) searchParams.set("models", params.models);
   // Always send timezone offset for correct date grouping
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
+  if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const queryString = searchParams.toString();
   const url = `/api/observability/metrics?${queryString}`;
@@ -406,18 +413,23 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   return response.data;
 }
 
-async function fetchSessions(params: FetchMetricsParams = {}): Promise<{ sessions: SessionListItem[]; total: number }> {
+async function fetchSessions(params: FetchMetricsParams = {}): Promise<{ sessions: SessionListItem[]; total: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
   searchParams.set("limit", "50");
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const response = await api.get(`/api/observability/sessions?${searchParams.toString()}`);
   return response.data;
 }
 
-async function fetchSessionDetail(sessionId: string): Promise<SessionDetailResponse> {
-  const response = await api.get<SessionDetailResponse>(`/api/observability/sessions/${encodeURIComponent(sessionId)}`);
+async function fetchSessionDetail(sessionId: string, params: FetchMetricsParams = {}): Promise<SessionDetailResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.from_date) searchParams.set("from_date", params.from_date);
+  if (params.to_date) searchParams.set("to_date", params.to_date);
+  const query = searchParams.toString();
+  const response = await api.get<SessionDetailResponse>(`/api/observability/sessions/${encodeURIComponent(sessionId)}${query ? `?${query}` : ''}`);
   return response.data;
 }
 
@@ -426,11 +438,12 @@ async function fetchTraceDetail(traceId: string): Promise<TraceDetailResponse> {
   return response.data;
 }
 
-async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: AgentListItem[]; total_count: number }> {
+async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: AgentListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
   if (params.search) searchParams.set("search", params.search);
+  if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const queryString = searchParams.toString();
   const url = queryString ? `/api/observability/agents?${queryString}` : "/api/observability/agents";
@@ -438,16 +451,21 @@ async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: A
   return response.data;
 }
 
-async function fetchAgentDetail(agentId: string): Promise<AgentDetailResponse> {
-  const tzOffset = getUserTimezoneOffset();
-  const response = await api.get<AgentDetailResponse>(`/api/observability/agents/${agentId}?tz_offset=${tzOffset}`);
+async function fetchAgentDetail(agentId: string, params: FetchMetricsParams = {}): Promise<AgentDetailResponse> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
+  if (params.from_date) searchParams.set("from_date", params.from_date);
+  if (params.to_date) searchParams.set("to_date", params.to_date);
+  if (params.fetch_all) searchParams.set("fetch_all", "true");
+  const response = await api.get<AgentDetailResponse>(`/api/observability/agents/${agentId}?${searchParams.toString()}`);
   return response.data;
 }
 
-async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ projects: ProjectListItem[]; total_count: number }> {
+async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ projects: ProjectListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const queryString = searchParams.toString();
   const url = queryString ? `/api/observability/projects?${queryString}` : "/api/observability/projects";
@@ -455,9 +473,13 @@ async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ project
   return response.data;
 }
 
-async function fetchProjectDetail(projectId: string): Promise<ProjectDetailResponse> {
-  const tzOffset = getUserTimezoneOffset();
-  const response = await api.get<ProjectDetailResponse>(`/api/observability/projects/${projectId}?tz_offset=${tzOffset}`);
+async function fetchProjectDetail(projectId: string, params: FetchMetricsParams = {}): Promise<ProjectDetailResponse> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
+  if (params.from_date) searchParams.set("from_date", params.from_date);
+  if (params.to_date) searchParams.set("to_date", params.to_date);
+  if (params.fetch_all) searchParams.set("fetch_all", "true");
+  const response = await api.get<ProjectDetailResponse>(`/api/observability/projects/${projectId}?${searchParams.toString()}`);
   return response.data;
 }
 
@@ -615,7 +637,7 @@ function ProgressBar({ value, max, color = THEME.primary, showLabel = true }: {
 
 // Recent Agent Activity Panel
 function RecentAgentActivityPanel({ agentsData }: {
-  agentsData: { agents: AgentListItem[]; total: number } | undefined;
+  agentsData: { agents: AgentListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number } | undefined;
 }) {
   const recentAgents = useMemo(() => {
     if (!agentsData?.agents) return [];
@@ -723,6 +745,39 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 // =============================================================================
+// Truncation Banner Component
+// =============================================================================
+
+function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
+  fetchedCount: number;
+  onLoadAll: () => void;
+  isLoading: boolean;
+}) {
+  return (
+    <Alert className="border-amber-200 bg-amber-50">
+      <AlertCircle className="h-4 w-4" style={{ color: THEME.warning }} />
+      <AlertTitle className="text-sm font-medium" style={{ color: THEME.textMain }}>
+        Showing data from {fetchedCount.toLocaleString()} traces (limit reached)
+      </AlertTitle>
+      <AlertDescription className="flex items-center justify-between">
+        <span className="text-sm" style={{ color: THEME.textSecondary }}>
+          There may be more traces. Narrow your date range for faster results, or load all data.
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onLoadAll}
+          disabled={isLoading}
+          className="ml-4 shrink-0 border-amber-300 hover:bg-amber-100"
+        >
+          {isLoading ? "Loading..." : "Load All Data"}
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+// =============================================================================
 // Main Component
 // =============================================================================
 
@@ -734,10 +789,11 @@ export default function ObservabilityPage(): JSX.Element {
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [expandedObservation, setExpandedObservation] = useState<string | null>(null);
+  const [fetchAllMode, setFetchAllMode] = useState(false);
 
   // Filter state
   const [filters, setFilters] = useState<Filters>({
-    dateRange: "30d",
+    dateRange: "today",
     search: "",
     models: [],
   });
@@ -751,7 +807,15 @@ export default function ObservabilityPage(): JSX.Element {
   const [usageSearch, setUsageSearch] = useState("");
 
   // Compute date params from filter
-  const dateParams = useMemo(() => getDateRangeParams(filters.dateRange), [filters.dateRange]);
+  const dateParams = useMemo(() => ({
+    ...getDateRangeParams(filters.dateRange),
+    ...(fetchAllMode ? { fetch_all: true } : {}),
+  }), [filters.dateRange, fetchAllMode]);
+
+  const handleDateRangeChange = useCallback((value: DateRangePreset) => {
+    setFetchAllMode(false);
+    setFilters(prev => ({ ...prev, dateRange: value }));
+  }, []);
 
   // Queries
   const { data: status, isLoading: statusLoading } = useQuery({
@@ -761,61 +825,70 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: metrics, isLoading: metricsLoading } = useQuery({
-    queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(",")],
+    queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(","), fetchAllMode],
     queryFn: () => fetchMetrics({
       ...dateParams,
       search: filters.search || undefined,
       models: filters.models.length > 0 ? filters.models.join(",") : undefined,
     }),
     enabled: status?.connected,
-    refetchInterval: 60000,
+    refetchInterval: activeTab === "overview" ? 60000 : false,
+    staleTime: 30000,
   });
 
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
-    queryKey: ["observability-sessions", filters.dateRange],
+    queryKey: ["observability-sessions", filters.dateRange, fetchAllMode],
     queryFn: () => fetchSessions(dateParams),
-    enabled: status?.connected,
-    refetchInterval: 60000,
+    enabled: status?.connected && (activeTab === "overview" || activeTab === "sessions"),
+    refetchInterval: activeTab === "sessions" ? 60000 : false,
+    staleTime: 30000,
   });
 
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
-    queryKey: ["observability-agents", filters.dateRange, filters.search],
+    queryKey: ["observability-agents", filters.dateRange, filters.search, fetchAllMode],
     queryFn: () => fetchAgents({
       ...dateParams,
       search: filters.search || undefined,
     }),
-    enabled: status?.connected,
-    refetchInterval: 60000,
+    enabled: status?.connected && (activeTab === "overview" || activeTab === "agents"),
+    refetchInterval: activeTab === "agents" ? 60000 : false,
+    staleTime: 30000,
   });
 
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
-    queryKey: ["observability-projects", filters.dateRange],
+    queryKey: ["observability-projects", filters.dateRange, fetchAllMode],
     queryFn: () => fetchProjects(dateParams),
-    enabled: status?.connected,
-    refetchInterval: 60000,
+    enabled: status?.connected && (activeTab === "projects"),
+    refetchInterval: activeTab === "projects" ? 60000 : false,
+    staleTime: 30000,
   });
 
-  const { data: sessionDetail } = useQuery({
-    queryKey: ["session-detail", selectedSession],
-    queryFn: () => fetchSessionDetail(selectedSession!),
+  const { data: sessionDetail, isLoading: sessionDetailLoading } = useQuery({
+    queryKey: ["session-detail", selectedSession, filters.dateRange],
+    queryFn: () => fetchSessionDetail(selectedSession!, dateParams),
     enabled: !!selectedSession,
   });
 
-  const { data: traceDetail } = useQuery({
+  const { data: traceDetail, isLoading: traceDetailLoading } = useQuery({
     queryKey: ["trace-detail", selectedTrace],
     queryFn: () => fetchTraceDetail(selectedTrace!),
     enabled: !!selectedTrace,
+    retry: (failureCount, error: any) => {
+      const status = error?.response?.status;
+      if (status === 404) return false;
+      return failureCount < 1;
+    },
   });
 
   const { data: agentDetail } = useQuery({
-    queryKey: ["agent-detail", selectedAgent],
-    queryFn: () => fetchAgentDetail(selectedAgent!),
+    queryKey: ["agent-detail", selectedAgent, filters.dateRange, fetchAllMode],
+    queryFn: () => fetchAgentDetail(selectedAgent!, dateParams),
     enabled: !!selectedAgent,
   });
 
   const { data: projectDetail } = useQuery({
-    queryKey: ["project-detail", selectedProject],
-    queryFn: () => fetchProjectDetail(selectedProject!),
+    queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode],
+    queryFn: () => fetchProjectDetail(selectedProject!, dateParams),
     enabled: !!selectedProject,
   });
 
@@ -918,7 +991,7 @@ export default function ObservabilityPage(): JSX.Element {
       {/* Header */}
       <div className="border-b bg-white px-8 py-6 shadow-sm">
         <div className="flex items-center gap-3">
-          
+          <BarChart3 className="h-7 w-7" style={{ color: THEME.primary }} />
           <div>
             <h1 className="text-2xl font-semibold" style={{ color: THEME.textMain }}>
               Observability
@@ -939,7 +1012,7 @@ export default function ObservabilityPage(): JSX.Element {
             <Calendar className="h-4 w-4" style={{ color: THEME.textSecondary }} />
             <Select
               value={filters.dateRange}
-              onValueChange={(value: DateRangePreset) => setFilters(prev => ({ ...prev, dateRange: value }))}
+              onValueChange={(value: DateRangePreset) => handleDateRangeChange(value)}
             >
               <SelectTrigger className="w-[140px] h-9 bg-gray-50 border-gray-200">
                 <SelectValue />
@@ -1004,13 +1077,14 @@ export default function ObservabilityPage(): JSX.Element {
           )}
 
           {/* Clear Filters */}
-          {(filters.search || filters.models.length > 0 || filters.dateRange !== "30d") && (
+          {(filters.search || filters.models.length > 0 || filters.dateRange !== "today") && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => {
-                setFilters({ dateRange: "30d", search: "", models: [] });
+                setFilters({ dateRange: "today", search: "", models: [] });
                 setSearchInput("");
+                setFetchAllMode(false);
               }}
               className="h-9"
               style={{ color: THEME.textSecondary }}
@@ -1064,6 +1138,13 @@ export default function ObservabilityPage(): JSX.Element {
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
+            {metrics?.truncated && !fetchAllMode && (
+              <TruncationBanner
+                fetchedCount={metrics.fetched_trace_count ?? 0}
+                onLoadAll={() => setFetchAllMode(true)}
+                isLoading={metricsLoading}
+              />
+            )}
             {metricsLoading ? (
               <div className="grid gap-4 md:grid-cols-4">
                 {[1, 2, 3, 4].map((i) => (
@@ -1442,6 +1523,13 @@ export default function ObservabilityPage(): JSX.Element {
 
           {/* Agents Tab */}
           <TabsContent value="agents" className="space-y-4">
+            {agentsData?.truncated && !fetchAllMode && (
+              <TruncationBanner
+                fetchedCount={agentsData.fetched_trace_count ?? 0}
+                onLoadAll={() => setFetchAllMode(true)}
+                isLoading={agentsLoading}
+              />
+            )}
             {agentsLoading ? (
               <Skeleton className="h-64" />
             ) : (
@@ -1539,6 +1627,13 @@ export default function ObservabilityPage(): JSX.Element {
 
           {/* Projects Tab */}
           <TabsContent value="projects" className="space-y-4">
+            {projectsData?.truncated && !fetchAllMode && (
+              <TruncationBanner
+                fetchedCount={projectsData.fetched_trace_count ?? 0}
+                onLoadAll={() => setFetchAllMode(true)}
+                isLoading={projectsLoading}
+              />
+            )}
             {projectsLoading ? (
               <Skeleton className="h-64" />
             ) : (
@@ -1624,6 +1719,13 @@ export default function ObservabilityPage(): JSX.Element {
 
           {/* Sessions Tab */}
           <TabsContent value="sessions" className="space-y-4">
+            {sessionsData?.truncated && !fetchAllMode && (
+              <TruncationBanner
+                fetchedCount={sessionsData.fetched_trace_count ?? 0}
+                onLoadAll={() => setFetchAllMode(true)}
+                isLoading={sessionsLoading}
+              />
+            )}
             {sessionsLoading ? (
               <Skeleton className="h-64" />
             ) : (
@@ -1797,7 +1899,7 @@ export default function ObservabilityPage(): JSX.Element {
                   </CardContent>
                 </Card>
 
-                {/* Top Agents - Horizontal Bar Chart */}
+                {/* Top agents - Horizontal Bar Chart */}
                 {metrics?.top_agents && metrics.top_agents.length > 0 && (
                   <Card className="border-0 shadow-sm">
                     <CardHeader>
@@ -2052,7 +2154,15 @@ export default function ObservabilityPage(): JSX.Element {
               {selectedSession}
             </DialogDescription>
           </DialogHeader>
-          {sessionDetail && (
+          {sessionDetailLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div
+                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                style={{ borderTopColor: THEME.primary }}
+              />
+              <p className="text-sm" style={{ color: THEME.textSecondary }}>Loading session details…</p>
+            </div>
+          ) : sessionDetail ? (
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 {[
@@ -2096,7 +2206,7 @@ export default function ObservabilityPage(): JSX.Element {
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -2112,7 +2222,15 @@ export default function ObservabilityPage(): JSX.Element {
               {traceDetail?.name || selectedTrace}
             </DialogDescription>
           </DialogHeader>
-          {traceDetail && (
+          {traceDetailLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div
+                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                style={{ borderTopColor: THEME.primary }}
+              />
+              <p className="text-sm" style={{ color: THEME.textSecondary }}>Loading trace details…</p>
+            </div>
+          ) : traceDetail ? (
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 {[
@@ -2132,9 +2250,48 @@ export default function ObservabilityPage(): JSX.Element {
               </div>
 
               <div>
+                <h4 className="font-medium mb-3" style={{ color: THEME.textMain }}>Evaluation Scores</h4>
+                {!traceDetail.scores || traceDetail.scores.length === 0 ? (
+                  <div className="text-sm bg-gray-50 rounded-lg p-4" style={{ color: THEME.textSecondary }}>
+                    No evaluation scores found for this trace.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {traceDetail.scores.map((score) => (
+                      <div key={score.id} className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+                        <div className="flex justify-between items-center gap-4">
+                          <div className="min-w-0">
+                            <p className="font-medium truncate" style={{ color: THEME.textMain }}>{score.name}</p>
+                            <p className="text-xs" style={{ color: THEME.textSecondary }}>
+                              {score.source || "evaluator"}{score.created_at ? ` | ${formatDate(score.created_at)}` : ""}
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="font-semibold">
+                            {Number.isFinite(score.value) ? score.value.toFixed(3) : score.value}
+                          </Badge>
+                        </div>
+                        {score.comment && (
+                          <p className="text-sm mt-2 whitespace-pre-wrap" style={{ color: THEME.textSecondary }}>
+                            {score.comment}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
                 <h4 className="font-medium mb-3" style={{ color: THEME.textMain }}>Observations Timeline</h4>
-                <div className="space-y-2">
-                  {traceDetail.observations.map((obs) => (
+                {traceDetail.observations.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 bg-gray-50 rounded-lg gap-2">
+                    <Layers className="h-8 w-8 text-gray-300" />
+                    <p className="text-sm" style={{ color: THEME.textSecondary }}>No observations found for this trace.</p>
+                    <p className="text-xs" style={{ color: THEME.textSecondary }}>The trace may still be processing, or observations were not recorded.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {traceDetail.observations.map((obs) => (
                     <div
                       key={obs.id}
                       className={`p-4 rounded-lg border cursor-pointer transition-colors ${
@@ -2188,11 +2345,12 @@ export default function ObservabilityPage(): JSX.Element {
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 

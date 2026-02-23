@@ -8,7 +8,7 @@ from uuid import UUID
 
 from cryptography.fernet import Fernet
 from fastapi import Depends, HTTPException, Security, WebSocketException, status, Request
-from fastapi.security import APIKeyHeader, APIKeyQuery, OAuth2PasswordBearer
+from fastapi.security import APIKeyHeader, APIKeyQuery,HTTPBearer, OAuth2PasswordBearer
 from jose import JWTError, jwt
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
@@ -23,12 +23,13 @@ from agentcore.services.database.models.user.crud import (
 from agentcore.services.database.models.user.model import User, UserRead
 from agentcore.services.deps import get_db_service, get_session, get_settings_service
 from agentcore.services.settings.service import SettingsService
-from agentcore.services.auth.permissions import ROLE_PERMISSIONS
+from agentcore.services.auth.permissions import get_permissions_for_role
 
 # API key to Azure Key Vault
 
 oauth2_login = OAuth2PasswordBearer(tokenUrl="api/login", auto_error=False)
-
+# HTTPBearer scheme — allows pasting a raw access token in Swagger's Authorize dialog
+http_bearer = HTTPBearer(auto_error=False, description="Paste your access_token_lf value here")
 API_KEY_NAME = "x-api-key"
 
 api_key_query = APIKeyQuery(name=API_KEY_NAME, scheme_name="API key query", auto_error=False)
@@ -38,7 +39,7 @@ MINIMUM_KEY_LENGTH = 32
 
 def require_permission(action: str):
     async def permission_dependency(current_user: User = Depends(get_current_active_user)):
-        allowed_actions = ROLE_PERMISSIONS.get(current_user.role, [])
+        allowed_actions = await get_permissions_for_role(current_user.role)
         if action not in allowed_actions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -71,23 +72,30 @@ async def ws_api_key_security(
 
 async def get_current_user(
     token: Annotated[str, Security(oauth2_login)],
+    bearer: Annotated[object | None, Security(http_bearer)],
     query_param: Annotated[str, Security(api_key_query)],
     header_param: Annotated[str, Security(api_key_header)],
     db: Annotated[AsyncSession, Depends(get_session)],
     request: Request,
 ) -> User:
+     # 1. Try OAuth2 password-flow token (from Swagger login or cookie)
     if token:
         return await get_current_user_by_jwt(token, db)
-    cookie_token = request.cookies.get("access_token_lf")
-    if cookie_token:
-        return await get_current_user_by_jwt(cookie_token, db)
-    user = await api_key_security(query_param, header_param)
-    if user:
-        return user
+
+    # 2. Try HTTPBearer token (pasted in Swagger Authorize → Bearer)
+    if bearer and hasattr(bearer, "credentials") and bearer.credentials:
+        return await get_current_user_by_jwt(bearer.credentials, db)
+
+    # 3. Try API key (currently disabled)
+    if query_param or header_param:
+        user = await api_key_security(query_param, header_param)
+        if user:
+            return user
 
     raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Invalid or missing API key",
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 

@@ -1,7 +1,6 @@
 import { memo } from "react";
 
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
-import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import {
   Disclosure,
@@ -32,6 +31,9 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
   filterName,
   filterDescription,
   resetFilters,
+  customComponent,
+  addComponent,
+  isLoading = false,
 }: SidebarHeaderComponentProps) {
   const { t } = useTranslation();
   return (
@@ -67,6 +69,20 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
         handleInputBlur={handleInputBlur}
         handleInputChange={handleInputChange}
       />
+      <Button
+        unstyled
+        disabled={isLoading}
+        onClick={() => {
+          if (customComponent && addComponent) {
+            addComponent(customComponent, "CustomComponent");
+          }
+        }}
+        data-testid="sidebar-custom-component-button"
+        className="mx-2 mb-1 flex h-9 w-auto items-center justify-center gap-2 rounded-md border border-input bg-background px-3 hover:bg-muted"
+      >
+        <ForwardedIconComponent name="Plus" className="h-4 w-4 text-muted-foreground" />
+        <span>{t("Create Custom")}</span>
+      </Button>
       {filterName !== "" && filterDescription !== "" && (
         <SidebarFilterComponent
           name={filterName}

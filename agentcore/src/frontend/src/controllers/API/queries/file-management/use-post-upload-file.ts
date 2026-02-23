@@ -7,6 +7,7 @@ import { UseRequestProcessor } from "../../services/request-processor";
 
 interface IPostUploadFile {
   file: File;
+  knowledgeBaseName?: string;
 }
 
 export const usePostUploadFileV2: useMutationFunctionType<
@@ -18,6 +19,9 @@ export const usePostUploadFileV2: useMutationFunctionType<
   const postUploadFileFn = async (payload: IPostUploadFile): Promise<any> => {
     const formData = new FormData();
     formData.append("file", payload.file);
+    if (payload.knowledgeBaseName) {
+      formData.append("knowledge_base_name", payload.knowledgeBaseName);
+    }
     const data = new Date().toISOString().split("Z")[0];
 
     const newFile = {

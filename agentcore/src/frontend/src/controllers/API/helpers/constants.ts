@@ -30,7 +30,12 @@ export const URLs = {
   MCP_SERVERS: `mcp/servers`,
   KNOWLEDGE_BASES: `knowledge_bases`,
   MODELS: `models`,
+  REGISTRY: `registry`,
+  VECTOR_DB_CATALOGUE: `vector-db-catalogue`,
+  GUARDRAILS_CATALOGUE: `guardrails-catalogue`,
+  TIMEOUT_SETTINGS: `timeout-settings`,
   APPROVALS: `approvals`,
+  CONTROL_PANEL: `control-panel`,
   PUBLISH: `publish`,
   ROLES: `roles`,
 } as const;

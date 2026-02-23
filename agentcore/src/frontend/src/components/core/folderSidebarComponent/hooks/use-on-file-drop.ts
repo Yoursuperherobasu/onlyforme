@@ -105,10 +105,10 @@ const useFileDrop = (folderId: string) => {
     if (!selectedAgent) {
       throw new Error("agent not found");
     }
-    const updatedAgent = { ...selectedAgent, folder_id: folderId };
+    const updatedAgent = { ...selectedAgent, project_id: folderId };
 
     const agentsToCheckNames = agents?.filter(
-      (f) => f.folder_id === myCollectionId,
+      (f) => f.project_id === myCollectionId,
     );
 
     const newName = addVersionToDuplicates(

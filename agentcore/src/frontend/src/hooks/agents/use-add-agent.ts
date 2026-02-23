@@ -67,14 +67,14 @@ const useAddAgent = () => {
         }
       }
 
-      const folder_id = folderId ?? myCollectionId ?? "";
+      const project_id = folderId ?? myCollectionId ?? "";
       const agentsToCheckNames = agents?.filter(
-        (f) => f.folder_id === myCollectionId,
+        (f) => f.project_id === myCollectionId,
       );
-      const newAgent = createNewAgent(agentData!, folder_id, agent);
+      const newAgent = createNewAgent(agentData!, project_id, agent);
       const newName = addVersionToDuplicates(newAgent, agentsToCheckNames ?? []);
       newAgent.name = newName;
-      newAgent.folder_id = folder_id;
+      newAgent.project_id = project_id;
 
       postAddAgent(newAgent, {
         onSuccess: (createdAgent) => {

@@ -321,7 +321,7 @@ export default function AdminPage() {
                       <TableHead className="h-10 w-[100px] text-right"></TableHead>
                     </TableRow>
                   </TableHeader>
-                  {!isPending && can("manage_users") && (
+                  {!isPending && can("view_admin_page") && (
                     
                     <TableBody>
                       {filterUserList.map((user: UserInputType, index) => (

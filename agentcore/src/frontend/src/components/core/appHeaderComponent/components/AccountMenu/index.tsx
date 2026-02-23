@@ -86,7 +86,7 @@ export const AccountMenu = () => {
                 </HeaderMenuItemButton>
               </div>
             )}
-            {can("manage_roles") && (
+            {role === "root" && (
               <div>
                 <HeaderMenuItemButton
                   onClick={() => {

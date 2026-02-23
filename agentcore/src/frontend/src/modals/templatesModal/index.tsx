@@ -18,8 +18,12 @@ export default function TemplatesModal({
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
 
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canCreateAgent =
+    can("edit_agents") ||
+    can("view_projects_page") ||
+    can("view_project_page");
 
   return (
     <BaseModal size="templates" open={open} setOpen={setOpen} className="p-0">
@@ -45,7 +49,7 @@ export default function TemplatesModal({
                     Begin with a fresh agent to build from scratch.
                   </div>
                 </div>
-                 {can("edit_agents") && (
+                 {canCreateAgent && (
                 <Button
                   onClick={() => {
                     addAgent().then((id) => {

@@ -17,9 +17,12 @@ import { useDeleteFilesV2 } from "@/controllers/API/queries/file-management/use-
 import { usePostRenameFileV2 } from "@/controllers/API/queries/file-management/use-put-rename-file";
 import { useCustomHandleBulkFilesDownload } from "@/customization/hooks/use-custom-handle-bulk-files-download";
 import { customPostUploadFileV2 } from "@/customization/hooks/use-custom-post-upload-file";
+import { createFileUpload } from "@/helpers/create-file-upload";
 import useUploadFile from "@/hooks/files/use-upload-file";
+import BaseModal from "@/modals/baseModal";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import FilesContextMenuComponent from "@/modals/fileManagerModal/components/filesContextMenuComponent";
+import useFileSizeValidator from "@/shared/hooks/use-file-size-validator";
 import useAlertStore from "@/stores/alertStore";
 import { formatFileSize } from "@/utils/stringManipulation";
 import { FILE_ICONS } from "@/utils/styleUtils";
@@ -46,17 +49,41 @@ const FilesTab = ({
   setQuantitySelected,
   isShiftPressed,
 }: FilesTabProps) => {
+  type DisplayRow = {
+    id: string;
+    name: string;
+    path: string;
+    size: number;
+    updated_at?: string;
+    created_at?: string;
+    progress?: number;
+    file?: File;
+    rowType: "folder" | "file";
+    folderName: string;
+    fileCount?: number;
+  };
+
   const tableRef = useRef<AgGridReact<any>>(null);
   const { data: files } = useGetFilesV2();
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [knowledgeBaseName, setKnowledgeBaseName] = useState("");
+  const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>(
+    {},
+  );
+  const { validateFileSize } = useFileSizeValidator();
 
   const { mutate: rename } = usePostRenameFileV2();
   const { mutate: deleteFiles, isPending: isDeleting } = useDeleteFilesV2();
   const { handleBulkDownload } = useCustomHandleBulkFilesDownload();
 
   const handleRename = (params: NewValueParams<any, any>) => {
+    if (typeof params.data?.id === "string" && params.data.id.startsWith("folder:")) {
+      return;
+    }
     rename({
       id: params.data.id,
       name: params.newValue,
@@ -65,19 +92,23 @@ const FilesTab = ({
 
   const handleOpenRename = (id: string, name: string) => {
     if (tableRef.current) {
-      tableRef.current.api.startEditingCell({
-        rowIndex: files?.findIndex((file) => file.id === id) ?? 0,
-        colKey: "name",
+      let targetRowIndex = 0;
+      tableRef.current.api.forEachNode((node) => {
+        if (node.data?.id === id && node.rowIndex !== null) {
+          targetRowIndex = node.rowIndex;
+        }
       });
+      tableRef.current.api.startEditingCell({ rowIndex: targetRowIndex, colKey: "name" });
     }
   };
 
   const uploadFile = useUploadFile({ multiple: true });
 
-  const handleUpload = async (files?: File[]) => {
+  const handleUpload = async (files?: File[], kbName?: string) => {
     try {
       const filesIds = await uploadFile({
         files: files,
+        knowledgeBaseName: kbName,
       });
       setSuccessData({
         title: `File${filesIds.length > 1 ? "s" : ""} uploaded successfully`,
@@ -92,6 +123,84 @@ const FilesTab = ({
 
   const { mutate: uploadFileDirect } = customPostUploadFileV2();
 
+  const getKnowledgeBaseNameFromPath = (path: string) => {
+    const normalizedPath = path.replace(/\\/g, "/");
+    const segments = normalizedPath.split("/").filter(Boolean);
+    return segments.length >= 3 ? segments[1] : "Ungrouped";
+  };
+
+  const displayRows: DisplayRow[] = useMemo(() => {
+    if (!files || !Array.isArray(files)) {
+      return [];
+    }
+
+    const groups = new Map<string, DisplayRow[]>();
+    files.forEach((file) => {
+      const folderName = getKnowledgeBaseNameFromPath(file.path);
+      const fileRow: DisplayRow = {
+        ...file,
+        rowType: "file",
+        folderName,
+      };
+      const existing = groups.get(folderName) ?? [];
+      existing.push(fileRow);
+      groups.set(folderName, existing);
+    });
+
+    const folderNames = Array.from(groups.keys()).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    const rows: DisplayRow[] = [];
+
+    folderNames.forEach((folderName) => {
+      const groupFiles = groups.get(folderName) ?? [];
+      const totalSize = groupFiles.reduce((acc, row) => acc + (row.size ?? 0), 0);
+      const latestUpdatedAt = groupFiles
+        .map((row) => row.updated_at ?? row.created_at)
+        .filter(Boolean)
+        .sort()
+        .at(-1);
+
+      rows.push({
+        id: `folder:${folderName}`,
+        name: folderName,
+        path: "",
+        size: totalSize,
+        updated_at: latestUpdatedAt,
+        rowType: "folder",
+        folderName,
+        fileCount: groupFiles.length,
+      });
+
+      if (expandedFolders[folderName] !== false) {
+        groupFiles
+          .sort((a, b) =>
+            sortByDate(
+              a.updated_at ?? a.created_at ?? "",
+              b.updated_at ?? b.created_at ?? "",
+            ),
+          )
+          .forEach((fileRow) => rows.push(fileRow));
+      }
+    });
+
+    return rows;
+  }, [files, expandedFolders]);
+
+  useEffect(() => {
+    if (!files || !Array.isArray(files)) return;
+    const folderNames = new Set(files.map((file) => getKnowledgeBaseNameFromPath(file.path)));
+    setExpandedFolders((prev) => {
+      const next = { ...prev };
+      folderNames.forEach((folderName) => {
+        if (next[folderName] === undefined) {
+          next[folderName] = true;
+        }
+      });
+      return next;
+    });
+  }, [files]);
+
   useEffect(() => {
     if (files) {
       setQuantitySelected(0);
@@ -99,8 +208,17 @@ const FilesTab = ({
     }
   }, [files, setQuantitySelected, setSelectedFiles]);
 
-  const handleSelectionChanged = (event: SelectionChangedEvent) => {
-    const selectedRows = event.api.getSelectedRows();
+  useEffect(() => {
+    if (!isUploadModalOpen) {
+      setPendingUploadFiles([]);
+      setKnowledgeBaseName("");
+    }
+  }, [isUploadModalOpen]);
+
+  const handleSelectionChanged = (event: SelectionChangedEvent<any>) => {
+    const selectedRows = event.api
+      .getSelectedRows()
+      .filter((row: DisplayRow) => row.rowType === "file");
     setSelectedFiles(selectedRows);
     if (selectedRows.length > 0) {
       setQuantitySelected(selectedRows.length);
@@ -117,15 +235,41 @@ const FilesTab = ({
       field: "name",
       flex: 2,
       headerCheckboxSelection: true,
-      checkboxSelection: true,
+      checkboxSelection: (params) => params.data?.rowType === "file",
       editable: true,
       filter: "agTextColumnFilter",
       cellClass:
         "cursor-text select-text group-[.no-select-cells]:cursor-default group-[.no-select-cells]:select-none",
       cellRenderer: (params) => {
-        const type = params.data.path.split(".")[1]?.toLowerCase();
+        if (params.data.rowType === "folder") {
+          const isExpanded = expandedFolders[params.data.folderName] !== false;
+          return (
+            <button
+              className="flex items-center gap-2 font-semibold"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpandedFolders((prev) => ({
+                  ...prev,
+                  [params.data.folderName]: !isExpanded,
+                }));
+              }}
+            >
+              <ForwardedIconComponent
+                name={isExpanded ? "ChevronDown" : "ChevronRight"}
+                className="h-4 w-4"
+              />
+              <ForwardedIconComponent name="Folder" className="h-4 w-4" />
+              <span>{params.value}</span>
+              <span className="text-xs text-muted-foreground">
+                ({params.data.fileCount} files)
+              </span>
+            </button>
+          );
+        }
+
+        const type = params.data.path.split(".").pop()?.toLowerCase() ?? "";
         return (
-          <div className="flex items-center gap-4 font-medium">
+          <div className="flex items-center gap-4 pl-8 font-medium">
             {params.data.progress !== undefined &&
             params.data.progress !== -1 ? (
               <div className="flex h-6 items-center justify-center text-xs font-semibold text-muted-foreground">
@@ -152,7 +296,8 @@ const FilesTab = ({
                   "pointer-events-none text-placeholder-foreground",
               )}
             >
-              {params.value}.{type}
+              {params.value}
+              {type ? `.${type}` : ""}
             </div>
             {params.data.progress !== undefined &&
             params.data.progress === -1 ? (
@@ -184,7 +329,10 @@ const FilesTab = ({
       filter: "agTextColumnFilter",
       editable: false,
       valueFormatter: (params) => {
-        return params.value.split(".")[1]?.toUpperCase();
+        if (params.data?.rowType === "folder") {
+          return "";
+        }
+        return params.value.split(".").pop()?.toUpperCase();
       },
       cellClass:
         "text-muted-foreground cursor-text select-text group-[.no-select-cells]:cursor-default group-[.no-select-cells]:select-none",
@@ -204,6 +352,9 @@ const FilesTab = ({
       headerName: "Modified",
       field: "updated_at",
       valueFormatter: (params) => {
+        if (params.data?.rowType === "folder") {
+          return "";
+        }
         return params.data.progress
           ? ""
           : new Date(params.value + "Z").toLocaleString();
@@ -220,6 +371,9 @@ const FilesTab = ({
       resizable: false,
       cellClass: "cursor-default",
       cellRenderer: (params) => {
+        if (params.data?.rowType === "folder") {
+          return <></>;
+        }
         return (
           <div className="flex h-full cursor-default items-center justify-center">
             {!params.data.progress && (
@@ -239,7 +393,7 @@ const FilesTab = ({
   ];
 
   const onFileDrop = async (e: React.DragEvent) => {
-    e.preventDefault;
+    e.preventDefault();
     e.stopPropagation();
     const droppedFiles = Array.from(e.dataTransfer.files);
     if (droppedFiles.length > 0) {
@@ -279,13 +433,13 @@ const FilesTab = ({
     );
   };
 
-  const UploadButtonComponent = useMemo(() => {
-    return (
+  const UploadButtonComponent = useMemo(
+    () => (
       <ShadTooltip content="Upload File" side="bottom">
         <Button
           className="!px-3 md:!px-4 md:!pl-3.5"
-          onClick={async () => {
-            await handleUpload();
+          onClick={() => {
+            setIsUploadModalOpen(true);
           }}
           id="upload-file-btn"
           data-testid="upload-file-btn"
@@ -300,11 +454,120 @@ const FilesTab = ({
           </span>
         </Button>
       </ShadTooltip>
-    );
-  }, []);
+    ),
+    [],
+  );
 
   return (
     <div className="flex h-full flex-col">
+      <BaseModal
+        size="small"
+        open={isUploadModalOpen}
+        setOpen={setIsUploadModalOpen}
+      >
+        <BaseModal.Header description="Enter a knowledge base name before selecting files.">
+          Upload Files
+        </BaseModal.Header>
+        <BaseModal.Content>
+          <div className="flex flex-col gap-3">
+            <Input
+              placeholder="Knowledge base name"
+              value={knowledgeBaseName}
+              onChange={(event) => {
+                setKnowledgeBaseName(event.target.value);
+              }}
+              data-testid="knowledge-base-name-upload-input"
+            />
+            <div className="text-sm text-muted-foreground">
+              {pendingUploadFiles.length > 0
+                ? `${pendingUploadFiles.length} file(s) selected`
+                : "No files selected yet"}
+            </div>
+            {pendingUploadFiles.length > 0 && (
+              <div className="max-h-48 overflow-auto rounded-md border p-2">
+                <div className="flex flex-col gap-1.5">
+                  {pendingUploadFiles.map((file) => {
+                    const fileType = file.name.split(".").pop()?.toLowerCase() ?? "";
+                    const fileIcon = FILE_ICONS[fileType]?.icon ?? "File";
+                    const fileIconColor = FILE_ICONS[fileType]?.color ?? "text-muted-foreground";
+
+                    return (
+                      <div
+                        key={`${file.name}-${file.size}`}
+                        className="flex items-center justify-between rounded-md border bg-muted/30 px-2 py-1.5"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <ForwardedIconComponent
+                            name={fileIcon}
+                            className={cn("h-4 w-4 shrink-0", fileIconColor)}
+                          />
+                          <span className="truncate text-sm">{file.name}</span>
+                        </div>
+                        <div className="ml-2 flex shrink-0 items-center gap-2">
+                          <span className="rounded bg-background px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground ring-1 ring-border">
+                            {fileType || "file"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatFileSize(file.size)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </BaseModal.Content>
+        <BaseModal.Footer
+          submit={{
+            label: "Upload Knowledge Base",
+            dataTestId: "upload-files-with-kb-button",
+            disabled:
+              pendingUploadFiles.length === 0 || !knowledgeBaseName.trim(),
+            onClick: async () => {
+              const kbName = knowledgeBaseName.trim();
+              if (!kbName) {
+                setErrorData({
+                  title: "Knowledge base name is required",
+                });
+                return;
+              }
+              await handleUpload(pendingUploadFiles, kbName);
+              setIsUploadModalOpen(false);
+              setKnowledgeBaseName("");
+              setPendingUploadFiles([]);
+            },
+          }}
+        >
+          <Button
+            variant="outline"
+            type="button"
+            onClick={async () => {
+              try {
+                const selected = await createFileUpload({
+                  multiple: true,
+                  accept: "",
+                });
+                const validFiles: File[] = [];
+                for (const file of selected) {
+                  validateFileSize(file);
+                  validFiles.push(file);
+                }
+                setPendingUploadFiles(validFiles);
+              } catch (error: any) {
+                setErrorData({
+                  title: "Error selecting files",
+                  list: [error.message || "Could not select files"],
+                });
+              }
+            }}
+          >
+            Choose Files
+          </Button>
+        </BaseModal.Footer>
+      </BaseModal>
+
       {files && files.length !== 0 ? (
         <div className="flex justify-between">
           <div className="flex w-full xl:w-5/12">
@@ -352,12 +615,7 @@ const FilesTab = ({
                 rowSelection="multiple"
                 onSelectionChanged={handleSelectionChanged}
                 columnDefs={colDefs}
-                rowData={files.sort((a, b) => {
-                  return sortByDate(
-                    a.updated_at ?? a.created_at,
-                    b.updated_at ?? b.created_at,
-                  );
-                })}
+                rowData={displayRows}
                 className={cn(
                   "ag-no-border group w-full",
                   isShiftPressed && quantitySelected > 0 && "no-select-cells",

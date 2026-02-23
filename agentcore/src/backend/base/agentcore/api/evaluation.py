@@ -13,14 +13,16 @@ import json
 import asyncio
 import time
 import re
-from threading import Lock
+import csv
+import io
+from threading import Lock, Thread
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any, List, Optional, Dict, Union
 from collections import defaultdict
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, UploadFile, File
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlmodel import select
@@ -57,6 +59,14 @@ router = APIRouter(prefix="/evaluation", tags=["Evaluation"])
 _LITELLM_STD_LOGGING_PATCHED = False
 _DATASET_EXPERIMENT_JOBS: dict[str, dict[str, Any]] = {}
 _DATASET_EXPERIMENT_JOBS_LOCK = Lock()
+_SCORE_LIST_CACHE: dict[str, dict[str, Any]] = {}
+_SCORE_LIST_CACHE_STALE_SECONDS = 90.0
+# Pending-reviews response cache (per user_id)
+_PENDING_REVIEWS_CACHE: dict[str, dict[str, Any]] = {}
+_PENDING_REVIEWS_CACHE_TTL_SECONDS = 30.0
+# Dataset list response cache (per user_id)
+_DATASETS_LIST_CACHE: dict[str, dict[str, Any]] = {}
+_DATASETS_LIST_CACHE_TTL_SECONDS = 60.0
 
 # Persistent evaluator configs stored in the database (see Evaluator model)
 from agentcore.services.database.models.evaluator.model import Evaluator  # noqa: E402
@@ -88,14 +98,6 @@ class CreateScoreRequest(BaseModel):
     value: float = Field(..., ge=0.0, le=1.0, description="Score between 0 and 1")
     comment: str | None = None
     observation_id: str | None = None
-
-
-class JudgeRequest(BaseModel):
-    """Request to run an LLM judge on a trace."""
-    trace_id: str
-    criteria: str = Field(..., description="The evaluation criteria (e.g., 'Is the answer helpful?')")
-    model: str = "gpt-4o"
-    name: str | None = None  # Defaults to criteria if not provided
 
 
 class JudgeConfig(BaseModel):
@@ -159,23 +161,6 @@ class EvaluatorResponse(BaseModel):
     created_at: Optional[str] = None
 
 
-class AnalyticsMetric(BaseModel):
-    """Aggregated stats for a specific score name."""
-    name: str
-    count: int
-    average: float
-    min: float
-    max: float
-    p50: float | None = None
-    p90: float | None = None
-
-
-class EvaluationAnalyticsResponse(BaseModel):
-    """Analytics response for the dashboard."""
-    total_scores: int
-    by_name: List[AnalyticsMetric]
-
-
 class TraceForReview(BaseModel):
     """Trace info for annotation queue."""
     id: str
@@ -232,6 +217,22 @@ class CreateDatasetItemRequest(BaseModel):
     use_trace_output_as_expected: bool = True
 
 
+class DatasetCsvImportError(BaseModel):
+    """CSV import error for one row."""
+    row: int
+    message: str
+
+
+class DatasetCsvImportResponse(BaseModel):
+    """CSV import summary for dataset items."""
+    dataset_name: str
+    total_rows: int
+    created_count: int
+    failed_count: int
+    skipped_count: int = 0
+    errors: list[DatasetCsvImportError] = Field(default_factory=list)
+
+
 class DatasetRunResponse(BaseModel):
     """Represents a dataset experiment run."""
     id: str
@@ -279,14 +280,19 @@ class DatasetRunDetailResponse(BaseModel):
 class RunDatasetExperimentRequest(BaseModel):
     """Request to run a Langfuse dataset experiment."""
     experiment_name: str = Field(..., min_length=1, max_length=200)
-    run_name: str | None = None
     description: str | None = None
     agent_id: str | None = None
+    generation_model: str | None = None
+    generation_model_api_key: str | None = None
     evaluator_config_id: str | None = None
+    preset_id: str | None = None
+    evaluator_name: str | None = None
     criteria: str | None = None
+    judge_model: str | None = None
+    judge_model_api_key: str | None = None
+    # Deprecated compatibility aliases
     model: str | None = None
     model_api_key: str | None = None
-    max_concurrency: int = Field(default=10, ge=1, le=50)
 
 
 class DatasetExperimentEnqueueResponse(BaseModel):
@@ -294,7 +300,6 @@ class DatasetExperimentEnqueueResponse(BaseModel):
     job_id: str
     dataset_name: str
     experiment_name: str
-    run_name: str | None = None
     status: str
 
 
@@ -304,7 +309,6 @@ class DatasetExperimentJobResponse(BaseModel):
     status: str
     dataset_name: str
     experiment_name: str
-    run_name: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
@@ -395,15 +399,39 @@ def _ensure_litellm_logging_compatibility_patch() -> None:
 
 def parse_trace_data(trace) -> Dict[str, Any]:
     """Extract and normalize trace data."""
+    metadata = get_attr(trace, 'metadata', 'meta')
+    if isinstance(metadata, str):
+        try:
+            parsed = json.loads(metadata)
+            metadata = parsed if isinstance(parsed, dict) else metadata
+        except Exception:
+            pass
+
+    top_level_user_id = get_attr(trace, 'user_id', 'userId', 'sender', 'user')
+    metadata_user_id = None
+    if isinstance(metadata, dict):
+        metadata_user_id = (
+            metadata.get("user_id")
+            or metadata.get("userId")
+            or metadata.get("app_user_id")
+            or metadata.get("created_by_user_id")
+            or metadata.get("owner_user_id")
+        )
+
+    top_level_session_id = get_attr(trace, 'session_id', 'sessionId')
+    metadata_session_id = None
+    if isinstance(metadata, dict):
+        metadata_session_id = metadata.get("session_id") or metadata.get("sessionId")
+
     return {
         "id": get_attr(trace, 'id', 'trace_id', 'traceId'),
         "name": get_attr(trace, 'name', 'display_name', 'trace_name'),
         "timestamp": get_attr(trace, 'timestamp', 'createdAt', 'created_at'),
         "input": get_attr(trace, 'input', 'inputs', 'input_data', 'generation', 'query'),
         "output": get_attr(trace, 'output', 'outputs', 'generation', 'text_output', 'response'),
-        "session_id": get_attr(trace, 'session_id', 'sessionId'),
-        "user_id": get_attr(trace, 'user_id', 'userId', 'sender', 'user'),
-        "metadata": get_attr(trace, 'metadata', 'meta'),
+        "session_id": top_level_session_id or metadata_session_id,
+        "user_id": top_level_user_id or metadata_user_id,
+        "metadata": metadata,
         "tags": get_attr(trace, 'tags', 'labels'),
     }
 
@@ -479,6 +507,22 @@ def _dataset_owned_by_user(dataset_obj: Any, user_id: str) -> bool:
     return str(owner) == str(user_id)
 
 
+def _dataset_item_owned_by_user(item_obj: Any, user_id: str) -> bool:
+    """Best-effort user scoping for dataset items via metadata."""
+    metadata = get_attr(item_obj, "metadata", default=None)
+    if not isinstance(metadata, dict):
+        return True
+    owner = (
+        metadata.get("app_user_id")
+        or metadata.get("user_id")
+        or metadata.get("owner_user_id")
+        or metadata.get("created_by_user_id")
+    )
+    if owner is None:
+        return True
+    return str(owner) == str(user_id)
+
+
 def _merge_dataset_metadata(metadata: Any, *, user_id: str) -> dict[str, Any]:
     """Attach app metadata while preserving user-provided fields."""
     base = _as_dict(metadata)
@@ -486,6 +530,146 @@ def _merge_dataset_metadata(metadata: Any, *, user_id: str) -> dict[str, Any]:
     base.setdefault("created_by_user_id", str(user_id))
     base.setdefault("created_via", "agentcore-evaluation")
     return base
+
+
+def _parse_csv_json_cell(value: Any) -> Any | None:
+    """Parse CSV cell into JSON when possible; keep plain text otherwise."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lower() in {"null", "none"}:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return text
+
+
+def _parse_csv_bool_cell(value: Any, *, default: bool = True) -> bool:
+    """Parse boolean CSV cells with safe defaults."""
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _get_row_value(row: dict[str, Any], *keys: str) -> Any | None:
+    """Get first non-empty value from a CSV row by alias keys."""
+    for key in keys:
+        if key not in row:
+            continue
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _create_dataset_item_for_user(
+    *,
+    client: Any,
+    dataset_name: str,
+    payload: CreateDatasetItemRequest,
+    current_user_id: str,
+    flush: bool = True,
+) -> DatasetItemResponse:
+    """Create one dataset item while enforcing user scoping and trace ownership."""
+    item_input = payload.input
+    expected_output = payload.expected_output
+    source_trace_id = payload.source_trace_id
+
+    if payload.trace_id:
+        trace_raw = _fetch_trace_by_id(client, payload.trace_id)
+        if not trace_raw:
+            raise HTTPException(status_code=404, detail=f"Trace '{payload.trace_id}' not found")
+
+        trace_dict = parse_trace_data(trace_raw)
+        trace_user = _extract_trace_user_id(trace_dict)
+        if trace_user and trace_user != str(current_user_id):
+            raise HTTPException(status_code=403, detail="Trace does not belong to current user")
+
+        if item_input is None:
+            item_input = trace_dict.get("input")
+        if expected_output is None and payload.use_trace_output_as_expected:
+            expected_output = trace_dict.get("output")
+        source_trace_id = source_trace_id or str(trace_dict.get("id") or payload.trace_id)
+
+    if item_input is None and expected_output is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide input/expected_output or a trace_id to create a dataset item",
+        )
+
+    metadata = _merge_dataset_metadata(payload.metadata, user_id=str(current_user_id))
+    if payload.trace_id:
+        metadata.setdefault("trace_id", str(payload.trace_id))
+
+    item = client.create_dataset_item(
+        dataset_name=dataset_name,
+        input=item_input,
+        expected_output=expected_output,
+        metadata=metadata,
+        source_trace_id=source_trace_id,
+        source_observation_id=payload.source_observation_id,
+    )
+    if flush and hasattr(client, "flush"):
+        client.flush()
+    return _dataset_item_to_response(item)
+
+
+def _csv_row_to_dataset_item_request(row: dict[str, Any]) -> CreateDatasetItemRequest:
+    """Map one CSV row to CreateDatasetItemRequest with flexible header aliases."""
+    row_lower = {(str(k).strip().lower() if k is not None else ""): v for k, v in row.items()}
+    item_input = _parse_csv_json_cell(
+        _get_row_value(row_lower, "input", "query", "question", "prompt")
+    )
+    expected_output = _parse_csv_json_cell(
+        _get_row_value(
+            row_lower,
+            "expected_output",
+            "expected output",
+            "ground_truth",
+            "ground truth",
+            "answer",
+        )
+    )
+    metadata = _parse_csv_json_cell(_get_row_value(row_lower, "metadata"))
+    source_trace_id = _get_row_value(
+        row_lower,
+        "source_trace_id",
+        "source trace id",
+        "source_trace",
+    )
+    source_observation_id = _get_row_value(
+        row_lower,
+        "source_observation_id",
+        "source observation id",
+        "source_observation",
+    )
+    trace_id = _get_row_value(row_lower, "trace_id", "trace id")
+    use_trace_output_as_expected = _parse_csv_bool_cell(
+        _get_row_value(row_lower, "use_trace_output_as_expected"),
+        default=True,
+    )
+    return CreateDatasetItemRequest(
+        input=item_input,
+        expected_output=expected_output,
+        metadata=metadata,
+        source_trace_id=source_trace_id,
+        source_observation_id=source_observation_id,
+        trace_id=trace_id,
+        use_trace_output_as_expected=use_trace_output_as_expected,
+    )
 
 
 def _dataset_to_response(dataset_obj: Any, *, item_count: int | None = None) -> DatasetResponse:
@@ -544,6 +728,18 @@ def _dataset_run_item_to_detail_response(
     """Serialize Langfuse dataset run item object to detailed response."""
     trace_dict = trace_dict or {}
     scores = scores or []
+    trace_name = trace_dict.get("name")
+    if trace_name is None:
+        trace_name = get_attr(item_obj, "trace_name", "traceName", default=None)
+
+    trace_input = trace_dict.get("input")
+    if trace_input is None:
+        trace_input = get_attr(item_obj, "input", default=None)
+
+    trace_output = trace_dict.get("output")
+    if trace_output is None:
+        trace_output = get_attr(item_obj, "output", default=None)
+
     return DatasetRunItemDetailResponse(
         id=str(get_attr(item_obj, "id", default="") or ""),
         dataset_item_id=get_attr(item_obj, "dataset_item_id", "datasetItemId", default=None),
@@ -551,12 +747,38 @@ def _dataset_run_item_to_detail_response(
         observation_id=get_attr(item_obj, "observation_id", "observationId", default=None),
         created_at=get_attr(item_obj, "created_at", "createdAt", default=None),
         updated_at=get_attr(item_obj, "updated_at", "updatedAt", default=None),
-        trace_name=str(trace_dict.get("name")) if trace_dict.get("name") is not None else None,
-        trace_input=trace_dict.get("input"),
-        trace_output=trace_dict.get("output"),
+        trace_name=str(trace_name) if trace_name is not None else None,
+        trace_input=trace_input,
+        trace_output=trace_output,
         score_count=len(scores),
         scores=scores,
     )
+
+
+def _extract_run_item_evaluation_scores(item_obj: Any) -> list[DatasetRunItemScoreResponse]:
+    """Extract evaluator scores directly from dataset run item payload."""
+    rows: list[DatasetRunItemScoreResponse] = []
+    evaluations = get_attr(item_obj, "evaluations", default=None) or []
+    if not isinstance(evaluations, list):
+        return rows
+
+    for idx, evaluation in enumerate(evaluations, 1):
+        value = get_attr(evaluation, "value", default=None)
+        try:
+            numeric_value = float(value)
+        except Exception:
+            continue
+        rows.append(
+            DatasetRunItemScoreResponse(
+                id=str(get_attr(evaluation, "id", default=None) or f"run-eval-{idx}"),
+                name=str(get_attr(evaluation, "name", default="Score") or "Score"),
+                value=numeric_value,
+                source="EXPERIMENT",
+                comment=get_attr(evaluation, "comment", default=None),
+                created_at=get_attr(evaluation, "created_at", "createdAt", default=None),
+            )
+        )
+    return rows
 
 
 def _set_dataset_experiment_job(job_id: str, **updates: Any) -> None:
@@ -581,7 +803,6 @@ def _dataset_job_response(job_id: str, payload: dict[str, Any]) -> DatasetExperi
         status=str(payload.get("status") or "unknown"),
         dataset_name=str(payload.get("dataset_name") or ""),
         experiment_name=str(payload.get("experiment_name") or ""),
-        run_name=payload.get("run_name"),
         started_at=payload.get("started_at"),
         finished_at=payload.get("finished_at"),
         error=payload.get("error"),
@@ -599,6 +820,68 @@ def _to_text(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False)
     except Exception:
         return str(value)
+
+
+def _build_experiment_evaluation(
+    *,
+    name: str,
+    value: Any,
+    comment: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Any:
+    """Create a Langfuse experiment Evaluation object when available."""
+    try:
+        from langfuse import Evaluation as LangfuseEvaluation  # type: ignore
+
+        kwargs: dict[str, Any] = {
+            "name": name,
+            "value": value,
+            "comment": comment,
+        }
+        if metadata is not None:
+            kwargs["metadata"] = metadata
+        return LangfuseEvaluation(**kwargs)
+    except Exception:
+        return SimpleNamespace(name=name, value=value, comment=comment, metadata=metadata)
+
+
+DATASET_PROMPT_CONTEXT_TEMPLATE = (
+    "Input:\n"
+    "Query: {{query}}\n"
+    "Generation: {{generation}}\n"
+    "Ground Truth: {{ground_truth}}"
+)
+
+
+def _ensure_dataset_prompt_template(criteria: str | None) -> str:
+    """Ensure dataset judge criteria contains Query/Generation/Ground Truth placeholders."""
+    base = str(criteria or "").strip()
+    if not base:
+        return DATASET_PROMPT_CONTEXT_TEMPLATE
+
+    normalized = " ".join(base.lower().split())
+    if "query: {{query}}" in normalized and "generation: {{generation}}" in normalized and "ground truth: {{ground_truth}}" in normalized:
+        return base
+    return f"{base}\n\n{DATASET_PROMPT_CONTEXT_TEMPLATE}"
+
+
+def _render_dataset_judge_criteria(
+    *,
+    criteria: str | None,
+    query: Any,
+    generation: Any,
+    ground_truth: Any,
+) -> str:
+    """Render criteria template placeholders with current dataset item values."""
+    rendered = _ensure_dataset_prompt_template(criteria)
+    replacements = {
+        "{{query}}": _to_text(query) or "[EMPTY]",
+        "{{generation}}": _to_text(generation) or "[EMPTY]",
+        "{{ground_truth}}": _to_text(ground_truth) or "[NOT PROVIDED]",
+    }
+    for token, value in replacements.items():
+        rendered = rendered.replace(token, value)
+    return rendered
 
 
 def _extract_agent_output_from_run_response(run_response: Any) -> Any:
@@ -688,8 +971,7 @@ def _run_async(coro):
         except Exception as exc:  # noqa: BLE001
             error_holder["error"] = exc
 
-    import threading
-    t = threading.Thread(target=_runner, daemon=True)
+    t = Thread(target=_runner, daemon=True)
     t.start()
     t.join()
     if "error" in error_holder:
@@ -728,6 +1010,189 @@ async def _run_dataset_item_with_agent(
     return _extract_agent_output_from_run_response(run_response)
 
 
+def _get_dataset_experiment_concurrency() -> int:
+    """Resolve safe background concurrency for dataset experiments."""
+    raw = str(os.getenv("EVALUATION_DATASET_MAX_CONCURRENCY") or "").strip()
+    try:
+        value = int(raw) if raw else 5
+    except Exception:
+        value = 5
+    return max(1, min(20, value))
+
+
+def _build_generation_messages(item_input: Any) -> list[dict[str, str]]:
+    """Normalize dataset item input into chat-completion messages."""
+    if isinstance(item_input, dict):
+        maybe_messages = item_input.get("messages")
+        if isinstance(maybe_messages, list):
+            messages: list[dict[str, str]] = []
+            for message in maybe_messages:
+                if not isinstance(message, dict):
+                    continue
+                role = str(message.get("role") or "user")
+                content = _to_text(message.get("content"))
+                if content:
+                    messages.append({"role": role, "content": content})
+            if messages:
+                return messages
+
+        for key in ("query", "question", "prompt", "input", "message", "text"):
+            if key in item_input and item_input.get(key) is not None:
+                return [{"role": "user", "content": _to_text(item_input.get(key))}]
+
+    return [{"role": "user", "content": _to_text(item_input) or ""}]
+
+
+async def _call_openai_generation_completion(
+    *,
+    model_candidates: list[str],
+    model_api_key: str | None,
+    messages: list[dict[str, str]],
+) -> tuple[str, str]:
+    """Call OpenAI-compatible chat completion for generation with retries."""
+    if openai is None:
+        raise RuntimeError("OpenAI SDK not available")
+
+    last_error: Exception | None = None
+    for candidate_model in model_candidates:
+        request_model = _model_name_for_openai_fallback(candidate_model)
+        api_base = _resolve_api_base_for_model(candidate_model)
+        api_key = _resolve_openai_fallback_api_key(candidate_model, explicit_api_key=model_api_key)
+        if not api_key:
+            env_names = ", ".join(_candidate_api_key_env_names(candidate_model))
+            raise RuntimeError(
+                f"No API key resolved for generation model '{candidate_model}'. "
+                f"Provide model_api_key or set one of: {env_names}"
+            )
+
+        try:
+            if hasattr(openai, "AsyncOpenAI"):
+                client_kwargs: dict[str, Any] = {}
+                if api_key:
+                    client_kwargs["api_key"] = api_key
+                if api_base:
+                    client_kwargs["base_url"] = api_base
+                async_client = openai.AsyncOpenAI(**client_kwargs)
+                try:
+                    resp = await async_client.chat.completions.create(
+                        model=request_model,
+                        messages=messages,
+                    )
+                finally:
+                    close_func = getattr(async_client, "close", None)
+                    if callable(close_func):
+                        try:
+                            await close_func()
+                        except Exception:
+                            pass
+            elif hasattr(openai, "OpenAI"):
+                client_kwargs = {}
+                if api_key:
+                    client_kwargs["api_key"] = api_key
+                if api_base:
+                    client_kwargs["base_url"] = api_base
+
+                def _sync_call_v1():
+                    sync_client = openai.OpenAI(**client_kwargs)
+                    try:
+                        return sync_client.chat.completions.create(
+                            model=request_model,
+                            messages=messages,
+                        )
+                    finally:
+                        close_func = getattr(sync_client, "close", None)
+                        if callable(close_func):
+                            try:
+                                close_func()
+                            except Exception:
+                                pass
+
+                resp = await asyncio.to_thread(_sync_call_v1)
+            else:
+                if api_key:
+                    openai.api_key = api_key
+                if api_base:
+                    openai.api_base = api_base
+                chat_completion = getattr(openai, "ChatCompletion", None)
+                if chat_completion and hasattr(chat_completion, "acreate"):
+                    resp = await chat_completion.acreate(
+                        model=request_model,
+                        messages=messages,
+                    )
+                elif chat_completion and hasattr(chat_completion, "create"):
+
+                    def _sync_call_legacy():
+                        return chat_completion.create(
+                            model=request_model,
+                            messages=messages,
+                        )
+
+                    resp = await asyncio.to_thread(_sync_call_legacy)
+                else:
+                    raise RuntimeError("OpenAI SDK does not expose a supported chat completion API")
+
+            content = _extract_openai_chat_content(resp)
+            return content, request_model
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            logger.warning("Generation call failed for model={}: {}", candidate_model, str(exc))
+            if _is_openai_retryable_model_error(exc):
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Generation call failed without response")
+
+
+async def _dataset_generate_with_model(
+    *,
+    model: str,
+    model_api_key: str | None,
+    item_input: Any,
+) -> tuple[Any, str]:
+    """Generate output for one dataset item via configured LLM model."""
+    messages = _build_generation_messages(item_input)
+    model_candidates = _build_litellm_model_candidates(model, model_api_key)
+    if not model_candidates:
+        raise RuntimeError("Invalid generation model configuration")
+
+    if LITELLM_AVAILABLE:
+        _ensure_litellm_logging_compatibility_patch()
+        last_error: Exception | None = None
+        for candidate_model in model_candidates:
+            kwargs: Dict[str, Any] = {
+                "model": candidate_model,
+                "messages": messages,
+                "no-log": True,
+            }
+            if model_api_key:
+                kwargs["api_key"] = model_api_key
+            api_base = _resolve_api_base_for_model(candidate_model)
+            if api_base:
+                kwargs["api_base"] = api_base
+            try:
+                response = await litellm.acompletion(**kwargs)
+                content = response.choices[0].message.content
+                return content if content is not None else "", candidate_model
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                logger.warning("LiteLLM generation failed for model={}: {}", candidate_model, str(exc))
+                if _is_litellm_retryable_model_error(exc):
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("LiteLLM generation failed without response")
+
+    content, used_model = await _call_openai_generation_completion(
+        model_candidates=model_candidates,
+        model_api_key=model_api_key,
+        messages=messages,
+    )
+    return content, used_model
+
+
 async def _dataset_llm_evaluate(
     *,
     criteria: str,
@@ -738,22 +1203,28 @@ async def _dataset_llm_evaluate(
     expected_output: Any,
 ) -> tuple[float, str, str]:
     """Run LLM-as-a-judge for one dataset item output and return normalized score."""
+    query_text = _to_text(item_input) or "[EMPTY]"
+    generation_text = _to_text(output) or "[EMPTY]"
+    ground_truth_text = _to_text(expected_output) or "[NOT PROVIDED]"
+    rendered_criteria = _render_dataset_judge_criteria(
+        criteria=criteria,
+        query=item_input,
+        generation=output,
+        ground_truth=expected_output,
+    )
+
     system_prompt = (
         "You are an impartial AI judge evaluating an assistant output. "
-        "Given criteria, input, expected output, and actual output, assign a score between 0 and 5 inclusive. "
+        "Given criteria, query, generation, and ground truth, assign a score between 0 and 5 inclusive. "
         "Return JSON with keys score_0_5 and reason."
     )
     user_prompt = f"""### Criteria
-{criteria}
+{rendered_criteria}
 
 ### Input
-{_to_text(item_input)}
-
-### Expected Output
-{_to_text(expected_output)}
-
-### Actual Output
-{_to_text(output)}
+Query: {query_text}
+Generation: {generation_text}
+Ground Truth: {ground_truth_text}
 
 Respond ONLY with valid JSON:
 {{
@@ -952,6 +1423,77 @@ def _fetch_dataset_run_items(
         return collected[:item_limit]
 
     return []
+
+
+def _fetch_all_dataset_items(
+    client: Any,
+    *,
+    dataset_name: str,
+    max_rows: int = 5000,
+) -> list[Any]:
+    """Fetch dataset items across pages with a hard safety cap."""
+    collected: list[Any] = []
+    page = 1
+    page_size = min(100, max_rows)
+    while len(collected) < max_rows:
+        rows, _ = _fetch_dataset_items_page(client, dataset_name, page, page_size)
+        if not rows:
+            break
+        collected.extend(rows)
+        if len(rows) < page_size:
+            break
+        page += 1
+    return collected[:max_rows]
+
+
+def _fetch_all_dataset_runs(
+    client: Any,
+    *,
+    dataset_name: str,
+    max_rows: int = 2000,
+) -> list[Any]:
+    """Fetch dataset runs across pages with a hard safety cap."""
+    collected: list[Any] = []
+    page = 1
+    page_size = min(100, max_rows)
+    while len(collected) < max_rows:
+        rows, _ = _fetch_dataset_runs_page(client, dataset_name, page, page_size)
+        if not rows:
+            break
+        collected.extend(rows)
+        if len(rows) < page_size:
+            break
+        page += 1
+    return collected[:max_rows]
+
+
+def _fetch_dataset_item_by_id(client: Any, item_id: str) -> Any | None:
+    """Fetch one dataset item by id if SDK exposes a direct getter."""
+    if hasattr(client, "api") and hasattr(client.api, "dataset_items") and hasattr(client.api.dataset_items, "get"):
+        try:
+            return client.api.dataset_items.get(id=item_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("dataset_items.get failed for item_id={}: {}", item_id, str(exc))
+    return None
+
+
+def _delete_dataset_item(client: Any, item_id: str) -> None:
+    """Delete one dataset item via SDK-compatible APIs."""
+    if hasattr(client, "api") and hasattr(client.api, "dataset_items") and hasattr(client.api.dataset_items, "delete"):
+        client.api.dataset_items.delete(id=item_id)
+        return
+    raise RuntimeError("Dataset item deletion is not supported by current Langfuse SDK")
+
+
+def _delete_dataset_run(client: Any, *, dataset_name: str, run_name: str) -> None:
+    """Delete one dataset run via SDK-compatible APIs."""
+    if hasattr(client, "delete_dataset_run"):
+        client.delete_dataset_run(dataset_name=dataset_name, run_name=run_name)
+        return
+    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "delete_run"):
+        client.api.datasets.delete_run(dataset_name=dataset_name, run_name=run_name)
+        return
+    raise RuntimeError("Dataset run deletion is not supported by current Langfuse SDK")
 
 _KNOWN_LITELLM_PROVIDERS = {
     "openai",
@@ -1175,6 +1717,7 @@ def _resolve_api_base_for_model(model: str) -> str | None:
             os.getenv("GEMINI_API_BASE_URL")
             or os.getenv("GOOGLE_API_BASE_URL")
             or os.getenv("VERTEX_API_BASE_URL")
+            or "https://generativelanguage.googleapis.com/v1beta/openai/"
         )
     return None
 
@@ -1187,18 +1730,40 @@ def _resolve_openai_fallback_api_key(model: str, explicit_api_key: str | None = 
 
     provider = _infer_litellm_provider(model)
     env_by_provider: dict[str, list[str]] = {
+        "openai": ["OPENAI_API_KEY"],
+        "azure": ["AZURE_OPENAI_API_KEY", "OPENAI_API_KEY"],
         "groq": ["GROQ_API_KEY"],
         "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-
+        "google": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "vertex_ai": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "anthropic": ["ANTHROPIC_API_KEY"],
+        "openrouter": ["OPENROUTER_API_KEY"],
     }
 
     env_names = env_by_provider.get(provider or "", [])
-    env_names = list(dict.fromkeys([*env_names, "OPENAI_API_KEY"]))
+    if not env_names:
+        env_names = ["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY"]
     for env_name in env_names:
         env_value = str(os.getenv(env_name) or "").strip()
         if env_value:
             return env_value
     return None
+
+
+def _candidate_api_key_env_names(model: str) -> list[str]:
+    """Return likely API key environment variables for the model provider."""
+    provider = _infer_litellm_provider(model)
+    mapping: dict[str, list[str]] = {
+        "openai": ["OPENAI_API_KEY"],
+        "azure": ["AZURE_OPENAI_API_KEY", "OPENAI_API_KEY"],
+        "groq": ["GROQ_API_KEY"],
+        "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "google": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "vertex_ai": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "anthropic": ["ANTHROPIC_API_KEY"],
+        "openrouter": ["OPENROUTER_API_KEY"],
+    }
+    return mapping.get(provider or "", ["OPENAI_API_KEY"])
 
 
 def _model_name_for_openai_fallback(model: str) -> str:
@@ -1276,6 +1841,12 @@ async def _call_openai_judge_completion(
         request_model = _model_name_for_openai_fallback(candidate_model)
         api_base = _resolve_api_base_for_model(candidate_model)
         api_key = _resolve_openai_fallback_api_key(candidate_model, explicit_api_key=model_api_key)
+        if not api_key:
+            env_names = ", ".join(_candidate_api_key_env_names(candidate_model))
+            raise RuntimeError(
+                f"No API key resolved for judge model '{candidate_model}'. "
+                f"Provide model_api_key or set one of: {env_names}"
+            )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -1473,18 +2044,33 @@ def _extract_trace_user_id(trace_dict: Dict[str, Any]) -> str | None:
         return str(user_id)
 
     metadata = trace_dict.get("metadata")
+    if isinstance(metadata, str):
+        try:
+            parsed = json.loads(metadata)
+            metadata = parsed if isinstance(parsed, dict) else metadata
+        except Exception:
+            pass
     if isinstance(metadata, dict):
-        value = metadata.get("user_id") or metadata.get("userId")
+        value = (
+            metadata.get("user_id")
+            or metadata.get("userId")
+            or metadata.get("app_user_id")
+            or metadata.get("created_by_user_id")
+            or metadata.get("owner_user_id")
+        )
         if value:
             return str(value)
 
     tags = trace_dict.get("tags") or []
     if isinstance(tags, list):
         for tag in tags:
-            if isinstance(tag, str) and tag.startswith("user_id:"):
-                value = tag.split(":", 1)[1].strip()
-                if value:
-                    return value
+            if not isinstance(tag, str):
+                continue
+            for prefix in ("user_id:", "app_user_id:", "created_by_user_id:"):
+                if tag.startswith(prefix):
+                    value = tag.split(":", 1)[1].strip()
+                    if value:
+                        return value
     return None
 
 
@@ -1930,6 +2516,7 @@ async def run_llm_judge_task(
             agent_name=agent_name,
             project_name=project_name,
             timestamp=timestamp,
+            max_attempts=3,
         )
         if not resolved_trace_id or not trace_dict:
             logger.error(
@@ -2135,7 +2722,7 @@ Respond ONLY with valid JSON, no markdown formatting."""
         logger.error("LLM Judge JSON parsing error for trace_ref={}: {}", trace_id, str(e))
         logger.error("Response content: {}", content)
     except Exception as e:
-        logger.opt(exception=True).error("LLM Judge error for trace_ref={}: {}", trace_id, str(e))
+        logger.error("LLM Judge error for trace_ref={}: {}", trace_id, str(e))
 
 
 async def _resolve_agent_payload_for_experiment(
@@ -2153,18 +2740,18 @@ async def _resolve_agent_payload_for_experiment(
         raise HTTPException(status_code=400, detail="Invalid agent_id for experiment run")
 
     async with session_scope() as session:
-        agent = await session.get(agent, agent_uuid)
-        if not agent:
-            raise HTTPException(status_code=404, detail=f"agent {normalized_agent_id} not found")
-        if str(agent.user_id) != str(current_user.id) and agent.access_type != AccessTypeEnum.PUBLIC:
+        agent_obj = await session.get(agent, agent_uuid)
+        if not agent_obj:
+            raise HTTPException(status_code=404, detail=f"Agent {normalized_agent_id} not found")
+        if str(agent_obj.user_id) != str(current_user.id) and agent_obj.access_type != AccessTypeEnum.PUBLIC:
             raise HTTPException(status_code=403, detail="You do not have access to this agent")
-        if agent.data is None:
+        if agent_obj.data is None:
             raise HTTPException(status_code=400, detail="Selected agent has no data payload")
 
         return {
-            "id": str(agent.id),
-            "name": agent.name or str(agent.id),
-            "data": agent.data,
+            "id": str(agent_obj.id),
+            "name": agent_obj.name or str(agent_obj.id),
+            "data": agent_obj.data,
         }
 
 
@@ -2172,15 +2759,18 @@ async def _resolve_experiment_judge_config(
     *,
     current_user: User,
     evaluator_config_id: str | None,
+    preset_id: str | None,
+    evaluator_name: str | None,
     criteria: str | None,
-    model: str | None,
-    model_api_key: str | None,
+    judge_model: str | None,
+    judge_model_api_key: str | None,
 ) -> dict[str, Any]:
     """Resolve dataset experiment judge settings from optional saved evaluator."""
-    judge_name = "Dataset LLM Judge"
+    judge_name = (evaluator_name or "").strip() or "Dataset LLM Judge"
     resolved_criteria = (criteria or "").strip() or None
-    resolved_model = (model or "").strip() or None
-    resolved_api_key = (model_api_key or "").strip() or None
+    resolved_model = (judge_model or "").strip() or None
+    resolved_api_key = (judge_model_api_key or "").strip() or None
+    resolved_preset_id = (preset_id or "").strip() or None
 
     if evaluator_config_id:
         try:
@@ -2200,12 +2790,40 @@ async def _resolve_experiment_judge_config(
             resolved_model = (evaluator.model or "").strip() or None
         if not resolved_api_key:
             resolved_api_key = (evaluator.model_api_key or "").strip() or None
+        if not resolved_preset_id:
+            resolved_preset_id = str(evaluator.preset_id) if evaluator.preset_id else None
+
+    preset = get_preset_by_id(resolved_preset_id)
+    if resolved_preset_id and preset is None:
+        raise HTTPException(status_code=400, detail=f"Unknown preset_id '{resolved_preset_id}'")
+
+    # Optional convenience: allow evaluator_name to match a preset id/name.
+    if not preset and judge_name:
+        normalized_name = judge_name.strip().lower()
+        for candidate in EVALUATION_PRESETS:
+            candidate_id = str(candidate.get("id") or "").strip().lower()
+            candidate_name = str(candidate.get("name") or "").strip().lower()
+            if normalized_name and normalized_name in {candidate_id, candidate_name}:
+                preset = candidate
+                resolved_preset_id = str(candidate.get("id"))
+                break
+
+    if preset:
+        if not resolved_criteria:
+            resolved_criteria = str(preset.get("criteria") or "").strip() or None
+        if not (evaluator_name or "").strip():
+            judge_name = str(preset.get("name") or judge_name)
+
+    if resolved_criteria:
+        resolved_criteria = _ensure_dataset_prompt_template(resolved_criteria)
 
     return {
         "judge_name": judge_name,
         "criteria": resolved_criteria,
         "model": resolved_model,
         "model_api_key": resolved_api_key,
+        "preset_id": resolved_preset_id,
+        "requires_ground_truth": bool(preset and preset.get("requires_ground_truth")),
     }
 
 
@@ -2214,15 +2832,16 @@ def _run_dataset_experiment_sync(
     client: Any,
     dataset_name: str,
     experiment_name: str,
-    run_name: str | None,
     description: str | None,
     user_id: str,
     agent_payload: dict[str, Any] | None,
+    generation_model: str | None,
+    generation_model_api_key: str | None,
     judge_name: str | None,
+    judge_preset_id: str | None,
     judge_criteria: str | None,
     judge_model: str | None,
     judge_model_api_key: str | None,
-    max_concurrency: int,
 ) -> dict[str, Any]:
     """Run dataset experiment synchronously (executed in a worker thread)."""
     dataset = client.get_dataset(dataset_name)
@@ -2245,28 +2864,43 @@ def _run_dataset_experiment_sync(
                     session_id=session_id,
                 )
             )
-
-        # Fallback mode (no agent selected): return input as output.
-        # This keeps behavior explicit and avoids accidentally inflating scores.
-        return item_input
+        if not generation_model:
+            raise RuntimeError("No generation model configured for dataset experiment.")
+        try:
+            generated_output, _ = _run_async(
+                _dataset_generate_with_model(
+                    model=generation_model,
+                    model_api_key=generation_model_api_key,
+                    item_input=item_input,
+                )
+            )
+            return generated_output
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Generation failed for dataset={} item_id={}: {}",
+                dataset_name,
+                item_id,
+                str(exc),
+            )
+            return f"[GENERATION_ERROR] {exc}"
 
     evaluators: list[Any] = []
     if has_expected_outputs:
         def exact_match_evaluator(*, input, output, expected_output=None, **kwargs):  # noqa: ARG001
             if expected_output is None:
-                return {
-                    "name": "exact_match",
-                    "value": 0.0,
-                    "comment": "No expected output configured for this dataset item.",
-                }
+                return _build_experiment_evaluation(
+                    name="exact_match",
+                    value=0.0,
+                    comment="No expected output configured for this dataset item.",
+                )
             expected_norm = _normalize_for_exact_match(expected_output)
             output_norm = _normalize_for_exact_match(output)
             is_match = expected_norm == output_norm
-            return {
-                "name": "exact_match",
-                "value": 1.0 if is_match else 0.0,
-                "comment": "Exact match" if is_match else "Output differs from expected output",
-            }
+            return _build_experiment_evaluation(
+                name="exact_match",
+                value=1.0 if is_match else 0.0,
+                comment="Exact match" if is_match else "Output differs from expected output",
+            )
 
         evaluators.append(exact_match_evaluator)
 
@@ -2285,47 +2919,40 @@ def _run_dataset_experiment_sync(
                         expected_output=expected_output,
                     )
                 )
-                return {
-                    "name": llm_metric_name,
-                    "value": float(value),
-                    "comment": json.dumps(
+                return _build_experiment_evaluation(
+                    name=llm_metric_name,
+                    value=float(value),
+                    comment=json.dumps(
                         {
                             "reason": reason,
                             "model": used_model,
                             "criteria": judge_criteria,
                         }
                     ),
-                }
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.debug("Dataset LLM evaluator failed for run_name={}: {}", run_name, str(exc))
-                return {
-                    "name": llm_metric_name,
-                    "value": 0.0,
-                    "comment": f"LLM evaluator error: {exc}",
-                }
+                logger.debug("Dataset LLM evaluator failed for experiment={}: {}", experiment_name, str(exc))
+                return _build_experiment_evaluation(
+                    name=llm_metric_name,
+                    value=0.0,
+                    comment=f"LLM evaluator error: {exc}",
+                )
 
         evaluators.append(llm_judge_evaluator)
 
+    # Keep metadata compact to avoid propagated-attribute truncation warnings.
     experiment_metadata = {
-        "app_user_id": str(user_id),
         "source": "agentcore-evaluation-datasets",
+        "user_id": str(user_id),
     }
-    if agent_payload:
-        experiment_metadata["agent_id"] = str(agent_payload["id"])
-        experiment_metadata["agent_name"] = str(agent_payload["name"])
-    if judge_criteria:
-        experiment_metadata["judge_enabled"] = "true"
-    if judge_name:
-        experiment_metadata["judge_name"] = str(judge_name)
 
     result = client.run_experiment(
         name=experiment_name,
-        run_name=run_name,
         description=description,
         data=data_items,
         task=task,
         evaluators=evaluators,
-        max_concurrency=max_concurrency,
+        max_concurrency=_get_dataset_experiment_concurrency(),
         metadata=experiment_metadata,
         _dataset_version=getattr(dataset, "version", None),
     )
@@ -2355,7 +2982,7 @@ def _run_dataset_experiment_sync(
     return {
         "dataset_run_id": get_attr(result, "dataset_run_id", "datasetRunId", default=None),
         "dataset_run_url": get_attr(result, "dataset_run_url", "datasetRunUrl", default=None),
-        "run_name": get_attr(result, "run_name", "runName", default=run_name),
+        "run_name": get_attr(result, "run_name", "runName", default=None),
         "item_count": len(list(get_attr(result, "item_results", default=[]) or [])),
         "metrics": metrics_summary,
     }
@@ -2367,15 +2994,16 @@ async def _run_dataset_experiment_job(
     client: Any,
     dataset_name: str,
     experiment_name: str,
-    run_name: str | None,
     description: str | None,
     user_id: str,
     agent_payload: dict[str, Any] | None,
+    generation_model: str | None,
+    generation_model_api_key: str | None,
     judge_name: str | None,
+    judge_preset_id: str | None,
     judge_criteria: str | None,
     judge_model: str | None,
     judge_model_api_key: str | None,
-    max_concurrency: int,
 ) -> None:
     """Background task runner for dataset experiments."""
     _set_dataset_experiment_job(
@@ -2389,21 +3017,21 @@ async def _run_dataset_experiment_job(
             client=client,
             dataset_name=dataset_name,
             experiment_name=experiment_name,
-            run_name=run_name,
             description=description,
             user_id=user_id,
             agent_payload=agent_payload,
+            generation_model=generation_model,
+            generation_model_api_key=generation_model_api_key,
             judge_name=judge_name,
+            judge_preset_id=judge_preset_id,
             judge_criteria=judge_criteria,
             judge_model=judge_model,
             judge_model_api_key=judge_model_api_key,
-            max_concurrency=max_concurrency,
         )
         _set_dataset_experiment_job(
             job_id,
             status="completed",
             finished_at=datetime.now(timezone.utc),
-            run_name=result_payload.get("run_name") or run_name,
             result=result_payload,
             error=None,
         )
@@ -2459,21 +3087,55 @@ async def get_scores(
 
     try:
         user_id = str(current_user.id)
+        trace_id = str(trace_id).strip() if trace_id and str(trace_id).strip() else None
+        name = str(name).strip() if name and str(name).strip() else None
+        score_cache_key = f"{user_id}|{page}|{limit}|{trace_id or ''}|{(name or '').lower()}"
+        now_mono = time.monotonic()
+        cached_score_payload: dict[str, Any] | None = None
+        cached_score_entry = _SCORE_LIST_CACHE.get(score_cache_key)
+        if cached_score_entry:
+            cached_age = now_mono - float(cached_score_entry.get("ts", 0))
+            cached_payload = cached_score_entry.get("payload")
+            if isinstance(cached_payload, dict):
+                # Fast path: serve any cached result (including empty) within TTL.
+                # Empty results use a shorter TTL (30s) so we re-check Langfuse quickly.
+                is_empty_result = not cached_payload.get("items") and cached_payload.get("total", 0) == 0
+                ttl = 30.0 if is_empty_result else _SCORE_LIST_CACHE_STALE_SECONDS
+                if cached_age <= ttl:
+                    return cached_payload
+                # Stale but non-empty: keep as fallback in case fresh fetch returns empty.
+                if not is_empty_result:
+                    cached_score_payload = cached_payload
 
         trace_lookup: Dict[str, Dict[str, Any]] = {}
         user_trace_ids: set[str] = set()
         trace_owner_cache: Dict[str, bool] = {}
-        try:
-            user_traces = fetch_traces_from_langfuse(client, user_id=user_id, limit=2000)
-            for raw_trace in user_traces or []:
-                trace_dict = parse_trace_data(raw_trace)
-                trace_key = str(trace_dict.get("id") or "")
-                if not trace_key:
-                    continue
-                trace_lookup[trace_key] = trace_dict
-                user_trace_ids.add(trace_key)
-        except Exception as trace_error:
-            logger.debug("Failed to prefetch user traces for score listing: {}", str(trace_error))
+        user_traces_prefetched = False
+
+        def _ensure_user_traces_prefetched() -> None:
+            nonlocal user_traces_prefetched
+            if user_traces_prefetched:
+                return
+            user_traces_prefetched = True
+            try:
+                prefetch_limit = 2000 if not trace_id else 200
+                user_traces = fetch_traces_from_langfuse(
+                    client,
+                    user_id=user_id,
+                    limit=prefetch_limit,
+                )
+                for raw_trace in user_traces or []:
+                    trace_dict = parse_trace_data(raw_trace)
+                    trace_key = str(trace_dict.get("id") or "")
+                    if not trace_key:
+                        continue
+                    trace_lookup[trace_key] = trace_dict
+                    user_trace_ids.add(trace_key)
+            except Exception as trace_error:
+                logger.debug(
+                    "Failed to prefetch user traces for score listing: {}",
+                    str(trace_error),
+                )
 
         def _extract_scores_payload(response: Any) -> tuple[list[Any], int | None]:
             if response is None:
@@ -2605,6 +3267,8 @@ async def get_scores(
                 return False
             if score_trace_id in trace_owner_cache:
                 return trace_owner_cache[score_trace_id]
+
+            _ensure_user_traces_prefetched()
             if score_trace_id in user_trace_ids:
                 trace_owner_cache[score_trace_id] = True
                 return True
@@ -2771,6 +3435,9 @@ async def get_scores(
 
         # Final fallback: collect scores per user-owned trace using observability's
         # robust score fetcher when list-based score APIs are empty/incompatible.
+        if not raw_scores and not user_trace_ids and not trace_id and not unscoped_collected:
+            _ensure_user_traces_prefetched()
+
         if not raw_scores and (user_trace_ids or trace_id or unscoped_collected):
             logger.info(
                 "Score list API returned no rows for user_id={}; using per-trace score fallback",
@@ -2901,6 +3568,26 @@ async def get_scores(
                 limit,
             )
 
+        # Last-mile retry for intermittent first-load empties.
+        if not raw_scores and page == 1 and not trace_id and not name:
+            retry_rows, retry_total = _list_scores_page(page, limit, include_user_filter=True)
+            retry_rows = [
+                row for row in retry_rows
+                if _score_belongs_to_user(row) and _score_matches_name(row)
+            ]
+            if retry_rows:
+                logger.info(
+                    "Recovered transient empty score list on retry for user_id={} with {} row(s)",
+                    user_id,
+                    len(retry_rows),
+                )
+                raw_scores = retry_rows
+                total = (
+                    int(retry_total)
+                    if retry_total is not None and len(retry_rows) > 0
+                    else len(retry_rows)
+                )
+
         # Parse to response model (including agent/agent name).
         items: list[ScoreResponse] = []
         for s in raw_scores:
@@ -2939,12 +3626,40 @@ async def get_scores(
                 config_id=get_attr(s, "config_id", "configId"),
             ))
 
-        return {
+        response_payload = {
             "items": items,
             "total": total,
             "page": page,
             "limit": limit
         }
+        # Always write to cache, including empty results.
+        # Empty results use a short TTL (30s) so they are re-validated quickly.
+        cache_payload = {
+            "items": [item.model_dump() for item in items],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+        _SCORE_LIST_CACHE[score_cache_key] = {
+            "ts": now_mono,
+            "payload": cache_payload,
+        }
+        if len(_SCORE_LIST_CACHE) > 512:
+            oldest_key = min(
+                _SCORE_LIST_CACHE.items(),
+                key=lambda kv: float(kv[1].get("ts", 0)),
+            )[0]
+            _SCORE_LIST_CACHE.pop(oldest_key, None)
+
+        # If fresh fetch returned empty but we have stale non-empty data, prefer stale.
+        if not items and total == 0 and cached_score_payload and page == 1 and not trace_id and not name:
+            logger.warning(
+                "Using stale cached score payload for user_id={} after transient empty response",
+                user_id,
+            )
+            return cached_score_payload
+
+        return response_payload
 
     except Exception as e:
         logger.opt(exception=True).error("Error fetching scores: {}", str(e))
@@ -2982,112 +3697,19 @@ async def create_score(
         # Flush to ensure it sends
         if hasattr(client, "flush"):
             client.flush()
-        
+
+        # Invalidate score list and pending-reviews caches so the next fetch is fresh.
+        for _k in [k for k in list(_SCORE_LIST_CACHE) if k.startswith(user_id + "|")]:
+            _SCORE_LIST_CACHE.pop(_k, None)
+        for _k in [k for k in list(_PENDING_REVIEWS_CACHE) if k.startswith(user_id + "|")]:
+            _PENDING_REVIEWS_CACHE.pop(_k, None)
+
         logger.info(f"User {user_id} created score for trace {payload.trace_id}")
         
         return {"status": "success", "message": "Score created successfully"}
 
     except Exception as e:
         logger.opt(exception=True).error("Error creating score: {}", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/judge")
-async def run_judge(
-    payload: JudgeRequest,
-    background_tasks: BackgroundTasks,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-) -> Dict[str, str]:
-    """
-    Trigger an LLM-as-a-Judge evaluation for a trace.
-    Runs in the background to not block API.
-    """
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
-    
-    if not (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
-        raise HTTPException(status_code=501, detail="LLM Judge not available (LiteLLM/OpenAI missing)")
-
-    user_id = str(current_user.id)
-    
-    # Use criteria as score name if not provided
-    score_name = payload.name or f"Judge: {payload.criteria[:50]}"
-
-    # Run in background to not block API
-    background_tasks.add_task(
-        run_llm_judge_task,
-        client=client,
-        trace_id=payload.trace_id,
-        criteria=payload.criteria,
-        score_name=score_name,
-        model=payload.model,
-        user_id=user_id
-    )
-
-    logger.info(f"User {user_id} started judge for trace {payload.trace_id}")
-
-    return {
-        "status": "queued",
-        "message": "Evaluation started in background. Refresh scores in a few seconds."
-    }
-
-
-@router.get("/analytics")
-async def get_analytics(
-    current_user: Annotated[User, Depends(get_current_active_user)],
-) -> EvaluationAnalyticsResponse:
-    """
-    Get aggregated evaluation metrics for the dashboard.
-    """
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
-
-    try:
-        user_id = str(current_user.id)
-        
-        # Fetch recent scores for aggregation
-        scores_data = []
-        if hasattr(client, 'client') and hasattr(client.client, 'scores'):
-            response = client.client.scores.list(user_id=user_id, limit=1000)
-            if hasattr(response, 'data'):
-                scores_data = response.data
-            elif isinstance(response, list):
-                scores_data = response
-
-        # Group by name
-        grouped: Dict[str, List[float]] = defaultdict(list)
-        for s in scores_data:
-            name = get_attr(s, 'name')
-            val = float(get_attr(s, 'value', 0.0))
-            if name and val is not None:
-                grouped[name].append(val)
-
-        # Calculate stats
-        metrics = []
-        for name, values in grouped.items():
-            values.sort()
-            count = len(values)
-            avg = sum(values) / count
-            
-            metrics.append(AnalyticsMetric(
-                name=name,
-                count=count,
-                average=avg,
-                min=values[0],
-                max=values[-1],
-                p50=values[int(count * 0.5)] if count > 0 else None,
-                p90=values[int(count * 0.9)] if count >= 10 else values[-1] if count > 0 else None
-            ))
-
-        return EvaluationAnalyticsResponse(
-            total_scores=len(scores_data),
-            by_name=metrics
-        )
-
-    except Exception as e:
-        logger.opt(exception=True).error("Error fetching analytics: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3113,9 +3735,21 @@ async def get_pending_reviews(
 
     try:
         user_id = str(current_user.id)
-        
+
+        # Fast-path: serve cached pending reviews within TTL.
+        # Filters bust the cache so only unfiltered requests are cached.
+        _use_pending_cache = not any([trace_id, agent_name, session_id, user_id_filter, ts_from, ts_to])
+        _pending_cache_key = f"{user_id}|{limit}"
+        _now_mono = time.monotonic()
+        if _use_pending_cache:
+            _pending_entry = _PENDING_REVIEWS_CACHE.get(_pending_cache_key)
+            if _pending_entry:
+                _age = _now_mono - float(_pending_entry.get("ts", 0))
+                if _age <= _PENDING_REVIEWS_CACHE_TTL_SECONDS:
+                    return _pending_entry["payload"]
+
         # Fetch recent traces for this user via shared helper (observability)
-        fetch_limit = max(limit * 10, 100)
+        fetch_limit = max(limit * 5, 100)
         try:
             traces_data = fetch_traces_from_langfuse(client, user_id=user_id, limit=fetch_limit)
             logger.info(f"Fetched {len(traces_data or [])} traces for user_id={user_id} (limit={fetch_limit})")
@@ -3228,6 +3862,14 @@ async def get_pending_reviews(
             if len(result) >= limit:
                 break
 
+        # Cache unfiltered results so subsequent calls are served instantly.
+        if _use_pending_cache:
+            _PENDING_REVIEWS_CACHE[_pending_cache_key] = {"ts": _now_mono, "payload": result}
+            # Evict oldest entry if cache exceeds 128 entries.
+            if len(_PENDING_REVIEWS_CACHE) > 128:
+                _oldest = min(_PENDING_REVIEWS_CACHE.items(), key=lambda kv: float(kv[1].get("ts", 0)))[0]
+                _PENDING_REVIEWS_CACHE.pop(_oldest, None)
+
         return result
 
     except Exception as e:
@@ -3249,6 +3891,16 @@ async def list_datasets(
 
     try:
         user_id = str(current_user.id)
+
+        # Fast-path: serve from cache for unfiltered requests.
+        _datasets_cache_key = f"{user_id}|{page}|{limit}|{(search or '').lower()}"
+        _now_mono = time.monotonic()
+        _datasets_entry = _DATASETS_LIST_CACHE.get(_datasets_cache_key)
+        if _datasets_entry:
+            _age = _now_mono - float(_datasets_entry.get("ts", 0))
+            if _age <= _DATASETS_LIST_CACHE_TTL_SECONDS:
+                return _datasets_entry["payload"]
+
         max_rows = max(page * limit, 200)
         rows = _list_all_datasets_for_user(client, user_id=user_id, max_rows=max_rows)
 
@@ -3264,26 +3916,23 @@ async def list_datasets(
         start = (page - 1) * limit
         page_rows = rows[start:start + limit]
 
-        items: list[DatasetResponse] = []
-        for dataset in page_rows:
-            item_count = None
-            dataset_name = str(get_attr(dataset, "name", default="") or "")
-            if dataset_name and hasattr(client, "api") and hasattr(client.api, "dataset_items"):
-                try:
-                    items_resp = client.api.dataset_items.list(dataset_name=dataset_name, page=1, limit=1)
-                    _, total_items = _parse_paginated_response(items_resp)
-                    item_count = int(total_items) if total_items is not None else None
-                except Exception:
-                    item_count = None
+        # Build responses without per-dataset item count API calls (N+1 eliminated).
+        # Item counts are loaded when a specific dataset is opened.
+        items: list[DatasetResponse] = [
+            _dataset_to_response(dataset, item_count=None) for dataset in page_rows
+        ]
 
-            items.append(_dataset_to_response(dataset, item_count=item_count))
-
-        return {
+        payload_out = {
             "items": items,
             "total": total,
             "page": page,
             "limit": limit,
         }
+        _DATASETS_LIST_CACHE[_datasets_cache_key] = {"ts": _now_mono, "payload": payload_out}
+        if len(_DATASETS_LIST_CACHE) > 256:
+            _oldest = min(_DATASETS_LIST_CACHE.items(), key=lambda kv: float(kv[1].get("ts", 0)))[0]
+            _DATASETS_LIST_CACHE.pop(_oldest, None)
+        return payload_out
     except HTTPException:
         raise
     except Exception as exc:
@@ -3313,6 +3962,11 @@ async def create_dataset(
         )
         if hasattr(client, "flush"):
             client.flush()
+        # Invalidate dataset list cache for this user so the new entry appears immediately.
+        _user_id = str(current_user.id)
+        keys_to_drop = [k for k in list(_DATASETS_LIST_CACHE) if k.startswith(_user_id + "|")]
+        for _k in keys_to_drop:
+            _DATASETS_LIST_CACHE.pop(_k, None)
         return _dataset_to_response(dataset, item_count=0)
     except Exception as exc:  # noqa: BLE001
         message = str(exc).lower()
@@ -3320,6 +3974,80 @@ async def create_dataset(
             raise HTTPException(status_code=409, detail=f"Dataset '{dataset_name}' already exists")
         logger.opt(exception=True).error("Error creating dataset '{}': {}", dataset_name, str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/datasets/{dataset_name}")
+async def delete_dataset(
+    dataset_name: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Dict[str, Any]:
+    """Delete/purge a dataset for the current user."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    runs_deleted = 0
+    items_deleted = 0
+    errors: list[str] = []
+
+    for run_obj in _fetch_all_dataset_runs(client, dataset_name=dataset_name, max_rows=2000):
+        run_name = str(get_attr(run_obj, "name", default="") or "").strip()
+        if not run_name:
+            continue
+        try:
+            _delete_dataset_run(client, dataset_name=dataset_name, run_name=run_name)
+            runs_deleted += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed deleting dataset run '{}' for '{}': {}", run_name, dataset_name, str(exc))
+            errors.append(f"run:{run_name}:{exc}")
+
+    for item_obj in _fetch_all_dataset_items(client, dataset_name=dataset_name, max_rows=5000):
+        item_id = str(get_attr(item_obj, "id", default="") or "").strip()
+        if not item_id:
+            continue
+        try:
+            _delete_dataset_item(client, item_id)
+            items_deleted += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed deleting dataset item '{}' for '{}': {}", item_id, dataset_name, str(exc))
+            errors.append(f"item:{item_id}:{exc}")
+
+    # Langfuse SDK currently exposes run/item deletion, but may not support deleting
+    # the dataset container itself in every version.
+    dataset_deleted = False
+    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "delete"):
+        try:
+            client.api.datasets.delete(dataset_name=dataset_name)
+            dataset_deleted = True
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Dataset container delete not available for '{}': {}", dataset_name, str(exc))
+
+    if hasattr(client, "flush"):
+        try:
+            client.flush()
+        except Exception:
+            pass
+
+    # Invalidate dataset list cache for this user.
+    _del_user_id = str(current_user.id)
+    for _k in [k for k in list(_DATASETS_LIST_CACHE) if k.startswith(_del_user_id + "|")]:
+        _DATASETS_LIST_CACHE.pop(_k, None)
+    return {
+        "status": "deleted" if dataset_deleted else "purged",
+        "dataset_name": dataset_name,
+        "dataset_deleted": dataset_deleted,
+        "runs_deleted": runs_deleted,
+        "items_deleted": items_deleted,
+        "errors": errors[:20],
+    }
 
 
 @router.get("/datasets/{dataset_name}/items")
@@ -3381,50 +4109,187 @@ async def create_dataset_item(
     if not _dataset_owned_by_user(dataset, str(current_user.id)):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    item_input = payload.input
-    expected_output = payload.expected_output
-    source_trace_id = payload.source_trace_id
-
-    if payload.trace_id:
-        trace_raw = _fetch_trace_by_id(client, payload.trace_id)
-        if not trace_raw:
-            raise HTTPException(status_code=404, detail=f"Trace '{payload.trace_id}' not found")
-
-        trace_dict = parse_trace_data(trace_raw)
-        trace_user = _extract_trace_user_id(trace_dict)
-        if trace_user and trace_user != str(current_user.id):
-            raise HTTPException(status_code=403, detail="Trace does not belong to current user")
-
-        if item_input is None:
-            item_input = trace_dict.get("input")
-        if expected_output is None and payload.use_trace_output_as_expected:
-            expected_output = trace_dict.get("output")
-        source_trace_id = source_trace_id or str(trace_dict.get("id") or payload.trace_id)
-
-    if item_input is None and expected_output is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide input/expected_output or a trace_id to create a dataset item",
-        )
-
-    metadata = _merge_dataset_metadata(payload.metadata, user_id=str(current_user.id))
-    if payload.trace_id:
-        metadata.setdefault("trace_id", str(payload.trace_id))
-
     try:
-        item = client.create_dataset_item(
+        return _create_dataset_item_for_user(
+            client=client,
             dataset_name=dataset_name,
-            input=item_input,
-            expected_output=expected_output,
-            metadata=metadata,
-            source_trace_id=source_trace_id,
-            source_observation_id=payload.source_observation_id,
+            payload=payload,
+            current_user_id=str(current_user.id),
+            flush=True,
         )
-        if hasattr(client, "flush"):
-            client.flush()
-        return _dataset_item_to_response(item)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.opt(exception=True).error("Error creating dataset item for '{}': {}", dataset_name, str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/datasets/{dataset_name}/items/upload-csv")
+async def upload_dataset_items_csv(
+    dataset_name: str,
+    csv_file: Annotated[UploadFile, File(...)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> DatasetCsvImportResponse:
+    """Bulk-create dataset items from CSV rows."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    filename = (csv_file.filename or "").strip()
+    if filename and not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+
+    max_bytes = 10 * 1024 * 1024  # 10 MB
+    max_rows = 5000
+    max_error_rows = 100
+
+    raw = await csv_file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded CSV is empty")
+    if len(raw) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"CSV file too large. Maximum supported size is {max_bytes // (1024 * 1024)} MB.",
+        )
+
+    try:
+        text = raw.decode("utf-8-sig")
+    except Exception:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV header row is required")
+
+    total_rows = 0
+    created_count = 0
+    failed_count = 0
+    skipped_count = 0
+    errors: list[DatasetCsvImportError] = []
+
+    try:
+        for row_number, row in enumerate(reader, start=2):
+            row_values = list((row or {}).values())
+            if not any(str(value).strip() for value in row_values if value is not None):
+                skipped_count += 1
+                continue
+
+            total_rows += 1
+            if total_rows > max_rows:
+                failed_count += 1
+                errors.append(
+                    DatasetCsvImportError(
+                        row=row_number,
+                        message=f"Row limit exceeded. Maximum import rows per file: {max_rows}",
+                    )
+                )
+                break
+
+            try:
+                request_payload = _csv_row_to_dataset_item_request(row or {})
+                _create_dataset_item_for_user(
+                    client=client,
+                    dataset_name=dataset_name,
+                    payload=request_payload,
+                    current_user_id=str(current_user.id),
+                    flush=False,
+                )
+                created_count += 1
+            except HTTPException as http_exc:
+                failed_count += 1
+                if len(errors) < max_error_rows:
+                    detail = http_exc.detail
+                    if isinstance(detail, (dict, list)):
+                        message = json.dumps(detail, ensure_ascii=False)
+                    else:
+                        message = str(detail)
+                    errors.append(DatasetCsvImportError(row=row_number, message=message))
+            except Exception as exc:
+                failed_count += 1
+                if len(errors) < max_error_rows:
+                    errors.append(DatasetCsvImportError(row=row_number, message=str(exc)))
+
+        if total_rows == 0:
+            raise HTTPException(status_code=400, detail="CSV has no importable rows")
+
+        if created_count > 0 and hasattr(client, "flush"):
+            client.flush()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.opt(exception=True).error(
+            "Error importing CSV dataset items for '{}': {}",
+            dataset_name,
+            str(exc),
+        )
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return DatasetCsvImportResponse(
+        dataset_name=dataset_name,
+        total_rows=total_rows,
+        created_count=created_count,
+        failed_count=failed_count,
+        skipped_count=skipped_count,
+        errors=errors,
+    )
+
+
+@router.delete("/datasets/{dataset_name}/items/{item_id}")
+async def delete_dataset_item(
+    dataset_name: str,
+    item_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Dict[str, Any]:
+    """Delete one dataset item."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    item_obj = _fetch_dataset_item_by_id(client, item_id)
+    if item_obj is None:
+        # SDK fallback: scan current dataset items to find the item id.
+        for candidate in _fetch_all_dataset_items(client, dataset_name=dataset_name, max_rows=5000):
+            if str(get_attr(candidate, "id", default="") or "") == str(item_id):
+                item_obj = candidate
+                break
+
+    if item_obj is None:
+        raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found")
+
+    item_dataset_name = str(get_attr(item_obj, "dataset_name", "datasetName", default="") or "")
+    if item_dataset_name and item_dataset_name != dataset_name:
+        raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found in dataset '{dataset_name}'")
+
+    if not _dataset_item_owned_by_user(item_obj, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found")
+
+    try:
+        _delete_dataset_item(client, item_id)
+        if hasattr(client, "flush"):
+            client.flush()
+        return {
+            "status": "deleted",
+            "dataset_name": dataset_name,
+            "item_id": item_id,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.opt(exception=True).error("Error deleting dataset item '{}': {}", item_id, str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -3538,6 +4403,9 @@ async def get_dataset_run_detail(
             except Exception as score_exc:
                 logger.debug("Failed loading scores for trace {} in run detail: {}", trace_id, str(score_exc))
 
+        if not score_rows:
+            score_rows = _extract_run_item_evaluation_scores(run_item)
+
         detailed_items.append(
             _dataset_run_item_to_detail_response(
                 run_item,
@@ -3551,6 +4419,48 @@ async def get_dataset_run_detail(
         item_count=len(run_items),
         items=detailed_items,
     )
+
+
+@router.delete("/datasets/{dataset_name}/runs/{run_id}")
+async def delete_dataset_run(
+    dataset_name: str,
+    run_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Dict[str, Any]:
+    """Delete one dataset run by id."""
+    client = get_langfuse_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+
+    try:
+        dataset = client.get_dataset(dataset_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+
+    run_obj = _find_dataset_run_by_id(client, dataset_name=dataset_name, run_id=run_id, max_scan=1000)
+    if not run_obj:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found in dataset '{dataset_name}'")
+
+    run_name = str(get_attr(run_obj, "name", default="") or "").strip()
+    if not run_name:
+        raise HTTPException(status_code=500, detail="Run name is missing for selected run")
+
+    try:
+        _delete_dataset_run(client, dataset_name=dataset_name, run_name=run_name)
+        if hasattr(client, "flush"):
+            client.flush()
+        return {
+            "status": "deleted",
+            "dataset_name": dataset_name,
+            "run_id": run_id,
+            "run_name": run_name,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.opt(exception=True).error("Error deleting dataset run '{}': {}", run_id, str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/datasets/{dataset_name}/experiments")
@@ -3577,16 +4487,42 @@ async def run_dataset_experiment(
         agent_id=payload.agent_id,
         current_user=current_user,
     )
+    generation_model = (payload.generation_model or "").strip() or None
+    generation_model_api_key = (payload.generation_model_api_key or "").strip() or None
+
+    if not agent_payload and not generation_model:
+        raise HTTPException(
+            status_code=400,
+            detail="Select an agent or provide a generation model.",
+        )
+    if not agent_payload and not generation_model_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Generation model API key is required when no agent is selected.",
+        )
 
     judge_cfg = await _resolve_experiment_judge_config(
         current_user=current_user,
         evaluator_config_id=payload.evaluator_config_id,
+        preset_id=payload.preset_id,
+        evaluator_name=payload.evaluator_name,
         criteria=payload.criteria,
-        model=payload.model,
-        model_api_key=payload.model_api_key,
+        judge_model=payload.judge_model or payload.model,
+        judge_model_api_key=payload.judge_model_api_key or payload.model_api_key,
     )
     if judge_cfg["criteria"] and not judge_cfg["model"]:
         judge_cfg["model"] = "gpt-4o"
+    if judge_cfg.get("requires_ground_truth"):
+        dataset_items = list(getattr(dataset, "items", []) or [])
+        has_ground_truth = any(
+            get_attr(item, "expected_output", "expectedOutput", default=None) not in (None, "", [])
+            for item in dataset_items
+        )
+        if not has_ground_truth:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected evaluator preset requires ground truth, but dataset items do not have expected_output.",
+            )
 
     job_id = str(uuid4())
     _set_dataset_experiment_job(
@@ -3594,7 +4530,6 @@ async def run_dataset_experiment(
         status="queued",
         dataset_name=dataset_name,
         experiment_name=payload.experiment_name,
-        run_name=payload.run_name,
         started_at=None,
         finished_at=None,
         result=None,
@@ -3608,22 +4543,22 @@ async def run_dataset_experiment(
         client=client,
         dataset_name=dataset_name,
         experiment_name=payload.experiment_name,
-        run_name=payload.run_name,
         description=payload.description,
         user_id=str(current_user.id),
         agent_payload=agent_payload,
+        generation_model=generation_model,
+        generation_model_api_key=generation_model_api_key,
         judge_name=judge_cfg["judge_name"],
+        judge_preset_id=judge_cfg.get("preset_id"),
         judge_criteria=judge_cfg["criteria"],
         judge_model=judge_cfg["model"],
         judge_model_api_key=judge_cfg["model_api_key"],
-        max_concurrency=payload.max_concurrency,
     )
 
     return DatasetExperimentEnqueueResponse(
         job_id=job_id,
         dataset_name=dataset_name,
         experiment_name=payload.experiment_name,
-        run_name=payload.run_name,
         status="queued",
     )
 
@@ -3874,50 +4809,52 @@ async def list_evaluation_models(
     """
     try:
         async with session_scope() as session:
-            stmt = (
-                select(agent)
-                .where(
-                    or_(
-                        agent.is_component == False,  # noqa: E712
-                        agent.is_component.is_(None),
-                    )
-                )
-                .where(
-                    or_(
-                        agent.user_id == current_user.id,
-                        agent.access_type == AccessTypeEnum.PUBLIC,
-                    )
+            stmt = select(agent).where(
+                or_(
+                    agent.user_id == current_user.id,
+                    agent.access_type == AccessTypeEnum.PUBLIC,
                 )
             )
+            is_component_col = getattr(agent, "is_component", None)
+            if is_component_col is not None:
+                stmt = stmt.where(
+                    or_(
+                        is_component_col == False,  # noqa: E712
+                        is_component_col.is_(None),
+                    )
+                )
             _res = await session.exec(stmt)
             agents = _res.all()
 
-        def to_payload(agent: agent) -> dict:
-            updated = agent.updated_at
+        def to_payload(agent_obj: agent) -> dict:
+            updated = agent_obj.updated_at
             try:
                 updated_dt = datetime.fromisoformat(updated) if isinstance(updated, str) else updated
             except Exception:
                 updated_dt = None
             created_ts = int(updated_dt.timestamp()) if updated_dt else int(time.time())
+            endpoint_name = getattr(agent_obj, "endpoint_name", None)
+            model_id = endpoint_name or agent_obj.id
+            access = agent_obj.access_type.value if agent_obj.access_type else AccessTypeEnum.PRIVATE.value
             return {
-                "id": f"lb:{agent.endpoint_name or agent.id}",
-                "name": agent.name,
+                "id": f"lb:{model_id}",
+                "name": agent_obj.name,
                 "object": "model",
                 "created": created_ts,
-                "owned_by": str(agent.user_id) if agent.user_id else None,
-                "root": f"lb:{agent.endpoint_name or agent.id}",
+                "owned_by": str(agent_obj.user_id) if agent_obj.user_id else None,
+                "root": f"lb:{model_id}",
                 "parent": None,
                 "permission": [],
                 "metadata": {
-                    "display_name": agent.name,
-                    "description": agent.description,
-                    "endpoint_name": agent.endpoint_name,
+                    "display_name": agent_obj.name,
+                    "description": agent_obj.description,
+                    "endpoint_name": endpoint_name,
                     # New canonical key used across the codebase
-                    "agent_id": str(agent.id),
+                    "agent_id": str(agent_obj.id),
                     # Legacy aliases expected by some frontend codepaths — keep for compatibility
-                    "agent_id": str(agent.id),
-                    "agent_ids": [str(agent.id)],
-                    "access": agent.access_type.value if agent.access_type else AccessTypeEnum.PRIVATE.value,
+                    "agent_id": str(agent_obj.id),
+                    "agent_ids": [str(agent_obj.id)],
+                    "access": access,
                 },
             }
 
@@ -3925,6 +4862,93 @@ async def list_evaluation_models(
     except Exception as e:
         logger.opt(exception=True).error("Error listing evaluation models: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _enqueue_existing_trace_evaluations(
+    *,
+    background_tasks: BackgroundTasks,
+    user_id: str,
+    evaluator_name: str,
+    criteria: str,
+    model: str | None,
+    trace_id: str | None = None,
+    agent_id: str | None = None,
+    agent_ids: Optional[List[str]] = None,
+    agent_name: str | None = None,
+    session_id: str | None = None,
+    project_name: str | None = None,
+    ts_from: datetime | None = None,
+    ts_to: datetime | None = None,
+    model_api_key: str | None = None,
+    preset_id: str | None = None,
+    ground_truth: str | None = None,
+) -> int:
+    """Queue evaluator runs for all matching existing traces."""
+    validate_ground_truth_requirement(preset_id, ground_truth)
+
+    client = get_langfuse_client()
+    if not client:
+        return 0
+
+    normalized_agent_id = _normalize_agent_id(agent_id)
+    normalized_agent_ids = _normalize_agent_ids(agent_ids)
+
+    try:
+        traces = fetch_traces_from_langfuse(
+            client,
+            user_id=user_id,
+            limit=1000,
+            from_timestamp=ts_from,
+            to_timestamp=ts_to,
+        )
+    except Exception as exc:
+        logger.warning("Failed to fetch traces for evaluator run: {}", str(exc))
+        return 0
+
+    enqueued = 0
+    seen_trace_ids: set[str] = set()
+    for trace in traces or []:
+        trace_dict = parse_trace_data(trace)
+        if not _trace_matches_evaluator_filters(
+            trace_dict,
+            trace_id=trace_id,
+            session_id=session_id,
+            agent_id=normalized_agent_id,
+            agent_ids=normalized_agent_ids,
+            agent_name=agent_name,
+            project_name=project_name,
+            ts_from=ts_from,
+            ts_to=ts_to,
+        ):
+            continue
+
+        matched_trace_id = str(trace_dict.get("id") or "")
+        if not matched_trace_id:
+            continue
+        if matched_trace_id in seen_trace_ids:
+            continue
+        seen_trace_ids.add(matched_trace_id)
+
+        background_tasks.add_task(
+            run_llm_judge_task,
+            client=client,
+            trace_id=matched_trace_id,
+            criteria=criteria,
+            score_name=f"Evaluator: {evaluator_name}",
+            model=model or "gpt-4o",
+            user_id=user_id,
+            model_api_key=model_api_key,
+            preset_id=preset_id,
+            ground_truth=ground_truth,
+            session_id=str(trace_dict.get("session_id") or "") or None,
+            agent_id=_extract_trace_agent_id(trace_dict),
+            agent_name=_extract_trace_agent_name(trace_dict),
+            project_name=_extract_trace_project_name(trace_dict),
+            timestamp=_parse_trace_timestamp(trace_dict.get("timestamp")),
+        )
+        enqueued += 1
+
+    return enqueued
 
 
 @router.post("/configs")
@@ -3976,64 +5000,100 @@ async def create_evaluator_config(
 
         # If target includes 'existing', fetch matching traces and enqueue judge tasks.
         if "existing" in normalized_target:
-            client = get_langfuse_client()
-            if client:
-                try:
-                    traces = fetch_traces_from_langfuse(
-                        client,
-                        user_id=str(current_user.id),
-                        limit=1000,
-                        from_timestamp=from_ts,
-                        to_timestamp=to_ts,
-                    )
-
-                    matched = []
-                    for trace in traces or []:
-                        trace_dict = parse_trace_data(trace)
-                        if _trace_matches_evaluator_filters(
-                            trace_dict,
-                            trace_id=payload.trace_id,
-                            session_id=payload.session_id,
-                            agent_id=normalized_agent_id,
-                            agent_ids=normalized_agent_ids,
-                            agent_name=payload.agent_name,
-                            project_name=payload.project_name,
-                            ts_from=from_ts,
-                            ts_to=to_ts,
-                        ):
-                            matched.append(trace_dict)
-
-                    enqueued = 0
-                    for matched_trace in matched:
-                        matched_trace_id = str(matched_trace.get("id"))
-                        background_tasks.add_task(
-                            run_llm_judge_task,
-                            client=client,
-                            trace_id=matched_trace_id,
-                            criteria=payload.criteria,
-                            score_name=f"Evaluator: {payload.name}",
-                            model=payload.model,
-                            user_id=str(current_user.id),
-                            model_api_key=payload.model_api_key,
-                            preset_id=payload.preset_id,
-                            ground_truth=payload.ground_truth,
-                            session_id=str(matched_trace.get("session_id") or "") or None,
-                            agent_id=_extract_trace_agent_id(matched_trace),
-                            agent_name=_extract_trace_agent_name(matched_trace),
-                            project_name=_extract_trace_project_name(matched_trace),
-                            timestamp=_parse_trace_timestamp(matched_trace.get("timestamp")),
-                        )
-                        enqueued += 1
-
-                    logger.info(f"evaluation - Enqueued {enqueued} judge tasks for evaluator id={eid}")
-                except Exception as e:
-                    logger.warning("Failed to enqueue evaluator for existing traces: {}", str(e))
+            enqueued = await _enqueue_existing_trace_evaluations(
+                background_tasks=background_tasks,
+                user_id=str(current_user.id),
+                evaluator_name=payload.name,
+                criteria=payload.criteria,
+                model=payload.model,
+                trace_id=payload.trace_id,
+                agent_id=normalized_agent_id,
+                agent_ids=normalized_agent_ids,
+                agent_name=payload.agent_name,
+                session_id=payload.session_id,
+                project_name=payload.project_name,
+                ts_from=from_ts,
+                ts_to=to_ts,
+                model_api_key=payload.model_api_key,
+                preset_id=payload.preset_id,
+                ground_truth=payload.ground_truth,
+            )
+            logger.info(f"evaluation - Enqueued {enqueued} judge tasks for evaluator id={eid}")
 
         return EvaluatorResponse(**evaluator.to_response())
     except HTTPException:
         raise
     except Exception as e:
         logger.opt(exception=True).error("Error creating evaluator config: {}", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/configs/{config_id}/run")
+async def run_evaluator_config(
+    config_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Dict[str, Any]:
+    """Run an existing saved evaluator against matching existing traces."""
+    try:
+        async with session_scope() as session:
+            try:
+                eval_obj = await session.get(Evaluator, UUID(config_id))
+            except Exception:
+                raise HTTPException(status_code=404, detail="Evaluator not found")
+            if not eval_obj or str(current_user.id) != str(eval_obj.user_id):
+                raise HTTPException(status_code=404, detail="Evaluator not found")
+
+        normalized_target = _normalize_targets(eval_obj.target)
+        if "existing" not in normalized_target:
+            logger.info(
+                "evaluation - Skipping manual run for evaluator id={} user={} target={}",
+                config_id,
+                current_user.id,
+                normalized_target,
+            )
+            return {
+                "status": "noop",
+                "config_id": config_id,
+                "enqueued": 0,
+                "target": normalized_target,
+                "message": "Evaluator is configured for new traces only. It will run automatically on new traces.",
+            }
+
+        enqueued = await _enqueue_existing_trace_evaluations(
+            background_tasks=background_tasks,
+            user_id=str(current_user.id),
+            evaluator_name=eval_obj.name,
+            criteria=eval_obj.criteria,
+            model=eval_obj.model,
+            trace_id=eval_obj.trace_id,
+            agent_id=eval_obj.agent_id,
+            agent_ids=eval_obj.agent_ids,
+            agent_name=eval_obj.agent_name,
+            session_id=eval_obj.session_id,
+            project_name=eval_obj.project_name,
+            ts_from=eval_obj.ts_from,
+            ts_to=eval_obj.ts_to,
+            model_api_key=eval_obj.model_api_key,
+            preset_id=eval_obj.preset_id,
+            ground_truth=eval_obj.ground_truth,
+        )
+        logger.info(
+            "evaluation - Enqueued {} judge tasks for existing evaluator id={} user={}",
+            enqueued,
+            config_id,
+            current_user.id,
+        )
+        return {
+            "status": "queued",
+            "config_id": config_id,
+            "enqueued": enqueued,
+            "target": normalized_target,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.opt(exception=True).error("Error running evaluator config: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -4129,72 +5189,4 @@ async def delete_evaluator_config(
         raise
     except Exception as e:
         logger.opt(exception=True).error("Error deleting evaluator config: {}", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class PreviewRequest(BaseModel):
-    trace_id: str
-    criteria: str
-    model: str = "gpt-4o"
-    name: str | None = None
-
-
-@router.post("/preview")
-async def preview_evaluation(
-    payload: PreviewRequest,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-) -> Dict[str, Any]:
-    """Return the system and user prompt that would be sent to the LLM for a given trace + criteria."""
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
-
-    try:
-        trace_response = client.fetch_trace(payload.trace_id)
-        trace_data = trace_response.data if hasattr(trace_response, "data") else trace_response
-        if not trace_data:
-            raise HTTPException(status_code=404, detail="Trace not found")
-
-        trace_dict = parse_trace_data(trace_data)
-
-        system_prompt = (
-            "You are an impartial AI judge evaluating an AI assistant's interaction. "
-            "You will be given the Input (User Query) and the Output (AI Response). "
-            "Your task is to evaluate the Output based strictly on the provided Criteria. "
-            "Provide a score between 0.0 (worst) and 1.0 (perfect) and explain your reasoning."
-        )
-
-        trace_input = trace_dict.get('input', '')
-        trace_output = trace_dict.get('output', '')
-        if not isinstance(trace_input, str):
-            trace_input = json.dumps(trace_input)
-        if not isinstance(trace_output, str):
-            trace_output = json.dumps(trace_output)
-
-        user_prompt = f"""### Criteria
-{payload.criteria}
-
-### Input
-{trace_input}
-
-### Output
-{trace_output}
-
-### Instructions
-Evaluate the Output based on the Criteria.
-Respond with a JSON object containing:
-- \"score\": A float between 0.0 and 1.0 (where 1.0 is perfect).
-- \"reason\": A concise explanation of your scoring (2-3 sentences).
-
-Respond ONLY with valid JSON, no markdown formatting."""
-
-        return {
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-            "trace": trace_dict,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.opt(exception=True).error("Error creating preview: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))

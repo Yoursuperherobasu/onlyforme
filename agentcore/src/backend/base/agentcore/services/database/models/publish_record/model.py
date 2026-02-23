@@ -30,6 +30,8 @@ class PublishRecordBase(SQLModel):
     __mapper_args__ = {"confirm_deleted_rows": False}
 
     agent_id: UUID = Field(foreign_key="agent.id", index=True, nullable=False)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
     platform: str = Field(index=True, nullable=False, description="Target platform")
     platform_url: str = Field(nullable=False, description="Base URL of the target platform")
     external_id: str = Field(

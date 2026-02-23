@@ -123,25 +123,6 @@ def build_input_keys_response(langchain_object, artifacts):
 
     return input_keys_response
 
-
-def validate_is_component(agents: list[Agent]):
-    for agent in agents:
-        if not agent.data or agent.is_component is not None:
-            continue
-
-        is_component = get_is_component_from_data(agent.data)
-        if is_component is not None:
-            agent.is_component = is_component
-        else:
-            agent.is_component = len(agent.data.get("nodes", [])) == 1
-    return agents
-
-
-def get_is_component_from_data(data: dict):
-    """Returns True if the data is a component."""
-    return data.get("is_component")
-
-
 def format_elapsed_time(elapsed_time: float) -> str:
     """Format elapsed time to a human-readable format coming from perf_counter().
 
@@ -238,12 +219,12 @@ async def build_graph_from_db_no_cache(agent_id: uuid.UUID, session: AsyncSessio
         raise ValueError(msg)
     kwargs["user_id"] = kwargs.get("user_id") or str(agent.user_id)
 
-    # Pass folder_id as project_id for observability tracking
-    if agent.folder_id:
-        kwargs["project_id"] = str(agent.folder_id)
+    # Pass project_id as project_id for observability tracking
+    if agent.project_id:
+        kwargs["project_id"] = str(agent.project_id)
         # Try to get folder name for project_name
         try:
-            folder = await session.get(Folder, agent.folder_id)
+            folder = await session.get(Folder, agent.project_id)
             if folder:
                 kwargs["project_name"] = folder.name
         except Exception:

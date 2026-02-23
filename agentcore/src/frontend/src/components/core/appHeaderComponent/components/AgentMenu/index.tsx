@@ -44,7 +44,7 @@ export const MenuBar = memo((): JSX.Element => {
       isAgentLocked: state.currentAgent?.locked,
       currentAgentName: state.currentAgent?.name,
       currentAgentId: state.currentAgent?.id,
-      currentAgentFolderId: state.currentAgent?.folder_id,
+      currentAgentFolderId: state.currentAgent?.project_id,
       currentAgentIcon: state.currentAgent?.icon,
       currentAgentGradient: state.currentAgent?.gradient,
     })),

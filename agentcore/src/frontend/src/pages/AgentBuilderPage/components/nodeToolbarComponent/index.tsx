@@ -34,7 +34,7 @@ import {
   downloadNode,
   expandGroupNode,
   updateAgentPosition,
-} from "../../../../utils/reactflowUtils";
+} from "../../../../utils/reactFlowUtils";
 import { cn, getNodeLength } from "../../../../utils/utils";
 import { ToolbarButton } from "./components/toolbar-button";
 import ToolbarModals from "./components/toolbar-modals";

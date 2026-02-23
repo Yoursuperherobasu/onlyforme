@@ -18,7 +18,28 @@ ROLE_ALIASES = {
 
 PERMISSION_ALIASES = {
     # Keep old permission checks working while roles move to assets-based keys.
+    "view_project_page": ["view_projects_page"],
+    "view_projects_page": ["view_project_page"],
     "view_assets_files_tab": ["view_files_tab"],
+    "manage_users": ["view_admin_page"],
+    "manage_roles": ["view_access_control_page"],
+    "interact_agents": ["view_orchastration_page"],
+    "view_orchestrator_page": ["view_orchastration_page"],
+    "view_traces": ["view_observability_page"],
+    "view_evaluation": ["view_evaluation_page"],
+    "view_guardrails": ["view_guardrail_page"],
+    "view_vector_db": ["view_vectordb_page"],
+    "view_vectorDb_page": ["view_vectordb_page"],
+    "view_mcp_page": ["view_mcp"],
+    "add_mcp": ["add_new_mcp"],
+    "view_knowledge_base_management": ["view_knowledge_base"],
+    "approve_reject_page": ["prod_publish_approval_required"],
+    "view_model_catalogue_page": ["view_models"],
+    "view_agent_catalogue_page": ["view_published_agents"],
+    "view_mcp_servers_page": ["view_mcp_page", "view_mcp"],
+    "view_guardrails_page": ["view_guardrail_page"],
+    "view_vector_db_page": ["view_vectordb_page"],
+    "view_observability_dashboard": ["view_observability_page"],
 }
 
 
@@ -44,13 +65,13 @@ def _expand_permissions(perms: List[str]) -> List[str]:
 
 ACTIONS = {
     "VIEW_DASHBOARD": "view_dashboard",
-    "MANAGE_USERS": "manage_users",
+    "MANAGE_USERS": "view_admin_page",
     "EDIT_AGENTS": "edit_agents",
     "VIEW_COSTS": "view_costs",
     "VIEW_FILES_TAB": "view_files_tab",
     "VIEW_ADMIN_PAGE": "view_admin_page",
     "VIEW_ACCESS_CONTROL_PAGE": "view_access_control_page",
-    "MANAGE_ROLES": "manage_roles",
+    "MANAGE_ROLES": "view_access_control_page",
     "VIEW_AGENTS_PAGE": "view_agents_page",
     "VIEW_COMPONENTS_PAGE": "view_components_page",
     "VIEW_ASSETS_FILES_TAB": "view_assets_files_tab",
@@ -60,13 +81,17 @@ ACTIONS = {
     "VIEW_SETTINGS_API_KEYS_TAB": "view_settings_api_keys_tab",
     "VIEW_SETTINGS_SHORTCUTS_TAB": "view_settings_shortcuts_tab",
     "VIEW_SETTINGS_MESSAGES_TAB": "view_settings_messages_tab",
-    "VIEW_MCP_SERVERS_PAGE": "view_mcp_servers_page",
+    "VIEW_MCP_SERVERS_PAGE": "view_mcp_page",
     "VIEW_MODEL_CATALOGUE_PAGE": "view_model_catalogue_page",
     "VIEW_AGENT_CATALOGUE_PAGE": "view_agent_catalogue_page",
-    "VIEW_ORCHESTRATOR_PAGE": "view_orchestrator_page",
-    "VIEW_GUARDRAILS_PAGE": "view_guardrails_page",
-    "VIEW_VECTOR_DB_PAGE": "view_vector_db_page",
-    "VIEW_OBSERVABILITY_DASHBOARD": "view_observability_dashboard",
+    "VIEW_ORCHESTRATOR_PAGE": "view_orchastration_page",
+    "VIEW_GUARDRAILS_PAGE": "view_guardrail_page",
+    "VIEW_VECTOR_DB_PAGE": "view_vectordb_page",
+    "VIEW_REVIEW_AGENT_TAB": "view_agent",
+    "VIEW_REVIEW_MODEL_TAB": "view_model",
+    "VIEW_REVIEW_MCP_TAB": "view_mcp",
+    "VIEW_OBSERVABILITY_DASHBOARD": "view_observability_page",
+    "VIEW_EVALUATION_PAGE": "view_evaluation_page",
     "VIEW_APPROVAL_PAGE": "view_approval_page",
     "VIEW_TIMEOUT_SETTINGS_PAGE": "view_timeout_settings_page",
     "VIEW_WORKAGENTS_PAGE": "view_workflows_page",
@@ -75,6 +100,41 @@ ACTIONS = {
 }
 
 ROLE_PERMISSIONS: Dict[str, List[str]] = {
+    "root": [
+        ACTIONS["VIEW_DASHBOARD"],
+        ACTIONS["MANAGE_USERS"],
+        ACTIONS["EDIT_AGENTS"],
+        ACTIONS["VIEW_COSTS"],
+        ACTIONS["VIEW_FILES_TAB"],
+        ACTIONS["VIEW_ADMIN_PAGE"],
+        ACTIONS["VIEW_ACCESS_CONTROL_PAGE"],
+        ACTIONS["MANAGE_ROLES"],
+        ACTIONS["VIEW_AGENTS_PAGE"],
+        ACTIONS["VIEW_COMPONENTS_PAGE"],
+        ACTIONS["VIEW_ASSETS_FILES_TAB"],
+        ACTIONS["VIEW_ASSETS_KNOWLEDGE_TAB"],
+        ACTIONS["VIEW_SETTINGS_PAGE"],
+        ACTIONS["VIEW_SETTINGS_GLOBAL_VARIABLES_TAB"],
+        ACTIONS["VIEW_SETTINGS_API_KEYS_TAB"],
+        ACTIONS["VIEW_SETTINGS_SHORTCUTS_TAB"],
+        ACTIONS["VIEW_SETTINGS_MESSAGES_TAB"],
+        ACTIONS["VIEW_MCP_SERVERS_PAGE"],
+        ACTIONS["VIEW_MODEL_CATALOGUE_PAGE"],
+        ACTIONS["VIEW_AGENT_CATALOGUE_PAGE"],
+        ACTIONS["VIEW_ORCHESTRATOR_PAGE"],
+        ACTIONS["VIEW_GUARDRAILS_PAGE"],
+        ACTIONS["VIEW_VECTOR_DB_PAGE"],
+        ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
+        ACTIONS["VIEW_EVALUATION_PAGE"],
+        ACTIONS["VIEW_APPROVAL_PAGE"],
+        ACTIONS["VIEW_REVIEW_AGENT_TAB"],
+        ACTIONS["VIEW_REVIEW_MODEL_TAB"],
+        ACTIONS["VIEW_REVIEW_MCP_TAB"],
+        ACTIONS["VIEW_TIMEOUT_SETTINGS_PAGE"],
+        ACTIONS["VIEW_WORKAGENTS_PAGE"],
+        ACTIONS["VIEW_PLAYGROUND_PAGE"],
+        ACTIONS["VIEW_AGENT_EDITOR"],
+    ],
     "super_admin": [
         ACTIONS["VIEW_DASHBOARD"],
         ACTIONS["MANAGE_USERS"],
@@ -100,7 +160,11 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_GUARDRAILS_PAGE"],
         ACTIONS["VIEW_VECTOR_DB_PAGE"],
         ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
+        ACTIONS["VIEW_EVALUATION_PAGE"],
         ACTIONS["VIEW_APPROVAL_PAGE"],
+        ACTIONS["VIEW_REVIEW_AGENT_TAB"],
+        ACTIONS["VIEW_REVIEW_MODEL_TAB"],
+        ACTIONS["VIEW_REVIEW_MCP_TAB"],
         ACTIONS["VIEW_TIMEOUT_SETTINGS_PAGE"],
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
         ACTIONS["VIEW_PLAYGROUND_PAGE"],
@@ -145,9 +209,16 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_ASSETS_FILES_TAB"],
         ACTIONS["VIEW_AGENT_EDITOR"],
     ],
+    "consumer": [
+        ACTIONS["VIEW_DASHBOARD"],
+        ACTIONS["VIEW_AGENTS_PAGE"],
+        ACTIONS["VIEW_COMPONENTS_PAGE"],
+        ACTIONS["VIEW_ORCHESTRATOR_PAGE"],
+        ACTIONS["VIEW_AGENT_EDITOR"],
+    ],
 }
 
-PERMISSION_VERSION = "v4"  # 🔥 bump this when permissions change
+PERMISSION_VERSION = "v7"  # bump when permissions change
 
 
 class PermissionCacheService:
@@ -164,6 +235,8 @@ class PermissionCacheService:
             if isinstance(cached, bytes):
                 cached = cached.decode("utf-8")
             cached = str(cached)
+            if cached == "__none__":
+                return []
             if cached.strip():
                 perms = _expand_permissions(cached.split(","))
                 if perms != [""]:
@@ -171,7 +244,9 @@ class PermissionCacheService:
 
         perms = await _get_permissions_for_role_db(role)
         if not perms:
-            perms = ROLE_PERMISSIONS.get(role, [])
+            await self.redis.set(key, "__none__", ex=self.ttl)
+            logger.info(f"RBAC cached → {key} = []")
+            return []
         perms = _expand_permissions(perms)
         await self.redis.set(key, ",".join(perms), ex=self.ttl)
 
@@ -183,19 +258,22 @@ permission_cache: Optional[PermissionCacheService] = None
 
 
 async def get_permissions_for_role(role: str) -> List[str]:
+    normalized = _normalize_role(role)
+    if normalized == "root":
+        async with session_scope() as session:
+            all_perm_rows = (await session.exec(select(Permission.key))).all()
+        return _expand_permissions([p for p in all_perm_rows if p])
+
     if permission_cache is None:
-        # 🔥 fallback (no Redis)
-        perms = await _get_permissions_for_role_db(_normalize_role(role))
+        perms = await _get_permissions_for_role_db(normalized)
         if perms:
             return _expand_permissions(perms)
-        normalized = _normalize_role(role)
-        return _expand_permissions(ROLE_PERMISSIONS.get(normalized, []))
+        return []
 
     perms = await permission_cache.get_permissions_for_role(role)
     if perms:
         return _expand_permissions(perms)
-    normalized = _normalize_role(role)
-    return _expand_permissions(ROLE_PERMISSIONS.get(normalized, []))
+    return []
 
 
 async def _get_permissions_for_role_db(role: str) -> List[str]:

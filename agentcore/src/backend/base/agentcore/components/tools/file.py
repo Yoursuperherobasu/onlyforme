@@ -14,8 +14,8 @@ class File(BaseFileNode):
     resolving paths, validating file types, and optionally using multithreading for processing.
     """
 
-    display_name = "File"
-    description = "Loads content from one or more files."
+    display_name = "Knowledge Base"
+    description = "Select one or more knowledge bases and load their files."
     icon = "file-text"
     name = "File"
 
@@ -25,6 +25,7 @@ class File(BaseFileNode):
 
     for input_item in _base_inputs:
         if isinstance(input_item, FileInput) and input_item.name == "path":
+            input_item.display_name = "Knowledge Bases"
             input_item.real_time_refresh = True
             break
 
@@ -72,16 +73,16 @@ class File(BaseFileNode):
                     )
 
                 # All files get the raw content and path outputs
+                # frontend_node["outputs"].append(
+                #     Output(display_name="Raw Content", name="message", method="load_files_message"),
+                # )
                 frontend_node["outputs"].append(
-                    Output(display_name="Raw Content", name="message", method="load_files_message"),
-                )
-                frontend_node["outputs"].append(
-                    Output(display_name="File Path", name="path", method="load_files_path"),
+                    Output(display_name="Knowledge Base", name="path", method="load_files_path"),
                 )
             else:
                 # For multiple files, we only show the files output
                 frontend_node["outputs"].append(
-                    Output(display_name="Files", name="dataframe", method="load_files"),
+                    Output(display_name="Knowledge Bases", name="dataframe", method="load_files"),
                 )
 
         return frontend_node
