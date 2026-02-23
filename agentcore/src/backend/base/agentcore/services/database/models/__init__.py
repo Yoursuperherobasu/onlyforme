@@ -25,6 +25,8 @@ from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
 from .orch_conversation import OrchConversationTable
 from .orch_transaction import OrchTransactionTable
+from .timeout_settings import TimeoutSettings
+from .guardrail_catalogue import GuardrailCatalogue
 
 __all__ = [
     "Agent",
@@ -57,6 +59,8 @@ __all__ = [
     "TransactionUATTable",
     "VectorDBCatalogue",
     "KnowledgeBase",
+    "TimeoutSettings",
+    "GuardrailCatalogue",
     "TransactionTable",
     "TransactionUATTable",
     "OrchConversationTable",

@@ -1,25 +1,30 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
-class VectorDBCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
-    __tablename__ = "vector_db_catalogue"
+class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
+    __tablename__ = "guardrail_catalogue"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
-    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
     name: str = Field(sa_column=Column(String(255), nullable=False))
     description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     provider: str = Field(sa_column=Column(String(100), nullable=False, index=True))
-    deployment: str = Field(sa_column=Column(String(50), nullable=False))
-    dimensions: str = Field(sa_column=Column(String(50), nullable=False))
-    index_type: str = Field(sa_column=Column(String(100), nullable=False))
-    status: str = Field(sa_column=Column(String(50), nullable=False))
-    vector_count: str = Field(sa_column=Column(String(50), nullable=False))
+    category: str = Field(sa_column=Column(String(50), nullable=False, index=True))
+    status: str = Field(default="active", sa_column=Column(String(50), nullable=False, index=True))
+    rules_count: int = Field(default=0, sa_column=Column(Integer, nullable=False))
     is_custom: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+
+    # NULL org_id + NULL dept_id => global scope
+    # org_id + NULL dept_id => organization scope
+    # org_id + dept_id => department scope
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
+
     created_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -34,12 +39,14 @@ class VectorDBCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     published_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     __table_args__ = (
-        CheckConstraint("(dept_id IS NULL) OR (org_id IS NOT NULL)", name="ck_vector_db_scope_consistency"),
+        CheckConstraint("(dept_id IS NULL) OR (org_id IS NOT NULL)", name="ck_guardrail_scope_consistency"),
         ForeignKeyConstraint(
             ["org_id", "dept_id"],
             ["department.org_id", "department.id"],
-            name="fk_vector_db_org_dept_department",
+            name="fk_guardrail_org_dept_department",
         ),
-        UniqueConstraint("org_id", "dept_id", "name", name="uq_vector_db_catalogue_scope_name"),
-        Index("ix_vector_db_catalogue_org_dept", "org_id", "dept_id"),
+        UniqueConstraint("org_id", "dept_id", "name", name="uq_guardrail_scope_name"),
+        Index("ix_guardrail_org_id", "org_id"),
+        Index("ix_guardrail_dept_id", "dept_id"),
+        Index("ix_guardrail_org_dept", "org_id", "dept_id"),
     )
