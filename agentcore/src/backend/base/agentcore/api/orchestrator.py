@@ -1,4 +1,4 @@
-"""Orchestrator Chat API — endpoints for multi-agent chat via PROD deployments."""
+
 from __future__ import annotations
 
 import asyncio
@@ -35,12 +35,6 @@ from agentcore.services.database.models.orch_transaction.crud import (
     orch_delete_session_transactions,
 )
 router = APIRouter(prefix="/orchestrator", tags=["Orchestrator"])
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Response / Request schemas
-# ═══════════════════════════════════════════════════════════════════════════
-
 
 class OrchAgentSummary(BaseModel):
     deploy_id: UUID
@@ -85,10 +79,6 @@ class OrchSessionSummary(BaseModel):
     active_deployment_id: UUID | None = None
     active_agent_name: str | None = None
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Helpers — run agent from snapshot & extract text (proven pattern)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _best_from_message(msg: Any) -> str | None:
@@ -186,10 +176,6 @@ async def _build_orch_graph(
         agent_name=agent_name,
     )
 
-    # Force stream=True on every vertex that has a "stream" template field
-    # (i.e. model nodes). process_tweaks should have already set this in the
-    # raw graph data, but we set it again on the vertex params as a safety net
-    # to guarantee the LangChain model is created with streaming=True.
     if stream:
         for vertex in graph.vertices:
             if isinstance(vertex.template.get("stream"), dict):
@@ -268,8 +254,7 @@ async def _run_agent_from_snapshot(
         event_manager=event_manager,
     )
 
-    # Serialize fully (jsonable_encoder handles nested BaseModel objects
-    # that RunResponse's custom model_serializer leaves un-serialized)
+
     run_response = RunResponse(outputs=task_result, session_id=result_session_id)
     encoded = jsonable_encoder(run_response)
     logger.debug(f"[ORCH] RunResponse encoded payload: {json.dumps(encoded, default=str)[:2000]}")
@@ -278,10 +263,6 @@ async def _run_agent_from_snapshot(
 
     return response_text, result_session_id
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Sticky routing + context reset helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 async def _resolve_agent(
@@ -356,10 +337,6 @@ async def _maybe_context_reset(
     return True
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 1. List published & active agents from PROD deployments
-# ═══════════════════════════════════════════════════════════════════════════
-
 
 @router.get("/agents", response_model=list[OrchAgentSummary], status_code=200)
 async def list_orch_agents(
@@ -393,10 +370,6 @@ async def list_orch_agents(
         logger.error(f"Error listing orchestrator agents: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 2. Send a message — run the agent and persist conversation
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @router.post("/chat", response_model=OrchChatResponse, status_code=200)
@@ -504,11 +477,6 @@ async def orch_chat(
     except Exception as e:
         logger.exception(f"Error in orchestrator chat: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 2b. Send a message — streaming via NDJSON (token-by-token like Playground)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @router.post("/chat/stream", status_code=200)
@@ -657,10 +625,6 @@ async def orch_chat_stream(
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. List sessions for the current user
-# ═══════════════════════════════════════════════════════════════════════════
-
 
 @router.get("/sessions", response_model=list[OrchSessionSummary], status_code=200)
 async def list_orch_sessions(
@@ -691,9 +655,6 @@ async def list_orch_sessions(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 4. Get messages for a session
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[OrchMessageResponse], status_code=200)
@@ -728,10 +689,6 @@ async def get_orch_session_messages(
         logger.error(f"Error getting orch session messages: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. Delete a session (messages + transactions)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -772,9 +729,6 @@ async def rename_orch_session(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 7. Get active agent for a session (sticky routing query)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class ActiveAgentResponse(BaseModel):

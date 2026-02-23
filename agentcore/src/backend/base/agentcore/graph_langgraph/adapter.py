@@ -388,11 +388,6 @@ class LangGraphAdapter:
             logger.info("Compiling LangGraph workflow...")
             self.compiled_app = self.workflow.compile()
             logger.info("LangGraph workflow compiled successfully")
-            
-            # Get graph object for inspection
-            graph_obj = self.compiled_app.get_graph()
-        
-            
         except Exception as e:
             logger.error(f"Failed to compile LangGraph workflow: {e}")
             raise
@@ -413,35 +408,7 @@ class LangGraphAdapter:
         stop_component_id: str | None = None,
         start_component_id: str | None = None,
     ) -> list[str]:
-        """Sort vertices and filter based on stop/start component IDs.
-        
-        This method filters the graph to only include vertices that:
-        1. If stop_component_id is provided: vertices that are predecessors of the stop component
-        2. If start_component_id is provided: vertices that are successors of the start component
-        
-        This enables "Run Till Specific Component" and "Run From Specific Component" functionality.
-        
-        Args:
-            stop_component_id: Optional ID of component to stop at.
-                              Only vertices leading to this component will be executed.
-            start_component_id: Optional ID of component to start from.
-                               Only vertices reachable from this component will be executed.
-                               
-        Returns:
-            List of vertex IDs in the first layer (vertices with no dependencies in the filtered set)
-            
-        Example:
-            Given agent: ChatInput -> Agent -> TextInput -> ChatOutput
-            
-            If stop_component_id = "Agent-xxx":
-                - Only ChatInput and Agent will be included
-                - Returns first layer: ["ChatInput-xxx"]
-                - Sets vertices_to_run = {"ChatInput-xxx", "Agent-xxx"}
-                
-            If start_component_id = "TextInput-xxx":
-                - Only TextInput and ChatOutput will be included
-                - Returns first layer: ["TextInput-xxx"]
-        """
+       
         from agentcore.graph_langgraph.utils import get_sorted_vertices_for_langgraph
         
         # Get all vertex IDs
@@ -668,9 +635,12 @@ class LangGraphAdapter:
     ):
         """Run the graph with given inputs.
 
-        Builds all vertices in topological (dependency-first) order so that
-        each vertex can resolve its parameters from already-built predecessors,
-        then collects results from the requested output vertices.
+        Uses the same adaptive layer-by-layer execution as the Playground:
+        after each vertex build, calls get_next_runnable_vertices() to
+        discover which vertices to build next.  This respects routing
+        decisions made by ANY component that calls self.stop() to mark
+        branches as INACTIVE (e.g. SmartRouter, ConditionalRouter, or
+        any future routing / orchestration component).
 
         Args:
             inputs: List of input dictionaries (e.g., [{"input_value": "hello"}])
@@ -678,13 +648,15 @@ class LangGraphAdapter:
             types: Optional list of input types for each input
             outputs: Optional list of output vertex IDs to retrieve
             session_id: Optional session ID
-            stream: Whether to stream results (not implemented for LangGraph)
+            stream: Accepted for caller compatibility; streaming is handled
+                at the component level via event_manager, not here.
             fallback_to_env_vars: Whether to fallback to environment variables
-            event_manager: Optional event manager
+            event_manager: Event manager for real-time token streaming
 
         Returns:
             List of RunOutputs objects with inputs and outputs
         """
+        import asyncio as _asyncio
         from agentcore.graph_langgraph.schema import RunOutputs
         from agentcore.services.deps import get_chat_service
 
@@ -692,14 +664,15 @@ class LangGraphAdapter:
             self._session_id = session_id
             self.session_id = session_id
 
-        # Initialize run
+        # Initialize run (resets all vertex states, run_manager, etc.)
         await self.initialize_run()
 
         # Get chat service for caching
         chat_service = get_chat_service()
 
-        # Determine the correct topological build order once
-        topo_order = self._topological_order()
+        # Sort vertices to get the first layer — same as Playground.
+        # sort_vertices() sets up vertices_to_run and run_manager state.
+        first_layer = self.sort_vertices()
 
         vertex_outputs = []
 
@@ -713,8 +686,6 @@ class LangGraphAdapter:
             else:
                 output_ids = {v.id for v in self.vertices if v.is_output}
 
-            # Build ALL vertices in topological order so that predecessors
-            # are built before their dependents (mirrors the Playground flow).
             build_kwargs = dict(
                 user_id=self.user_id,
                 inputs_dict=run_inputs,
@@ -725,7 +696,27 @@ class LangGraphAdapter:
             )
 
             built_results: dict[str, object] = {}
-            for vertex_id in topo_order:
+            completed_vertices: set[str] = set()
+
+            # ── Adaptive layer-by-layer execution (same as Playground) ──
+            #
+            # After each vertex build we call get_next_runnable_vertices()
+            # which checks vertex active/inactive state.  Any component
+            # (router, conditional, A2A, etc.) that calls self.stop() to
+            # deactivate a branch will cause those downstream vertices to
+            # be skipped here — automatically and generically.
+
+            # Separate input vertices from non-input in first layer
+            input_ids = [vid for vid in first_layer
+                         if self.get_vertex(vid) and self.get_vertex(vid).is_input]
+            non_input_ids = [vid for vid in first_layer if vid not in input_ids]
+
+            async def _build_and_follow(vertex_id: str) -> None:
+                """Build one vertex, then recursively build its runnable successors."""
+                vertex = self.get_vertex(vertex_id)
+                if not vertex:
+                    return
+
                 try:
                     result = await self.build_vertex(vertex_id=vertex_id, **build_kwargs)
                     built_results[vertex_id] = (
@@ -734,6 +725,45 @@ class LangGraphAdapter:
                 except Exception:
                     logger.exception(f"Error building vertex {vertex_id}")
                     built_results[vertex_id] = None
+
+                completed_vertices.add(vertex_id)
+
+                # Reset per-vertex tracking (same as Playground's _build_vertex)
+                self.reset_inactivated_vertices()
+                self.reset_activated_vertices()
+
+                # Discover which successors are now runnable.
+                # get_next_runnable_vertices respects INACTIVE state set by
+                # any component's self.stop() → graph.mark_branch().
+                next_runnable = await self.get_next_runnable_vertices(
+                    self._lock, vertex=vertex, cache=False,
+                )
+
+                if self.stop_vertex and self.stop_vertex in next_runnable:
+                    next_runnable = [self.stop_vertex]
+
+                if not next_runnable:
+                    return
+
+                # Only schedule successors whose predecessors are ALL done
+                tasks = []
+                for next_vid in next_runnable:
+                    predecessors = self.predecessor_map.get(next_vid, [])
+                    if all(p in completed_vertices for p in predecessors):
+                        tasks.append(_asyncio.create_task(_build_and_follow(next_vid)))
+
+                if tasks:
+                    await _asyncio.gather(*tasks)
+
+            # 1) Build input vertices sequentially (user message stored first)
+            for vid in input_ids:
+                await _build_and_follow(vid)
+
+            # 2) Build remaining first-layer vertices concurrently
+            if non_input_ids:
+                tasks = [_asyncio.create_task(_build_and_follow(vid))
+                         for vid in non_input_ids]
+                await _asyncio.gather(*tasks)
 
             # Collect results only for the requested output vertices
             run_outputs = [built_results.get(oid) for oid in (outputs or list(output_ids))]
@@ -1320,17 +1350,6 @@ class LangGraphAdapter:
                     neighbors[neighbor] = neighbors.get(neighbor, 0) + 1
         
         return neighbors
-    
-    def __deepcopy__(self, memo):
-        """Deep copy the adapter."""
-        if id(self) in memo:
-            return memo[id(self)]
-        
-        new_adapter = type(self)(
-            agent_id=copy.deepcopy(self.agent_id, memo),
-            agent_name=copy.deepcopy(self.agent_name, memo),
-            user_id=copy.deepcopy(self.user_id, memo),
-        )
     
     def get_snapshot(self) -> dict[str, Any]:
         """Capture current execution state snapshot.
