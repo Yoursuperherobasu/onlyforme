@@ -645,7 +645,20 @@ class LangGraphAdapter:
 
         # Sort vertices to get the first layer — same as Playground.
         # sort_vertices() sets up vertices_to_run and run_manager state.
-        first_layer = self.sort_vertices()
+        #
+        # In orchestration mode (skip_dev_logging), filter execution to only the
+        # query path (starting from the input vertex).  This mirrors how the
+        # Playground's chat phase uses start_component_id to avoid re-running
+        # ingestion / build-only branches.  The filtering is fully generic — it
+        # uses the same DAG-reachability logic that sort_vertices already supports.
+        start_component_id = None
+        if getattr(self, "skip_dev_logging", False):
+            from agentcore.graph_langgraph.utils import find_start_component_id
+
+            start_component_id = find_start_component_id(
+                [v.id for v in self.vertices]
+            )
+        first_layer = self.sort_vertices(start_component_id=start_component_id)
 
         vertex_outputs = []
 
@@ -684,20 +697,30 @@ class LangGraphAdapter:
                          if self.get_vertex(vid) and self.get_vertex(vid).is_input]
             non_input_ids = [vid for vid in first_layer if vid not in input_ids]
 
+            is_orch = getattr(self, "skip_dev_logging", False)
+
             async def _build_and_follow(vertex_id: str) -> None:
                 """Build one vertex, then recursively build its runnable successors."""
                 vertex = self.get_vertex(vertex_id)
                 if not vertex:
                     return
 
+                if is_orch:
+                    display = getattr(vertex, "display_name", vertex_id)
+                    logger.info(f"[ORCH] ▶️  Building component: {display} ({vertex_id})")
+
                 try:
                     result = await self.build_vertex(vertex_id=vertex_id, **build_kwargs)
                     built_results[vertex_id] = (
                         result.result_dict if hasattr(result, 'result_dict') else result
                     )
+                    if is_orch:
+                        logger.info(f"[ORCH] ✅ Built component: {display} ({vertex_id})")
                 except Exception:
                     logger.exception(f"Error building vertex {vertex_id}")
                     built_results[vertex_id] = None
+                    if is_orch:
+                        logger.error(f"[ORCH] ❌ Failed component: {display} ({vertex_id})")
 
                 completed_vertices.add(vertex_id)
 

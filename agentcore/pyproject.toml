@@ -6,13 +6,13 @@ requires-python = ">=3.10,<3.13"
 
 # Define your main dependencies here
 dependencies = [
+    "agentcore-base~=0.6.5",
     "python-pptx== 1.0.2",
     "python-docx==1.2.0",
     "openpyxl==3.1.5",
     "PyPDF2==3.0.1",
     "pdf2image==1.17.0",
-    "google-generativeai==0.8.6"
-    "agentcore-base~=0.6.5",
+    "google-generativeai==0.8.6",
     "beautifulsoup4==4.12.3",
     "google-search-results>=2.4.1,<3.0.0",
     "google-api-python-client==2.154.0",

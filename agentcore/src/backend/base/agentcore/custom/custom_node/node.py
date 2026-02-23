@@ -1522,6 +1522,9 @@ class Node(ExecutableNode):
         if hasattr(self, "graph"):
             # Convert UUID to str if needed
             agent_id = str(self.graph.agent_id) if self.graph.agent_id else None
+            # Mark orchestrator messages so they don't appear in the playground
+            if getattr(self.graph, "skip_dev_logging", False):
+                message.category = "orch"
 
         stored_messages = await astore_message(message, agent_id=agent_id)
         if len(stored_messages) != 1:

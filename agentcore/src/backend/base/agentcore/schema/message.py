@@ -53,7 +53,7 @@ class Message(Data):
     edit: bool = Field(default=False)
 
     properties: Properties = Field(default_factory=Properties)
-    category: Literal["message", "error", "warning", "info"] | None = "message"
+    category: Literal["message", "error", "warning", "info", "orch"] | None = "message"
     content_blocks: list[ContentBlock] = Field(default_factory=list)
     duration: int | None = None
 

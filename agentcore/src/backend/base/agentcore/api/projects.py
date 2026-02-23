@@ -59,7 +59,9 @@ async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set
             )
         )
     ).all()
-    return set(org_rows), set(dept_rows)
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
+    dept_ids = {r if isinstance(r, UUID) else r[0] for r in dept_rows}
+    return org_ids, dept_ids
 
 
 async def _build_project_visibility_statement(session: DbSession, current_user: CurrentActiveUser):

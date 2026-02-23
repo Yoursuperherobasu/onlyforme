@@ -185,7 +185,9 @@ export default function AgentOrchestrator() {
     // Build a regex that matches any known @agent_name (including spaces)
     // so "@smart agent" is bolded as one unit, not just "@smart".
     if (agents.length === 0) return [text];
-    const escaped = agents.map((a) => a.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const escaped = [...agents]
+      .sort((a, b) => b.name.length - a.name.length)
+      .map((a) => a.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     const pattern = new RegExp(`(@(?:${escaped.join("|")}))`, "gi");
     return text.split(pattern).map((part, i) =>
       part.startsWith("@") ? (
@@ -229,8 +231,11 @@ export default function AgentOrchestrator() {
   const handleSend = useCallback(async () => {
     if (!input.trim() || isSending || agents.length === 0) return;
 
-    // Detect explicit @mention vs implicit (sticky) routing
-    const explicitAgent = agents.find((a) => input.includes(`@${a.name}`));
+    // Detect explicit @mention vs implicit (sticky) routing.
+    // Sort by name length descending so "rag agent_new" matches before "rag agent".
+    const explicitAgent = [...agents]
+      .sort((a, b) => b.name.length - a.name.length)
+      .find((a) => input.includes(`@${a.name}`));
     const fallbackAgent = agents.find((a) => a.name === selectedModel) || agents[0];
 
     // If user explicitly @mentioned an agent, update the selected model (sticky switch)

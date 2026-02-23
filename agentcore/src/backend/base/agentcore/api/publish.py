@@ -1154,20 +1154,6 @@ async def publish_agent(
                     f"as v{next_version} by {current_user.id} [dept={resolved_department_id}]"
                 )
 
-                # Sync schedule
-                try:
-                    from agentcore.services.deps import get_scheduler_service
-                    scheduler = get_scheduler_service()
-                    await scheduler.sync_schedule_for_agent(
-                        agent_id=agent_id,
-                        environment="prod",
-                        version=f"v{next_version}",
-                        flow_data=snapshot,
-                        created_by=current_user.id,
-                    )
-                except Exception as sched_err:
-                    logger.warning(f"Schedule sync failed for PROD deploy of {agent_id}: {sched_err}")
-
                 # ─── Sync agent registry after PROD admin publish ──
                 try:
                     await sync_agent_registry(
