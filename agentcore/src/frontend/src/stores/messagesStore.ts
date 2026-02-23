@@ -43,6 +43,9 @@ const sortMessagesByTimestamp = (messages: Message[]): Message[] => {
 
 export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
   displayLoadingMessage: false,
+  setDisplayLoadingMessage: (value) => {
+    set(() => ({ displayLoadingMessage: value }));
+  },
   deleteSession: (id) => {
     set((state) => {
       const updatedMessages = state.messages.filter(

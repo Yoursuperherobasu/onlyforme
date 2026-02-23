@@ -54,6 +54,17 @@ if TYPE_CHECKING:
 # Ignore Pydantic deprecation warnings from Langchain
 warnings.filterwarnings("ignore", category=PydanticDeprecatedSince20)
 
+
+import logging as _stdlib_logging
+
+
+class _OTelContextDetachFilter(_stdlib_logging.Filter):
+    def filter(self, record: _stdlib_logging.LogRecord) -> bool:
+        return "Failed to detach context" not in record.getMessage()
+
+
+_stdlib_logging.getLogger("opentelemetry.context").addFilter(_OTelContextDetachFilter())
+
 _tasks: list[asyncio.Task] = []
 
 
@@ -206,50 +217,99 @@ def create_app():
         allow_headers=["*"],
     )
 
-    @app.middleware("http")
-    async def check_boundary(request: Request, call_next):
-        if "/api/files/upload" in request.url.path:
-            content_type = request.headers.get("Content-Type")
+
+    class BoundaryCheckMiddleware:
+     
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http" or "/api/files/upload" not in scope.get("path", ""):
+                await self.app(scope, receive, send)
+                return
+
+            # Only validate boundary for file upload requests
+            headers = {k: v for k, v in scope.get("headers", [])}
+            content_type = headers.get(b"content-type", b"").decode()
 
             if not content_type or "multipart/form-data" not in content_type or "boundary=" not in content_type:
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     content={"detail": "Content-Type header must be 'multipart/form-data' with a boundary parameter."},
                 )
+                await response(scope, receive, send)
+                return
 
             boundary = content_type.split("boundary=")[-1].strip()
 
             if not re.match(r"^[\w\-]{1,70}$", boundary):
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     content={"detail": "Invalid boundary format"},
                 )
+                await response(scope, receive, send)
+                return
 
-            body = await request.body()
+            # Read body to validate boundary markers
+            body = b""
+            while True:
+                message = await receive()
+                body += message.get("body", b"")
+                if not message.get("more_body", False):
+                    break
 
             boundary_start = f"--{boundary}".encode()
-            # The multipart/form-data spec doesn't require a newline after the boundary, however many clients do
-            # implement it that way
             boundary_end = f"--{boundary}--\r\n".encode()
             boundary_end_no_newline = f"--{boundary}--".encode()
 
             if not body.startswith(boundary_start) or not body.endswith((boundary_end, boundary_end_no_newline)):
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     content={"detail": "Invalid multipart formatting"},
                 )
+                await response(scope, receive, send)
+                return
 
-        return await call_next(request)
+            # Replay the consumed body for downstream handlers
+            body_sent = False
 
-    @app.middleware("http")
-    async def flatten_query_string_lists(request: Request, call_next):
-        flattened: list[tuple[str, str]] = []
-        for key, value in request.query_params.multi_items():
-            flattened.extend((key, entry) for entry in value.split(","))
+            async def replay_receive():
+                nonlocal body_sent
+                if not body_sent:
+                    body_sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return await receive()
 
-        request.scope["query_string"] = urlencode(flattened, doseq=True).encode("utf-8")
+            await self.app(scope, replay_receive, send)
 
-        return await call_next(request)
+    class QueryStringFlattenMiddleware:
+        """Flattens comma-separated query string values.
+
+        Raw ASGI middleware — no response buffering.
+        """
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            from urllib.parse import parse_qsl
+
+            qs = scope.get("query_string", b"").decode()
+            if "," in qs:
+                pairs = parse_qsl(qs, keep_blank_values=True)
+                flattened: list[tuple[str, str]] = []
+                for key, value in pairs:
+                    flattened.extend((key, entry) for entry in value.split(","))
+                scope["query_string"] = urlencode(flattened, doseq=True).encode("utf-8")
+
+            await self.app(scope, receive, send)
+
+    app.add_middleware(QueryStringFlattenMiddleware)
+    app.add_middleware(BoundaryCheckMiddleware)
 
     settings = get_settings_service().settings
 
