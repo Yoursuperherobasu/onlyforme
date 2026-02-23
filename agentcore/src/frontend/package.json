@@ -11,6 +11,7 @@
     "@emotion/styled": "^11.14.1",
     "@headlessui/react": "^2.0.4",
     "@hookform/resolvers": "^3.6.0",
+    "@microsoft/applicationinsights-web": "^3.3.11",
     "@million/lint": "^1.0.0-rc.26",
     "@radix-ui/react-accordion": "^1.1.2",
     "@radix-ui/react-avatar": "^1.1.11",

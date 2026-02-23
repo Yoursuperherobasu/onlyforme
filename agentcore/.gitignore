@@ -3,6 +3,10 @@ prepare-commit-msg
 # Logs
 logs
 *.log
+loguru/
+agentcore/loguru/
+loguru/**/*.jsonl
+loguru/metrics/*.prom
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

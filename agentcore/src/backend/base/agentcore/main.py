@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import re
@@ -29,7 +30,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi_pagination import add_pagination
 from loguru import logger
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import PydanticDeprecatedSince20
 from pydantic_core import PydanticSerializationError
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -39,7 +39,13 @@ from agentcore.api.openai_compat_router import router as openai_router
 from agentcore.api.mcp_projects import init_mcp_servers
 from agentcore.interface.components import get_and_cache_all_types_dict
 from agentcore.interface.utils import setup_llm_caching
-from agentcore.logging.logger import configure
+from agentcore.logging.logger import configure, reset_log_context, update_log_context
+from agentcore.observability import (
+    is_metrics_enabled,
+    is_tracing_enabled,
+    setup_otel_metrics,
+    setup_otel_tracing,
+)
 from agentcore.middleware import ContentSizeLimitMiddleware
 from agentcore.services.deps import (
     get_queue_service,
@@ -191,6 +197,87 @@ def create_app():
         version=__version__,
         lifespan=lifespan,
     )
+
+    def _decode_jwt_payload_unverified(token: str) -> dict | None:
+        """Decode JWT payload without verification. Never log token. Returns None on any error."""
+        try:
+            parts = token.split(".")
+            if len(parts) != 3:
+                return None
+            payload_b64 = parts[1]
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += "=" * padding
+            decoded = base64.urlsafe_b64decode(payload_b64)
+            return json.loads(decoded)
+        except Exception:
+            return None
+
+    @app.middleware("http")
+    async def correlation_logging_middleware(request: Request, call_next):
+        """Request-scoped correlation context for JSON logs. Never breaks requests."""
+        reset_log_context()
+        start = asyncio.get_event_loop().time()
+        status_code = None
+        try:
+            update_log_context(
+                http_method=request.method,
+                http_route=request.scope.get("path") or request.url.path,
+            )
+            path = request.url.path or ""
+            uuid_match = re.findall(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                path,
+            )
+            if "/agents/" in path or "/upload/" in path or "/run/" in path or "/build/" in path or "/approvals/" in path:
+                for m in uuid_match:
+                    seg = path[: path.index(m)].rstrip("/").split("/")[-1] if m in path else ""
+                    if seg in ("agents", "agent", "upload", "run", "build") or "approval" in seg:
+                        update_log_context(agent_id=m, agent_id_or_name=m)
+                        break
+            if "/projects/" in path:
+                for m in uuid_match:
+                    if path.index(m) > path.index("/projects/"):
+                        update_log_context(project_id=m)
+                        break
+            session_id = request.headers.get("x-session-id") or request.query_params.get("session_id")
+            if session_id:
+                update_log_context(session_id=session_id)
+            try:
+                auth = request.headers.get("Authorization")
+                if auth and auth.startswith("Bearer "):
+                    token = auth[7:].strip()
+                    if token:
+                        payload = _decode_jwt_payload_unverified(token)
+                        if payload:
+                            user_id = payload.get("sub") or payload.get("oid")
+                            if user_id:
+                                update_log_context(user_id=str(user_id))
+                for name, val in request.cookies.items():
+                    if "token" in name.lower() and val:
+                        payload = _decode_jwt_payload_unverified(val)
+                        if payload:
+                            user_id = payload.get("sub") or payload.get("oid")
+                            if user_id:
+                                update_log_context(user_id=str(user_id))
+                                break
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            if request.url.path != "/metrics":
+                latency_ms = int((asyncio.get_event_loop().time() - start) * 1000) if start else None
+                try:
+                    update_log_context(status_code=status_code, latency_ms=latency_ms, event="http_request")
+                    logger.info("http_request")
+                except Exception:
+                    pass
+
     app.add_middleware(
         ContentSizeLimitMiddleware,
     )
@@ -277,13 +364,14 @@ def create_app():
             content={"message": str(exc)},
         )
 
-    # Exclude API routes from OTEL instrumentation to prevent HTTP traces
-    # from polluting Langfuse with "POST /api/..." instead of actual agent names.
-    # Agent tracing is handled separately by the TracingService with proper names.
-    FastAPIInstrumentor.instrument_app(
-        app,
-        excluded_urls="/api/.*,/health,/health_check",
-    )
+    # OpenTelemetry tracing: env-gated (off by default). When enabled, creates real spans
+    # so Loguru correlation logs get non-null trace_id/span_id from trace.get_current_span().
+    if is_tracing_enabled():
+        setup_otel_tracing(app)
+
+    # Prometheus /metrics: env-gated (AGENTCORE_METRICS_ENABLED=true). Exposes http_server_* metrics.
+    if is_metrics_enabled():
+        setup_otel_metrics(app)
 
     add_pagination(app)
 

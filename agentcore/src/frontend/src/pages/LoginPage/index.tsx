@@ -58,8 +58,10 @@ export default function LoginPage(): JSX.Element {
 
       console.log("🟣 [SSO] Sending token to backend...");
 
+      const apiBase = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+      const ssoUrl = apiBase ? `${apiBase}/api/azure/sso` : "/api/azure/sso";
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/azure/sso`,
+        ssoUrl,
         {
           method: "POST",
           credentials: "include",

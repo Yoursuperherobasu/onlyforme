@@ -16,7 +16,6 @@ export const URLs = {
   BUILD: `build`,
   CUSTOM_COMPONENT: `custom_component`,
   AGENTS: `agents`,
-  AGENTS: `agents`,
   FOLDERS: `projects`,
   PROJECTS: `projects`,
   VARIABLES: `variables`,
