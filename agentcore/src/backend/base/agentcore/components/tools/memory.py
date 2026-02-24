@@ -14,7 +14,7 @@ from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI,
 
 
 class MemoryComponent(Node):
-    display_name = "Message History"
+    display_name = "Memory"
     description = "Stores or retrieves stored chat messages"
     name = "Memory"
     default_keys = ["mode", "memory"]
