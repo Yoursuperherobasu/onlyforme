@@ -13,10 +13,9 @@ from agentcore.utils.component_utils import set_current_fields, set_field_displa
 from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI, MESSAGE_SENDER_USER
 
 
-class MemoryNode(Node):
-    display_name = "Message History"
-    description = "Stores or retrieves stored chat messages from agentCore tables or an external memory."
-    icon = "message-square-more"
+class MemoryComponent(Node):
+    display_name = "Memory"
+    description = "Stores or retrieves stored chat messages"
     name = "Memory"
     default_keys = ["mode", "memory"]
     mode_config = {
@@ -45,7 +44,7 @@ class MemoryNode(Node):
             name="memory",
             display_name="External Memory",
             input_types=["Memory"],
-            info="Retrieve messages from an external memory. If empty, it will use the Agentcore tables.",
+            info="Retrieve messages from an external memory. If empty, it will use the Langbuilder tables.",
             advanced=True,
         ),
         DropdownInput(
