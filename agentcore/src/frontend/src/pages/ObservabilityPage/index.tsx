@@ -31,19 +31,12 @@ import {
   FolderOpen,
   Bot,
   TrendingUp,
-  TrendingDown,
-  Minus,
-  Zap,
   BarChart3,
   PieChart as PieChartIcon,
   ArrowUpRight,
   ArrowDownRight,
-  CheckCircle2,
   XCircle,
   Timer,
-  Gauge,
-  Eye,
-  RefreshCw,
 } from "lucide-react";
 import {
   LineChart,
@@ -870,13 +863,13 @@ export default function ObservabilityPage(): JSX.Element {
     staleTime: 30000,
   });
 
-  const { data: sessionDetail } = useQuery({
+  const { data: sessionDetail, isLoading: sessionDetailLoading } = useQuery({
     queryKey: ["session-detail", selectedSession, filters.dateRange],
     queryFn: () => fetchSessionDetail(selectedSession!, dateParams),
     enabled: !!selectedSession,
   });
 
-  const { data: traceDetail } = useQuery({
+  const { data: traceDetail, isLoading: traceDetailLoading } = useQuery({
     queryKey: ["trace-detail", selectedTrace],
     queryFn: () => fetchTraceDetail(selectedTrace!),
     enabled: !!selectedTrace,
@@ -2161,7 +2154,15 @@ export default function ObservabilityPage(): JSX.Element {
               {selectedSession}
             </DialogDescription>
           </DialogHeader>
-          {sessionDetail && (
+          {sessionDetailLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div
+                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                style={{ borderTopColor: THEME.primary }}
+              />
+              <p className="text-sm" style={{ color: THEME.textSecondary }}>Loading session details…</p>
+            </div>
+          ) : sessionDetail ? (
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 {[
@@ -2205,7 +2206,7 @@ export default function ObservabilityPage(): JSX.Element {
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -2221,7 +2222,15 @@ export default function ObservabilityPage(): JSX.Element {
               {traceDetail?.name || selectedTrace}
             </DialogDescription>
           </DialogHeader>
-          {traceDetail && (
+          {traceDetailLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div
+                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                style={{ borderTopColor: THEME.primary }}
+              />
+              <p className="text-sm" style={{ color: THEME.textSecondary }}>Loading trace details…</p>
+            </div>
+          ) : traceDetail ? (
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 {[
@@ -2274,8 +2283,15 @@ export default function ObservabilityPage(): JSX.Element {
 
               <div>
                 <h4 className="font-medium mb-3" style={{ color: THEME.textMain }}>Observations Timeline</h4>
-                <div className="space-y-2">
-                  {traceDetail.observations.map((obs) => (
+                {traceDetail.observations.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 bg-gray-50 rounded-lg gap-2">
+                    <Layers className="h-8 w-8 text-gray-300" />
+                    <p className="text-sm" style={{ color: THEME.textSecondary }}>No observations found for this trace.</p>
+                    <p className="text-xs" style={{ color: THEME.textSecondary }}>The trace may still be processing, or observations were not recorded.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {traceDetail.observations.map((obs) => (
                     <div
                       key={obs.id}
                       className={`p-4 rounded-lg border cursor-pointer transition-colors ${
@@ -2329,11 +2345,12 @@ export default function ObservabilityPage(): JSX.Element {
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 

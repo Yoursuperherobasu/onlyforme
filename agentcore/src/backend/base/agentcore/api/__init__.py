@@ -16,12 +16,15 @@ from agentcore.api.publish import router as publish_router
 from agentcore.api.approvals import router as approvals_router
 from agentcore.api.router import router
 from agentcore.api.roles import router as roles_router
+from agentcore.api.organizations import router as organizations_router
+from agentcore.api.departments import router as departments_router
 from agentcore.api.starter_projects import router as starter_projects_router
 from agentcore.api.users import router as users_router
 from agentcore.api.validate import router as validate_router
 from agentcore.api.variable import router as variables_router
 from agentcore.api.files_user import router as files_router_v2
 from agentcore.api.mcp_config import router as mcp_router_v2
+from agentcore.api.help_support import router as help_support_router
 
 __all__ = [
     "api_key_router",
@@ -41,6 +44,8 @@ __all__ = [
     "evaluation_router",
     "projects_router",
     "roles_router",
+    "organizations_router",
+    "departments_router",
     "approvals_router",
     "publish_router",
     "router",
@@ -48,4 +53,5 @@ __all__ = [
     "users_router",
     "validate_router",
     "variables_router",
+    "help_support_router",
 ]

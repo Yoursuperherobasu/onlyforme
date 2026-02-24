@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,7 @@ from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.initial_setup.setup import get_or_create_default_folder
 from agentcore.services.auth.decorators import PermissionChecker
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role, permission_cache
+from agentcore.services.auth.hard_delete import hard_delete_user
 from agentcore.services.auth.utils import get_password_hash, verify_password
 from agentcore.services.cache.user_cache import UserCacheService
 from agentcore.services.database.models.department.model import Department
@@ -44,14 +46,14 @@ async def _assignable_roles_for_creator(session: DbSession, creator_role: str) -
         return [
             role
             for role in global_role_names
-            if role not in {"root", "super_admin"}
+            if role in {"department_admin", "developer", "business_user"}
         ]
 
     if creator_role == "department_admin":
         return [
             role
             for role in global_role_names
-            if role in {"developer", "business_user", "consumer"}
+            if role in {"developer", "business_user"}
         ]
 
     return []
@@ -197,12 +199,12 @@ async def _ensure_department_membership(
 async def _visible_user_ids_for_admin(session: DbSession, current_user: User) -> set[UUID]:
     role = normalize_role(current_user.role)
     if role == "root":
-        return set((await session.exec(select(User.id))).all())
+        return set((await session.exec(select(User.id).where(User.id != current_user.id))).all())
 
     if role == "super_admin":
         org_ids = await _get_admin_org_ids(session, current_user)
         if not org_ids:
-            return {current_user.id}
+            return set()
         rows = (
             await session.exec(
                 select(distinct(UserOrganizationMembership.user_id)).where(
@@ -211,12 +213,12 @@ async def _visible_user_ids_for_admin(session: DbSession, current_user: User) ->
                 )
             )
         ).all()
-        return set(rows) | {current_user.id}
+        return set(rows) - {current_user.id}
 
     if role == "department_admin":
         dept_ids = await _get_admin_department_ids(session, current_user)
         if not dept_ids:
-            return {current_user.id}
+            return set()
         rows = (
             await session.exec(
                 select(distinct(UserDepartmentMembership.user_id)).where(
@@ -225,9 +227,9 @@ async def _visible_user_ids_for_admin(session: DbSession, current_user: User) ->
                 )
             )
         ).all()
-        return set(rows) | {current_user.id}
+        return set(rows) - {current_user.id}
 
-    return {current_user.id}
+    return set()
 
 
 @router.post("/", response_model=UserRead, status_code=201)
@@ -237,14 +239,31 @@ async def add_user(
     current_user: User = Depends(PermissionChecker(["view_admin_page"])),
 ) -> User:
     """Add a new user to the database and stitch org/dept memberships by creator role."""
-    new_user = User.model_validate(user, from_attributes=True)
     try:
+        existing_user = await get_user_by_username(session, user.username)
+        is_reusing_consumer = bool(
+            existing_user and normalize_role(getattr(existing_user, "role", "consumer")) == "consumer"
+        )
+        if existing_user and not is_reusing_consumer:
+            raise HTTPException(status_code=400, detail="This username is unavailable.")
+
+        raw_password = user.password or secrets.token_urlsafe(32)
+        if is_reusing_consumer and existing_user:
+            new_user = existing_user
+            new_user.display_name = user.display_name or new_user.display_name
+            new_user.email = new_user.email or user.email or user.username
+        else:
+            user_payload = user.model_dump()
+            user_payload["password"] = raw_password
+            new_user = User.model_validate(user_payload, from_attributes=True)
+
         creator_email = getattr(current_user, "username", None)
         creator_role = normalize_role(getattr(current_user, "role", "developer"))
-        target_role = normalize_role(new_user.role)
+        target_role = normalize_role(user.role)
         assignable_roles = await _assignable_roles_for_creator(session, creator_role)
         new_user.creator_email = creator_email
         new_user.creator_role = creator_role
+        new_user.created_by = current_user.id
         new_user.role = target_role
 
         if target_role not in assignable_roles:
@@ -256,7 +275,7 @@ async def add_user(
         if creator_role not in {"root", "super_admin", "department_admin"}:
             raise HTTPException(status_code=403, detail="Only admins can create users.")
 
-        new_user.password = get_password_hash(user.password)
+        new_user.password = get_password_hash(raw_password)
         new_user.is_superuser = new_user.role in {"super_admin", "department_admin", "root"}
         new_user.is_active = get_settings_service().auth_settings.NEW_USER_IS_ACTIVE
         session.add(new_user)
@@ -325,30 +344,29 @@ async def add_user(
                     actor_user_id=current_user.id,
                 )
             else:
-                if not user.department_admin_email:
-                    raise HTTPException(status_code=400, detail="Department admin email is required.")
-                dept_admin = await get_user_by_username(session, user.department_admin_email)
-                if not dept_admin or normalize_role(dept_admin.role) != "department_admin":
-                    raise HTTPException(status_code=400, detail="Selected department admin email is invalid.")
-                dept_admin_membership = (
+                if target_role not in {"developer", "business_user"}:
+                    raise HTTPException(status_code=400, detail="Invalid target role for super admin.")
+                if not user.department_id:
+                    raise HTTPException(status_code=400, detail="Department is required.")
+                department = (
                     await session.exec(
-                        select(UserDepartmentMembership).where(
-                            UserDepartmentMembership.user_id == dept_admin.id,
-                            UserDepartmentMembership.org_id == org_id,
-                            UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+                        select(Department).where(
+                            Department.id == user.department_id,
+                            Department.org_id == org_id,
+                            Department.status == "active",
                         )
                     )
                 ).first()
-                if not dept_admin_membership:
-                    raise HTTPException(status_code=400, detail="Selected department admin has no department mapping.")
-                department = await session.get(Department, dept_admin_membership.department_id)
-                new_user.department_admin_email = dept_admin.username
-                new_user.department_name = department.name if department else None
+                if not department:
+                    raise HTTPException(status_code=400, detail="Invalid department.")
+                dept_admin = await session.get(User, department.admin_user_id)
+                new_user.department_admin_email = dept_admin.username if dept_admin else None
+                new_user.department_name = department.name
                 await _ensure_department_membership(
                     session,
                     user_id=new_user.id,
                     org_id=org_id,
-                    department_id=dept_admin_membership.department_id,
+                    department_id=department.id,
                     role_id=role_entity.id,
                     actor_user_id=current_user.id,
                 )
@@ -412,6 +430,48 @@ async def list_assignable_roles(
     return await _assignable_roles_for_creator(session, creator_role)
 
 
+@router.get("/departments")
+async def list_visible_departments(
+    session: DbSession,
+    current_user: User = Depends(PermissionChecker(["view_admin_page"])),
+) -> list[dict]:
+    current_role = normalize_role(current_user.role)
+    if current_role == "root":
+        depts = (await session.exec(select(Department).order_by(Department.name.asc()))).all()
+    elif current_role == "super_admin":
+        org_ids = await _get_admin_org_ids(session, current_user)
+        if not org_ids:
+            return []
+        depts = (
+            await session.exec(
+                select(Department)
+                .where(
+                    Department.org_id.in_(list(org_ids)),
+                    Department.status == "active",
+                )
+                .order_by(Department.name.asc())
+            )
+        ).all()
+    elif current_role == "department_admin":
+        dept_ids = await _get_admin_department_ids(session, current_user)
+        if not dept_ids:
+            return []
+        depts = (
+            await session.exec(
+                select(Department)
+                .where(
+                    Department.id.in_(list(dept_ids)),
+                    Department.status == "active",
+                )
+                .order_by(Department.name.asc())
+            )
+        ).all()
+    else:
+        return []
+
+    return [{"id": str(dept.id), "name": dept.name, "org_id": str(dept.org_id)} for dept in depts]
+
+
 @router.get("/whoami", response_model=UserReadWithPermissions)
 async def read_current_user(
     current_user: CurrentActiveUser,
@@ -441,9 +501,25 @@ async def read_current_user(
     if not user_permissions:
         user_permissions = await get_permissions_for_role(current_user.role)
 
+    organization_name = (
+        await db.exec(
+            select(Organization.name)
+            .join(
+                UserOrganizationMembership,
+                UserOrganizationMembership.org_id == Organization.id,
+            )
+            .where(
+                UserOrganizationMembership.user_id == current_user.id,
+                UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+            )
+            .order_by(Organization.created_at.asc())
+        )
+    ).first()
+
     return {
         **cached_user,
         "permissions": user_permissions,
+        "organization_name": organization_name,
     }
 
 
@@ -463,6 +539,8 @@ async def read_all_users(
         return UsersResponse(total_count=0, users=[])
 
     query: SelectOfScalar = select(User).where(User.id.in_(list(visible_user_ids)))
+    if normalize_role(current_admin.role) != "root":
+        query = query.where(User.role != "root")
     if role:
         query = query.where(User.role == normalize_role(role))
     if q:
@@ -471,15 +549,52 @@ async def read_all_users(
     users = (await session.exec(query)).fetchall()
 
     count_query = select(func.count()).select_from(User).where(User.id.in_(list(visible_user_ids)))
+    if normalize_role(current_admin.role) != "root":
+        count_query = count_query.where(User.role != "root")
     if role:
         count_query = count_query.where(User.role == normalize_role(role))
     if q:
         count_query = count_query.where(User.username.ilike(f"%{q}%"))
     total_count = (await session.exec(count_query)).first()
 
+    user_ids = [user.id for user in users]
+    creator_ids = [user.created_by for user in users if user.created_by]
+
+    org_rows = []
+    if user_ids:
+        org_rows = (
+            await session.exec(
+                select(UserOrganizationMembership.user_id, Organization.name)
+                .join(Organization, Organization.id == UserOrganizationMembership.org_id)
+                .where(
+                    UserOrganizationMembership.user_id.in_(user_ids),
+                    UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+                )
+            )
+        ).all()
+
+    org_map: dict[UUID, str] = {}
+    for uid, org_name in org_rows:
+        if uid not in org_map:
+            org_map[uid] = org_name
+
+    creator_map: dict[UUID, str] = {}
+    if creator_ids:
+        creator_rows = (
+            await session.exec(select(User.id, User.username).where(User.id.in_(list(set(creator_ids)))))
+        ).all()
+        creator_map = {creator_id: creator_username for creator_id, creator_username in creator_rows}
+
     return UsersResponse(
         total_count=total_count,
-        users=[UserRead(**user.model_dump()) for user in users],
+        users=[
+            UserRead(
+                **user.model_dump(),
+                organization_name=org_map.get(user.id),
+                created_by_username=creator_map.get(user.created_by) if user.created_by else None,
+            )
+            for user in users
+        ],
     )
 
 
@@ -546,15 +661,32 @@ async def delete_user(
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="You can't delete your own user account")
 
-    visible_user_ids = await _visible_user_ids_for_admin(session, current_user)
-    if user_id not in visible_user_ids:
-        raise HTTPException(status_code=403, detail="Permission denied")
-
     user_db = (await session.exec(select(User).where(User.id == user_id))).first()
     if not user_db:
         raise HTTPException(status_code=404, detail="User not found")
 
-    await session.delete(user_db)
-    await session.commit()
-    return {"detail": "User deleted"}
+    try:
+        current_role = normalize_role(current_user.role)
+        if current_role != "root":
+            if user_db.created_by != current_user.id:
+                raise HTTPException(status_code=403, detail="You can delete only users you created.")
+            visible_user_ids = await _visible_user_ids_for_admin(session, current_user)
+            if user_id not in visible_user_ids:
+                raise HTTPException(status_code=403, detail="Permission denied")
+        if normalize_role(user_db.role) == "root":
+            raise HTTPException(status_code=403, detail="Root users cannot be deleted.")
+        await hard_delete_user(session, user_id, delete_owned_organizations=True)
+        await session.commit()
+    except HTTPException:
+        await session.rollback()
+        raise
+    except IntegrityError as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Could not hard delete user due to database constraints."
+            ),
+        ) from e
 
+    return {"detail": "User deleted"}

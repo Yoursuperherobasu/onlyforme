@@ -14,26 +14,41 @@ import {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
-  const envAgentCoreResult = dotenv.config({
+  const envSenseiResult = dotenv.config({
     path: path.resolve(__dirname, "../../.env"),
   });
   
 
-  const envAgentCore = envAgentCoreResult.parsed || {};
+  const envSensei = envSenseiResult.parsed || {};
 
   const apiRoutes = API_ROUTES || ["^/api/", "^/api/", "/health"];
 
   const target =
-    envAgentCore.VITE_PROXY_TARGET || env.VITE_PROXY_TARGET || PROXY_TARGET || "http://localhost:7860";
+    envSensei.VITE_PROXY_TARGET || env.VITE_PROXY_TARGET || PROXY_TARGET || "http://localhost:7860";
   
-  const port = Number(envAgentCore.VITE_PORT || env.VITE_PORT) || PORT || 3000;
+  const port = Number(envSensei.VITE_PORT || env.VITE_PORT) || PORT || 3000;
 
-  const proxyTargets = apiRoutes.reduce((proxyObj, route) => {
+  const proxyTargets = apiRoutes.reduce((proxyObj: Record<string, any>, route) => {
     proxyObj[route] = {
       target: target,
       changeOrigin: true,
       secure: false,
       ws: true,
+      // Ensure streaming (SSE / NDJSON) responses are forwarded
+      // chunk-by-chunk without buffering by the dev-server proxy.
+      configure: (proxy: any) => {
+        proxy.on("proxyRes", (proxyRes: any, _req: any, res: any) => {
+          const ct = proxyRes.headers["content-type"] || "";
+          if (ct.includes("text/event-stream") || ct.includes("application/x-ndjson")) {
+            // Prevent Node / proxy from coalescing small chunks
+            res.setHeader("X-Accel-Buffering", "no");
+            res.setHeader("Cache-Control", "no-cache, no-transform");
+            if (typeof res.flushHeaders === "function") {
+              res.flushHeaders();
+            }
+          }
+        });
+      },
     };
     return proxyObj;
   }, {});
@@ -45,14 +60,14 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       "process.env.BACKEND_URL": JSON.stringify(
-        envAgentCore.BACKEND_URL ?? "http://localhost:7860",
+        envSensei.BACKEND_URL ?? "http://localhost:7860",
       ),
       "process.env.ACCESS_TOKEN_EXPIRE_SECONDS": JSON.stringify(
-        envAgentCore.ACCESS_TOKEN_EXPIRE_SECONDS ?? 60,
+        envSensei.ACCESS_TOKEN_EXPIRE_SECONDS ?? 60,
       ),
-      "process.env.CI": JSON.stringify(envAgentCore.CI ?? false),
-      "process.env.AGENTCORE_MCP_COMPOSER_ENABLED": JSON.stringify(
-        envAgentCore.AGENTCORE_MCP_COMPOSER_ENABLED ?? "true",
+      "process.env.CI": JSON.stringify(envSensei.CI ?? false),
+      "process.env.SENSEI_MCP_COMPOSER_ENABLED": JSON.stringify(
+        envSensei.SENSEI_MCP_COMPOSER_ENABLED ?? "true",
       ),
     },
     plugins: [react(), svgr(), tsconfigPaths()],

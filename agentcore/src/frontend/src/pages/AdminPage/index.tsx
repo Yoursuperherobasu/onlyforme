@@ -72,6 +72,32 @@ export default function AdminPage() {
 
   const { mutate: mutateGetUsers, isPending, isIdle } = useGetUsers({});
 
+  function normalizeErrorMessages(error: any): string[] {
+    const detail = error?.response?.data?.detail;
+    if (!detail) return ["Unknown error"];
+    if (typeof detail === "string") return [detail];
+    if (Array.isArray(detail)) {
+      return detail.map((item) => {
+        if (typeof item === "string") return item;
+        if (item?.msg) return String(item.msg);
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
+        }
+      });
+    }
+    if (typeof detail === "object") {
+      if (detail?.msg) return [String(detail.msg)];
+      try {
+        return [JSON.stringify(detail)];
+      } catch {
+        return [String(detail)];
+      }
+    }
+    return [String(detail)];
+  }
+
   function getUsers() {
     mutateGetUsers(
       {
@@ -140,7 +166,7 @@ export default function AdminPage() {
         onError: (error) => {
           setErrorData({
             title: USER_DEL_ERROR_ALERT,
-            list: [error["response"]["data"]["detail"]],
+            list: normalizeErrorMessages(error),
           });
         },
       },
@@ -160,7 +186,7 @@ export default function AdminPage() {
         onError: (error) => {
           setErrorData({
             title: USER_EDIT_ERROR_ALERT,
-            list: [error["response"]["data"]["detail"]],
+            list: normalizeErrorMessages(error),
           });
         },
       },
@@ -183,7 +209,7 @@ export default function AdminPage() {
         onError: (error) => {
           setErrorData({
             title: USER_EDIT_ERROR_ALERT,
-            list: [error["response"]["data"]["detail"]],
+            list: normalizeErrorMessages(error),
           });
         },
       },
@@ -211,7 +237,7 @@ export default function AdminPage() {
             onError: (error) => {
               setErrorData({
                 title: USER_ADD_ERROR_ALERT,
-                list: [error["response"]["data"]["detail"]],
+                list: normalizeErrorMessages(error),
               });
             },
           },
@@ -220,7 +246,7 @@ export default function AdminPage() {
       onError: (error) => {
         setErrorData({
           title: USER_ADD_ERROR_ALERT,
-          list: [error["response"]["data"]["detail"]],
+          list: normalizeErrorMessages(error),
         });
       },
     });
@@ -314,8 +340,11 @@ export default function AdminPage() {
                     <TableRow>
                       
                       <TableHead className="h-10">Username</TableHead>
-                      <TableHead className="h-10">Active</TableHead>
+                      <TableHead className="h-10">Organization</TableHead>
+                      <TableHead className="h-10">Department</TableHead>
                       <TableHead className="h-10">Role</TableHead>
+                      <TableHead className="h-10">Created By</TableHead>
+                      <TableHead className="h-10">Active</TableHead>
                       <TableHead className="h-10">Created At</TableHead>
                       <TableHead className="h-10">Updated At</TableHead>
                       <TableHead className="h-10 w-[100px] text-right"></TableHead>
@@ -336,6 +365,34 @@ export default function AdminPage() {
                             </ShadTooltip>
                           </TableCell>
                           
+                          <TableCell className="truncate py-2">
+                            <ShadTooltip content={user.organization_name || "-"}>
+                              <span className="cursor-default">
+                                {user.organization_name || "-"}
+                              </span>
+                            </ShadTooltip>
+                          </TableCell>
+                          <TableCell className="truncate py-2">
+                            <ShadTooltip content={user.department_name || "-"}>
+                              <span className="cursor-default">
+                                {user.department_name || "-"}
+                              </span>
+                            </ShadTooltip>
+                          </TableCell>
+                          <TableCell className="truncate py-2">
+                            <ShadTooltip content={formatRole(user.role)}>
+                              <span className="cursor-default">
+                                {formatRole(user.role)}
+                              </span>
+                            </ShadTooltip>
+                          </TableCell>
+                          <TableCell className="truncate py-2">
+                            <ShadTooltip content={user.created_by_username || user.creator_email || "-"}>
+                              <span className="cursor-default">
+                                {user.created_by_username || user.creator_email || "-"}
+                              </span>
+                            </ShadTooltip>
+                          </TableCell>
                           <TableCell className="relative left-1 truncate py-2 text-align-last-left">
                             <ConfirmationModal
                               size="x-small"
@@ -367,13 +424,6 @@ export default function AdminPage() {
                                 </div>
                               </ConfirmationModal.Trigger>
                             </ConfirmationModal>
-                          </TableCell>
-                          <TableCell className="truncate py-2">
-                            <ShadTooltip content={formatRole(user.role)}>
-                              <span className="cursor-default">
-                                {formatRole(user.role)}
-                              </span>
-                            </ShadTooltip>
                           </TableCell>
                           <TableCell className="truncate py-2">
                             {

@@ -24,6 +24,7 @@ from agentcore.services.database.models.user.model import User, UserRead
 from agentcore.services.deps import get_db_service, get_session, get_settings_service
 from agentcore.services.settings.service import SettingsService
 from agentcore.services.auth.permissions import get_permissions_for_role
+from agentcore.services.auth.token_revocation import is_user_token_revoked
 
 # API key to Azure Key Vault
 
@@ -124,6 +125,7 @@ async def get_current_user_by_jwt(
             payload = jwt.decode(token, secret_key, algorithms=[settings_service.auth_settings.ALGORITHM])
         user_id: UUID = payload.get("sub")  # type: ignore[assignment]
         token_type: str = payload.get("type")  # type: ignore[assignment]
+        token_iat: int | None = payload.get("iat")  # type: ignore[assignment]
         if expires := payload.get("exp", None):
             expires_datetime = datetime.fromtimestamp(expires, timezone.utc)
             if datetime.now(timezone.utc) > expires_datetime:
@@ -139,6 +141,12 @@ async def get_current_user_by_jwt(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token details.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if await is_user_token_revoked(user_id, token_iat):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
     except JWTError as e:
@@ -214,8 +222,10 @@ def create_token(data: dict, expires_delta: timedelta):
     settings_service = get_settings_service()
 
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + expires_delta
+    now = datetime.now(timezone.utc)
+    expire = now + expires_delta
     to_encode["exp"] = expire
+    to_encode["iat"] = int(now.timestamp())
 
     return jwt.encode(
         to_encode,
@@ -335,16 +345,20 @@ async def create_refresh_token(refresh_token: str, db: AsyncSession):
             )
         user_id: UUID = payload.get("sub")  # type: ignore[assignment]
         token_type: str = payload.get("type")  # type: ignore[assignment]
+        token_iat: int | None = payload.get("iat")  # type: ignore[assignment]
 
         if user_id is None or token_type == "":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-        user_exists = await get_user_by_id(db, user_id)
-
-        if user_exists is None:
+        if await is_user_token_revoked(UUID(str(user_id)), token_iat):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-        return await create_user_tokens(user_id, db)
+        user_exists = await get_user_by_id(db, UUID(str(user_id)))
+
+        if user_exists is None or not user_exists.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+        return await create_user_tokens(UUID(str(user_id)), db)
 
     except JWTError as e:
         logger.exception("JWT decoding error")

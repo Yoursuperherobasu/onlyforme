@@ -32,10 +32,15 @@ export const URLs = {
   KNOWLEDGE_BASES: `knowledge_bases`,
   MODELS: `models`,
   REGISTRY: `registry`,
+  VECTOR_DB_CATALOGUE: `vector-db-catalogue`,
+  GUARDRAILS_CATALOGUE: `guardrails-catalogue`,
+  TIMEOUT_SETTINGS: `timeout-settings`,
   APPROVALS: `approvals`,
   CONTROL_PANEL: `control-panel`,
   PUBLISH: `publish`,
   ROLES: `roles`,
+  HELP_SUPPORT: `help-support`,
+  ORCHESTRATOR: `orchestrator`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

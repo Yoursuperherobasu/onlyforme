@@ -209,6 +209,7 @@ class UsersResponse(BaseModel):
 
 class UserReadWithPermissions(UserRead):
     permissions: list[str] = []
+    organization_name: str | None = None
 
 
 class PermissionReadResponse(BaseModel):

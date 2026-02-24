@@ -16,7 +16,7 @@ import {
   DEFAULT_TOOLSET_PLACEHOLDER,
   FLEX_VIEW_TYPES,
   ICON_STROKE_WIDTH,
-  AGENTCORE_SUPPORTED_TYPES,
+  SENSEI_SUPPORTED_TYPES,
 } from "../../../../constants/constants";
 import useAgentStore from "../../../../stores/agentStore";
 import { useTypesStore } from "../../../../stores/typesStore";
@@ -99,12 +99,15 @@ export default function NodeInputField({
   }, [optionalHandle]);
 
   const displayHandle =
-    (!AGENTCORE_SUPPORTED_TYPES.has(type ?? "") ||
+    (!SENSEI_SUPPORTED_TYPES.has(type ?? "") ||
       (optionalHandle && optionalHandle.length > 0)) &&
     !isToolMode &&
     !hasRefreshButton;
 
   const isFlexView = FLEX_VIEW_TYPES.includes(type ?? "");
+  const isKnowledgeBaseField =
+    type === "file" && (title === "File" || title === "Files");
+  const resolvedTitle = isKnowledgeBaseField ? "Knowledge Bases" : title;
 
   const Handle = (
     <HandleRenderComponent
@@ -156,28 +159,42 @@ export default function NodeInputField({
               <ShadTooltip content={<span>{proxy.id}</span>}>
                 {
                   <span>
-                    {getCustomParameterTitle({
-                      title,
-                      nodeId: data.id,
-                      isFlexView,
-                      required,
-                    })}
+                    <span className="flex items-center gap-1.5">
+                      {isKnowledgeBaseField && (
+                        <IconComponent
+                          name="FileText"
+                          strokeWidth={ICON_STROKE_WIDTH}
+                          className="h-4 w-4 text-muted-foreground"
+                        />
+                      )}
+                      {getCustomParameterTitle({
+                        title: resolvedTitle,
+                        nodeId: data.id,
+                        isFlexView,
+                        required,
+                      })}
+                    </span>
                   </span>
                 }
               </ShadTooltip>
             ) : (
               <div className="flex gap-2">
                 <span>
-                  {
-                    <span className="text-sm font-medium">
-                      {getCustomParameterTitle({
-                        title,
-                        nodeId: data.id,
-                        isFlexView,
-                        required,
-                      })}
-                    </span>
-                  }
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
+                    {isKnowledgeBaseField && (
+                      <IconComponent
+                        name="FileText"
+                        strokeWidth={ICON_STROKE_WIDTH}
+                        className="h-4 w-4 text-muted-foreground"
+                      />
+                    )}
+                    {getCustomParameterTitle({
+                      title: resolvedTitle,
+                      nodeId: data.id,
+                      isFlexView,
+                      required,
+                    })}
+                  </span>
                 </span>
               </div>
             )}

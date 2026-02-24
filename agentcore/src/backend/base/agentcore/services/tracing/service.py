@@ -109,14 +109,24 @@ class TracingService(Service):
         logger.info(f"🔧 TracingService initialized: deactivated={self.deactivated}")
 
     async def _trace_worker(self, trace_context: TraceContext) -> None:
-        while trace_context.running or not trace_context.traces_queue.empty():
-            trace_func, args = await trace_context.traces_queue.get()
-            try:
-                trace_func(*args)
-            except Exception:  # noqa: BLE001
-                logger.exception("Error processing trace_func")
-            finally:
-                trace_context.traces_queue.task_done()
+        try:
+            while trace_context.running or not trace_context.traces_queue.empty():
+                trace_func, args = await trace_context.traces_queue.get()
+                try:
+                    trace_func(*args)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Error processing trace_func")
+                finally:
+                    trace_context.traces_queue.task_done()
+        except asyncio.CancelledError:
+            # Graceful shutdown — drain remaining items before exiting
+            while not trace_context.traces_queue.empty():
+                try:
+                    trace_func, args = trace_context.traces_queue.get_nowait()
+                    trace_func(*args)
+                    trace_context.traces_queue.task_done()
+                except Exception:  # noqa: BLE001
+                    break
 
     async def _start(self, trace_context: TraceContext) -> None:
         if trace_context.running or self.deactivated:
@@ -207,11 +217,15 @@ class TracingService(Service):
     async def _stop(self, trace_context: TraceContext) -> None:
         try:
             trace_context.running = False
-            # check the qeue is empty
+            # Drain any remaining items in the queue
             if not trace_context.traces_queue.empty():
                 await trace_context.traces_queue.join()
             if trace_context.worker_task:
                 trace_context.worker_task.cancel()
+                try:
+                    await trace_context.worker_task
+                except (asyncio.CancelledError, Exception):
+                    pass
                 trace_context.worker_task = None
 
         except Exception:  # noqa: BLE001

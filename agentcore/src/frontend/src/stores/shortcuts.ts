@@ -41,8 +41,8 @@ export const useShortcutsStore = create<shortcutsStoreType>((set, get) => ({
     });
   },
   getShortcutsFromStorage: () => {
-    if (localStorage.getItem("agentcore-shortcuts")) {
-      const savedShortcuts = localStorage.getItem("agentcore-shortcuts");
+    if (localStorage.getItem("sensei-shortcuts")) {
+      const savedShortcuts = localStorage.getItem("sensei-shortcuts");
       const savedArr = JSON.parse(savedShortcuts!);
       savedArr.forEach(({ name, shortcut }) => {
         const shortcutName = toCamelCase(name);

@@ -14,3 +14,9 @@ async def check_api_key():
 async def check_store():
     """Check if store is available - dummy implementation returning OK."""
     return {"enabled": False}
+
+
+@router.get("/tags")
+async def get_store_tags():
+    """Return store tags list."""
+    return []

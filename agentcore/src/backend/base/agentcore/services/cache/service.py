@@ -211,14 +211,25 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         """
         # Redis is a main dependency, no need to import check
         from redis.asyncio import StrictRedis
+        from redis.asyncio.retry import Retry
+        from redis.backoff import ExponentialBackoff
 
         logger.warning(
-            "RedisCache is an experimental feature and may not work as expected."
-            " Please report any issues to our GitHub repository."
+            ""
         )
-        # Use explicit socket timeouts so startup doesn't hang indefinitely when Redis is unreachable.
+        # retry_on_timeout + Retry: when Redis restarts or a connection
+        # goes stale, the client automatically drops the dead socket and
+        # retries with a fresh connection — no server restart needed.
+        _retry = Retry(ExponentialBackoff(), retries=3)
         if url:
-            self._client = StrictRedis.from_url(url, socket_connect_timeout=5, socket_timeout=5)
+            self._client = StrictRedis.from_url(
+                url,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True,
+                retry=_retry,
+                health_check_interval=30,
+            )
         else:
             self._client = StrictRedis(
                 host=host,
@@ -228,6 +239,9 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
                 ssl=ssl,
                 socket_connect_timeout=5,
                 socket_timeout=5,
+                retry_on_timeout=True,
+                retry=_retry,
+                health_check_interval=30,
             )
         self.expiration_time = expiration_time
 

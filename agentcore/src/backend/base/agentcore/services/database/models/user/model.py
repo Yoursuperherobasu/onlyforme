@@ -66,10 +66,11 @@ class UserCreate(SQLModel):
     username: str = Field()
     email: str | None = None
     display_name: str | None = None
-    password: str = Field()
+    password: str | None = None
     role: str = Field(default="developer", max_length=50)
     department_admin_email: str | None = None
     department_name: str | None = None
+    department_id: UUID | None = None
     organization_name: str | None = None
     organization_description: str | None = None
     optins: dict[str, Any] | None = Field(
@@ -103,7 +104,9 @@ class UserRead(SQLModel):
     department_name: str | None = Field(default=None)
     department_admin: UUID | None = Field(default=None)
     created_by: UUID | None = Field(default=None)
+    created_by_username: str | None = Field(default=None)
     country: str | None = Field(default=None)
+    organization_name: str | None = Field(default=None)
 
 
 class UserUpdate(SQLModel):

@@ -24,11 +24,18 @@ from agentcore.api.users import router as users_router
 from agentcore.api.validate import router as validate_router
 from agentcore.api.variable import router as variables_router
 from agentcore.api.roles import router as roles_router
+from agentcore.api.organizations import router as organizations_router
+from agentcore.api.departments import router as departments_router
 from agentcore.api.approvals import router as approvals_router
 from agentcore.api.cache import router as cache_router
 from agentcore.api.control_panel import router as control_panel_router
 from agentcore.api.knowledge_bases import router as knowledge_bases_router
 from agentcore.api.model_registry import router as model_registry_router
+from agentcore.api.orchestrator import router as orchestrator_router
+from agentcore.api.vector_db_catalogue import router as vector_db_catalogue_router
+from agentcore.api.timeout_settings import router as timeout_settings_router
+from agentcore.api.guardrails_catalogue import router as guardrails_catalogue_router
+from agentcore.api.help_support import router as help_support_router
 router = APIRouter(
     prefix="/api",
 )
@@ -56,8 +63,15 @@ router.include_router(evaluation_router)
 router.include_router(files_router_user)
 router.include_router(mcp_router_config)
 router.include_router(roles_router)
+router.include_router(organizations_router)
+router.include_router(departments_router)
 router.include_router(approvals_router)
 router.include_router(control_panel_router)
 router.include_router(cache_router)
 router.include_router(knowledge_bases_router)
 router.include_router(model_registry_router)
+router.include_router(orchestrator_router)
+router.include_router(vector_db_catalogue_router)
+router.include_router(timeout_settings_router)
+router.include_router(guardrails_catalogue_router)
+router.include_router(help_support_router)

@@ -71,7 +71,9 @@ async def _get_scope_memberships(session, user_id: UUID) -> tuple[set[UUID], set
             )
         )
     ).all()
-    return set(org_rows), set(dept_rows)
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
+    dept_ids = {r if isinstance(r, UUID) else r[0] for r in dept_rows}
+    return org_ids, dept_ids
 
 
 async def _can_access_project(session, current_user, project: Project) -> bool:

@@ -53,6 +53,16 @@ export default function SettingsPage(): JSX.Element {
       ),
       permissionKey: "view_settings_messages_tab",
     },
+    {
+      title: "Help & Support",
+      href: "/settings/help-support",
+      icon: (
+        <ForwardedIconComponent
+          name="HelpCircle"
+          className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
+        />
+      ),
+    },
   );
 
 
@@ -61,7 +71,7 @@ export default function SettingsPage(): JSX.Element {
     <PageLayout
       backTo={-1 as To}
       title="Settings"
-      description="Manage the general settings for AgentCore."
+      description="Manage the general settings for Sensei."
     >
       <SidebarProvider width="15rem" defaultOpen={false}>
         <SideBarButtonsComponent items={sidebarNavItems} />

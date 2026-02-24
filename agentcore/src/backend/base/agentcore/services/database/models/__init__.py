@@ -23,6 +23,11 @@ from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
+from .orch_conversation import OrchConversationTable
+from .orch_transaction import OrchTransactionTable
+from .timeout_settings import TimeoutSettings
+from .guardrail_catalogue import GuardrailCatalogue
+from .help_support import HelpSupportQuestion
 
 __all__ = [
     "Agent",
@@ -55,7 +60,12 @@ __all__ = [
     "TransactionUATTable",
     "VectorDBCatalogue",
     "KnowledgeBase",
+    "TimeoutSettings",
+    "GuardrailCatalogue",
+    "HelpSupportQuestion",
     "TransactionTable",
     "TransactionUATTable",
+    "OrchConversationTable",
+    "OrchTransactionTable",
     "User",
 ]

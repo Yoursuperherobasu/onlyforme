@@ -1,3 +1,3 @@
-export const AgentCoreButtonRedirectTarget = () => {
+export const SenseiButtonRedirectTarget = () => {
   return "https://www.motherson.com/";
 };

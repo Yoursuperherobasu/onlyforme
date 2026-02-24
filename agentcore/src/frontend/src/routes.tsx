@@ -36,6 +36,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ApiKeysPage from "./pages/SettingsPage/pages/ApiKeysPage";
 
 import GlobalVariablesPage from "./pages/SettingsPage/pages/GlobalVariablesPage";
+import HelpSupportPage from "./pages/SettingsPage/pages/HelpSupportPage";
 import MCPServersPage from "./pages/McpServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
@@ -128,17 +129,17 @@ const router = createBrowserRouter(
                   <Route
                     path="guardrails"
                     element={
-                      
+                      <ProtectedPermissionRoute permission="view_guardrail_page">
                         <GuardrailsView />
-             
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
                     path="vector-db"
                     element={
-                      
+                      <ProtectedPermissionRoute permission="view_vectordb_page">
                         <VectorDBView />
-                   
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
@@ -160,9 +161,9 @@ const router = createBrowserRouter(
                   <Route
                     path="timeout-settings"
                     element={
-                      
+                      <ProtectedAccessControlRoute>
                         <TimeoutSettings />
-                    
+                      </ProtectedAccessControlRoute>
                     }
                   />
                   
@@ -281,8 +282,10 @@ const router = createBrowserRouter(
                  
                   <Route path="shortcuts" element={<ShortcutsPage />} />
                   <Route path="messages" element={<MessagesPage />} />
+                  <Route path="help-support" element={<HelpSupportPage />} />
                   {CustomRoutesStore()}
                 </Route>
+                <Route path="help-support" element={<HelpSupportPage />} />
                 {CustomRoutesStorePages()}
                 <Route path="account">
                   <Route path="delete" element={<DeleteAccountPage />}></Route>
@@ -354,3 +357,4 @@ const router = createBrowserRouter(
 );
 
 export default router;
+
