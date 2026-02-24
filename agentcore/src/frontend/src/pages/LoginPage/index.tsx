@@ -160,7 +160,7 @@ export default function LoginPage(): JSX.Element {
           <div className="mb-6 sm:mb-8">
             <img 
               src={MothersonLogo} 
-              alt="Sensei Logo" 
+              alt={t("Sensei Logo")} 
               className="h-12 sm:h-16 md:h-20 w-auto"
             />
           </div>
@@ -227,7 +227,7 @@ export default function LoginPage(): JSX.Element {
               
               <div className="mt-4 sm:mt-6 text-center">
                 <p className="text-[10px] sm:text-xs text-gray-500 px-2">
-                  By signing in, you agree to our Terms of Service and Privacy Policy
+                  {t("By signing in, you agree to our Terms of Service and Privacy Policy")}
                 </p>
               </div>
             </div>

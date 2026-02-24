@@ -1,5 +1,6 @@
 import { Copy, Eye, Search, Star } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +33,7 @@ interface AgentCatalogueViewProps {
 export default function AgentCatalogueView({
   setSearch,
 }: AgentCatalogueViewProps): JSX.Element {
+  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<RegistryEntry | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
@@ -111,7 +113,7 @@ export default function AgentCatalogueView({
       let projectId = selectedProjectId;
       if (createProject) {
         if (!newProjectName.trim()) {
-          setErrorData({ title: "Project name is required" });
+          setErrorData({ title: t("Project name is required") });
           return;
         }
         const created = await api.post(`${getURL("PROJECTS")}/`, {
@@ -131,7 +133,7 @@ export default function AgentCatalogueView({
         }
       }
       if (!projectId) {
-        setErrorData({ title: "Please select a project first" });
+        setErrorData({ title: t("Please select a project first") });
         return;
       }
       const response = await cloneMutation.mutateAsync({
@@ -140,14 +142,16 @@ export default function AgentCatalogueView({
         new_name: cloneName.trim() || undefined,
       });
       setSuccessData({
-        title: `Agent '${response.agent_name}' copied successfully`,
+        title: t("Agent '{{name}}' copied successfully", {
+          name: response.agent_name,
+        }),
       });
       setCloneOpen(false);
       navigate(`/agent/${response.agent_id}/folder/${projectId}`);
     } catch (error: any) {
       setErrorData({
-        title: "Failed to copy agent",
-        list: [error?.response?.data?.detail || "Please try again"],
+        title: t("Failed to copy agent"),
+        list: [error?.response?.data?.detail || t("Please try again")],
       });
     }
   };
@@ -161,11 +165,11 @@ export default function AgentCatalogueView({
         review: review.trim() || undefined,
       });
       await refetchRatings();
-      setSuccessData({ title: "Rating submitted successfully" });
+      setSuccessData({ title: t("Rating submitted successfully") });
     } catch (error: any) {
       setErrorData({
-        title: "Failed to submit rating",
-        list: [error?.response?.data?.detail || "Please try again"],
+        title: t("Failed to submit rating"),
+        list: [error?.response?.data?.detail || t("Please try again")],
       });
     }
   };
@@ -175,11 +179,12 @@ export default function AgentCatalogueView({
       <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Agent Registry</h1>
+            <h1 className="text-2xl font-semibold">{t("Agent Registry")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Discover and deploy pre-built AI agents and workflows. Clone,
-            customize, and integrate into your applications.
+            {t(
+              "Discover and deploy pre-built AI agents and workflows. Clone, customize, and integrate into your applications.",
+            )}
           </p>
         </div>
 
@@ -187,7 +192,7 @@ export default function AgentCatalogueView({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder="Search agents"
+              placeholder={t("Search agents")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-64 rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
@@ -203,7 +208,7 @@ export default function AgentCatalogueView({
           </div>
         ) : filteredAgents.length === 0 ? (
           <div className="rounded-lg border border-border bg-card p-12 text-center">
-            <p className="text-muted-foreground">No registry agents found</p>
+            <p className="text-muted-foreground">{t("No registry agents found")}</p>
           </div>
         ) : (
           <>
@@ -220,13 +225,13 @@ export default function AgentCatalogueView({
                           {agent.title}
                         </h3>
                         <p className="text-xs text-muted-foreground">
-                          by {agent.listed_by_username || "Unknown"}
+                          {t("by")} {agent.listed_by_username || t("Unknown")}
                         </p>
                       </div>
                     </div>
 
                     <p className="mb-4 line-clamp-2 text-sm text-muted-foreground">
-                      {agent.summary || "No description provided."}
+                      {agent.summary || t("No description available.")}
                     </p>
 
                     <div className="mb-4 flex flex-wrap gap-2">
@@ -244,8 +249,8 @@ export default function AgentCatalogueView({
                       <ShadTooltip
                         content={
                           !can("copy_agents")
-                            ? "You don't have permission to view ratings"
-                            : "Click to rate and view reviews"
+                            ? t("You don't have permission to view ratings")
+                            : t("Click to rate and view reviews")
                         }
                       >
                         <button
@@ -270,7 +275,7 @@ export default function AgentCatalogueView({
                         <ShadTooltip
                           content={
                             !can("view_only_agent")
-                              ? "You don't have permission to view"
+                              ? t("You don't have permission to view")
                               : ""
                           }
                         >
@@ -284,7 +289,7 @@ export default function AgentCatalogueView({
                               }
                             >
                               <Eye className="mr-1.5 h-3.5 w-3.5" />
-                              View
+                              {t("View")}
                             </Button>
                           </span>
                         </ShadTooltip>
@@ -292,7 +297,7 @@ export default function AgentCatalogueView({
                         <ShadTooltip
                           content={
                             !can("copy_agents")
-                              ? "You don't have permission to copy"
+                              ? t("You don't have permission to copy")
                               : ""
                           }
                         >
@@ -303,7 +308,7 @@ export default function AgentCatalogueView({
                               onClick={() => openCloneModal(agent)}
                             >
                               <Copy className="mr-1.5 h-3.5 w-3.5" />
-                              Copy
+                              {t("Copy")}
                             </Button>
                           </span>
                         </ShadTooltip>
@@ -315,7 +320,10 @@ export default function AgentCatalogueView({
             </div>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
-              Showing {filteredAgents.length} of {registryData?.total || 0} agents
+              {t("Showing {{shown}} of {{total}} agents", {
+                shown: filteredAgents.length,
+                total: registryData?.total || 0,
+              })}
             </div>
           </>
         )}
@@ -324,23 +332,24 @@ export default function AgentCatalogueView({
       <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Copy Agent</DialogTitle>
+            <DialogTitle>{t("Copy Agent")}</DialogTitle>
             <DialogDescription>
-              Choose existing project or create a new project, then copy this
-              registry agent.
+              {t(
+                "Choose existing project or create a new project, then copy this registry agent.",
+              )}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 text-sm">
             <label className="block">
               <span className="mb-1 block text-xs text-muted-foreground">
-                Agent Name
+                {t("Agent Name")}
               </span>
               <input
                 value={cloneName}
                 onChange={(e) => setCloneName(e.target.value)}
                 className="w-full rounded-md border bg-card px-3 py-2"
-                placeholder="Copied agent name"
+                placeholder={t("Copied agent name")}
               />
             </label>
 
@@ -350,7 +359,7 @@ export default function AgentCatalogueView({
                 checked={createProject}
                 onChange={(e) => setCreateProject(e.target.checked)}
               />
-              <span>Create new project and copy there</span>
+              <span>{t("Create new project and copy there")}</span>
             </label>
 
             {createProject ? (
@@ -359,13 +368,13 @@ export default function AgentCatalogueView({
                   value={newProjectName}
                   onChange={(e) => setNewProjectName(e.target.value)}
                   className="w-full rounded-md border bg-card px-3 py-2"
-                  placeholder="New project name"
+                  placeholder={t("New project name")}
                 />
                 <textarea
                   value={newProjectDescription}
                   onChange={(e) => setNewProjectDescription(e.target.value)}
                   className="w-full rounded-md border bg-card px-3 py-2"
-                  placeholder="New project description (optional)"
+                  placeholder={t("New project description (optional)")}
                 />
               </div>
             ) : (
@@ -374,7 +383,7 @@ export default function AgentCatalogueView({
                 onChange={(e) => setSelectedProjectId(e.target.value)}
                 className="w-full rounded-md border bg-card px-3 py-2"
               >
-                <option value="">Select project</option>
+                <option value="">{t("Select project")}</option>
                 {folders.map((folder) => (
                   <option
                     key={folder.id || folder.name}
@@ -389,10 +398,10 @@ export default function AgentCatalogueView({
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setCloneOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button onClick={handleClone} disabled={cloneMutation.isLoading}>
-              {cloneMutation.isLoading ? "Copying..." : "Copy Agent"}
+              {cloneMutation.isLoading ? t("Copying...") : t("Copy Agent")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -401,16 +410,16 @@ export default function AgentCatalogueView({
       <Dialog open={ratingOpen} onOpenChange={setRatingOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rate Agent</DialogTitle>
+            <DialogTitle>{t("Rate Agent")}</DialogTitle>
             <DialogDescription>
-              Submit your rating and review for this registry agent.
+              {t("Submit your rating and review for this registry agent.")}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 text-sm">
             <div>
               <span className="mb-1 block text-xs text-muted-foreground">
-                Score (1 to 5)
+                {t("Score (1 to 5)")}
               </span>
               <input
                 type="number"
@@ -426,16 +435,16 @@ export default function AgentCatalogueView({
               value={review}
               onChange={(e) => setReview(e.target.value)}
               className="w-full rounded-md border bg-card px-3 py-2"
-              placeholder="Write a short review (optional)"
+              placeholder={t("Write a short review (optional)")}
             />
 
             <div className="rounded-md border bg-muted/30 p-3">
               <p className="text-xs text-muted-foreground">
-                Average:{" "}
+                {t("Average:")}{" "}
                 {Number(
                   ratingsData?.average_rating || selectedEntry?.rating || 0,
                 ).toFixed(1)}{" "}
-                • Total ratings:{" "}
+                | {t("Total ratings:")} 
                 {ratingsData?.total_ratings || selectedEntry?.rating_count || 0}
               </p>
             </div>
@@ -443,10 +452,10 @@ export default function AgentCatalogueView({
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setRatingOpen(false)}>
-              Close
+              {t("Close")}
             </Button>
             <Button onClick={handleRate} disabled={rateMutation.isLoading}>
-              {rateMutation.isLoading ? "Submitting..." : "Submit Rating"}
+              {rateMutation.isLoading ? t("Submitting...") : t("Submit Rating")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -23,6 +23,7 @@ import { getProviderIcon } from "@/utils/logo_provider";
 import { AuthContext } from "@/contexts/authContext";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import useAlertStore from "@/stores/alertStore";
+import { useTranslation } from "react-i18next";
 import {
   useGetRegistryModels,
   useDeleteRegistryModel,
@@ -55,6 +56,7 @@ const ENV_BADGE_CLASSES: Record<string, string> = {
 };
 
 export default function ModelCatalogue(): JSX.Element {
+  const { t } = useTranslation();
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -122,9 +124,11 @@ export default function ModelCatalogue(): JSX.Element {
     if (!deleteConfirmModel) return;
     try {
       await deleteMutation.mutateAsync({ id: deleteConfirmModel.id });
-      setSuccessData({ title: `Model "${deleteConfirmModel.display_name}" deleted.` });
+      setSuccessData({
+        title: t("Model \"{{name}}\" deleted.", { name: deleteConfirmModel.display_name }),
+      });
     } catch {
-      setErrorData({ title: "Failed to delete model." });
+      setErrorData({ title: t("Failed to delete model.") });
     }
     setDeleteConfirmModel(null);
   };
@@ -151,10 +155,10 @@ export default function ModelCatalogue(): JSX.Element {
       <div className="flex-shrink-0 flex items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Model Registry</h1>
+            <h1 className="text-2xl font-semibold">{t("Model Registry")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Onboard, browse, and manage AI models across environments
+            {t("Onboard, browse, and manage AI models across environments")}
           </p>
         </div>
 
@@ -162,7 +166,7 @@ export default function ModelCatalogue(): JSX.Element {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder="Search models..."
+              placeholder={t("Search models...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-64 rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
@@ -173,7 +177,7 @@ export default function ModelCatalogue(): JSX.Element {
             <ShadTooltip
               content={
                 !canAddModel
-                  ? "You don't have permission to add models"
+                  ? t("You don't have permission to add models")
                   : ""
               }
             >
@@ -186,14 +190,14 @@ export default function ModelCatalogue(): JSX.Element {
                   disabled={!canAddModel}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Add Model
+                  {t("Add Model")}
                 </Button>
               </span>
             </ShadTooltip>
           ) : canRequestModel ? (
             <Button onClick={() => setIsRequestModalOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
-              Request New Model
+              {t("Request New Model")}
             </Button>
           ) : null}
         </div>
@@ -210,7 +214,7 @@ export default function ModelCatalogue(): JSX.Element {
               variant={providerFilter === type ? "default" : "outline"}
               onClick={() => setProviderFilter(type)}
             >
-              {PROVIDER_LABELS[type]}
+              {t(PROVIDER_LABELS[type])}
             </Button>
           ))}
         </div>
@@ -226,7 +230,7 @@ export default function ModelCatalogue(): JSX.Element {
               variant={envFilter === env ? "default" : "outline"}
               onClick={() => setEnvFilter(env)}
             >
-              {ENV_LABELS[env]}
+              {t(ENV_LABELS[env])}
             </Button>
           ))}
         </div>
@@ -240,7 +244,7 @@ export default function ModelCatalogue(): JSX.Element {
           </div>
         ) : isError ? (
           <div className="flex items-center justify-center py-20 text-destructive">
-            Failed to load models. Please try again.
+            {t("Failed to load models. Please try again.")}
           </div>
         ) : (
           <>
@@ -261,7 +265,7 @@ export default function ModelCatalogue(): JSX.Element {
                         key={h}
                         className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider"
                       >
-                        {h}
+                        {t(h)}
                       </th>
                     ))}
                   </tr>
@@ -275,8 +279,8 @@ export default function ModelCatalogue(): JSX.Element {
                         className="px-6 py-12 text-center text-sm text-muted-foreground"
                       >
                         {displayModels.length === 0
-                          ? "No models onboarded yet. Click 'Add Model' to get started."
-                          : "No models match the current filters."}
+                          ? t("No models onboarded yet. Click 'Add Model' to get started.")
+                          : t("No models match the current filters.")}
                       </td>
                     </tr>
                   ) : (
@@ -301,7 +305,7 @@ export default function ModelCatalogue(): JSX.Element {
                               {getProviderLogo(model.provider)}
                             </div>
                             <span className="text-sm">
-                              {getProviderName(model.provider)}
+                              {t(getProviderName(model.provider))}
                             </span>
                           </div>
                         </td>
@@ -318,7 +322,7 @@ export default function ModelCatalogue(): JSX.Element {
                               ENV_BADGE_CLASSES[model.environment] ?? "bg-gray-100 text-gray-700"
                             }`}
                           >
-                            {model.environment}
+                            {t(ENV_LABELS[model.environment] ?? model.environment)}
                           </span>
                         </td>
 
@@ -330,7 +334,7 @@ export default function ModelCatalogue(): JSX.Element {
                                 key={badge}
                                 className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium"
                               >
-                                {badge}
+                              {t(badge)}
                               </span>
                             ))}
                           </div>
@@ -341,12 +345,12 @@ export default function ModelCatalogue(): JSX.Element {
                           {model.is_active ? (
                             <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
                               <CheckCircle className="h-3.5 w-3.5" />
-                              Active
+                              {t("Active")}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
                               <XCircle className="h-3.5 w-3.5" />
-                              Inactive
+                              {t("Inactive")}
                             </span>
                           )}
                         </td>
@@ -368,7 +372,7 @@ export default function ModelCatalogue(): JSX.Element {
                                 }}
                               >
                                 <Edit2 className="mr-2 h-4 w-4" />
-                                Edit
+                                {t("Edit")}
                               </DropdownMenuItem>
 
                               <DropdownMenuItem
@@ -376,7 +380,7 @@ export default function ModelCatalogue(): JSX.Element {
                                 onClick={() => setDeleteConfirmModel(model)}
                               >
                                 <Trash2 className="mr-2 h-4 w-4" />
-                                Delete
+                                {t("Delete")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -389,7 +393,10 @@ export default function ModelCatalogue(): JSX.Element {
             </div>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
-              Showing {filteredModels.length} of {displayModels.length} models
+              {t("Showing {{shown}} of {{total}} models", {
+                shown: filteredModels.length,
+                total: displayModels.length,
+              })}
             </div>
           </>
         )}
@@ -414,11 +421,11 @@ export default function ModelCatalogue(): JSX.Element {
             onClick={() => setDeleteConfirmModel(null)}
           />
           <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-card p-6 shadow-lg">
-            <h3 className="text-lg font-semibold">Delete Model</h3>
+            <h3 className="text-lg font-semibold">{t("Delete Model")}</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              Are you sure you want to delete{" "}
-              <strong>{deleteConfirmModel.display_name}</strong>? This action
-              cannot be undone.
+              {t("Are you sure you want to delete {{name}}? This action cannot be undone.", {
+                name: deleteConfirmModel.display_name,
+              })}
             </p>
             <div className="mt-6 flex gap-3">
               <Button
@@ -426,7 +433,7 @@ export default function ModelCatalogue(): JSX.Element {
                 className="flex-1"
                 onClick={() => setDeleteConfirmModel(null)}
               >
-                Cancel
+                {t("Cancel")}
               </Button>
               <Button
                 variant="destructive"
@@ -437,7 +444,7 @@ export default function ModelCatalogue(): JSX.Element {
                 {deleteMutation.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : null}
-                Delete
+                {t("Delete")}
               </Button>
             </div>
           </div>

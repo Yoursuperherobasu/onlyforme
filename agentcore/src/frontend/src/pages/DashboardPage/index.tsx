@@ -9,13 +9,15 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "react-i18next";
 
 interface DashboardProps {
   onNewAgent?: () => void;
 }
 
 export default function DashboardAdmin(): JSX.Element {
-  const [timeFilter, setTimeFilter] = useState<"day" | "week" | "month" | "year">("week");
+  const { t } = useTranslation();
+  const [timeFilter, setTimeFilter] = useState<"day" | "week" | "month" | "year">("day");
 
   /* ---------------------------------- Stats Data ---------------------------------- */
 
@@ -191,7 +193,7 @@ export default function DashboardAdmin(): JSX.Element {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold mb-2">
-                Dashboard
+                {t("Dashboard")}
               </h1>
             
             </div>
@@ -219,7 +221,7 @@ export default function DashboardAdmin(): JSX.Element {
                   : "bg-muted hover:bg-muted/80"
               }`}
             >
-              {filter.label}
+              {t(filter.label)}
             </button>
           ))}
         </div>
@@ -236,12 +238,12 @@ export default function DashboardAdmin(): JSX.Element {
                   <stat.icon className={`h-6 w-6 ${stat.color}`} />
                 </div>
                 <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-                  {stat.label}
+                  {t(stat.label)}
                 </div>
                 <div className="text-4xl font-bold mb-3">{stat.value}</div>
                 <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${stat.changePositive ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
                   <TrendingUp className={`h-3 w-3 ${stat.changePositive ? "" : "rotate-180"}`} />
-                  {stat.change}
+                  {t(stat.change)}
                 </div>
               </div>
             </div>
@@ -254,9 +256,9 @@ export default function DashboardAdmin(): JSX.Element {
           <div className="rounded-xl border bg-card p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-lg font-semibold mb-1">API Requests</h3>
+                <h3 className="text-lg font-semibold mb-1">{t("API Requests")}</h3>
                 <p className="text-sm text-muted-foreground">
-                  Total requests over time
+                  {t("Total requests over time")}
                 </p>
               </div>
               <Activity className="h-5 w-5 text-purple-500" />
@@ -331,7 +333,7 @@ export default function DashboardAdmin(): JSX.Element {
                           fill="transparent"
                           className="cursor-pointer"
                         >
-                          <title>{`${d.label}: ${d.requests.toLocaleString()} requests`}</title>
+                          <title>{`${t(d.label)}: ${d.requests.toLocaleString()} ${t("requests")}`}</title>
                         </circle>
                       </g>
                     );
@@ -343,7 +345,7 @@ export default function DashboardAdmin(): JSX.Element {
               <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2">
                 {performanceData.map((d, i) => (
                   <span key={i} className="text-xs text-muted-foreground">
-                    {d.label}
+                    {t(d.label)}
                   </span>
                 ))}
               </div>
@@ -355,13 +357,13 @@ export default function DashboardAdmin(): JSX.Element {
                 <div className="text-2xl font-bold">
                   {Math.max(...performanceData.map(d => d.requests)).toLocaleString()}
                 </div>
-                <div className="text-xs text-muted-foreground">Peak requests</div>
+                <div className="text-xs text-muted-foreground">{t("Peak requests")}</div>
               </div>
               <div>
                 <div className="text-2xl font-bold">
                   {Math.round(performanceData.reduce((sum, d) => sum + d.requests, 0) / performanceData.length).toLocaleString()}
                 </div>
-                <div className="text-xs text-muted-foreground">Average</div>
+                <div className="text-xs text-muted-foreground">{t("Average")}</div>
               </div>
             </div>
           </div>
@@ -370,9 +372,9 @@ export default function DashboardAdmin(): JSX.Element {
           <div className="rounded-xl border bg-card p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-lg font-semibold mb-1">Workagent Executions</h3>
+                <h3 className="text-lg font-semibold mb-1">{t("Workagent Executions")}</h3>
                 <p className="text-sm text-muted-foreground">
-                  Completed workflows over time
+                  {t("Completed workflows over time")}
                 </p>
               </div>
               <TrendingUp className="h-5 w-5 text-blue-500" />
@@ -416,7 +418,7 @@ export default function DashboardAdmin(): JSX.Element {
                           fill="transparent"
                           className="cursor-pointer"
                         >
-                          <title>{`${d.label}: ${d.executions.toLocaleString()} executions`}</title>
+                          <title>{`${t(d.label)}: ${d.executions.toLocaleString()} ${t("executions")}`}</title>
                         </rect>
                       </g>
                     );
@@ -428,7 +430,7 @@ export default function DashboardAdmin(): JSX.Element {
               <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2">
                 {performanceData.map((d, i) => (
                   <span key={i} className="text-xs text-muted-foreground">
-                    {d.label}
+                    {t(d.label)}
                   </span>
                 ))}
               </div>
@@ -440,13 +442,13 @@ export default function DashboardAdmin(): JSX.Element {
                 <div className="text-2xl font-bold">
                   {Math.max(...performanceData.map(d => d.executions)).toLocaleString()}
                 </div>
-                <div className="text-xs text-muted-foreground">Peak executions</div>
+                <div className="text-xs text-muted-foreground">{t("Peak executions")}</div>
               </div>
               <div>
                 <div className="text-2xl font-bold">
                   {Math.round(performanceData.reduce((sum, d) => sum + d.executions, 0) / performanceData.length).toLocaleString()}
                 </div>
-                <div className="text-xs text-muted-foreground">Average</div>
+                <div className="text-xs text-muted-foreground">{t("Average")}</div>
               </div>
             </div>
           </div>
@@ -455,8 +457,8 @@ export default function DashboardAdmin(): JSX.Element {
           <div className="rounded-xl border bg-card p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-lg font-semibold mb-1">Project Status</h3>
-                <p className="text-sm text-muted-foreground">Distribution by state</p>
+                <h3 className="text-lg font-semibold mb-1">{t("Project Status")}</h3>
+                <p className="text-sm text-muted-foreground">{t("Distribution by state")}</p>
               </div>
             </div>
             <div className="flex items-center justify-center mb-6">
@@ -491,7 +493,7 @@ export default function DashboardAdmin(): JSX.Element {
                 <div key={idx} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className={`w-3 h-3 rounded-full ${item.color}`} />
-                    <span className="text-sm">{item.label}</span>
+                    <span className="text-sm">{t(item.label)}</span>
                   </div>
                   <span className="text-sm font-semibold">{item.value}</span>
                 </div>
@@ -504,11 +506,11 @@ export default function DashboardAdmin(): JSX.Element {
         <div className="rounded-xl border bg-card p-6">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="text-lg font-semibold mb-1">Recent Projects</h3>
-              <p className="text-sm text-muted-foreground">Your most active workflows</p>
+              <h3 className="text-lg font-semibold mb-1">{t("Recent Projects")}</h3>
+              <p className="text-sm text-muted-foreground">{t("Your most active workflows")}</p>
             </div>
             <Button variant="ghost" size="sm" className="text-primary">
-              View all <ArrowUpRight className="ml-1 h-4 w-4" />
+              {t("View all")} <ArrowUpRight className="ml-1 h-4 w-4" />
             </Button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -519,11 +521,11 @@ export default function DashboardAdmin(): JSX.Element {
               >
                 
                 <div className="flex-1 min-w-0">
-                  <h4 className="font-semibold truncate">{project.name}</h4>
-                  <p className="text-xs text-muted-foreground">{project.type}</p>
+                  <h4 className="font-semibold truncate">{t(project.name)}</h4>
+                  <p className="text-xs text-muted-foreground">{t(project.type)}</p>
                   <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                    <span>Executions: {project.executions}</span>
-                    <span>Last edited: {project.lastEdited}</span>
+                    <span>{t("Executions:")} {project.executions}</span>
+                    <span>{t("Last edited:")} {project.lastEdited}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -534,7 +536,7 @@ export default function DashboardAdmin(): JSX.Element {
                         : "bg-orange-500/10 text-orange-500"
                     }`}
                   >
-                    {project.status}
+                    {t(project.status)}
                   </span>
                   <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
                 </div>

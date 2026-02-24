@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Save, RotateCcw } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +21,7 @@ import { usePutTimeoutSettings } from "@/controllers/API/queries/config/use-put-
 import useAlertStore from "@/stores/alertStore";
 
 export default function TimeoutSettings() {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<TimeoutSetting[]>([]);
   const [originalSettings, setOriginalSettings] = useState<TimeoutSetting[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
@@ -78,10 +80,10 @@ export default function TimeoutSettings() {
       onSuccess: () => {
         setOriginalSettings(settings);
         setHasChanges(false);
-        setSuccessData({ title: "Timeout settings saved successfully" });
+        setSuccessData({ title: t("Timeout settings saved successfully") });
       },
       onError: () => {
-        setErrorData({ title: "Failed to save timeout settings." });
+        setErrorData({ title: t("Failed to save timeout settings.") });
       },
     });
   };
@@ -96,10 +98,10 @@ export default function TimeoutSettings() {
       <div className="flex items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Platform Configurations</h1>
+            <h1 className="text-2xl font-semibold">{t("Platform Configurations")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Configure system timeouts and session management
+            {t("Configure system timeouts and session management")}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -110,7 +112,7 @@ export default function TimeoutSettings() {
             className="gap-2"
           >
             <RotateCcw className="h-4 w-4" />
-            Reset to Defaults
+            {t("Reset to Defaults")}
           </Button>
           <Button
             variant="default"
@@ -119,7 +121,7 @@ export default function TimeoutSettings() {
             className="gap-2"
           >
             <Save className="h-4 w-4" />
-            Save Changes
+            {t("Save Changes")}
           </Button>
         </div>
       </div>
@@ -132,28 +134,28 @@ export default function TimeoutSettings() {
         )}
         {isError && !isLoading && (
           <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-            Failed to load timeout settings from database.
+            {t("Failed to load timeout settings from database.")}
           </div>
         )}
         {!isLoading && (
           <div className="w-full px-2 lg:px-4 xl:px-6">
-            <h2 className="mb-6 text-lg font-semibold">Timeouts</h2>
+            <h2 className="mb-6 text-lg font-semibold">{t("Timeouts")}</h2>
 
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
                     <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                      Setting
+                      {t("Setting")}
                     </th>
                     <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                      Value
+                      {t("Value")}
                     </th>
                     <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                      Unit
+                      {t("Unit")}
                     </th>
                     <th className="px-6 py-4 text-left text-sm font-medium text-muted-foreground">
-                      Description
+                      {t("Description")}
                     </th>
                   </tr>
                 </thead>
@@ -227,12 +229,12 @@ export default function TimeoutSettings() {
                 </div>
                 <div className="text-sm">
                   <p className="font-medium text-blue-900 dark:text-blue-100">
-                    Important
+                    {t("Important")}
                   </p>
                   <p className="mt-1 text-blue-800 dark:text-blue-200">
-                    Changes to timeout settings will affect new sessions only.
-                    Existing active sessions will maintain their current timeout
-                    values until they expire.
+                    {t(
+                      "Changes to timeout settings will affect new sessions only. Existing active sessions will maintain their current timeout values until they expire.",
+                    )}
                   </p>
                 </div>
               </div>
