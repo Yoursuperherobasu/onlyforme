@@ -65,6 +65,10 @@ class ProjectCreate(ProjectBase):
 
 class ProjectRead(ProjectBase):
     id: UUID
+    is_own_project: bool = False
+    created_by_email: str | None = None
+    department_name: str | None = None
+    organization_name: str | None = None
 
 
 class ProjectReadWithAgents(ProjectBase):

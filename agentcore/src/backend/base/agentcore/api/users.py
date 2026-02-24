@@ -10,7 +10,6 @@ from sqlmodel.sql.expression import SelectOfScalar
 
 from agentcore.api.schemas import UsersResponse, UserReadWithPermissions
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.initial_setup.setup import get_or_create_default_folder
 from agentcore.services.auth.decorators import PermissionChecker
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role, permission_cache
 from agentcore.services.auth.hard_delete import hard_delete_user
@@ -405,9 +404,6 @@ async def add_user(
         await session.commit()
         await session.refresh(new_user)
 
-        folder = await get_or_create_default_folder(session, new_user.id)
-        if not folder:
-            raise HTTPException(status_code=500, detail="Error creating default project")
     except HTTPException:
         await session.rollback()
         raise

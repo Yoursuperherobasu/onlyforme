@@ -13,7 +13,6 @@ from jose import jwt
 import secrets
 from agentcore.api.utils import DbSession
 from agentcore.api.schemas import Token
-from agentcore.initial_setup.setup import get_or_create_default_folder
 from agentcore.services.auth.utils import (
     authenticate_user,
     create_refresh_token,
@@ -83,9 +82,6 @@ async def login_to_get_access_token(
             expires=None,  # Set to None to make it a session cookie
             domain=auth_settings.COOKIE_DOMAIN,
         )
-        
-        # Create default project for user if it doesn't exist
-        _ = await get_or_create_default_folder(db, user.id)
         current_role = normalize_role(getattr(user, "role", "developer"))
         permissions = await get_permissions_for_role(current_role)
         print(current_role,"current_roleeeeeeeeeee")
@@ -232,10 +228,6 @@ async def azure_sso_login(
         expires=None,
         domain=auth_settings.COOKIE_DOMAIN,
     )
-
-    
-    _ = await get_or_create_default_folder(db, user.id)
-
     return {
         **tokens,
         "role": resolved_role,
@@ -314,6 +306,5 @@ async def logout(response: Response):
 #     response.delete_cookie("apikey_tkn_lflw", **cookie_params)
     
 #     return {"message": "Logout successful"}
-
 
 

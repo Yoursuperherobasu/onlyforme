@@ -3,6 +3,8 @@ import { useBlocker, useParams } from "react-router-dom";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useGetAgent } from "@/controllers/API/queries/agents/use-get-agent";
 import { useGetTypes } from "@/controllers/API/queries/agents/use-get-types";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useSaveAgent from "@/hooks/agents/use-save-agent";
@@ -31,6 +33,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const currentAgent = useAgentStore((state) => state.currentAgent);
   const currentSavedAgent = useAgentsManagerStore((state) => state.currentAgent);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
   const [isLoading, setIsLoading] = useState(false);
 
   const changesNotSaved =
@@ -149,9 +152,44 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   }, [blocker.state, isBuilding]);
 
   const getAgentToAddToCanvas = async (id: string) => {
-    const agent = await getAgent({ id: id });
-    setCurrentAgent(agent);
+    try {
+      const agent = await getAgent({ id: id });
+      await api.post(`${getURL("AGENTS")}/${id}/session/acquire`);
+      setCurrentAgent(agent);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const detail = error?.response?.data?.detail;
+      setErrorData({
+        title: status === 423 ? "Agent is currently locked" : "Unable to open agent",
+        list: [typeof detail === "string" ? detail : "Please try again later."],
+      });
+      navigate("/all");
+    }
   };
+
+  useEffect(() => {
+    if (!id || !currentAgent) return;
+
+    const heartbeat = setInterval(() => {
+      api.post(`${getURL("AGENTS")}/${id}/session/acquire`).catch(() => {
+        // Keep UX non-disruptive; hard failures are handled on explicit open.
+      });
+    }, 60_000);
+
+    const release = () => {
+      api.post(`${getURL("AGENTS")}/${id}/session/release`).catch(() => {
+        // Best-effort release.
+      });
+    };
+
+    window.addEventListener("beforeunload", release);
+
+    return () => {
+      clearInterval(heartbeat);
+      window.removeEventListener("beforeunload", release);
+      release();
+    };
+  }, [id, currentAgent]);
 
   const isMobile = useIsMobile();
 
