@@ -131,8 +131,6 @@ async def get_agent_card(
         authentication={"type": "api_key", "header": "x-api-key"},
         metadata={
             "agent_id": str(agent.id),
-            "endpoint_name": agent.endpoint_name,
-            "is_component": agent.is_component,
         },
     )
 
