@@ -4,6 +4,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useContext } from "react";
+import { useTranslation } from "react-i18next";
 import { AuthContext } from "@/contexts/authContext";
 import CustomLoader from "@/customization/components/custom-loader";
 import { useGetControlPanelAgents } from "@/controllers/API/queries/control-panel";
@@ -41,6 +42,7 @@ export default function WorkflowsView({
   setSearch,
   onWorkagentClick,
 }: WorkflowsViewProps): JSX.Element {
+  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<EnvironmentTab>("UAT");
   const [workflowStates, setWorkagentStates] = useState<{
@@ -133,7 +135,7 @@ export default function WorkflowsView({
     <div className="flex h-full w-full flex-col overflow-hidden">
       <div className="flex-shrink-0 border-b px-8 py-6">
         <div className="mb-4 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">Agent Control Panel</h1>
+          <h1 className="text-2xl font-semibold">{t("Agent Control Panel")}</h1>
         </div>
 
         <div className="mb-6 inline-flex rounded-lg border bg-muted/30 p-1">
@@ -165,7 +167,7 @@ export default function WorkflowsView({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search agents..."
+            placeholder={t("Search agents...")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
@@ -179,31 +181,31 @@ export default function WorkflowsView({
             <thead className="border-b bg-muted/50">
               <tr>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Agent Name
+                  {t("Agent Name")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Creater
+                  {t("Creator")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Department
+                  {t("Department")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Created At
+                  {t("Created At")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Last Run
+                  {t("Last Run")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  Failed Runs
+                  {t("Failed Runs")}
                 </th>
                 {can("start_stop_agent") && (
                   <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                    Start/Stop
+                    {t("Start/Stop")}
                   </th>
                 )}
                 {can("enable_disable_agent") && (
                   <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                    Enable/Disable
+                    {t("Enable/Disable")}
                   </th>
                 )}
               </tr>
@@ -221,7 +223,7 @@ export default function WorkflowsView({
               ) : filteredworkflows.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-6 py-10 text-center text-sm text-muted-foreground">
-                    No deployed agents found
+                    {t("No deployed agents found")}
                   </td>
                 </tr>
               ) : (
@@ -304,13 +306,13 @@ export default function WorkflowsView({
         </div>
 
         <div className="mt-6 flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">Rows per page</div>
+          <div className="text-sm text-muted-foreground">{t("Rows per page")}</div>
           <div className="flex items-center gap-2">
             <button className="rounded-lg border bg-card px-4 py-2 text-sm hover:bg-muted">
-              Previous
+              {t("Previous")}
             </button>
             <button className="rounded-lg border bg-card px-4 py-2 text-sm hover:bg-muted">
-              Next
+              {t("Next")}
             </button>
           </div>
         </div>

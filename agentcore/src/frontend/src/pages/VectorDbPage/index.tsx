@@ -3,6 +3,7 @@ import {
   Activity,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Loading from "@/components/ui/loading";
 import { useGetVectorDBCatalogue } from "@/controllers/API/queries/vector-db/use-get-vector-db-catalogue";
 import { getProviderIcon } from "@/utils/logo_provider";
@@ -37,6 +38,7 @@ export default function VectorDBView({
   onDeleteVectorDB,
   onConfigureVectorDB,
 }: VectorDBViewProps): JSX.Element {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState<DeploymentType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const {
@@ -114,7 +116,7 @@ export default function VectorDBView({
       disconnected: "Disconnected",
       configuring: "Configuring",
     };
-    return labels[status] || status;
+    return t(labels[status] || status);
   };
 
   /* ---------------------------------- JSX ---------------------------------- */
@@ -126,10 +128,10 @@ export default function VectorDBView({
         <div>
           <div className="mb-2 flex items-center gap-3">
             
-            <h1 className="text-2xl font-semibold">Vector Database Catalogue</h1>
+            <h1 className="text-2xl font-semibold">{t("Vector Database Catalogue")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Manage and configure vector database connections
+            {t("Manage and configure vector database connections")}
           </p>
         </div>
 
@@ -137,7 +139,7 @@ export default function VectorDBView({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder="Search vector databases..."
+              placeholder={t("Search vector databases...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
@@ -158,7 +160,7 @@ export default function VectorDBView({
           <>
             {!!error && (
               <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                Failed to load vector databases from database.
+                {t("Failed to load vector databases from database.")}
               </div>
             )}
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -178,7 +180,7 @@ export default function VectorDBView({
                         key={h}
                         className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                       >
-                        {h}
+                        {t(h)}
                       </th>
                     ))}
                   </tr>
@@ -191,7 +193,7 @@ export default function VectorDBView({
                         colSpan={9}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
-                        No vector databases found matching your criteria
+                        {t("No vector databases found matching your criteria")}
                       </td>
                     </tr>
                   ) : (
@@ -203,7 +205,7 @@ export default function VectorDBView({
                             <div className="font-semibold">{db.name}</div>
                             {db.isCustom && (
                               <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                                Custom
+                                {t("Custom")}
                               </span>
                             )}
                           </div>
@@ -218,7 +220,7 @@ export default function VectorDBView({
                             <div className="flex h-8 w-8 items-center justify-center rounded border">
                               {getProviderLogo(db.provider)}
                             </div>
-                            <span className="text-sm">{db.provider}</span>
+                            <span className="text-sm">{t(db.provider)}</span>
                           </div>
                         </td>
 
@@ -227,7 +229,7 @@ export default function VectorDBView({
                           <span
                             className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getDeploymentBadgeColor(db.deployment)}`}
                           >
-                            {db.deployment}
+                            {t(db.deployment)}
                           </span>
                         </td>
 
@@ -274,8 +276,10 @@ export default function VectorDBView({
             </div>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
-              Showing {filteredVectorDBs.length} of {displayVectorDBs.length} vector
-              databases
+              {t("Showing {{shown}} of {{total}} vector databases", {
+                shown: filteredVectorDBs.length,
+                total: displayVectorDBs.length,
+              })}
             </div>
           </>
         )}

@@ -20,8 +20,10 @@ import useAlertStore from "@/stores/alertStore";
 import type { MCPServerInfoType } from "@/types/mcp";
 import { cn } from "@/utils/utils";
 import RequestMcpServerModal from "./components/request-mcp-server-modal";
+import { useTranslation } from "react-i18next";
 
 export default function MCPServersPage() {
+  const { t } = useTranslation();
   const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const { data: servers } = useGetMCPServers();
@@ -43,7 +45,7 @@ export default function MCPServersPage() {
       setEditInitialData(data);
       setEditOpen(true);
     } catch (e: any) {
-      setErrorData({ title: "Error fetching server", list: [e.message] });
+      setErrorData({ title: t("Error fetching server"), list: [e.message] });
     }
   };
 
@@ -52,7 +54,7 @@ export default function MCPServersPage() {
       { name: server.name },
       {
         onError: (e: any) =>
-          setErrorData({ title: "Error deleting server", list: [e.message] }),
+          setErrorData({ title: t("Error deleting server"), list: [e.message] }),
       },
     );
   };
@@ -78,10 +80,10 @@ export default function MCPServersPage() {
         <div>
           <div className="mb-2 flex items-center gap-3">
             
-            <h1 className="text-2xl font-semibold">MCP Servers</h1>
+            <h1 className="text-2xl font-semibold">{t("MCP Servers")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Manage MCP Servers for use in your agents
+            {t("Manage MCP Servers for use in your agents")}
           </p>
         </div>
 
@@ -90,21 +92,32 @@ export default function MCPServersPage() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder="Search servers..."
+              placeholder={t("Search servers...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
 
-          <Button
-            variant="default"
-            onClick={() => setAddOpen(true)}
-            data-testid="add-mcp-server-button-page"
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Register MCP Server
-          </Button>
+          {canAddMcp ? (
+            <Button
+              variant="default"
+              onClick={() => setAddOpen(true)}
+              data-testid="add-mcp-server-button-page"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              {t("Add MCP Server")}
+            </Button>
+          ) : canRequestMcp ? (
+            <Button
+              variant="default"
+              onClick={() => setRequestOpen(true)}
+              data-testid="request-mcp-server-button-page"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              {t("Request MCP Server")}
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -118,11 +131,11 @@ export default function MCPServersPage() {
           <div className="flex h-full w-full items-center justify-center">
             <div className="text-center">
               <Server className="mx-auto h-12 w-12 text-muted-foreground/50" />
-              <h3 className="mt-4 text-lg font-semibold">No MCP servers found</h3>
+              <h3 className="mt-4 text-lg font-semibold">{t("No MCP servers found")}</h3>
               <p className="mt-2 text-sm text-muted-foreground">
                 {searchQuery
-                  ? "No servers match your search criteria"
-                  : "Get started by adding your first MCP server"}
+                  ? t("No servers match your search criteria")
+                  : t("Get started by adding your first MCP server")}
               </p>
               {!searchQuery && canAddMcp && (
                 <Button
@@ -131,7 +144,7 @@ export default function MCPServersPage() {
                   onClick={() => setAddOpen(true)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Register MCP Server
+                  {t("Add MCP Server")}
                 </Button>
               )}
               {!searchQuery && !canAddMcp && canRequestMcp && (
@@ -141,7 +154,7 @@ export default function MCPServersPage() {
                   onClick={() => setRequestOpen(true)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Request MCP Server
+                  {t("Request MCP Server")}
                 </Button>
               )}
             </div>
@@ -153,16 +166,16 @@ export default function MCPServersPage() {
                 <thead className="bg-muted/50">
                   <tr className="border-b border-border">
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      Server Name
+                      {t("Server Name")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      Status
+                      {t("Status")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      Tools
+                      {t("Tools")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      Actions
+                      {t("Actions")}
                     </th>
                   </tr>
                 </thead>
@@ -198,21 +211,21 @@ export default function MCPServersPage() {
                               <span className="h-2 w-2 rounded-full bg-red-500"></span>
                               <span className="text-sm text-destructive">
                                 {server.error.startsWith("Timeout")
-                                  ? "Timeout"
-                                  : "Error"}
+                                  ? t("Timeout")
+                                  : t("Error")}
                               </span>
                             </>
                           ) : server.toolsCount === null ? (
                             <>
                               <span className="h-2 w-2 animate-pulse rounded-full bg-yellow-500"></span>
                               <span className="text-sm text-muted-foreground">
-                                Loading...
+                                {t("Loading...")}
                               </span>
                             </>
                           ) : (
                             <>
                               <span className="h-2 w-2 rounded-full bg-green-500"></span>
-                              <span className="text-sm">Connected</span>
+                              <span className="text-sm">{t("Connected")}</span>
                             </>
                           )}
                         </div>
@@ -230,11 +243,11 @@ export default function MCPServersPage() {
                             )}
                           >
                             {server.toolsCount === null
-                              ? "—"
+                              ? "-"
                               : !server.toolsCount
-                                ? "No tools found"
-                                : `${server.toolsCount} tool${
-                                    server.toolsCount === 1 ? "" : "s"
+                                ? t("No tools found")
+                                : `${server.toolsCount} ${
+                                    server.toolsCount === 1 ? t("tool") : t("tools")
                                   }`}
                           </span>
                         </ShadTooltip>
@@ -256,14 +269,14 @@ export default function MCPServersPage() {
                               onClick={() => handleEdit(server.name)}
                             >
                               <Edit2 className="mr-2 h-4 w-4" />
-                              Edit
+                              {t("Edit")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => openDeleteModal(server)}
                               className="text-destructive"
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
+                              {t("Delete")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -275,7 +288,10 @@ export default function MCPServersPage() {
             </div>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
-              Showing {filteredServers?.length || 0} of {servers?.length || 0} servers
+              {t("Showing {{shown}} of {{total}} servers", {
+                shown: filteredServers?.length || 0,
+                total: servers?.length || 0,
+              })}
             </div>
           </>
         )}
@@ -299,8 +315,9 @@ export default function MCPServersPage() {
           setDeleteModalOpen(false);
           setServerToDelete(null);
         }}
-        description={"MCP Server"}
+        description={t("MCP Server")}
       />
     </div>
   );
 }
+

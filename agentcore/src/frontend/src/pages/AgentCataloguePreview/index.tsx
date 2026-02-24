@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useGetTypes } from "@/controllers/API/queries/agents/use-get-types";
@@ -10,6 +11,7 @@ import { useTypesStore } from "@/stores/typesStore";
 import Page from "../AgentBuilderPage/components/PageComponent";
 
 export default function AgentCataloguePreviewPage(): JSX.Element {
+  const { t } = useTranslation();
   const navigate = useCustomNavigate();
   const { registryId } = useParams();
   const types = useTypesStore((state) => state.types);
@@ -36,20 +38,20 @@ export default function AgentCataloguePreviewPage(): JSX.Element {
 
   const subtitle = useMemo(() => {
     if (!previewAgent?.data?.nodes?.length) {
-      return "No components available in this deployed snapshot.";
+      return t("No components available in this deployed snapshot.");
     }
-    return `${previewAgent.data.nodes.length} component(s)`;
-  }, [previewAgent]);
+    return t("{{count}} component(s)", { count: previewAgent.data.nodes.length });
+  }, [previewAgent, t]);
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b px-6 py-4">
         <div>
-          <h1 className="text-lg font-semibold">{previewAgent?.name || "Agent Preview"}</h1>
+          <h1 className="text-lg font-semibold">{previewAgent?.name || t("Agent Preview")}</h1>
           <p className="text-xs text-muted-foreground">{subtitle}</p>
         </div>
         <Button variant="outline" onClick={() => navigate("/agent-catalogue")}>
-          Back to Registry
+          {t("Back to Registry")}
         </Button>
       </div>
       <div className="h-full w-full">

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { v4 as uuid } from "uuid";
+import { useTranslation } from "react-i18next";
 import { useGetConfig } from "@/controllers/API/queries/config/use-get-config";
 import { useGetAgent } from "@/controllers/API/queries/agents/use-get-agent";
 import { CustomIOModal } from "@/customization/components/custom-new-modal";
@@ -12,6 +13,7 @@ import { type CookieOptions, getCookie, setCookie } from "@/utils/utils";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { getInputsAndOutputs } from "../../utils/storeUtils";
 export default function PlaygroundPage() {
+  const { t } = useTranslation();
   useGetConfig();
   const setCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);
   const currentSavedAgent = useAgentsManagerStore((state) => state.currentAgent);
@@ -59,7 +61,7 @@ export default function PlaygroundPage() {
   }, []);
 
   useEffect(() => {
-    document.title = currentSavedAgent?.name || "Sensei";
+    document.title = currentSavedAgent?.name || t("Sensei");
     if (currentSavedAgent?.data) {
       const { inputs, outputs } = getInputsAndOutputs(
         currentSavedAgent?.data?.nodes || [],
@@ -72,7 +74,7 @@ export default function PlaygroundPage() {
         navigate("/");
       }
     }
-  }, [currentSavedAgent]);
+  }, [currentSavedAgent, t]);
 
   useEffect(() => {
     // Get client ID from cookie or create new one

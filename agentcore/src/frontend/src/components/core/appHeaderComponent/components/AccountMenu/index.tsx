@@ -10,7 +10,7 @@ import { CustomProfileIcon } from "@/customization/components/custom-profile-ico
 import { ENABLE_DATASTAX_SENSEI } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { useDarkStore } from "@/stores/darkStore";
-import { cn, stripReleaseStageFromVersion } from "@/utils/utils";
+import { stripReleaseStageFromVersion } from "@/utils/utils";
 import {
   HeaderMenu,
   HeaderMenuItemButton,
@@ -22,27 +22,53 @@ import ThemeButtons from "../ThemeButtons";
 import useAuthStore from "@/stores/authStore";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
+import { useTranslation } from "react-i18next";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { resolvePreferredLocale, SUPPORTED_LOCALES } from "@/i18n";
 
 export const AccountMenu = () => {
+  const { t, i18n } = useTranslation();
   const version = useDarkStore((state) => state.version);
   const latestVersion = useDarkStore((state) => state.latestVersion);
   const navigate = useCustomNavigate();
   const { mutate: mutationLogout } = useLogout();
   const { permissions, role, userData } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const username = (userData?.username || "User").trim();
+  const username = (userData?.username || t("User")).trim();
   const fallbackName = username.includes("@") ? username.split("@")[0] : username;
-  const displayName = (userData?.display_name || fallbackName || "User").trim();
+  const displayName = (fallbackName || t("User")).trim();
   const email = (userData?.email || (username.includes("@") ? username : "")).trim();
-  const organizationName = userData?.organization_name || userData?.department_name || "N/A";
-  const displayRole = role ? role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "N/A";
+  const organizationName = userData?.organization_name || userData?.department_name || t("N/A");
+  const displayRole = role ? role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : t("N/A");
   const showOrganization = role !== "root";
   const initialsSource = displayName.replace(/\s+/g, "");
-  const initials = (initialsSource.slice(0, 2) || "US").toUpperCase();
+  const initials = (initialsSource.slice(0, 2) || t("US")).toUpperCase();
 
+  const selectedLanguage = resolvePreferredLocale(i18n.resolvedLanguage);
+  const languageOptions = SUPPORTED_LOCALES.map((locale) => {
+    const languageCode = locale.split("-")[0];
+    const languageName = new Intl.DisplayNames([locale], {
+      type: "language",
+    }).of(languageCode);
+    return {
+      value: locale,
+      label: languageName ? `${languageName} (${locale})` : locale,
+    };
+  });
 
   const handleLogout = () => {
     mutationLogout();
+  };
+
+  const handleLanguageChange = (language: string) => {
+    void i18n.changeLanguage(language);
+    localStorage.setItem("locale", language);
   };
 
   const isLatestVersion = (() => {
@@ -95,11 +121,11 @@ export const AccountMenu = () => {
             <div className="mt-2 grid grid-cols-[84px_1fr] items-center gap-x-2 gap-y-0.5 pl-11 text-[11px]">
               {showOrganization ? (
                 <>
-                  <span className="text-muted-foreground">Organization</span>
+                  <span className="text-muted-foreground">{t("Organization")}</span>
                   <span className="truncate text-foreground">{organizationName}</span>
                 </>
               ) : null}
-              <span className="text-muted-foreground">Role</span>
+              <span className="text-muted-foreground">{t("Role")}</span>
               <span className="truncate text-foreground">{displayRole}</span>
             </div>
           </div>
@@ -113,7 +139,7 @@ export const AccountMenu = () => {
                 data-testid="menu_settings_button"
                 id="menu_settings_button"
               >
-                Settings
+                {t("Settings")}
               </span>
             </HeaderMenuItemButton>
 
@@ -128,7 +154,7 @@ export const AccountMenu = () => {
                     data-testid="menu_admin_page_button"
                     id="menu_admin_page_button"
                   >
-                    Admin Page
+                    {t("Admin Page")}
                   </span>
                 </HeaderMenuItemButton>
               </div>
@@ -144,7 +170,7 @@ export const AccountMenu = () => {
                     data-testid="menu_access_control_button"
                     id="menu_access_control_button"
                   >
-                    Access Control
+                    {t("Access Control")}
                   </span>
                 </HeaderMenuItemButton>
               </div>
@@ -154,7 +180,7 @@ export const AccountMenu = () => {
               href={ENABLE_DATASTAX_SENSEI ? DATASTAX_DOCS_URL : DOCS_URL}
             >
               <span data-testid="menu_docs_button" id="menu_docs_button">
-                Docs
+                {t("Docs")}
               </span>
             </HeaderMenuItemLink>
           </div>
@@ -162,16 +188,31 @@ export const AccountMenu = () => {
           
 
           <div className="flex items-center justify-between px-4 py-[6.5px] text-sm">
-            <span className="">Theme</span>
+            <span className="">{t("Theme")}</span>
             <div className="relative top-[1px] float-right">
               <ThemeButtons />
             </div>
+          </div>
+          <div className="flex items-center justify-between px-4 py-[6.5px] text-sm">
+            <span>{t("Preferred Language")}</span>
+            <Select value={selectedLanguage} onValueChange={handleLanguageChange}>
+              <SelectTrigger className="h-8 w-[180px] px-2 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-56 overflow-y-auto">
+                {languageOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           
             <div>
               <HeaderMenuItemButton onClick={handleLogout} icon="log-out">
-                Logout
+                {t("Logout")}
               </HeaderMenuItemButton>
             </div>
         
