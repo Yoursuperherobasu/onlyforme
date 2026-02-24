@@ -1,7 +1,7 @@
 """add runtime config to guardrail catalogue
 
-Revision ID: m1n2o3p4q5r6
-Revises: l9a0b1c2d3e4
+Revision ID: r1s2t3u4v5w6
+Revises: 8427dd771044
 Create Date: 2026-02-23 19:10:00.000000
 """
 
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "m1n2o3p4q5r6"
-down_revision: str | Sequence[str] | None = "l9a0b1c2d3e4"
+revision: str = "r1s2t3u4v5w6"
+down_revision: str | Sequence[str] | None = "8427dd771044"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
