@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +15,7 @@ from agentcore.services.database.models.guardrail_catalogue.model import Guardra
 from agentcore.services.database.models.organization.model import Organization
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.guardrails import invalidate_nemo_guardrail_cache, is_nemo_runtime_config_ready
 
 router = APIRouter(prefix="/guardrails-catalogue", tags=["Guardrails Catalogue"])
 
@@ -26,6 +28,7 @@ class GuardrailPayload(BaseModel):
     status: str = "active"
     rulesCount: int = 0
     isCustom: bool = False
+    runtimeConfig: dict[str, Any] | None = None
     org_id: UUID | None = None
     dept_id: UUID | None = None
 
@@ -94,6 +97,33 @@ async def _validate_scope_refs(session: DbSession, payload: GuardrailPayload) ->
             raise HTTPException(status_code=400, detail="Invalid dept_id for org_id")
 
 
+def _validate_runtime_config_shape(payload: GuardrailPayload) -> None:
+    runtime_config = payload.runtimeConfig
+    if runtime_config is None:
+        return
+    if not isinstance(runtime_config, dict):
+        raise HTTPException(status_code=400, detail="runtimeConfig must be a JSON object")
+
+    for key in ("config_yml", "configYml", "config.yml", "rails_co", "railsCo", "rails.co", "prompts_yml"):
+        if key not in runtime_config:
+            continue
+        value = runtime_config.get(key)
+        if value is not None and not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"runtimeConfig.{key} must be a string")
+
+    files = runtime_config.get("files")
+    if files is None:
+        return
+    if not isinstance(files, dict):
+        raise HTTPException(status_code=400, detail="runtimeConfig.files must be an object")
+    invalid_entry = next(
+        ((k, v) for k, v in files.items() if not isinstance(k, str) or not isinstance(v, str)),
+        None,
+    )
+    if invalid_entry:
+        raise HTTPException(status_code=400, detail="runtimeConfig.files must map string path to string content")
+
+
 def _serialize_guardrail(row: GuardrailCatalogue) -> dict:
     return {
         "id": str(row.id),
@@ -104,6 +134,8 @@ def _serialize_guardrail(row: GuardrailCatalogue) -> dict:
         "status": row.status,
         "rulesCount": int(row.rules_count or 0),
         "isCustom": bool(row.is_custom),
+        "runtimeConfig": row.runtime_config,
+        "runtimeReady": is_nemo_runtime_config_ready(row.runtime_config),
         "org_id": str(row.org_id) if row.org_id else None,
         "dept_id": str(row.dept_id) if row.dept_id else None,
     }
@@ -135,6 +167,7 @@ async def create_guardrail_catalogue(
         raise HTTPException(status_code=403, detail="Access denied. Root admin only.")
 
     await _validate_scope_refs(session, payload)
+    _validate_runtime_config_shape(payload)
     now = datetime.now(timezone.utc)
     row = GuardrailCatalogue(
         name=payload.name,
@@ -144,6 +177,7 @@ async def create_guardrail_catalogue(
         status=payload.status,
         rules_count=payload.rulesCount,
         is_custom=payload.isCustom,
+        runtime_config=payload.runtimeConfig,
         org_id=payload.org_id,
         dept_id=payload.dept_id,
         created_by=current_user.id,
@@ -156,6 +190,7 @@ async def create_guardrail_catalogue(
     session.add(row)
     await session.commit()
     await session.refresh(row)
+    invalidate_nemo_guardrail_cache(row.id)
     return _serialize_guardrail(row)
 
 
@@ -174,6 +209,7 @@ async def update_guardrail_catalogue(
         raise HTTPException(status_code=404, detail="Guardrail not found")
 
     await _validate_scope_refs(session, payload)
+    _validate_runtime_config_shape(payload)
     now = datetime.now(timezone.utc)
 
     row.name = payload.name
@@ -183,6 +219,7 @@ async def update_guardrail_catalogue(
     row.status = payload.status
     row.rules_count = payload.rulesCount
     row.is_custom = payload.isCustom
+    row.runtime_config = payload.runtimeConfig
     row.org_id = payload.org_id
     row.dept_id = payload.dept_id
     row.updated_by = current_user.id
@@ -193,6 +230,7 @@ async def update_guardrail_catalogue(
 
     await session.commit()
     await session.refresh(row)
+    invalidate_nemo_guardrail_cache(row.id)
     return _serialize_guardrail(row)
 
 
@@ -211,4 +249,5 @@ async def delete_guardrail_catalogue(
 
     await session.delete(row)
     await session.commit()
+    invalidate_nemo_guardrail_cache(guardrail_id)
     return {"message": "Guardrail deleted successfully"}

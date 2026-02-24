@@ -1,23 +1,28 @@
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Edit2, MoreVertical, Plus, Search, Trash2 } from "lucide-react";
+import { useContext, useEffect, useState } from "react";
+import { AuthContext } from "@/contexts/authContext";
 import Loading from "@/components/ui/loading";
-import { useGetGuardrailsCatalogue } from "@/controllers/API/queries/guardrails/use-get-guardrails-catalogue";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  type GuardrailInfo,
+  useDeleteGuardrailCatalogue,
+  useGetGuardrailsCatalogue,
+} from "@/controllers/API/queries/guardrails";
+import useAlertStore from "@/stores/alertStore";
 import { getProviderIcon } from "@/utils/logo_provider";
-
-interface GuardrailType {
-  id: string;
-  name: string;
-  description: string;
-  provider: string;
-  category: string;
-  status: "active" | "inactive";
-  rulesCount: number;
-  isCustom: boolean;
-}
+import EditGuardrailModal from "./components/edit-guardrail-modal";
 
 interface GuardrailsViewProps {
-  guardrails?: GuardrailType[];
+  guardrails?: GuardrailInfo[];
   setSearch?: (search: string) => void;
 }
 
@@ -30,11 +35,24 @@ export default function GuardrailsView({
   const { t } = useTranslation();
   const [filter] = useState<CategoryType>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedGuardrail, setSelectedGuardrail] = useState<GuardrailInfo | null>(null);
+
+  const { role, permissions } = useContext(AuthContext);
+  const can = (permission: string) => permissions?.includes(permission);
+  const canCreateOrEdit = role === "root" || can("add_guardrails");
+  const canDelete = role === "root" || can("retire_guardrails");
+  const canManage = canCreateOrEdit || canDelete;
+
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
+
   const {
     data: dbGuardrails,
     isLoading,
     error,
   } = useGetGuardrailsCatalogue();
+  const deleteMutation = useDeleteGuardrailCatalogue();
 
   const getProviderLogo = (provider: string) => {
     const iconSrc = getProviderIcon(provider);
@@ -84,6 +102,28 @@ export default function GuardrailsView({
     return colors[category] || "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400";
   };
 
+  const handleCreateGuardrail = () => {
+    setSelectedGuardrail(null);
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditGuardrail = (guardrail: GuardrailInfo) => {
+    setSelectedGuardrail(guardrail);
+    setIsEditModalOpen(true);
+  };
+
+  const handleDeleteGuardrail = async (guardrail: GuardrailInfo) => {
+    const shouldDelete = window.confirm(`Delete guardrail "${guardrail.name}"?`);
+    if (!shouldDelete) return;
+
+    try {
+      await deleteMutation.mutateAsync({ id: guardrail.id });
+      setSuccessData({ title: `Guardrail "${guardrail.name}" deleted.` });
+    } catch {
+      setErrorData({ title: "Failed to delete guardrail." });
+    }
+  };
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
@@ -106,6 +146,12 @@ export default function GuardrailsView({
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
+          {canCreateOrEdit && (
+            <Button onClick={handleCreateGuardrail}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Guardrail
+            </Button>
+          )}
         </div>
       </div>
 
@@ -131,6 +177,7 @@ export default function GuardrailsView({
                       "Category",
                       "Status",
                       "Rules",
+                      ...(canManage ? ["Actions"] : []),
                     ].map((h) => (
                       <th
                         key={h}
@@ -146,7 +193,7 @@ export default function GuardrailsView({
                   {filteredGuardrails.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={canManage ? 6 : 5}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         {t("No guardrails found matching your criteria")}
@@ -167,6 +214,16 @@ export default function GuardrailsView({
                           <div className="mt-1 text-xs text-muted-foreground">
                             {guardrail.description}
                           </div>
+                          {guardrail.runtimeReady === true && (
+                            <div className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                              Runtime ready
+                            </div>
+                          )}
+                          {guardrail.runtimeConfig && guardrail.runtimeReady === false && (
+                            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                              Runtime config incomplete
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-6 py-4">
@@ -202,6 +259,35 @@ export default function GuardrailsView({
                             {guardrail.rulesCount} {t("rules")}
                           </span>
                         </td>
+
+                        {canManage && (
+                          <td className="px-6 py-4">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button className="rounded p-1 hover:bg-muted">
+                                  <MoreVertical className="h-4 w-4" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {canCreateOrEdit && (
+                                  <DropdownMenuItem onClick={() => handleEditGuardrail(guardrail)}>
+                                    <Edit2 className="mr-2 h-4 w-4" />
+                                    Edit
+                                  </DropdownMenuItem>
+                                )}
+                                {canDelete && (
+                                  <DropdownMenuItem
+                                    onClick={() => handleDeleteGuardrail(guardrail)}
+                                    className="text-destructive"
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}
@@ -218,6 +304,12 @@ export default function GuardrailsView({
           </>
         )}
       </div>
+
+      <EditGuardrailModal
+        open={isEditModalOpen}
+        onOpenChange={setIsEditModalOpen}
+        guardrail={selectedGuardrail}
+      />
     </div>
   );
 }
