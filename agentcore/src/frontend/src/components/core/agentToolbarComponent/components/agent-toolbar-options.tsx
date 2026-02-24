@@ -3,6 +3,7 @@ import useAgentStore from "@/stores/agentStore";
 import PublishDropdown from "./deploy-dropdown";
 import PlaygroundButton from "./playground-button";
 import PublishButton from "./publish-button";
+import TeamsButton from "./teams/teams-button";
 
 type AgentToolbarOptionsProps = {
   open: boolean;
@@ -31,6 +32,9 @@ const AgentToolbarOptions = ({
       </div>
       <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
         <PublishButton hasIO={hasIO} />
+      </div>
+      <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">
+        <TeamsButton />
       </div>
       {/* <PublishDropdown
         openApiModal={openApiModal}

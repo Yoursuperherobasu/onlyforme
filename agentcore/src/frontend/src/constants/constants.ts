@@ -1000,6 +1000,7 @@ export const REFETCH_SERVER_HEALTH_INTERVAL = 20000;
 export const DRAG_EVENTS_CUSTOM_TYPESS = {
   genericnode: "genericNode",
   notenode: "noteNode",
+  a2anode: "a2aNode",
   "text/plain": "text/plain",
 };
 

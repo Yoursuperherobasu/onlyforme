@@ -36,6 +36,9 @@ from agentcore.api.vector_db_catalogue import router as vector_db_catalogue_rout
 from agentcore.api.timeout_settings import router as timeout_settings_router
 from agentcore.api.guardrails_catalogue import router as guardrails_catalogue_router
 from agentcore.api.help_support import router as help_support_router
+from agentcore.api.a2a import router as a2a_router
+from agentcore.api.teams import router as teams_router
+
 router = APIRouter(
     prefix="/api",
 )
@@ -75,3 +78,5 @@ router.include_router(vector_db_catalogue_router)
 router.include_router(timeout_settings_router)
 router.include_router(guardrails_catalogue_router)
 router.include_router(help_support_router)
+router.include_router(a2a_router)
+router.include_router(teams_router)

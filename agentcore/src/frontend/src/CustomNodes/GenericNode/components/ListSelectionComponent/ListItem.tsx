@@ -81,7 +81,7 @@ const ListItem = ({
           <div className="flex w-full items-center gap-2 truncate text-mmd font-medium">
             <span className="truncate">{item.name}</span>
             {"description" in item && item.description && (
-              <span className="font-normal text-muted-foreground">
+              <span className="ml-auto shrink-0 font-normal text-muted-foreground">
                 {item.description}
               </span>
             )}

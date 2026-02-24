@@ -97,25 +97,14 @@ export default function MCPServersPage() {
             />
           </div>
 
-          {canAddMcp ? (
-            <Button
-              variant="default"
-              onClick={() => setAddOpen(true)}
-              data-testid="add-mcp-server-button-page"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add MCP Server
-            </Button>
-          ) : canRequestMcp ? (
-            <Button
-              variant="default"
-              onClick={() => setRequestOpen(true)}
-              data-testid="request-mcp-server-button-page"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Request MCP Server
-            </Button>
-          ) : null}
+          <Button
+            variant="default"
+            onClick={() => setAddOpen(true)}
+            data-testid="add-mcp-server-button-page"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Register MCP Server
+          </Button>
         </div>
       </div>
 
@@ -142,7 +131,7 @@ export default function MCPServersPage() {
                   onClick={() => setAddOpen(true)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Add MCP Server
+                  Register MCP Server
                 </Button>
               )}
               {!searchQuery && !canAddMcp && canRequestMcp && (
