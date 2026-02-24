@@ -11,7 +11,7 @@ import { create } from "zustand";
 import { checkCodeValidity } from "@/CustomNodes/helpers/check-code-validity";
 import { MISSED_ERROR_ALERT } from "@/constants/alerts_constants";
 import { BROKEN_EDGES_WARNING } from "@/constants/constants";
-import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
+import { ENABLE_DATASTAX_SENSEI } from "@/customization/feature-flags";
 import {
   track,
   trackDataLoaded,
@@ -781,7 +781,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
           ...next_vertices_ids,
         ];
         if (
-          ENABLE_DATASTAX_AGENTCORE &&
+          ENABLE_DATASTAX_SENSEI &&
           vertexBuildData?.id?.includes("AstraDB")
         ) {
           const search_results: LogsLogType[] = Object.values(

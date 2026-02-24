@@ -1,9 +1,9 @@
 import { createContext, useEffect, useState } from "react";
 import { Cookies } from "react-cookie";
 import {
-  AGENTCORE_ACCESS_TOKEN,
-  AGENTCORE_API_TOKEN,
-  AGENTCORE_REFRESH_TOKEN,
+  SENSEI_ACCESS_TOKEN,
+  SENSEI_API_TOKEN,
+  SENSEI_REFRESH_TOKEN,
 } from "@/constants/constants";
 import { useGetUserData } from "@/controllers/API/queries/auth";
 import { useGetGlobalVariablesMutation } from "@/controllers/API/queries/variables/use-get-mutation-global-variables";
@@ -33,7 +33,7 @@ export const AuthContext = createContext<AuthContextType>(initialValue);
 export function AuthProvider({ children }): React.ReactElement {
   const cookies = new Cookies();
   const [accessToken, setAccessToken] = useState<string | null>(
-    getAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN) ?? null,
+    getAuthCookie(cookies, SENSEI_ACCESS_TOKEN) ?? null,
   );
   // --- ADD THESE STATES FOR RBAC ---
   const [role, setRole] = useState<string | null>(null);
@@ -41,7 +41,7 @@ export function AuthProvider({ children }): React.ReactElement {
   // ---------------------------------
   const [userData, setUserData] = useState<Users | null>(null);
   const [apiKey, setApiKey] = useState<string | null>(
-    getAuthCookie(cookies, AGENTCORE_API_TOKEN),
+    getAuthCookie(cookies, SENSEI_API_TOKEN),
   );
 
   const checkHasStore = useStoreStore((state) => state.checkHasStore);
@@ -53,14 +53,14 @@ export function AuthProvider({ children }): React.ReactElement {
   const { mutate: mutateGetGlobalVariables } = useGetGlobalVariablesMutation();
 
   useEffect(() => {
-    const storedAccessToken = getAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN);
+    const storedAccessToken = getAuthCookie(cookies, SENSEI_ACCESS_TOKEN);
     if (storedAccessToken) {
       setAccessToken(storedAccessToken);
     }
   }, []);
 
   useEffect(() => {
-    const apiKey = getAuthCookie(cookies, AGENTCORE_API_TOKEN);
+    const apiKey = getAuthCookie(cookies, SENSEI_API_TOKEN);
     if (apiKey) {
       setApiKey(apiKey);
     }
@@ -72,7 +72,7 @@ export function AuthProvider({ children }): React.ReactElement {
   }, []);
 
   useEffect(() => {
-    const token = cookies.get(AGENTCORE_ACCESS_TOKEN);
+    const token = cookies.get(SENSEI_ACCESS_TOKEN);
     if (!token) return;
 
     const interval = setInterval(() => {
@@ -113,11 +113,11 @@ export function AuthProvider({ children }): React.ReactElement {
     refreshToken?: string,
     
   ) {
-    setAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN, newAccessToken);
-    setLocalStorage(AGENTCORE_ACCESS_TOKEN, newAccessToken);
+    setAuthCookie(cookies, SENSEI_ACCESS_TOKEN, newAccessToken);
+    setLocalStorage(SENSEI_ACCESS_TOKEN, newAccessToken);
 
     if (refreshToken) {
-      setAuthCookie(cookies, AGENTCORE_REFRESH_TOKEN, refreshToken);
+      setAuthCookie(cookies, SENSEI_REFRESH_TOKEN, refreshToken);
     }
 
     setAuthContext({

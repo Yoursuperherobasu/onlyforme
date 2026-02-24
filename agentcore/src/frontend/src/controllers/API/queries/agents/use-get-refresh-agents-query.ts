@@ -47,22 +47,26 @@ export const useGetRefreshAgentsQuery: useQueryFunctionType<
         return dbDataAgents;
       }
 
-      const { data: dbDataComponents } = await api.get<AgentType[]>(
-        addQueryParams(`${getURL("AGENTS")}/`, {
-          components_only: true,
-          get_all: true,
-        }),
-      );
-
-      if (dbDataComponents) {
-        const { data } = processAgents(dbDataComponents);
-        useTypesStore.setState((state) => ({
-          data: { ...state.data, ["saved_components"]: data },
-          ComponentFields: extractSecretFieldsFromComponents({
-            ...state.data,
-            ["saved_components"]: data,
+      try {
+        const { data: dbDataComponents } = await api.get<AgentType[]>(
+          addQueryParams(`${getURL("AGENTS")}/`, {
+            components_only: true,
+            get_all: true,
           }),
-        }));
+        );
+
+        if (dbDataComponents) {
+          const { data } = processAgents(dbDataComponents);
+          useTypesStore.setState((state) => ({
+            data: { ...state.data, ["saved_components"]: data },
+            ComponentFields: extractSecretFieldsFromComponents({
+              ...state.data,
+              ["saved_components"]: data,
+            }),
+          }));
+        }
+      } catch {
+        // Do not fail the main agents list load if component refresh fails.
       }
 
       if (dbDataAgents) {
@@ -75,7 +79,8 @@ export const useGetRefreshAgentsQuery: useQueryFunctionType<
 
       return [];
     } catch (e) {
-      if (e instanceof AxiosError && e.status !== 403) {
+      const status = e instanceof AxiosError ? e.response?.status : undefined;
+      if (e instanceof AxiosError && status !== 401 && status !== 403) {
         setErrorData({
           title: "Could not load agents from database",
         });

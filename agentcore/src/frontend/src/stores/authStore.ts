@@ -1,17 +1,17 @@
 import { Cookies } from "react-cookie";
 import { create } from "zustand";
 import {
-  AGENTCORE_ACCESS_TOKEN,
-  AGENTCORE_API_TOKEN,
+  SENSEI_ACCESS_TOKEN,
+  SENSEI_API_TOKEN,
 } from "@/constants/constants";
 import type { AuthStoreType } from "@/types/zustand/auth";
 
 const cookies = new Cookies();
 const useAuthStore = create<AuthStoreType>((set) => ({
   // auth
-  isAuthenticated: !!cookies.get(AGENTCORE_ACCESS_TOKEN),
-  accessToken: cookies.get(AGENTCORE_ACCESS_TOKEN) ?? null,
-  apiKey: cookies.get(AGENTCORE_API_TOKEN),
+  isAuthenticated: !!cookies.get(SENSEI_ACCESS_TOKEN),
+  accessToken: cookies.get(SENSEI_ACCESS_TOKEN) ?? null,
+  apiKey: cookies.get(SENSEI_API_TOKEN),
   authenticationErrorCount: 0,
 
   // authz

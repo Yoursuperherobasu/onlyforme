@@ -132,6 +132,7 @@ async def azure_sso_login(
         ) from e
 
     email = payload.get("preferred_username") or payload.get("email")
+    entra_object_id = payload.get("oid")
     normalized_email = str(email).strip().lower() if email else ""
     root_email = str(auth_settings.PLATFORM_ROOT_EMAIL).strip().lower() if auth_settings.PLATFORM_ROOT_EMAIL else ""
 
@@ -141,10 +142,12 @@ async def azure_sso_login(
             detail="Email not found in Azure token",
         )
 
+    existing_user = await get_user_by_username(db, email)
+
     # -----------------------------
     # Find or Create User
     # -----------------------------
-    user = await get_user_by_username(db, email)
+    user = existing_user
     resolved_role = "consumer"
 
     if root_email and normalized_email == root_email:
@@ -167,7 +170,7 @@ async def azure_sso_login(
             username=email,
             email=email,
             display_name=payload.get("name"),
-            entra_object_id=payload.get("oid"),
+            entra_object_id=entra_object_id,
             password=get_password_hash(random_password),
             role=resolved_role,
             is_superuser=resolved_role in {"root", "super_admin", "department_admin"},
@@ -311,3 +314,6 @@ async def logout(response: Response):
 #     response.delete_cookie("apikey_tkn_lflw", **cookie_params)
     
 #     return {"message": "Logout successful"}
+
+
+

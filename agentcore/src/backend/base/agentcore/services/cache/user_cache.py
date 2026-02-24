@@ -23,3 +23,6 @@ class UserCacheService:
             self.ttl,
             json.dumps(user_dict),
         )
+
+    async def delete_user(self, user_id: str):
+        await self.redis.delete(f"user:{user_id}")

@@ -39,6 +39,7 @@ export const URLs = {
   CONTROL_PANEL: `control-panel`,
   PUBLISH: `publish`,
   ROLES: `roles`,
+  HELP_SUPPORT: `help-support`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

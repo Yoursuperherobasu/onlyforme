@@ -587,7 +587,7 @@ const McpServerTab = ({ folderName }: { folderName: string }) => {
                       className="h-4 w-4 shrink-0"
                     />
                     <span>
-                      One-click install is disabled because the AgentCore server
+                      One-click install is disabled because the Sensei server
                       is not running on your local machine. Use the JSON tab to
                       configure your client manually.
                     </span>

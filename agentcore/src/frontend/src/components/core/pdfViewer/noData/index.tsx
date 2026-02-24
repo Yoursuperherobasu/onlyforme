@@ -5,11 +5,11 @@ export default function NoDataPdf(): JSX.Element {
     <div className="flex h-full w-full flex-col items-center justify-center bg-muted">
       <div className="chat-alert-box">
         <span>
-          📄 <span className="agentcore-chat-span">{PDFErrorTitle}</span>
+          📄 <span className="sensei-chat-span">{PDFErrorTitle}</span>
         </span>
         <br />
-        <div className="agentcore-chat-desc">
-          <span className="agentcore-chat-desc-span">{PDFLoadError} </span>
+        <div className="sensei-chat-desc">
+          <span className="sensei-chat-desc-span">{PDFLoadError} </span>
         </div>
       </div>
     </div>

@@ -75,8 +75,8 @@ export const HelpDropdownView = ({
         <Separator />
         <DropdownControlButton
           iconName="download"
-          testId="canvas_controls_dropdown_get_agentcore_desktop"
-          label="Get AgentCore Desktop"
+          testId="canvas_controls_dropdown_get_sensei_desktop"
+          label="Get Sensei Desktop"
           externalLink
           onClick={() => openLink(urls.desktop)}
         />

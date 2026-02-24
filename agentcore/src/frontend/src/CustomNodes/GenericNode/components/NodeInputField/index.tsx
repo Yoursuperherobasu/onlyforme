@@ -16,7 +16,7 @@ import {
   DEFAULT_TOOLSET_PLACEHOLDER,
   FLEX_VIEW_TYPES,
   ICON_STROKE_WIDTH,
-  AGENTCORE_SUPPORTED_TYPES,
+  SENSEI_SUPPORTED_TYPES,
 } from "../../../../constants/constants";
 import useAgentStore from "../../../../stores/agentStore";
 import { useTypesStore } from "../../../../stores/typesStore";
@@ -99,7 +99,7 @@ export default function NodeInputField({
   }, [optionalHandle]);
 
   const displayHandle =
-    (!AGENTCORE_SUPPORTED_TYPES.has(type ?? "") ||
+    (!SENSEI_SUPPORTED_TYPES.has(type ?? "") ||
       (optionalHandle && optionalHandle.length > 0)) &&
     !isToolMode &&
     !hasRefreshButton;

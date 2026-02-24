@@ -1,18 +1,19 @@
 import * as Form from "@radix-ui/react-form";
-import { Eye, EyeOff } from "lucide-react";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import IconComponent from "@/components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { CONTROL_NEW_USER } from "../../constants/constants";
 import { AuthContext } from "../../contexts/authContext";
-import { useGetAssignableRoles, useGetUsers } from "../../controllers/API/queries/auth";
+import {
+  useGetAssignableRoles,
+  useGetDepartments,
+} from "../../controllers/API/queries/auth";
 import type {
   inputHandlerEventType,
   UserInputType,
   UserManagementType,
 } from "../../types/components";
-import type { Users } from "../../types/api";
 import BaseModal from "../baseModal";
 
 export default function UserManagementModal({
@@ -27,30 +28,24 @@ export default function UserManagementModal({
   onConfirm,
   asChild,
 }: UserManagementType) {
-  const [pwdVisible, setPwdVisible] = useState(false);
-  const [confirmPwdVisible, setConfirmPwdVisible] = useState(false);
   const [open, setOpen] = useState(false);
-  const [password, setPassword] = useState(data?.password ?? "");
   const [username, setUserName] = useState(data?.username ?? "");
-  const [confirmPassword, setConfirmPassword] = useState(data?.password ?? "");
   const [isActive, setIsActive] = useState(data?.is_active ?? false);
   const [selectedRole, setSelectedRole] = useState(
     data?.role ?? "business_user",
   );
   const [availableRoles, setAvailableRoles] = useState<string[]>([]);
-  const [departmentAdmins, setDepartmentAdmins] = useState<Users[]>([]);
-  const [departmentAdminEmail, setDepartmentAdminEmail] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([]);
   const [departmentName, setDepartmentName] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [organizationDescription, setOrganizationDescription] = useState("");
-  const [departmentAdminError, setDepartmentAdminError] = useState("");
+  const [departmentError, setDepartmentError] = useState("");
   const [organizationError, setOrganizationError] = useState("");
-  const [isDeptAdminLoading, setIsDeptAdminLoading] = useState(false);
   const { mutate: mutateGetAssignableRoles } = useGetAssignableRoles();
-  const { mutate: mutateGetUsers } = useGetUsers({});
+  const { mutate: mutateGetDepartments } = useGetDepartments();
   const [inputState, setInputState] = useState<UserInputType>(CONTROL_NEW_USER);
   const { userData } = useContext(AuthContext);
-  const deptAdminFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getDefaultRoleForCreator = () => {
     if (userData?.role === "root") return "super_admin";
@@ -72,11 +67,11 @@ export default function UserManagementModal({
         setIsActive(data.is_active);
         const nextRole = data.role ?? "business_user";
         setSelectedRole(nextRole);
-        setDepartmentAdminEmail(data.department_admin_email ?? "");
+        setDepartmentId(data.department_id ?? "");
         setDepartmentName(data.department_name ?? "");
         setOrganizationName(data.organization_name ?? "");
         setOrganizationDescription(data.organization_description ?? "");
-        setDepartmentAdminError("");
+        setDepartmentError("");
         setOrganizationError("");
 
         handleInput({ target: { name: "username", value: data.username } });
@@ -90,7 +85,7 @@ export default function UserManagementModal({
     if (open) {
       mutateGetAssignableRoles(undefined, {
         onSuccess: (roleNames) => {
-          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
+          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user"];
           const merged = (roleNames || []).length > 0 ? (roleNames || []) : fallbackRoles;
           const withSelected = merged.includes(selectedRole)
             ? merged
@@ -99,7 +94,7 @@ export default function UserManagementModal({
         },
         onError: () => {
           // Fallback roles if API fails
-          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
+          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user"];
           setAvailableRoles(fallbackRoles);
         },
       });
@@ -109,43 +104,26 @@ export default function UserManagementModal({
   useEffect(() => {
     if (!open) return;
     if (userData?.role !== "super_admin") return;
-    setIsDeptAdminLoading(true);
-    mutateGetUsers(
-      { skip: 0, limit: 200, role: "department_admin" },
-      {
-        onSuccess: (res) => {
-          setDepartmentAdmins(res?.users ?? []);
-        },
-        onError: () => {
-          setDepartmentAdmins([]);
-        },
-        onSettled: () => {
-          setIsDeptAdminLoading(false);
-        },
+    mutateGetDepartments(undefined, {
+      onSuccess: (res) => {
+        setDepartments((res ?? []).map((dept) => ({ id: dept.id, name: dept.name })));
       },
-    );
+      onError: () => {
+        setDepartments([]);
+      },
+    });
   }, [open, userData?.role]);
-
-  useEffect(() => {
-    return () => {
-      if (deptAdminFetchTimer.current) {
-        clearTimeout(deptAdminFetchTimer.current);
-      }
-    };
-  }, []);
 
   function resetForm() {
     const defaultRole = getDefaultRoleForCreator();
-    setPassword("");
     setUserName("");
-    setConfirmPassword("");
     setIsActive(false);
     setSelectedRole(defaultRole);
-    setDepartmentAdminEmail("");
+    setDepartmentId("");
     setDepartmentName("");
     setOrganizationName("");
     setOrganizationDescription("");
-    setDepartmentAdminError("");
+    setDepartmentError("");
     setOrganizationError("");
     setInputState({ ...CONTROL_NEW_USER, role: defaultRole });
   }
@@ -158,8 +136,8 @@ export default function UserManagementModal({
       return prev.includes(selectedRole) ? prev : [...prev, selectedRole];
     });
     if (selectedRole === "department_admin") {
-      setDepartmentAdminEmail("");
-      setDepartmentAdminError("");
+      setDepartmentId("");
+      setDepartmentError("");
     }
   }
 
@@ -185,13 +163,13 @@ export default function UserManagementModal({
       baseRoles =
         availableRoles.length > 0
           ? availableRoles.filter((role) => !["root", "super_admin"].includes(role))
-          : ["department_admin", "developer", "business_user", "consumer"];
+          : ["department_admin", "developer", "business_user"];
     } else if (isDepartmentAdminCreator) {
-      baseRoles = ["developer", "business_user", "consumer"];
+      baseRoles = ["developer", "business_user"];
     } else if (availableRoles.length > 0) {
       baseRoles = availableRoles;
     } else {
-      baseRoles = ["super_admin", "department_admin", "developer", "business_user", "consumer"];
+      baseRoles = ["super_admin", "department_admin", "developer", "business_user"];
     }
     if (isRootAdmin) {
       return ["super_admin"];
@@ -199,55 +177,19 @@ export default function UserManagementModal({
     return Array.from(new Set([...baseRoles, effectiveRole].filter(Boolean)));
   })();
 
-  const departmentAdminOptions = useMemo(
-    () =>
-      departmentAdmins.map((admin) => ({
-        email: admin.username,
-        role: admin.role,
-      })),
-    [departmentAdmins],
-  );
-
   function validateDepartmentAdminSelection(): boolean {
     if (!requiresDepartmentAdminSelection) return true;
-    if (!departmentAdminEmail) {
-      setDepartmentAdminError("Please select a department admin.");
+    if (!departmentId) {
+      setDepartmentError("Please select a department.");
       return false;
     }
-    const exists = departmentAdminOptions.some(
-      (admin) =>
-        admin.email.toLowerCase() === departmentAdminEmail.toLowerCase(),
-    );
+    const exists = departments.some((dept) => dept.id === departmentId);
     if (!exists) {
-      setDepartmentAdminError("Please add department admin first.");
+      setDepartmentError("Please select a valid department.");
       return false;
     }
-    setDepartmentAdminError("");
+    setDepartmentError("");
     return true;
-  }
-
-  function fetchDepartmentAdminsByQuery(value: string) {
-    if (!requiresDepartmentAdminSelection) return;
-    if (deptAdminFetchTimer.current) {
-      clearTimeout(deptAdminFetchTimer.current);
-    }
-    deptAdminFetchTimer.current = setTimeout(() => {
-      setIsDeptAdminLoading(true);
-      mutateGetUsers(
-        { skip: 0, limit: 50, role: "department_admin", q: value || undefined },
-        {
-          onSuccess: (res) => {
-            setDepartmentAdmins(res?.users ?? []);
-          },
-          onError: () => {
-            setDepartmentAdmins([]);
-          },
-          onSettled: () => {
-            setIsDeptAdminLoading(false);
-          },
-        },
-      );
-    }, 300);
   }
 
   return (
@@ -264,10 +206,6 @@ export default function UserManagementModal({
       <BaseModal.Content>
         <Form.Root
           onSubmit={(event) => {
-            if (password !== confirmPassword) {
-              event.preventDefault();
-              return;
-            }
             const submitRequiresDepartmentAdminSelection =
               userData?.role === "super_admin" && effectiveRole !== "department_admin";
             if (submitRequiresDepartmentAdminSelection && !validateDepartmentAdminSelection()) {
@@ -285,21 +223,23 @@ export default function UserManagementModal({
               is_active: isActive,
               role: effectiveRole,
             };
-            
-            // Only include password if it's provided
-            if (password) {
-              submitData.password = password;
-            }
 
             if (isCreatingDepartmentAdmin) {
               submitData.department_name = departmentName;
               submitData.department_admin_email = "";
+              delete submitData.department_id;
             } else if (isDepartmentAdminCreator) {
               submitData.department_admin_email = userData?.username || "";
               submitData.department_name =
                 (userData as any)?.department_name || "";
+              if ((userData as any)?.department_id) {
+                submitData.department_id = (userData as any).department_id;
+              } else {
+                delete submitData.department_id;
+              }
             } else if (requiresDepartmentAdminSelection) {
-              submitData.department_admin_email = departmentAdminEmail;
+              submitData.department_id = departmentId;
+              submitData.department_admin_email = "";
             }
             if (requiresOrganizationBootstrap) {
               submitData.organization_name = organizationName.trim();
@@ -343,126 +283,6 @@ export default function UserManagementModal({
               </Form.Message>
             </Form.Field>
 
-            <div className="flex flex-row">
-              <div className="mr-3 basis-1/2">
-                <Form.Field
-                  name="password"
-                  serverInvalid={password != confirmPassword}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <Form.Label className="data-[invalid]:label-invalid flex">
-                      Password{" "}
-                      {!data && (
-                        <span className="ml-1 mr-1 font-medium text-destructive">
-                          *
-                        </span>
-                      )}
-                      {pwdVisible && (
-                        <Eye
-                          onClick={() => setPwdVisible(!pwdVisible)}
-                          className="h-5 cursor-pointer"
-                          strokeWidth={1.5}
-                        />
-                      )}
-                      {!pwdVisible && (
-                        <EyeOff
-                          onClick={() => setPwdVisible(!pwdVisible)}
-                          className="h-5 cursor-pointer"
-                          strokeWidth={1.5}
-                        />
-                      )}
-                    </Form.Label>
-                  </div>
-                  <Form.Control asChild>
-                    <input
-                      onChange={({ target: { value } }) => {
-                        handleInput({ target: { name: "password", value } });
-                        setPassword(value);
-                      }}
-                      value={password}
-                      className="primary-input"
-                      required={data ? false : true}
-                      type={pwdVisible ? "text" : "password"}
-                      placeholder={data ? "Leave blank to keep current password" : ""}
-                    />
-                  </Form.Control>
-
-                  <Form.Message className="field-invalid" match="valueMissing">
-                    Please enter a password
-                  </Form.Message>
-
-                  {password != confirmPassword && (
-                    <Form.Message className="field-invalid">
-                      Passwords do not match
-                    </Form.Message>
-                  )}
-                </Form.Field>
-              </div>
-
-              <div className="basis-1/2">
-                <Form.Field
-                  name="confirmpassword"
-                  serverInvalid={password != confirmPassword}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <Form.Label className="data-[invalid]:label-invalid flex">
-                      Confirm password{" "}
-                      {!data && (
-                        <span className="ml-1 mr-1 font-medium text-destructive">
-                          *
-                        </span>
-                      )}
-                      {confirmPwdVisible && (
-                        <Eye
-                          onClick={() =>
-                            setConfirmPwdVisible(!confirmPwdVisible)
-                          }
-                          className="h-5 cursor-pointer"
-                          strokeWidth={1.5}
-                        />
-                      )}
-                      {!confirmPwdVisible && (
-                        <EyeOff
-                          onClick={() =>
-                            setConfirmPwdVisible(!confirmPwdVisible)
-                          }
-                          className="h-5 cursor-pointer"
-                          strokeWidth={1.5}
-                        />
-                      )}
-                    </Form.Label>
-                  </div>
-                  <Form.Control asChild>
-                    <input
-                      onChange={(input) => {
-                        setConfirmPassword(input.target.value);
-                      }}
-                      value={confirmPassword}
-                      className="primary-input"
-                      required={data ? false : true}
-                      type={confirmPwdVisible ? "text" : "password"}
-                      placeholder={data ? "Leave blank to keep current password" : ""}
-                    />
-                  </Form.Control>
-                  <Form.Message className="field-invalid" match="valueMissing">
-                    Please confirm your password
-                  </Form.Message>
-                </Form.Field>
-              </div>
-            </div>
-            
             <div className="flex gap-8">
               <Form.Field name="is_active">
                 <div>
@@ -490,21 +310,19 @@ export default function UserManagementModal({
                     Role{" "}
                     <span className="font-medium text-destructive">*</span>
                   </Form.Label>
-                  <Form.Control asChild>
-                    <select
-                      defaultValue={effectiveRole}
-                      name="role"
-                      onChange={(e) => handleRoleChange(e.target.value)}
-                      className="primary-input cursor-pointer"
-                      required
-                    >
-                      {rolesToRender.map((r) => (
-                        <option key={r} value={r}>
-                          {formatRoleDisplay(r)}
-                        </option>
-                      ))}
-                    </select>
-                  </Form.Control>
+                  <select
+                    value={effectiveRole}
+                    name="role"
+                    onChange={(e) => handleRoleChange(e.target.value)}
+                    className="primary-input cursor-pointer"
+                    required
+                  >
+                    {rolesToRender.map((r) => (
+                      <option key={r} value={r}>
+                        {formatRoleDisplay(r)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </Form.Field>
             </div>
@@ -578,63 +396,32 @@ export default function UserManagementModal({
             )}
 
             {requiresDepartmentAdminSelection && (
-              <Form.Field name="department_admin_email">
+              <Form.Field name="department_id">
                 <div className="flex flex-col">
                   <Form.Label className="data-[invalid]:label-invalid mb-2">
-                    Department Admin Email{" "}
+                    Department{" "}
                     <span className="font-medium text-destructive">*</span>
                   </Form.Label>
-                  <Form.Control asChild>
-                    <input
-                      value={departmentAdminEmail}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setDepartmentAdminEmail(value);
-                        setDepartmentAdminError("");
-                        fetchDepartmentAdminsByQuery(value);
-                      }}
-                      onBlur={() => {
-                        validateDepartmentAdminSelection();
-                      }}
-                      className="primary-input"
-                      required
-                      placeholder="Type to search department admins"
-                    />
-                  </Form.Control>
-                  <div className="mt-2 max-h-40 overflow-y-auto rounded-md border bg-background">
-                    {isDeptAdminLoading && (
-                      <div className="px-3 py-2 text-xs text-muted-foreground">
-                        Loading...
-                      </div>
-                    )}
-                    {!isDeptAdminLoading &&
-                      departmentAdmins.map((admin) => (
-                        <button
-                          type="button"
-                          key={admin.id}
-                          onClick={() => {
-                            setDepartmentAdminEmail(admin.username);
-                            setDepartmentAdminError("");
-                          }}
-                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-muted"
-                        >
-                          <span className="truncate">{admin.username}</span>
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            {formatRoleDisplay(admin.role)}
-                          </span>
-                        </button>
-                      ))}
-                    {!isDeptAdminLoading &&
-                      departmentAdmins.length === 0 &&
-                      departmentAdminEmail && (
-                        <div className="px-3 py-2 text-xs text-muted-foreground">
-                          Please add department admin first.
-                        </div>
-                      )}
-                  </div>
-                  {departmentAdminError && (
+                  <select
+                    name="department_id"
+                    value={departmentId}
+                    onChange={(e) => {
+                      setDepartmentId(String(e.target.value || ""));
+                      setDepartmentError("");
+                    }}
+                    className="primary-input"
+                    required
+                  >
+                    <option value="">Select department</option>
+                    {departments.map((dept) => (
+                      <option key={String(dept.id)} value={String(dept.id)}>
+                        {dept.name}
+                      </option>
+                    ))}
+                  </select>
+                  {departmentError && (
                     <div className="mt-1 text-xs text-destructive">
-                      {departmentAdminError}
+                      {departmentError}
                     </div>
                   )}
                 </div>
