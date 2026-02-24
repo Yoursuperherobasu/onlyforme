@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import EditModelModal from "./components/edit-model-modal";
+import RequestModelModal from "./components/request-model-modal";
 import { getProviderIcon } from "@/utils/logo_provider";
 import { AuthContext } from "@/contexts/authContext";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -59,11 +60,19 @@ export default function ModelCatalogue(): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelType | null>(null);
   const [deleteConfirmModel, setDeleteConfirmModel] = useState<ModelType | null>(null);
 
-  const { permissions } = useContext(AuthContext);
+  const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const normalizedRole = (role ?? "").toLowerCase();
+  const isModelAdmin =
+    normalizedRole === "root" ||
+    normalizedRole === "super_admin" ||
+    normalizedRole === "department_admin";
+  const canAddModel = isModelAdmin && can("add_new_model");
+  const canRequestModel = can("request_new_model");
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -160,26 +169,33 @@ export default function ModelCatalogue(): JSX.Element {
             />
           </div>
 
-          <ShadTooltip
-            content={
-              !can("add_new_model")
-                ? "You don't have permission to add models"
-                : ""
-            }
-          >
-            <span className="inline-block">
-              <Button
-                onClick={() => {
-                  setSelectedModel(null);
-                  setIsEditModalOpen(true);
-                }}
-                disabled={!can("add_new_model")}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Model
-              </Button>
-            </span>
-          </ShadTooltip>
+          {canAddModel ? (
+            <ShadTooltip
+              content={
+                !canAddModel
+                  ? "You don't have permission to add models"
+                  : ""
+              }
+            >
+              <span className="inline-block">
+                <Button
+                  onClick={() => {
+                    setSelectedModel(null);
+                    setIsEditModalOpen(true);
+                  }}
+                  disabled={!canAddModel}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Model
+                </Button>
+              </span>
+            </ShadTooltip>
+          ) : canRequestModel ? (
+            <Button onClick={() => setIsRequestModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Request New Model
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -384,6 +400,10 @@ export default function ModelCatalogue(): JSX.Element {
         open={isEditModalOpen}
         onOpenChange={setIsEditModalOpen}
         model={selectedModel}
+      />
+      <RequestModelModal
+        open={isRequestModalOpen}
+        onOpenChange={setIsRequestModalOpen}
       />
 
       {/* Delete Confirmation Dialog */}

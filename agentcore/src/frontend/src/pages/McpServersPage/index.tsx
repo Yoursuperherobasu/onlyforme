@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { Plus, Server, MoreVertical, Edit2, Trash2, Search } from "lucide-react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -15,16 +15,21 @@ import { useGetMCPServer } from "@/controllers/API/queries/mcp/use-get-mcp-serve
 import { useGetMCPServers } from "@/controllers/API/queries/mcp/use-get-mcp-servers";
 import AddMcpServerModal from "@/modals/addMcpServerModal";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
+import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
 import type { MCPServerInfoType } from "@/types/mcp";
 import { cn } from "@/utils/utils";
+import RequestMcpServerModal from "./components/request-mcp-server-modal";
 
 export default function MCPServersPage() {
+  const { permissions } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const { data: servers } = useGetMCPServers();
   const { mutate: deleteServer } = useDeleteMCPServer();
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const [searchQuery, setSearchQuery] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editInitialData, setEditInitialData] = useState<any>(null);
   const { mutateAsync: getServer } = useGetMCPServer();
@@ -63,6 +68,8 @@ export default function MCPServersPage() {
       !searchQuery ||
       server.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  const canAddMcp = can("add_new_mcp");
+  const canRequestMcp = can("request_new_mcp");
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
@@ -90,14 +97,25 @@ export default function MCPServersPage() {
             />
           </div>
 
-          <Button
-            variant="default"
-            onClick={() => setAddOpen(true)}
-            data-testid="add-mcp-server-button-page"
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add MCP Server
-          </Button>
+          {canAddMcp ? (
+            <Button
+              variant="default"
+              onClick={() => setAddOpen(true)}
+              data-testid="add-mcp-server-button-page"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add MCP Server
+            </Button>
+          ) : canRequestMcp ? (
+            <Button
+              variant="default"
+              onClick={() => setRequestOpen(true)}
+              data-testid="request-mcp-server-button-page"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Request MCP Server
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -117,7 +135,7 @@ export default function MCPServersPage() {
                   ? "No servers match your search criteria"
                   : "Get started by adding your first MCP server"}
               </p>
-              {!searchQuery && (
+              {!searchQuery && canAddMcp && (
                 <Button
                   variant="default"
                   className="mt-4"
@@ -125,6 +143,16 @@ export default function MCPServersPage() {
                 >
                   <Plus className="mr-2 h-4 w-4" />
                   Add MCP Server
+                </Button>
+              )}
+              {!searchQuery && !canAddMcp && canRequestMcp && (
+                <Button
+                  variant="default"
+                  className="mt-4"
+                  onClick={() => setRequestOpen(true)}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Request MCP Server
                 </Button>
               )}
             </div>
@@ -266,6 +294,7 @@ export default function MCPServersPage() {
 
       {/* Modals */}
       <AddMcpServerModal open={addOpen} setOpen={setAddOpen} />
+      <RequestMcpServerModal open={requestOpen} setOpen={setRequestOpen} />
       {editOpen && (
         <AddMcpServerModal
           open={editOpen}
