@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useGetTypes } from "@/controllers/API/queries/agents/use-get-types";
@@ -10,6 +11,7 @@ import { useTypesStore } from "@/stores/typesStore";
 import Page from "../AgentBuilderPage/components/PageComponent";
 
 export default function ApprovalPreviewPage(): JSX.Element {
+  const { t } = useTranslation();
   const navigate = useCustomNavigate();
   const { agentId } = useParams();
   const types = useTypesStore((state) => state.types);
@@ -42,14 +44,14 @@ export default function ApprovalPreviewPage(): JSX.Element {
       <div className="flex items-center justify-between border-b px-6 py-4">
         <div>
           <h1 className="text-lg font-semibold">
-            {previewAgent?.name || "Review Details"}
+            {previewAgent?.name || t("Review Details")}
           </h1>
           <p className="text-xs text-muted-foreground">
-            Read-only flow preview
+            {t("Read-only flow preview")}
           </p>
         </div>
         <Button variant="outline" onClick={() => navigate("/approval")}>
-          Back to Approval
+          {t("Back to Approval")}
         </Button>
       </div>
       <div className="h-full w-full">
@@ -61,7 +63,7 @@ export default function ApprovalPreviewPage(): JSX.Element {
           <div className="flex h-full w-full items-center justify-center p-6">
             <div className="rounded-lg border border-border bg-card p-6 text-center">
               <p className="text-sm text-muted-foreground">
-                Unable to load review preview for this approval.
+                {t("Unable to load review preview for this approval.")}
               </p>
             </div>
           </div>

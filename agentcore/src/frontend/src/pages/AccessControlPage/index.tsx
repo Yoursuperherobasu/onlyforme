@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef, useContext } from "react";
+import { useTranslation } from "react-i18next";
 import PageLayout from "@/components/common/pageLayout";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -150,6 +151,7 @@ const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {
 };
 
 export default function AccessControlPage() {
+  const { t } = useTranslation();
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { getUser } = useContext(AuthContext);
@@ -230,8 +232,8 @@ export default function AccessControlPage() {
       console.error("Failed to load access control data:", error);
       setHasLoadError(true);
       setErrorData({
-        title: "Failed to load roles/permissions",
-        list: [error?.message || "Unknown error"],
+        title: t("Failed to load roles/permissions"),
+        list: [error?.message || t("Unknown error")],
       });
     } finally {
       setIsLoading(false);
@@ -299,14 +301,14 @@ export default function AccessControlPage() {
           setRoles((prev) =>
             prev.map((r) => (r.id === normalizedRole.id ? normalizedRole : r)),
           );
-          setSuccessData({ title: "Permissions updated successfully" });
+          setSuccessData({ title: t("Permissions updated successfully") });
           getUser();
         },
         onError: (error) => {
           console.error('Failed to update permissions:', error);
           setErrorData({ 
-            title: "Failed to update permissions",
-            list: [error?.response?.data?.detail || error?.message || "Unknown error"]
+            title: t("Failed to update permissions"),
+            list: [error?.response?.data?.detail || error?.message || t("Unknown error")]
           });
         },
       },
@@ -335,14 +337,14 @@ export default function AccessControlPage() {
           setNewRoleName("");
           setNewRoleDescription("");
           setNewRolePermissions([]);
-          setSuccessData({ title: "Role created successfully" });
+          setSuccessData({ title: t("Role created successfully") });
           getUser();
         },
         onError: (error) => {
           console.error('Failed to create role:', error);
           setErrorData({
-            title: "Failed to create role",
-            list: [error?.response?.data?.detail || error?.message || "Unknown error"],
+            title: t("Failed to create role"),
+            list: [error?.response?.data?.detail || error?.message || t("Unknown error")],
           });
         },
       },
@@ -362,14 +364,14 @@ export default function AccessControlPage() {
             }
             return next;
           });
-          setSuccessData({ title: "Role deleted successfully" });
+          setSuccessData({ title: t("Role deleted successfully") });
           getUser();
         },
         onError: (error) => {
           console.error('Failed to delete role:', error);
           setErrorData({
-            title: "Failed to delete role",
-            list: [error?.response?.data?.detail || error?.message || "Unknown error"],
+            title: t("Failed to delete role"),
+            list: [error?.response?.data?.detail || error?.message || t("Unknown error")],
           });
         },
       },
@@ -383,7 +385,7 @@ export default function AccessControlPage() {
     if (permissionPages.length === 0) {
       return (
         <div className="text-sm text-muted-foreground text-center py-6">
-          No permissions available.
+          {t("No permissions available.")}
         </div>
       );
     }
@@ -391,15 +393,15 @@ export default function AccessControlPage() {
     return (
       <div className="overflow-hidden rounded-md border">
         <div className="grid grid-cols-12 bg-muted/50 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
-          <div className="col-span-3">Pages</div>
-          <div className="col-span-3">Tabs / Sections</div>
-          <div className="col-span-6">Permissions / Actions</div>
+          <div className="col-span-3">{t("Pages")}</div>
+          <div className="col-span-3">{t("Tabs / Sections")}</div>
+          <div className="col-span-6">{t("Permissions / Actions")}</div>
         </div>
         <div className="max-h-[60vh] overflow-auto">
           {permissionPages.map((page) => (
             <div key={page.name} className="grid grid-cols-12 border-t first:border-t-0">
               <div className="col-span-3 border-r px-3 py-3 text-sm font-semibold">
-                {page.name}
+                {t(page.name)}
               </div>
               <div className="col-span-9">
                 {page.sections.map((section) => (
@@ -408,7 +410,7 @@ export default function AccessControlPage() {
                     className="grid grid-cols-9 border-b last:border-b-0"
                   >
                     <div className="col-span-3 border-r px-3 py-3 text-sm text-muted-foreground">
-                      {section.name}
+                      {t(section.name)}
                     </div>
                     <div className="col-span-6 px-3 py-3">
                       <div className="grid grid-cols-1 gap-2">
@@ -451,8 +453,8 @@ export default function AccessControlPage() {
   return (
     <PageLayout
       backTo={-1}
-      title="Access Control"
-      description="Create roles and manage permissions across pages, tabs, and navigation."
+      title={t("Access Control")}
+      description={t("Create roles and manage permissions across pages, tabs, and navigation.")}
     >
       <div className="w-full max-w-none -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         {isLoading ? (
@@ -461,52 +463,52 @@ export default function AccessControlPage() {
           </div>
         ) : hasLoadError ? (
           <div className="flex h-[70vh] flex-col items-center justify-center gap-4">
-            <div className="text-center">
-              <h3 className="text-lg font-semibold text-destructive mb-2">
-                Failed to Load Data
-              </h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Unable to load roles and permissions. Please check your connection and try again.
-              </p>
-            </div>
-            <Button onClick={() => loadData(true)} variant="outline">
-              Retry
-            </Button>
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold text-destructive mb-2">
+                    {t("Failed to Load Data")}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {t("Unable to load roles and permissions. Please check your connection and try again.")}
+                  </p>
+                </div>
+                <Button onClick={() => loadData(true)} variant="outline">
+                  {t("Retry")}
+                </Button>
           </div>
         ) : (
           <div className="grid grid-cols-12 gap-6">
             {/* Left Panel - Roles List */}
             <div className="col-span-12 lg:col-span-4">
               <div className="flex items-center justify-between pb-3">
-                <div className="text-sm font-medium">Roles</div>
+                <div className="text-sm font-medium">{t("Roles")}</div>
                 <BaseModal open={isCreateOpen} setOpen={setIsCreateOpen} size="large">
                   <BaseModal.Trigger asChild>
-                    <Button variant="primary">New Role</Button>
+                    <Button variant="primary">{t("New Role")}</Button>
                   </BaseModal.Trigger>
-                  <BaseModal.Header description="Create a role and pick permissions.">
-                    New Role
+                  <BaseModal.Header description={t("Create a role and pick permissions.")}>
+                    {t("New Role")}
                   </BaseModal.Header>
                   <BaseModal.Content>
                     <div className="flex flex-col gap-4">
                       <div>
-                        <div className="mb-1 text-sm font-medium">Role Name</div>
+                        <div className="mb-1 text-sm font-medium">{t("Role Name")}</div>
                         <Input
                           value={newRoleName}
-                          placeholder="e.g. qa_lead"
+                          placeholder={t("e.g. qa_lead")}
                           onChange={(e) => setNewRoleName(e.target.value)}
                         />
                       </div>
                       <div>
-                        <div className="mb-1 text-sm font-medium">Description</div>
+                        <div className="mb-1 text-sm font-medium">{t("Description")}</div>
                         <Input
                           value={newRoleDescription}
-                          placeholder="Optional description"
+                          placeholder={t("Optional description")}
                           onChange={(e) => setNewRoleDescription(e.target.value)}
                         />
                       </div>
                       <div>
                         <div className="mb-2 text-sm font-medium">
-                          Permissions
+                          {t("Permissions")}
                         </div>
                         {renderPermissionHierarchy(
                           newRolePermissions,
@@ -517,7 +519,7 @@ export default function AccessControlPage() {
                   </BaseModal.Content>
                   <BaseModal.Footer
                     submit={{
-                      label: "Create Role",
+                      label: t("Create Role"),
                       loading: isCreating,
                       disabled: !newRoleName.trim(),
                       onClick: handleCreateRole,
@@ -528,7 +530,7 @@ export default function AccessControlPage() {
               <div className="rounded-md border">
                 {roles.length === 0 ? (
                   <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                    No roles available. Create one to get started.
+                    {t("No roles available. Create one to get started.")}
                   </div>
                 ) : (
                   roles.map((role) => (
@@ -557,12 +559,12 @@ export default function AccessControlPage() {
                           disabled={isDeleting}
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm(`Are you sure you want to delete the role "${role.name}"?`)) {
+                            if (confirm(t("Are you sure you want to delete the role \"{{name}}\"?", { name: role.name }))) {
                               handleDeleteRole(role.id);
                             }
                           }}
                         >
-                          Delete
+                          {t("Delete")}
                         </Button>
                       )}
                     </div>
@@ -575,22 +577,22 @@ export default function AccessControlPage() {
             <div className="col-span-12 lg:col-span-8">
               <div className="flex items-center justify-between pb-3">
                 <div className="text-sm font-medium">
-                  Permissions for {selectedRole?.name || "-"}
+                  {t("Permissions for")} {selectedRole?.name || "-"}
                 </div>
                 <Button
                   variant="primary"
                   disabled={!hasChanges || isSaving}
                   onClick={handleSavePermissions}
                 >
-                  {isSaving ? "Saving..." : "Save Changes"}
+                  {isSaving ? t("Saving...") : t("Save Changes")}
                 </Button>
               </div>
               <div className="rounded-md border p-4">
                 {selectedRole ? (
                   renderPermissionHierarchy(draftPermissions, toggleDraftPermission)
                 ) : (
-                  <div className="text-sm text-muted-foreground text-center py-6">
-                    Select a role to view and edit permissions.
+                    <div className="text-sm text-muted-foreground text-center py-6">
+                    {t("Select a role to view and edit permissions.")}
                   </div>
                 )}
               </div>
@@ -601,4 +603,3 @@ export default function AccessControlPage() {
     </PageLayout>
   );
 }
-

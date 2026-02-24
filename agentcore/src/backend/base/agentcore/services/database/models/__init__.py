@@ -29,6 +29,7 @@ from .orch_transaction import OrchTransactionTable
 from .timeout_settings import TimeoutSettings
 from .guardrail_catalogue import GuardrailCatalogue
 from .help_support import HelpSupportQuestion
+from .teams_app import TeamsApp
 
 __all__ = [
     "Agent",
@@ -65,6 +66,7 @@ __all__ = [
     "TimeoutSettings",
     "GuardrailCatalogue",
     "HelpSupportQuestion",
+    "TeamsApp",
     "TransactionTable",
     "TransactionUATTable",
     "OrchConversationTable",

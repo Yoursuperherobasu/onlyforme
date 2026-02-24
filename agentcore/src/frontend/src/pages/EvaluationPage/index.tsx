@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useTranslation } from "react-i18next";
 import useAlertStore from "@/stores/alertStore";
 import { useModelStore } from "@/stores/modelStore";
 import {
@@ -91,6 +92,7 @@ const ensureDatasetPromptTemplate = (criteria?: string | null): string => {
 };
 
 export default function EvaluationPage() {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState("judges");
   const [status, setStatus] = useState<EvaluationStatus | null>(null);
   const [recentScores, setRecentScores] = useState<Score[]>([]);
@@ -834,7 +836,7 @@ export default function EvaluationPage() {
         description: datasetForm.description.trim() || undefined,
       });
       setDatasetForm({ name: "", description: "" });
-      setSuccessData({ title: `Dataset '${created.name}' created` });
+      setSuccessData({ title: t("Dataset '{{name}}' created", { name: created.name }) });
       await fetchDatasets(false);
       setSelectedDatasetName(created.name);
     } catch (error) {
@@ -849,14 +851,17 @@ export default function EvaluationPage() {
       return;
     }
     const confirmed = window.confirm(
-      `Delete dataset '${selectedDatasetName}'? This will remove all dataset items and experiment runs.`,
+      t(
+        "Delete dataset '{{name}}'? This will remove all dataset items and experiment runs.",
+        { name: selectedDatasetName },
+      ),
     );
     if (!confirmed) return;
 
     try {
       const result = await deleteEvaluationDataset(selectedDatasetName);
       if (result.status === "deleted") {
-        setSuccessData({ title: `Dataset '${selectedDatasetName}' deleted` });
+        setSuccessData({ title: t("Dataset '{{name}}' deleted", { name: selectedDatasetName }) });
       } else {
         setNoticeData({
           title: `Dataset '${selectedDatasetName}' purged (container retained by Langfuse SDK).`,
@@ -967,7 +972,7 @@ export default function EvaluationPage() {
 
   const handleDeleteDatasetItem = async (itemId: string) => {
     if (!selectedDatasetName) return;
-    const confirmed = window.confirm(`Delete dataset item '${itemId}'?`);
+    const confirmed = window.confirm(t("Delete dataset item '{{id}}'?", { id: itemId }));
     if (!confirmed) return;
     try {
       await deleteEvaluationDatasetItem(selectedDatasetName, itemId);
@@ -1086,7 +1091,7 @@ export default function EvaluationPage() {
 
   const handleDeleteDatasetRun = async (run: EvaluationDatasetRun) => {
     if (!selectedDatasetName || !run?.id) return;
-    const confirmed = window.confirm(`Delete run '${run.name || run.id}'?`);
+    const confirmed = window.confirm(t("Delete run '{{name}}'?", { name: run.name || run.id }));
     if (!confirmed) return;
     try {
       await deleteEvaluationDatasetRun(selectedDatasetName, run.id);
@@ -2281,18 +2286,18 @@ export default function EvaluationPage() {
       >
         <DialogContent className="w-[96vw] max-w-6xl max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-6 pt-6">
-            <DialogTitle>Dataset Items</DialogTitle>
+            <DialogTitle>{t("Dataset Items")}</DialogTitle>
             <DialogDescription>
               {selectedDatasetName
-                ? `Manage dataset items for '${selectedDatasetName}'.`
-                : "Select a dataset to view items."}
+                ? t("Manage dataset items for '{{name}}'.", { name: selectedDatasetName })
+                : t("Select a dataset to view items.")}
             </DialogDescription>
           </DialogHeader>
           {selectedDatasetName ? (
             <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-4 py-2">
               <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                 <div className="space-y-1">
-                  <label className="text-sm font-medium">Import CSV</label>
+                  <label className="text-sm font-medium">{t("Import CSV")}</label>
                   <div className="flex flex-wrap items-center gap-2">
                     <input
                       key={datasetCsvInputKey}
@@ -2308,11 +2313,11 @@ export default function EvaluationPage() {
                       onClick={handleUploadDatasetCsv}
                       disabled={!datasetCsvFile || datasetCsvUploading}
                     >
-                      {datasetCsvUploading ? "Uploading..." : "Upload CSV"}
+                      {datasetCsvUploading ? t("Uploading...") : t("Upload CSV")}
                     </Button>
                   </div>
                   <p className="text-xs text-gray-500">
-                    Supported headers: <code>input</code>,{" "}
+                    {t("Supported headers:")} <code>input</code>,{" "}
                     <code>expected_output</code>, <code>metadata</code>,{" "}
                     <code>trace_id</code>, <code>source_trace_id</code>.
                   </p>
@@ -2322,16 +2327,16 @@ export default function EvaluationPage() {
                   variant="outline"
                   onClick={() => fetchDatasetDetails(selectedDatasetName)}
                 >
-                  Refresh Items
+                  {t("Refresh Items")}
                 </Button>
               </div>
               <div className="border rounded">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Input</label>
+                    <label className="text-sm font-medium">{t("Input")}</label>
                     <textarea
                       className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      placeholder='Text or JSON, e.g. {"question":"What is VAT?"}'
+                      placeholder={t('Text or JSON, e.g. {"question":"What is VAT?"}')}
                       value={datasetItemForm.input}
                       onChange={(e) =>
                         setDatasetItemForm({
@@ -2343,11 +2348,11 @@ export default function EvaluationPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">
-                      Expected Output
+                      {t("Expected Output")}
                     </label>
                     <textarea
                       className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      placeholder="Optional expected output (text or JSON)"
+                      placeholder={t("Optional expected output (text or JSON)")}
                       value={datasetItemForm.expected_output}
                       onChange={(e) =>
                         setDatasetItemForm({
@@ -2359,11 +2364,11 @@ export default function EvaluationPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">
-                      Metadata (Optional)
+                      {t("Metadata (Optional)")}
                     </label>
                     <textarea
                       className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      placeholder='JSON object, e.g. {"tag":"prod-trace","lang":"en"}'
+                      placeholder={t('JSON object, e.g. {"tag":"prod-trace","lang":"en"}')}
                       value={datasetItemForm.metadata}
                       onChange={(e) =>
                         setDatasetItemForm({
@@ -2375,7 +2380,7 @@ export default function EvaluationPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">
-                      Add From Existing Trace
+                      {t("Add From Existing Trace")}
                     </label>
                     <Select
                       value={datasetItemForm.trace_id || "__none__"}
@@ -2387,10 +2392,10 @@ export default function EvaluationPage() {
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Pick a trace (optional)" />
+                        <SelectValue placeholder={t("Pick a trace (optional)")} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__none__">None</SelectItem>
+                        <SelectItem value="__none__">{t("None")}</SelectItem>
                         {safePendingTraces.map((trace) => (
                           <SelectItem key={trace.id} value={trace.id}>
                             {trace.name || trace.id}
@@ -2401,7 +2406,7 @@ export default function EvaluationPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">
-                      Source Trace ID (Optional)
+                      {t("Source Trace ID (Optional)")}
                     </label>
                     <Input
                       placeholder="Trace ID reference"
