@@ -6,6 +6,7 @@ import ActionModal from "./components/ActionModal";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
+import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 
 import { useGetApprovals, type ApprovalAgent } from "@/controllers/API/queries/approvals";
 import { useApprovalActionModal, useApprovalActions } from "./hooks";
@@ -28,6 +29,7 @@ export default function ApprovalPage() {
   const [filter, setFilter] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ApprovalTabType>("agent");
+  const navigate = useCustomNavigate();
   const { permissions } = useContext(AuthContext);
   const setNoticeData = useAlertStore((state) => state.setNoticeData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -179,7 +181,9 @@ export default function ApprovalPage() {
                   {...agent}
                   onReject={() => handleRejectClick(agent)}
                   onApprove={() => handleApproveClick(agent)}
-                  onReviewDetails={() => console.log("Review Details", agent.id)}
+                  onReviewDetails={() =>
+                    navigate(`/approval/${agent.id}/review`)
+                  }
                   onRunTest={() => console.log("Run Test", agent.id)}
                 />
               ))

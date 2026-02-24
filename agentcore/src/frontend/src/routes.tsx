@@ -42,9 +42,11 @@ import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
+import ApprovalPreviewPage from "./pages/ApprovalPreviewPage";
 import ModelCatalogue from "./pages/ModelCatalogue";
 import AgentOrchestrator from "./pages/OrchestratorChat";
 import AgentCatalogueView from "./pages/AgentCatalogue";
+import AgentCataloguePreviewPage from "./pages/AgentCataloguePreview";
 import { Workflow } from "lucide-react";
 import WorkflowsView from "./pages/WorkflowPage";
 import Dashboard from "./pages/DashboardPage";
@@ -107,6 +109,14 @@ const router = createBrowserRouter(
                     element={
                       <ProtectedPermissionRoute permission="view_approval_page">
                         <ApprovalPage />
+                      </ProtectedPermissionRoute>
+                    }
+                  />
+                  <Route
+                    path="approval/:agentId/review"
+                    element={
+                      <ProtectedPermissionRoute permission="view_approval_page">
+                        <ApprovalPreviewPage />
                       </ProtectedPermissionRoute>
                     }
                   />
@@ -174,6 +184,10 @@ const router = createBrowserRouter(
                         <AgentCatalogueView />
                      
                     }
+                  />
+                  <Route
+                    path="agent-catalogue/:registryId/view"
+                    element={<AgentCataloguePreviewPage />}
                   />
                   <Route
                     path="observability-dashboard"
@@ -357,4 +371,3 @@ const router = createBrowserRouter(
 );
 
 export default router;
-

@@ -16,7 +16,6 @@ import { getURL } from "@/controllers/API/helpers/constants";
 import { useGetFoldersQuery } from "@/controllers/API/queries/folders/use-get-folders";
 import {
   useGetRegistry,
-  useGetRegistryEntry,
   useGetRegistryRatings,
   usePostRegistryClone,
   usePostRegistryRate,
@@ -35,7 +34,6 @@ export default function AgentCatalogueView({
 }: AgentCatalogueViewProps): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<RegistryEntry | null>(null);
-  const [viewOpen, setViewOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [ratingOpen, setRatingOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -67,10 +65,6 @@ export default function AgentCatalogueView({
   const { data: folders = [], refetch: refetchFolders } = useGetFoldersQuery({
     staleTime: 0,
   });
-  const { data: detailEntry } = useGetRegistryEntry(
-    { registry_id: selectedEntry?.id || "" },
-    { enabled: viewOpen && !!selectedEntry?.id },
-  );
   const { data: ratingsData, refetch: refetchRatings } = useGetRegistryRatings(
     { registry_id: selectedEntry?.id || "" },
     { enabled: ratingOpen && !!selectedEntry?.id },
@@ -102,11 +96,6 @@ export default function AgentCatalogueView({
     setCreateProject(false);
     setNewProjectName("");
     setNewProjectDescription("");
-  };
-
-  const openViewModal = (entry: RegistryEntry) => {
-    setSelectedEntry(entry);
-    setViewOpen(true);
   };
 
   const openRatingModal = (entry: RegistryEntry) => {
@@ -290,7 +279,9 @@ export default function AgentCatalogueView({
                               variant="outline"
                               size="sm"
                               disabled={!can("view_only_agent")}
-                              onClick={() => openViewModal(agent)}
+                              onClick={() =>
+                                navigate(`/agent-catalogue/${agent.id}/view`)
+                              }
                             >
                               <Eye className="mr-1.5 h-3.5 w-3.5" />
                               View
@@ -329,31 +320,6 @@ export default function AgentCatalogueView({
           </>
         )}
       </div>
-
-      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{detailEntry?.title || selectedEntry?.title}</DialogTitle>
-            <DialogDescription>
-              {detailEntry?.summary || selectedEntry?.summary || "No summary"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 text-sm">
-            <p>
-              Environment:{" "}
-              {detailEntry?.deployment_env || selectedEntry?.deployment_env}
-            </p>
-            <p>Version: {detailEntry?.version_number || "-"}</p>
-            <p>
-              Listed by:{" "}
-              {detailEntry?.listed_by_username ||
-                selectedEntry?.listed_by_username ||
-                "-"}
-            </p>
-            <p>Published notes: {detailEntry?.publish_description || "-"}</p>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
         <DialogContent>

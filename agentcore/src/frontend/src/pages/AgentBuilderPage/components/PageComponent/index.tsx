@@ -1,12 +1,16 @@
 import {
+  ControlButton,
   type Connection,
   type Edge,
   type NodeChange,
   type OnNodeDrag,
   type OnSelectionChangeParams,
+  Panel,
   ReactFlow,
   reconnectEdge,
   type SelectionDragHandler,
+  useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import _, { cloneDeep } from "lodash";
 import {
@@ -91,6 +95,33 @@ const edgeTypes = {
   default: DefaultEdge,
 };
 
+const ReadOnlyViewportControls = () => {
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
+  const { minZoomReached, maxZoomReached } = useStore((state) => ({
+    minZoomReached: state.transform[2] <= state.minZoom,
+    maxZoomReached: state.transform[2] >= state.maxZoom,
+  }));
+
+  return (
+    <Panel
+      className="react-flow__controls !left-auto !m-2 flex !flex-col gap-1.5 rounded-md border border-border bg-background p-0.5 shadow-sm [&>button]:border-0 [&>button]:bg-background hover:[&>button]:bg-accent"
+      position="bottom-left"
+    >
+      <ControlButton onClick={zoomIn} disabled={maxZoomReached} title="Zoom in">
+        +
+      </ControlButton>
+      <ControlButton onClick={zoomOut} disabled={minZoomReached} title="Zoom out">
+        -
+      </ControlButton>
+      <ControlButton onClick={fitView} title="Fit view">
+        <>
+          [ ]
+        </>
+      </ControlButton>
+    </Panel>
+  );
+};
+
 function formatBrowserLocalDate(value?: string): string {
   if (!value) return "";
   const date = new Date(value);
@@ -108,9 +139,11 @@ function formatBrowserLocalDate(value?: string): string {
 
 export default function Page({
   view,
+  enableViewportInteractions,
   setIsLoading,
 }: {
   view?: boolean;
+  enableViewportInteractions?: boolean;
   setIsLoading: (isLoading: boolean) => void;
 }): JSX.Element {
   const uploadAgent = useUploadAgent();
@@ -155,6 +188,7 @@ export default function Page({
   const isLocked = useAgentStore(
     useShallow((state) => state.currentAgent?.locked),
   );
+  const isReadOnlyCanvas = !!view || !!isLocked;
 
   const position = useRef({ x: 0, y: 0 });
   const [lastSelection, setLastSelection] =
@@ -241,10 +275,16 @@ export default function Page({
   }, [showCanvas]);
 
   useEffect(() => {
+    // Never autosave in read-only/view mode.
+    if (view) {
+      useAgentStore.setState({ autoSaveAgent: undefined });
+      return;
+    }
     useAgentStore.setState({ autoSaveAgent });
-  }, [autoSaveAgent]);
+  }, [autoSaveAgent, view]);
 
   function handleUndo(e: KeyboardEvent) {
+    if (isReadOnlyCanvas) return;
     if (!isWrappedWithClass(e, "noflow")) {
       e.preventDefault();
       (e as unknown as Event).stopImmediatePropagation();
@@ -253,6 +293,7 @@ export default function Page({
   }
 
   function handleRedo(e: KeyboardEvent) {
+    if (isReadOnlyCanvas) return;
     if (!isWrappedWithClass(e, "noflow")) {
       e.preventDefault();
       (e as unknown as Event).stopImmediatePropagation();
@@ -261,6 +302,7 @@ export default function Page({
   }
 
   function handleGroup(e: KeyboardEvent) {
+    if (isReadOnlyCanvas) return;
     if (selectionMenuVisible) {
       e.preventDefault();
       (e as unknown as Event).stopImmediatePropagation();
@@ -269,6 +311,7 @@ export default function Page({
   }
 
   function handleDuplicate(e: KeyboardEvent) {
+    if (isReadOnlyCanvas) return;
     e.preventDefault();
     e.stopPropagation();
     (e as unknown as Event).stopImmediatePropagation();
@@ -305,6 +348,7 @@ export default function Page({
   }
 
   function handleCut(e: KeyboardEvent) {
+    if (isReadOnlyCanvas) return;
     if (!isWrappedWithClass(e, "noflow")) {
       e.preventDefault();
       (e as unknown as Event).stopImmediatePropagation();
@@ -315,6 +359,7 @@ export default function Page({
   }
 
   function handlePaste(e: KeyboardEvent) {
+    if (isReadOnlyCanvas) return;
     if (!isWrappedWithClass(e, "noflow")) {
       e.preventDefault();
       (e as unknown as Event).stopImmediatePropagation();
@@ -332,7 +377,7 @@ export default function Page({
   }
 
   function handleDelete(e: KeyboardEvent) {
-    if (isLocked) return;
+    if (isReadOnlyCanvas) return;
     if (!isWrappedWithClass(e, "nodelete") && lastSelection) {
       e.preventDefault();
       (e as unknown as Event).stopImmediatePropagation();
@@ -382,11 +427,12 @@ export default function Page({
 
   const onConnectMod = useCallback(
     (params: Connection) => {
+      if (isReadOnlyCanvas) return;
       takeSnapshot();
       onConnect(params);
       track("New Component Connection Added");
     },
-    [takeSnapshot, onConnect],
+    [takeSnapshot, onConnect, isReadOnlyCanvas],
   );
 
   const [helperLines, setHelperLines] = useState<HelperLinesState>({});
@@ -494,16 +540,18 @@ export default function Page({
   }, [takeSnapshot]);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
+    if (isReadOnlyCanvas) return;
     event.preventDefault();
     if (event.dataTransfer.types.some((types) => isSupportedNodeTypes(types))) {
       event.dataTransfer.dropEffect = "move";
     } else {
       event.dataTransfer.dropEffect = "copy";
     }
-  }, []);
+  }, [isReadOnlyCanvas]);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
+      if (isReadOnlyCanvas) return;
       event.preventDefault();
       if (isLocked) return;
       const grabbingElement =
@@ -549,7 +597,7 @@ export default function Page({
         });
       }
     },
-    [takeSnapshot, addComponent],
+    [takeSnapshot, addComponent, isReadOnlyCanvas, isLocked],
   );
 
   const onEdgeUpdateStart = useCallback(() => {
@@ -605,6 +653,7 @@ export default function Page({
 
   const onPaneClick = useCallback(
     (event: React.MouseEvent) => {
+      if (isReadOnlyCanvas) return;
       setFilterEdge([]);
       setFilterComponent("");
       if (isAddingNote) {
@@ -649,6 +698,7 @@ export default function Page({
       getNodeId,
       setFilterEdge,
       setFilterComponent,
+      isReadOnlyCanvas,
     ],
   );
 
@@ -723,6 +773,7 @@ export default function Page({
     minZoom: MIN_ZOOM,
     maxZoom: MAX_ZOOM,
   };
+  const allowViewportInteractions = !view || !!enableViewportInteractions;
 
   return (
     <div className="h-full w-full bg-canvas" ref={reactFlowWrapper}>
@@ -740,16 +791,23 @@ export default function Page({
                 <AgentToolbar />
               </>
             )}
-            <MemoizedSidebarTrigger />
-            <SelectionMenu
-              lastSelection={lastSelection}
-              isVisible={selectionMenuVisible}
-              nodes={lastSelection?.nodes}
-              onClick={handleGroupNode}
-            />
+            {!view && <MemoizedSidebarTrigger />}
+            {!isReadOnlyCanvas && (
+              <SelectionMenu
+                lastSelection={lastSelection}
+                isVisible={selectionMenuVisible}
+                nodes={lastSelection?.nodes}
+                onClick={handleGroupNode}
+              />
+            )}
             {showReviewFeedbackPanel && (
-              <div className="pointer-events-none absolute right-4 top-4 z-20 w-[380px] max-w-[calc(100%-2rem)]">
-                <div className="pointer-events-auto rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-sm">
+              <div className="pointer-events-none absolute right-2 top-[4.5rem] z-20 w-[380px] max-w-[calc(100%-1rem)] sm:right-4 sm:max-w-[calc(100%-2rem)]">
+                <div
+                  className="pointer-events-auto max-h-[calc(100vh-6rem)] overflow-auto rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-sm"
+                  role="status"
+                  aria-live="polite"
+                  aria-label="Review feedback panel"
+                >
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold">
                       Review Feedback
@@ -809,15 +867,15 @@ export default function Page({
               edges={edges}
               onNodesChange={onNodesChangeWithHelperLines}
               onEdgesChange={onEdgesChange}
-              onConnect={isLocked ? undefined : onConnectMod}
+              onConnect={isReadOnlyCanvas ? undefined : onConnectMod}
               disableKeyboardA11y={true}
-              nodesFocusable={!isLocked}
-              edgesFocusable={!isLocked}
+              nodesFocusable={!isReadOnlyCanvas}
+              edgesFocusable={!isReadOnlyCanvas}
               onInit={setReactFlowInstance}
               nodeTypes={nodeTypes}
-              onReconnect={isLocked ? undefined : onEdgeUpdate}
-              onReconnectStart={isLocked ? undefined : onEdgeUpdateStart}
-              onReconnectEnd={isLocked ? undefined : onEdgeUpdateEnd}
+              onReconnect={isReadOnlyCanvas ? undefined : onEdgeUpdate}
+              onReconnectStart={isReadOnlyCanvas ? undefined : onEdgeUpdateStart}
+              onReconnectEnd={isReadOnlyCanvas ? undefined : onEdgeUpdateEnd}
               onNodeDrag={onNodeDrag}
               onNodeDragStart={onNodeDragStart}
               onSelectionDragStart={onSelectionDragStart}
@@ -827,30 +885,34 @@ export default function Page({
               connectionRadius={30}
               edgeTypes={edgeTypes}
               connectionLineComponent={ConnectionLineComponent}
-              onDragOver={onDragOver}
+              onDragOver={isReadOnlyCanvas ? undefined : onDragOver}
               onNodeDragStop={onNodeDragStop}
-              onDrop={onDrop}
-              onSelectionChange={onSelectionChange}
+              onDrop={isReadOnlyCanvas ? undefined : onDrop}
+              onSelectionChange={isReadOnlyCanvas ? undefined : onSelectionChange}
               deleteKeyCode={[]}
               fitView={isEmptyAgent.current ? false : true}
               fitViewOptions={fitViewOptions}
               className="theme-attribution"
-              tabIndex={isLocked ? -1 : undefined}
+              tabIndex={isReadOnlyCanvas ? -1 : undefined}
               minZoom={MIN_ZOOM}
               maxZoom={MAX_ZOOM}
-              zoomOnScroll={!view}
-              zoomOnPinch={!view}
-              panOnDrag={!view}
+              zoomOnScroll={allowViewportInteractions}
+              zoomOnPinch={allowViewportInteractions}
+              panOnDrag={allowViewportInteractions}
               panActivationKeyCode={""}
               proOptions={{ hideAttribution: true }}
-              onPaneClick={onPaneClick}
-              onEdgeClick={handleEdgeClick}
-              onKeyDown={handleKeyDown}
+              onPaneClick={isReadOnlyCanvas ? undefined : onPaneClick}
+              onEdgeClick={isReadOnlyCanvas ? undefined : handleEdgeClick}
+              onKeyDown={isReadOnlyCanvas ? undefined : handleKeyDown}
+              nodesDraggable={!isReadOnlyCanvas}
+              nodesConnectable={!isReadOnlyCanvas}
+              elementsSelectable={!isReadOnlyCanvas}
             >
               <AgentBuildingComponent />
               <UpdateAllComponents />
               <MemoizedBackground />
               {helperLineEnabled && <HelperLines helperLines={helperLines} />}
+              {view && enableViewportInteractions && <ReadOnlyViewportControls />}
             </ReactFlow>
           </div>
           <div
