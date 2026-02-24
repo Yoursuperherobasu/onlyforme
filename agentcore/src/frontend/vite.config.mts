@@ -28,12 +28,27 @@ export default defineConfig(({ mode }) => {
   
   const port = Number(envSensei.VITE_PORT || env.VITE_PORT) || PORT || 3000;
 
-  const proxyTargets = apiRoutes.reduce((proxyObj, route) => {
+  const proxyTargets = apiRoutes.reduce((proxyObj: Record<string, any>, route) => {
     proxyObj[route] = {
       target: target,
       changeOrigin: true,
       secure: false,
       ws: true,
+      // Ensure streaming (SSE / NDJSON) responses are forwarded
+      // chunk-by-chunk without buffering by the dev-server proxy.
+      configure: (proxy: any) => {
+        proxy.on("proxyRes", (proxyRes: any, _req: any, res: any) => {
+          const ct = proxyRes.headers["content-type"] || "";
+          if (ct.includes("text/event-stream") || ct.includes("application/x-ndjson")) {
+            // Prevent Node / proxy from coalescing small chunks
+            res.setHeader("X-Accel-Buffering", "no");
+            res.setHeader("Cache-Control", "no-cache, no-transform");
+            if (typeof res.flushHeaders === "function") {
+              res.flushHeaders();
+            }
+          }
+        });
+      },
     };
     return proxyObj;
   }, {});

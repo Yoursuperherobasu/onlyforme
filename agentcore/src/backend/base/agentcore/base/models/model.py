@@ -286,9 +286,11 @@ class LCModelNode(Node):
         Returns:
             tuple: (Message object if connected to chat output, model result)
         """
+        from uuid import uuid4
+
         lf_message = None
         if self.is_connected_to_chat_output():
-            # Add a Message
+            # Add a Message — use async streaming to avoid blocking the event loop
             if hasattr(self, "graph"):
                 session_id = self.graph.session_id
             elif hasattr(self, "_session_id"):
@@ -296,7 +298,7 @@ class LCModelNode(Node):
             else:
                 session_id = None
             model_message = Message(
-                text=runnable.stream(inputs),
+                text=runnable.astream(inputs),
                 sender=MESSAGE_SENDER_AI,
                 sender_name="AI",
                 properties={"icon": self.icon, "state": "partial"},
@@ -305,8 +307,27 @@ class LCModelNode(Node):
             model_message.properties.source = self._build_source(self._id, self.display_name, self)
             lf_message = await self.send_message(model_message)
             result = lf_message.text
+        elif hasattr(self, "_event_manager") and self._event_manager:
+            # Stream tokens directly via event_manager even when not
+            # connected to ChatOutput (e.g. LLM → Agent → ChatOutput).
+            # ChatOutput will still emit its own add_message with the
+            # final text; the token events let the UI render progressively.
+            import asyncio
+
+            message_id = str(uuid4())
+            complete = ""
+            async for chunk in runnable.astream(inputs):
+                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                complete += content
+                self._event_manager.on_token(
+                    data={"chunk": content, "id": message_id},
+                )
+                # Yield to the event loop so the queue consumer can
+                # deliver the token to the client immediately.
+                await asyncio.sleep(0)
+            result = complete
         else:
-            message = runnable.invoke(inputs)
+            message = await runnable.ainvoke(inputs)
             result = message.content if hasattr(message, "content") else message
         return lf_message, result
 

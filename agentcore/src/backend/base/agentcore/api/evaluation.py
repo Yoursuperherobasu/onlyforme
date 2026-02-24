@@ -15,7 +15,7 @@ import time
 import re
 import csv
 import io
-from threading import Lock
+from threading import Lock, Thread
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any, List, Optional, Dict, Union
 from collections import defaultdict
@@ -59,6 +59,14 @@ router = APIRouter(prefix="/evaluation", tags=["Evaluation"])
 _LITELLM_STD_LOGGING_PATCHED = False
 _DATASET_EXPERIMENT_JOBS: dict[str, dict[str, Any]] = {}
 _DATASET_EXPERIMENT_JOBS_LOCK = Lock()
+_SCORE_LIST_CACHE: dict[str, dict[str, Any]] = {}
+_SCORE_LIST_CACHE_STALE_SECONDS = 90.0
+# Pending-reviews response cache (per user_id)
+_PENDING_REVIEWS_CACHE: dict[str, dict[str, Any]] = {}
+_PENDING_REVIEWS_CACHE_TTL_SECONDS = 30.0
+# Dataset list response cache (per user_id)
+_DATASETS_LIST_CACHE: dict[str, dict[str, Any]] = {}
+_DATASETS_LIST_CACHE_TTL_SECONDS = 60.0
 
 # Persistent evaluator configs stored in the database (see Evaluator model)
 from agentcore.services.database.models.evaluator.model import Evaluator  # noqa: E402
@@ -963,8 +971,7 @@ def _run_async(coro):
         except Exception as exc:  # noqa: BLE001
             error_holder["error"] = exc
 
-    import threading
-    t = threading.Thread(target=_runner, daemon=True)
+    t = Thread(target=_runner, daemon=True)
     t.start()
     t.join()
     if "error" in error_holder:
@@ -3082,6 +3089,23 @@ async def get_scores(
         user_id = str(current_user.id)
         trace_id = str(trace_id).strip() if trace_id and str(trace_id).strip() else None
         name = str(name).strip() if name and str(name).strip() else None
+        score_cache_key = f"{user_id}|{page}|{limit}|{trace_id or ''}|{(name or '').lower()}"
+        now_mono = time.monotonic()
+        cached_score_payload: dict[str, Any] | None = None
+        cached_score_entry = _SCORE_LIST_CACHE.get(score_cache_key)
+        if cached_score_entry:
+            cached_age = now_mono - float(cached_score_entry.get("ts", 0))
+            cached_payload = cached_score_entry.get("payload")
+            if isinstance(cached_payload, dict):
+                # Fast path: serve any cached result (including empty) within TTL.
+                # Empty results use a shorter TTL (30s) so we re-check Langfuse quickly.
+                is_empty_result = not cached_payload.get("items") and cached_payload.get("total", 0) == 0
+                ttl = 30.0 if is_empty_result else _SCORE_LIST_CACHE_STALE_SECONDS
+                if cached_age <= ttl:
+                    return cached_payload
+                # Stale but non-empty: keep as fallback in case fresh fetch returns empty.
+                if not is_empty_result:
+                    cached_score_payload = cached_payload
 
         trace_lookup: Dict[str, Dict[str, Any]] = {}
         user_trace_ids: set[str] = set()
@@ -3544,6 +3568,26 @@ async def get_scores(
                 limit,
             )
 
+        # Last-mile retry for intermittent first-load empties.
+        if not raw_scores and page == 1 and not trace_id and not name:
+            retry_rows, retry_total = _list_scores_page(page, limit, include_user_filter=True)
+            retry_rows = [
+                row for row in retry_rows
+                if _score_belongs_to_user(row) and _score_matches_name(row)
+            ]
+            if retry_rows:
+                logger.info(
+                    "Recovered transient empty score list on retry for user_id={} with {} row(s)",
+                    user_id,
+                    len(retry_rows),
+                )
+                raw_scores = retry_rows
+                total = (
+                    int(retry_total)
+                    if retry_total is not None and len(retry_rows) > 0
+                    else len(retry_rows)
+                )
+
         # Parse to response model (including agent/agent name).
         items: list[ScoreResponse] = []
         for s in raw_scores:
@@ -3582,12 +3626,40 @@ async def get_scores(
                 config_id=get_attr(s, "config_id", "configId"),
             ))
 
-        return {
+        response_payload = {
             "items": items,
             "total": total,
             "page": page,
             "limit": limit
         }
+        # Always write to cache, including empty results.
+        # Empty results use a short TTL (30s) so they are re-validated quickly.
+        cache_payload = {
+            "items": [item.model_dump() for item in items],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+        _SCORE_LIST_CACHE[score_cache_key] = {
+            "ts": now_mono,
+            "payload": cache_payload,
+        }
+        if len(_SCORE_LIST_CACHE) > 512:
+            oldest_key = min(
+                _SCORE_LIST_CACHE.items(),
+                key=lambda kv: float(kv[1].get("ts", 0)),
+            )[0]
+            _SCORE_LIST_CACHE.pop(oldest_key, None)
+
+        # If fresh fetch returned empty but we have stale non-empty data, prefer stale.
+        if not items and total == 0 and cached_score_payload and page == 1 and not trace_id and not name:
+            logger.warning(
+                "Using stale cached score payload for user_id={} after transient empty response",
+                user_id,
+            )
+            return cached_score_payload
+
+        return response_payload
 
     except Exception as e:
         logger.opt(exception=True).error("Error fetching scores: {}", str(e))
@@ -3625,7 +3697,13 @@ async def create_score(
         # Flush to ensure it sends
         if hasattr(client, "flush"):
             client.flush()
-        
+
+        # Invalidate score list and pending-reviews caches so the next fetch is fresh.
+        for _k in [k for k in list(_SCORE_LIST_CACHE) if k.startswith(user_id + "|")]:
+            _SCORE_LIST_CACHE.pop(_k, None)
+        for _k in [k for k in list(_PENDING_REVIEWS_CACHE) if k.startswith(user_id + "|")]:
+            _PENDING_REVIEWS_CACHE.pop(_k, None)
+
         logger.info(f"User {user_id} created score for trace {payload.trace_id}")
         
         return {"status": "success", "message": "Score created successfully"}
@@ -3657,9 +3735,21 @@ async def get_pending_reviews(
 
     try:
         user_id = str(current_user.id)
-        
+
+        # Fast-path: serve cached pending reviews within TTL.
+        # Filters bust the cache so only unfiltered requests are cached.
+        _use_pending_cache = not any([trace_id, agent_name, session_id, user_id_filter, ts_from, ts_to])
+        _pending_cache_key = f"{user_id}|{limit}"
+        _now_mono = time.monotonic()
+        if _use_pending_cache:
+            _pending_entry = _PENDING_REVIEWS_CACHE.get(_pending_cache_key)
+            if _pending_entry:
+                _age = _now_mono - float(_pending_entry.get("ts", 0))
+                if _age <= _PENDING_REVIEWS_CACHE_TTL_SECONDS:
+                    return _pending_entry["payload"]
+
         # Fetch recent traces for this user via shared helper (observability)
-        fetch_limit = max(limit * 10, 100)
+        fetch_limit = max(limit * 5, 100)
         try:
             traces_data = fetch_traces_from_langfuse(client, user_id=user_id, limit=fetch_limit)
             logger.info(f"Fetched {len(traces_data or [])} traces for user_id={user_id} (limit={fetch_limit})")
@@ -3772,6 +3862,14 @@ async def get_pending_reviews(
             if len(result) >= limit:
                 break
 
+        # Cache unfiltered results so subsequent calls are served instantly.
+        if _use_pending_cache:
+            _PENDING_REVIEWS_CACHE[_pending_cache_key] = {"ts": _now_mono, "payload": result}
+            # Evict oldest entry if cache exceeds 128 entries.
+            if len(_PENDING_REVIEWS_CACHE) > 128:
+                _oldest = min(_PENDING_REVIEWS_CACHE.items(), key=lambda kv: float(kv[1].get("ts", 0)))[0]
+                _PENDING_REVIEWS_CACHE.pop(_oldest, None)
+
         return result
 
     except Exception as e:
@@ -3793,6 +3891,16 @@ async def list_datasets(
 
     try:
         user_id = str(current_user.id)
+
+        # Fast-path: serve from cache for unfiltered requests.
+        _datasets_cache_key = f"{user_id}|{page}|{limit}|{(search or '').lower()}"
+        _now_mono = time.monotonic()
+        _datasets_entry = _DATASETS_LIST_CACHE.get(_datasets_cache_key)
+        if _datasets_entry:
+            _age = _now_mono - float(_datasets_entry.get("ts", 0))
+            if _age <= _DATASETS_LIST_CACHE_TTL_SECONDS:
+                return _datasets_entry["payload"]
+
         max_rows = max(page * limit, 200)
         rows = _list_all_datasets_for_user(client, user_id=user_id, max_rows=max_rows)
 
@@ -3808,26 +3916,23 @@ async def list_datasets(
         start = (page - 1) * limit
         page_rows = rows[start:start + limit]
 
-        items: list[DatasetResponse] = []
-        for dataset in page_rows:
-            item_count = None
-            dataset_name = str(get_attr(dataset, "name", default="") or "")
-            if dataset_name and hasattr(client, "api") and hasattr(client.api, "dataset_items"):
-                try:
-                    items_resp = client.api.dataset_items.list(dataset_name=dataset_name, page=1, limit=1)
-                    _, total_items = _parse_paginated_response(items_resp)
-                    item_count = int(total_items) if total_items is not None else None
-                except Exception:
-                    item_count = None
+        # Build responses without per-dataset item count API calls (N+1 eliminated).
+        # Item counts are loaded when a specific dataset is opened.
+        items: list[DatasetResponse] = [
+            _dataset_to_response(dataset, item_count=None) for dataset in page_rows
+        ]
 
-            items.append(_dataset_to_response(dataset, item_count=item_count))
-
-        return {
+        payload_out = {
             "items": items,
             "total": total,
             "page": page,
             "limit": limit,
         }
+        _DATASETS_LIST_CACHE[_datasets_cache_key] = {"ts": _now_mono, "payload": payload_out}
+        if len(_DATASETS_LIST_CACHE) > 256:
+            _oldest = min(_DATASETS_LIST_CACHE.items(), key=lambda kv: float(kv[1].get("ts", 0)))[0]
+            _DATASETS_LIST_CACHE.pop(_oldest, None)
+        return payload_out
     except HTTPException:
         raise
     except Exception as exc:
@@ -3857,6 +3962,11 @@ async def create_dataset(
         )
         if hasattr(client, "flush"):
             client.flush()
+        # Invalidate dataset list cache for this user so the new entry appears immediately.
+        _user_id = str(current_user.id)
+        keys_to_drop = [k for k in list(_DATASETS_LIST_CACHE) if k.startswith(_user_id + "|")]
+        for _k in keys_to_drop:
+            _DATASETS_LIST_CACHE.pop(_k, None)
         return _dataset_to_response(dataset, item_count=0)
     except Exception as exc:  # noqa: BLE001
         message = str(exc).lower()
@@ -3926,6 +4036,10 @@ async def delete_dataset(
         except Exception:
             pass
 
+    # Invalidate dataset list cache for this user.
+    _del_user_id = str(current_user.id)
+    for _k in [k for k in list(_DATASETS_LIST_CACHE) if k.startswith(_del_user_id + "|")]:
+        _DATASETS_LIST_CACHE.pop(_k, None)
     return {
         "status": "deleted" if dataset_deleted else "purged",
         "dataset_name": dataset_name,

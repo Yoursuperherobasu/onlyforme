@@ -36,7 +36,6 @@ import {
   EvaluationPreset,
   EvaluationStatus,
   getAgents,
-  getAvailableModels,
   getDatasetExperimentJob,
   getEvaluationDatasetItems,
   getEvaluationDatasetRunDetail,
@@ -92,11 +91,11 @@ const ensureDatasetPromptTemplate = (criteria?: string | null): string => {
 };
 
 export default function EvaluationPage() {
-  const [activeTab, setActiveTab] = useState("scores");
+  const [activeTab, setActiveTab] = useState("judges");
   const [status, setStatus] = useState<EvaluationStatus | null>(null);
   const [recentScores, setRecentScores] = useState<Score[]>([]);
   const [pendingTraces, setPendingTraces] = useState<TraceForReview[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [scoreFilters, setScoreFilters] = useState({ trace_id: "", name: "" });
   const [presets, setPresets] = useState<EvaluationPreset[]>([]);
   const [savedEvaluators, setSavedEvaluators] = useState<Array<any>>([]);
@@ -148,13 +147,16 @@ export default function EvaluationPage() {
   );
   const fetchSeqRef = useRef(0);
 
-  const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [modelApiKey, setModelApiKey] = useState<string>("");
   const [agentList, setAgentList] = useState<any[]>([]);
   const storeModels = useModelStore((s) => s.models);
   const [savedModelKeys, setSavedModelKeys] = useState<Record<string, string>>(
     {},
   );
+
+  // Per-tab fetch guards — prevent redundant refetches on every tab revisit
+  const hasFetchedScoresRef = useRef(false);
+  const hasFetchedDatasetsRef = useRef(false);
   const loadSavedModelKeys = () => {
     try {
       const raw = localStorage.getItem("evaluation_model_keys");
@@ -171,8 +173,8 @@ export default function EvaluationPage() {
     setSavedModelKeys(next);
     try {
       localStorage.setItem("evaluation_model_keys", JSON.stringify(next));
-    } catch (e) {
-      console.debug(e);
+    } catch {
+      // ignore storage errors
     }
   };
 
@@ -241,29 +243,6 @@ export default function EvaluationPage() {
 
   const sleep = (ms: number) =>
     new Promise((resolve) => setTimeout(resolve, ms));
-
-  const pollScoresForTrace = async (
-    traceId: string,
-    attempts = 5,
-    delayMs = 2000,
-  ) => {
-    for (let i = 0; i < attempts; i += 1) {
-      await sleep(delayMs);
-      try {
-        const scoresData = await getEvaluationScores({
-          trace_id: traceId,
-          limit: 5,
-        });
-        if (scoresData?.items?.length) {
-          await fetchData();
-          return true;
-        }
-      } catch {
-        // ignore and continue polling
-      }
-    }
-    return false;
-  };
 
   const parseJsonOrString = (value: string): unknown => {
     const trimmed = value.trim();
@@ -380,8 +359,8 @@ export default function EvaluationPage() {
   };
 
   useEffect(() => {
-    fetchData();
-    fetchDatasets(false);
+    // Only load data required by the default "judges" tab on mount.
+    // Scores and Datasets are loaded lazily when their tabs become active.
     getEvaluationPresets()
       .then((items) => {
         if (Array.isArray(items)) {
@@ -415,11 +394,6 @@ export default function EvaluationPage() {
               ? agents
               : [];
         setAgentList(normalized);
-        if (normalized.length > 0) {
-          setAvailableModels(normalized);
-        } else if (storeModels?.length) {
-          setAvailableModels(storeModels);
-        }
       })
       .catch(() => {
         setAgentList([]);
@@ -432,49 +406,16 @@ export default function EvaluationPage() {
     let mounted = true;
     (async () => {
       try {
-        console.debug("Fetching pending reviews for judge dialog");
         const val = await getPendingReviews({ limit: 100 });
         if (!mounted) return;
         if (Array.isArray(val)) {
           setPendingTraces(val);
-          console.debug("Pending traces fetched:", val.length);
         } else if (val && Array.isArray((val as any).items)) {
           setPendingTraces((val as any).items);
-          console.debug(
-            "Pending traces fetched (items):",
-            (val as any).items.length,
-          );
         } else if (val && Array.isArray((val as any).data)) {
           setPendingTraces((val as any).data);
-          console.debug(
-            "Pending traces fetched (data):",
-            (val as any).data.length,
-          );
         } else {
           setPendingTraces([]);
-        }
-        // Load agents (also used as model catalogue). Fetch only once to avoid duplicate requests.
-        try {
-          const agents = await getAgents();
-          const normalized =
-            agents && Array.isArray(agents.data)
-              ? agents.data
-              : Array.isArray(agents)
-                ? agents
-                : [];
-          setAgentList(normalized);
-          // For availableModels, prefer storeModels fallback; if agents look like models, expose them too
-          if (normalized.length > 0) {
-            setAvailableModels(normalized);
-          } else if (storeModels?.length) {
-            setAvailableModels(storeModels);
-          } else {
-            setAvailableModels([]);
-          }
-        } catch (e) {
-          console.debug("Failed to load agents/models", e);
-          setAgentList([]);
-          setAvailableModels(storeModels?.length ? storeModels : []);
         }
         // load saved model API keys and prefill if available
         try {
@@ -498,14 +439,24 @@ export default function EvaluationPage() {
     };
   }, [isJudgeDialogOpen]);
 
+  // Lazy-load scores data only when the Scores tab becomes active
   useEffect(() => {
-    if (activeTab !== "datasets") return;
-    fetchDatasets(true);
+    if (activeTab !== "scores") return;
+    if (!hasFetchedScoresRef.current) {
+      hasFetchedScoresRef.current = true;
+      fetchData();
+    }
   }, [activeTab]);
 
+  // Lazy-load dataset list and details only when the Datasets tab becomes active
   useEffect(() => {
     if (activeTab !== "datasets") return;
-    fetchDatasetDetails(selectedDatasetName);
+    if (!hasFetchedDatasetsRef.current) {
+      hasFetchedDatasetsRef.current = true;
+      fetchDatasets(true);
+    } else if (selectedDatasetName) {
+      fetchDatasetDetails(selectedDatasetName);
+    }
   }, [activeTab, selectedDatasetName]);
 
   useEffect(() => {
@@ -574,6 +525,8 @@ export default function EvaluationPage() {
     if (traceId) scoreQuery.trace_id = traceId;
     if (metricName) scoreQuery.name = metricName;
 
+    // Single fetch — no retry delays; show empty state immediately rather than
+    // blocking the UI for 3+ seconds waiting for data that may not exist yet.
     const requestSeq = ++fetchSeqRef.current;
     setLoading(true);
     try {
@@ -583,18 +536,21 @@ export default function EvaluationPage() {
         getEvaluationStatus(),
       ]);
       if (scoresResult.status === "fulfilled") {
-        let nextScores = scoresResult.value.items ?? [];
-        if (!traceId && !metricName && nextScores.length === 0) {
-          try {
-            await sleep(250);
-            const retryScores = await getEvaluationScores(scoreQuery);
-            nextScores = retryScores?.items ?? [];
-          } catch {
-            // Keep original empty result if retry fails.
-          }
-        }
+        const nextScores = Array.isArray(scoresResult.value?.items)
+          ? scoresResult.value.items
+          : [];
         if (requestSeq !== fetchSeqRef.current) return;
-        setRecentScores(nextScores);
+        setRecentScores((prevScores) => {
+          if (
+            !traceId &&
+            !metricName &&
+            nextScores.length === 0 &&
+            prevScores.length > 0
+          ) {
+            return prevScores;
+          }
+          return nextScores;
+        });
       }
       if (pendingResult.status === "fulfilled") {
         if (requestSeq !== fetchSeqRef.current) return;
@@ -787,12 +743,7 @@ export default function EvaluationPage() {
       setRunOnExisting(target.includes("existing"));
       setRunOnNew(target.includes("new"));
     }
-    // Load from agent_ids (new) or agent_ids (old) for backward compatibility
-    const agentIds = Array.isArray(s.agent_ids)
-      ? s.agent_ids
-      : Array.isArray(s.agent_ids)
-        ? s.agent_ids
-        : [];
+    const agentIds = Array.isArray(s.agent_ids) ? s.agent_ids : [];
     setSelectedAgentIds(agentIds);
     setFilterSessionId(s.session_id || "");
     setFilterTraceId(s.trace_id || "");
@@ -1286,8 +1237,7 @@ export default function EvaluationPage() {
   const renderDatasets = () => {
     const agentOptions = (agentList || [])
       .map((agent: any) => {
-        const id =
-          agent?.metadata?.agent_id || agent?.metadata?.agent_id || agent?.id;
+        const id = agent?.metadata?.agent_id || agent?.id;
         if (!id) return null;
         return {
           id: String(id),
@@ -1417,7 +1367,7 @@ export default function EvaluationPage() {
                     <tr
                       key={dataset.id || dataset.name}
                       className={`border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${
-                        isSelected ? "bg-blue-50 dark:bg-blue-950/30" : ""
+                        isSelected ? "bg-red-50 dark:bg-red-950/30" : ""
                       }`}
                       onClick={() => void handleOpenDatasetItemsDialog(dataset.name)}
                     >
@@ -1732,7 +1682,7 @@ export default function EvaluationPage() {
               datasetExperimentJob.status === "running" ? (
                 <div className="mt-3">
                   <div className="h-2 w-full rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
-                    <div className="h-full w-1/3 bg-blue-500 animate-pulse" />
+                    <div className="h-full w-1/3 bg-[#da2128] animate-pulse" />
                   </div>
                   <div className="mt-1 text-xs text-gray-500">
                     Experiment "{datasetExperimentJob.experiment_name}" is
@@ -1848,18 +1798,8 @@ export default function EvaluationPage() {
           <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
             <button
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "scores"
-                  ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-              }`}
-              onClick={() => setActiveTab("scores")}
-            >
-              Scores
-            </button>
-            <button
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "judges"
-                  ? "border-blue-500 text-blue-600 dark:text-blue-400"
+                  ? "border-[#da2128] text-[#da2128]"
                   : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
               }`}
               onClick={() => setActiveTab("judges")}
@@ -1869,25 +1809,40 @@ export default function EvaluationPage() {
             <button
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "datasets"
-                  ? "border-blue-500 text-blue-600 dark:text-blue-400"
+                  ? "border-[#da2128] text-[#da2128]"
                   : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
               }`}
               onClick={() => setActiveTab("datasets")}
             >
               Datasets
             </button>
+            <button
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "scores"
+                  ? "border-[#da2128] text-[#da2128]"
+                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              }`}
+              onClick={() => setActiveTab("scores")}
+            >
+              Scores
+            </button>
           </div>
 
           {/* Tab Content */}
           <div className="flex-1 overflow-auto">
-            {loading ? (
-              <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-              </div>
-            ) : (
-              <>
-                {activeTab === "scores" && renderScoresList()}
-                {activeTab === "judges" && (
+            <>
+              {activeTab === "scores" && (
+                loading ? (
+                  <div className="flex flex-col items-center justify-center h-64 gap-3">
+                    <div
+                      className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                      style={{ borderTopColor: "#da2128" }}
+                    />
+                    <p className="text-sm text-gray-500">Loading scores…</p>
+                  </div>
+                ) : renderScoresList()
+              )}
+              {activeTab === "judges" && (
                   <div className="flex flex-col gap-6">
                     <div className="p-8 text-center bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
                       <h3 className="text-lg font-medium mb-2">
@@ -1915,7 +1870,7 @@ export default function EvaluationPage() {
                           resetForms();
                           setIsJudgeDialogOpen(true);
                         }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-2 mx-auto"
+                        className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors flex items-center gap-2 mx-auto"
                       >
                         <Play className="h-4 w-4" />
                         Create New Judge
@@ -2101,8 +2056,7 @@ export default function EvaluationPage() {
                   </div>
                 )}
                 {activeTab === "datasets" && renderDatasets()}
-              </>
-            )}
+            </>
           </div>
         </div>
       </div>
@@ -2184,7 +2138,6 @@ export default function EvaluationPage() {
                   {agentList && agentList.length > 0 ? (
                     agentList.map((f: any) => {
                       const fid =
-                        f.metadata?.agent_id ||
                         f.metadata?.agent_id ||
                         f.id ||
                         f.metadata?.endpoint_name ||
@@ -2577,8 +2530,12 @@ export default function EvaluationPage() {
             </DialogDescription>
           </DialogHeader>
           {runDetailLoading ? (
-            <div className="py-8 text-center text-sm text-gray-500">
-              Loading run details...
+            <div className="flex flex-col items-center justify-center py-10 gap-3">
+              <div
+                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                style={{ borderTopColor: "#da2128" }}
+              />
+              <p className="text-sm text-gray-500">Loading run details…</p>
             </div>
           ) : selectedRunDetail ? (
             <div className="space-y-4 py-2">

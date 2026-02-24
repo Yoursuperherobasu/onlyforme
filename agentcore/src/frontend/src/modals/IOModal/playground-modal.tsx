@@ -21,7 +21,6 @@ import type { IOModalPropsType } from "../../types/components";
 import { cn, getNumberFromString } from "../../utils/utils";
 import BaseModal from "../baseModal";
 import { ChatViewWrapper } from "./components/chat-view-wrapper";
-import { createNewSessionName } from "./components/chatView/chatInput/components/voice-assistant/helpers/create-new-session-name";
 import { SelectedViewField } from "./components/selected-view-field";
 import { SidebarOpenView } from "./components/sidebar-open-view";
 import { useGetAgentId } from "./hooks/useGetAgentId";
@@ -197,6 +196,10 @@ export default function IOModal({
   const eventDeliveryConfig = useUtilityStore((state) => state.eventDelivery);
 
   // ─── sendMessage (UNCHANGED) ──────────────────────────────────────
+  const setDisplayLoadingMessage = useMessagesStore(
+    (state) => state.setDisplayLoadingMessage,
+  );
+
   const sendMessage = useCallback(
     async ({
       repeat = 1,
@@ -207,6 +210,7 @@ export default function IOModal({
     }): Promise<void> => {
       if (isBuilding) return;
       setChatValue("");
+      setDisplayLoadingMessage(true);
       for (let i = 0; i < repeat; i++) {
         await buildAgent({
           input_value: chatValue,
@@ -221,7 +225,7 @@ export default function IOModal({
         });
       }
     },
-    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent],
+    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent, setDisplayLoadingMessage],
   );
 
   // ─── Effects (UNCHANGED) ──────────────────────────────────────────
@@ -250,7 +254,7 @@ export default function IOModal({
 
   useEffect(() => {
     if (!visibleSession) {
-      setSessionId(createNewSessionName());
+      setSessionId(crypto.randomUUID());
       setCurrentSessionId(currentAgentId);
     } else if (visibleSession) {
       setSessionId(visibleSession);

@@ -287,20 +287,8 @@ async def approve_agent(
     deployment.updated_at = now
     session.add(deployment)
 
-    # Keep one active PROD version per agent by default.
-    previous = (
-        await session.exec(
-            select(AgentDeploymentProd).where(
-                AgentDeploymentProd.agent_id == deployment.agent_id,
-                AgentDeploymentProd.id != deployment.id,
-                AgentDeploymentProd.is_active == True,  # noqa: E712
-            )
-        )
-    ).all()
-    for rec in previous:
-        rec.is_active = False
-        rec.updated_at = now
-        session.add(rec)
+    # Shadow deployment: keep previous versions active so
+    # multiple versions can run side-by-side.
 
     await session.commit()
 

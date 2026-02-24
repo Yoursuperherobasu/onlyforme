@@ -40,6 +40,7 @@ export const URLs = {
   PUBLISH: `publish`,
   ROLES: `roles`,
   HELP_SUPPORT: `help-support`,
+  ORCHESTRATOR: `orchestrator`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

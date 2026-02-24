@@ -1469,7 +1469,7 @@ class Node(ExecutableNode):
     async def send_message(self, message: Message, id_: str | None = None):
         if self._should_skip_message(message):
             return message
-        
+
         if (hasattr(self, "graph") and self.graph.session_id) and (message is not None and not message.session_id):
             session_id = (
                 UUID(self.graph.session_id) if isinstance(self.graph.session_id, str) else self.graph.session_id
@@ -1477,7 +1477,7 @@ class Node(ExecutableNode):
             message.session_id = session_id
         if hasattr(message, "agent_id") and isinstance(message.agent_id, str):
             message.agent_id = UUID(message.agent_id)
-        
+
         # Check if this is a streaming message BEFORE storing to DB
         is_streaming = (
             hasattr(self, "_event_manager")
@@ -1485,7 +1485,6 @@ class Node(ExecutableNode):
             and message is not None
             and isinstance(message.text, AsyncIterator | Iterator)
         )
-        
         if is_streaming:
             # OPTIMIZATION: For streaming messages, generate ID upfront and write to DB only ONCE at the end
             # This reduces DB writes from 100+ (one per chunk) to just 1
@@ -1523,7 +1522,10 @@ class Node(ExecutableNode):
         if hasattr(self, "graph"):
             # Convert UUID to str if needed
             agent_id = str(self.graph.agent_id) if self.graph.agent_id else None
-        
+            # Mark orchestrator messages so they don't appear in the playground
+            if getattr(self.graph, "skip_dev_logging", False):
+                message.category = "orch"
+
         stored_messages = await astore_message(message, agent_id=agent_id)
         if len(stored_messages) != 1:
             msg = "Only one message can be stored at a time."
@@ -1637,19 +1639,21 @@ class Node(ExecutableNode):
         self, chunk: str, complete_message: str, message_id: str, message: Message, *, first_chunk: bool = False
     ) -> str:
         """Process a streaming chunk - send SSE event only, NO database writes.
-        
+
         OPTIMIZATION: All DB writes happen ONCE at the end of streaming in send_message().
         This reduces DB writes from 100+ (one per chunk) to just 1 per message.
         """
+        import asyncio as _asyncio
+
         complete_message += chunk
-        
+
         if self._event_manager:
             if first_chunk:
                 # Send the initial message event on first chunk (for UI to create message bubble)
                 msg_copy = message.model_copy()
                 msg_copy.text = complete_message
                 await self._send_message_event(msg_copy, id_=message_id)
-            
+
             # Send token event for real-time UI streaming (SSE only, no DB)
             self._event_manager.on_token(
                 data={
@@ -1657,6 +1661,10 @@ class Node(ExecutableNode):
                     "id": str(message_id),
                 },
             )
+            # Yield to event loop so the queue consumer can send this chunk
+            # to the HTTP response immediately. Without this, synchronous
+            # runnable.stream() blocks the loop and tokens pile up in the queue.
+            await _asyncio.sleep(0)
         return complete_message
 
     async def send_error(

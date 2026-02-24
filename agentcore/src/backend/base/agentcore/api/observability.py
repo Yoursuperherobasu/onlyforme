@@ -15,6 +15,7 @@ Features:
 import os
 import json
 import time
+import traceback
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any
 from collections import defaultdict
@@ -42,6 +43,9 @@ _TRACE_CACHE_TTL_SECONDS = 12.0
 _TRACE_CACHE_STALE_SECONDS = 90.0
 _TRACE_METRICS_CACHE: dict[str, dict[str, Any]] = {}
 _TRACE_METRICS_CACHE_TTL_SECONDS = 60.0
+# Cache for per-trace observations — avoids redundant Langfuse calls during the same session.
+_OBSERVATIONS_CACHE: dict[str, dict[str, Any]] = {}
+_OBSERVATIONS_CACHE_TTL_SECONDS = 60.0
 
 
 # =============================================================================
@@ -499,6 +503,21 @@ def _cache_traces(cache_key: str, traces: list[Any]) -> None:
         _TRACE_FETCH_CACHE.pop(oldest_key, None)
 
 
+def _cache_and_return_observations(trace_id: str, observations: list) -> list:
+    """Store observations in the process-local cache then return them."""
+    _OBSERVATIONS_CACHE[trace_id] = {
+        "ts": time.monotonic(),
+        "observations": observations,
+    }
+    if len(_OBSERVATIONS_CACHE) > 512:
+        oldest_key = min(
+            _OBSERVATIONS_CACHE.items(),
+            key=lambda item: float(item[1].get("ts", 0)),
+        )[0]
+        _OBSERVATIONS_CACHE.pop(oldest_key, None)
+    return observations
+
+
 def _extract_trace_metrics(trace: Any) -> tuple[int, int, int, float, float | None, list[str], int]:
     """Read aggregate metrics from trace-level fields without N+1 observation calls."""
     total_tokens = int(get_attr(trace, "totalTokens", "total_tokens", default=0) or 0)
@@ -522,13 +541,22 @@ def _extract_trace_metrics(trace: Any) -> tuple[int, int, int, float, float | No
         or 0
     )
 
-    latency_raw = get_attr(trace, "latency_ms", "latencyMs", "latency", default=None)
+    # Try explicit ms fields first (custom instrumentation may set these)
     latency_ms: float | None = None
-    if latency_raw is not None:
+    _latency_raw_ms = get_attr(trace, "latency_ms", "latencyMs", default=None)
+    if _latency_raw_ms is not None:
         try:
-            latency_ms = float(latency_raw)
+            latency_ms = float(_latency_raw_ms)
         except (TypeError, ValueError):
-            latency_ms = None
+            pass
+    if latency_ms is None:
+        # Langfuse native 'latency' field is in SECONDS — must multiply by 1000 to get ms
+        _latency_secs = get_attr(trace, "latency", default=None)
+        if _latency_secs is not None:
+            try:
+                latency_ms = float(_latency_secs) * 1000.0
+            except (TypeError, ValueError):
+                pass
 
     metadata = _normalize_metadata(get_attr(trace, "metadata", "meta"))
     models = []
@@ -769,7 +797,6 @@ def fetch_traces_from_langfuse(
 
         except Exception as e:
             logger.warning(f"fetch_traces with user_id failed: {e}")
-            import traceback
             logger.debug(traceback.format_exc())
 
     # ==========================================================================
@@ -981,6 +1008,13 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
     Fetch observations (spans) for a specific trace.
     Supports both Langfuse SDK v3 and v2.
     """
+    # Check process-local cache first to avoid redundant high-latency Langfuse calls.
+    _now_mono = time.monotonic()
+    _obs_cached = _OBSERVATIONS_CACHE.get(str(trace_id))
+    if _obs_cached and (_now_mono - float(_obs_cached.get("ts", 0))) <= _OBSERVATIONS_CACHE_TTL_SECONDS:
+        logger.debug(f"Observations cache hit for trace_id={trace_id}")
+        return list(_obs_cached.get("observations", []))
+
     observations = []
 
     def _response_to_list(response: Any) -> list:
@@ -1016,7 +1050,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
         try:
             observations = _try_call(client.fetch_observations)
             if observations:
-                return observations
+                return _cache_and_return_observations(str(trace_id), observations)
         except Exception as e:
             logger.debug(f"fetch_observations failed for trace {trace_id}: {e}")
 
@@ -1027,7 +1061,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
             try:
                 observations = _try_call(obs_client.get_many)
                 if observations:
-                    return observations
+                    return _cache_and_return_observations(str(trace_id), observations)
             except Exception as e:
                 logger.debug(f"api.observations.get_many failed for trace {trace_id}: {e}")
 
@@ -1035,7 +1069,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
             try:
                 observations = _try_call(obs_client.list)
                 if observations:
-                    return observations
+                    return _cache_and_return_observations(str(trace_id), observations)
             except Exception as e:
                 logger.debug(f"api.observations.list failed for trace {trace_id}: {e}")
 
@@ -1046,7 +1080,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
             try:
                 observations = _try_call(obs_v2_client.get_many)
                 if observations:
-                    return observations
+                    return _cache_and_return_observations(str(trace_id), observations)
             except Exception as e:
                 logger.debug(f"api.observations_v_2.get_many failed for trace {trace_id}: {e}")
 
@@ -1055,11 +1089,12 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
         try:
             observations = _try_call(client.client.observations.list)
             if observations:
-                return observations
+                return _cache_and_return_observations(str(trace_id), observations)
         except Exception as e:
             logger.debug(f"client.client.observations.list failed for trace {trace_id}: {e}")
 
-    return observations
+    # Cache even empty results to prevent hammering Langfuse for the same missing trace.
+    return _cache_and_return_observations(str(trace_id), observations)
 
 
 def fetch_scores_for_trace(client, trace_id: str, user_id: str | None = None, limit: int = 100) -> list[ScoreItem]:
@@ -1269,10 +1304,16 @@ def parse_trace_to_list_item(trace: Any, observations: list | None = None) -> Tr
         total_cost = float(get_attr(trace,
             'calculated_total_cost', 'calculatedTotalCost',
             'total_cost', 'totalCost', default=0) or 0)
-        latency_raw = get_attr(trace, "latency_ms", "latencyMs", "latency", default=None)
-        if latency_raw is not None:
+        _lat_raw_ms = get_attr(trace, "latency_ms", "latencyMs", default=None)
+        if _lat_raw_ms is not None:
             try:
-                latencies.append(float(latency_raw))
+                latencies.append(float(_lat_raw_ms))
+            except (TypeError, ValueError):
+                pass
+        elif get_attr(trace, "latency", default=None) is not None:
+            try:
+                # Langfuse 'latency' field is in SECONDS — convert to ms
+                latencies.append(float(get_attr(trace, "latency")) * 1000.0)
             except (TypeError, ValueError):
                 pass
 
@@ -1412,7 +1453,6 @@ async def debug_langfuse_data(
 
     except Exception as e:
         result["errors"].append(f"fetch_traces error: {str(e)}")
-        import traceback
         result["errors"].append(traceback.format_exc())
 
     return result
@@ -1486,7 +1526,6 @@ async def debug_trace_detail(
             result["observations_sample"].append(obs_sample)
     except Exception as e:
         result["errors"].append(f"fetch_observations error: {str(e)}")
-        import traceback
         result["errors"].append(traceback.format_exc())
 
     return result
@@ -1769,7 +1808,6 @@ async def get_trace_detail(
         raise
     except Exception as e:
         logger.error(f"Error fetching trace detail: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to fetch trace: {str(e)}")
 
@@ -1832,8 +1870,11 @@ async def get_user_sessions(
 
         is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
 
-        # Group by session - use trace-level metrics (NO observation fetching for performance)
+        # Group by session — use _get_trace_metrics which reads from the process-local
+        # cache when already computed (e.g. by the /metrics endpoint), and falls back to
+        # observations for traces missing trace-level token/cost fields (Langfuse v3).
         sessions_data: dict[str, dict] = {}
+        fallback_budget = {"remaining": min(50, len(raw_traces))}
 
         for trace in raw_traces:
             session_id = get_attr(trace, 'session_id', 'sessionId')
@@ -1842,17 +1883,17 @@ async def get_user_sessions(
 
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
 
-            trace_tokens = int(get_attr(trace, 'totalTokens', 'total_tokens', default=0) or 0)
-            trace_cost = float(get_attr(trace, 'calculated_total_cost', 'calculatedTotalCost', 'total_cost', default=0) or 0)
-            trace_model = get_attr(trace, 'model', default=None)
-            start_time = parse_datetime(get_attr(trace, 'start_time', 'startTime', 'timestamp'))
-            end_time = parse_datetime(get_attr(trace, 'end_time', 'endTime'))
-            if start_time and end_time and end_time > start_time:
-                trace_latency_ms: float | None = (end_time - start_time).total_seconds() * 1000
-            else:
-                trace_latency_ms = None
-            trace_status = get_attr(trace, 'level', 'status', default='') or ''
-            trace_error_count = 1 if str(trace_status).upper() in ('ERROR', 'WARNING') else 0
+            trace_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=True,
+                fallback_budget=fallback_budget,
+            )
+            trace_tokens = int(trace_metrics["total_tokens"])
+            trace_cost = float(trace_metrics["total_cost"])
+            trace_latency_ms = trace_metrics["latency_ms"]
+            trace_error_count = int(trace_metrics["error_count"])
+            trace_models_list = list(trace_metrics["models"])
 
             if session_id not in sessions_data:
                 sessions_data[session_id] = {
@@ -1869,8 +1910,7 @@ async def get_user_sessions(
             sessions_data[session_id]["trace_count"] += 1
             sessions_data[session_id]["total_tokens"] += trace_tokens
             sessions_data[session_id]["total_cost"] += trace_cost
-            if trace_model:
-                sessions_data[session_id]["models"].add(trace_model)
+            sessions_data[session_id]["models"].update(trace_models_list)
             sessions_data[session_id]["error_count"] += trace_error_count
             if trace_latency_ms is not None:
                 sessions_data[session_id]["latencies"].append(trace_latency_ms)
@@ -2046,7 +2086,6 @@ async def get_session_detail(
         raise
     except Exception as e:
         logger.error(f"Error fetching session detail: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to fetch session: {str(e)}")
 
@@ -2308,7 +2347,6 @@ async def get_user_metrics(
         raise
     except Exception as e:
         logger.error(f"Error calculating metrics: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to calculate metrics: {str(e)}")
 
@@ -2407,41 +2445,6 @@ class ProjectDetailResponse(BaseModel):
 # =============================================================================
 # Helper: Extract agent/project info from trace
 # =============================================================================
-
-def extract_agent_project_info(trace) -> tuple[str | None, str | None, str | None, str | None]:
-    """
-    Extract agent_id, agent_name, project_id, project_name from trace metadata/tags.
-
-    Returns: (agent_id, agent_name, project_id, project_name)
-    """
-    metadata = _normalize_metadata(get_attr(trace, 'metadata', default={}) or {})
-    tags = get_attr(trace, 'tags', default=[]) or []
-
-    # Try to get from metadata first (more reliable)
-    agent_id = metadata.get('agent_id')
-    agent_name = metadata.get('agent_name')
-    project_id = metadata.get('project_id')
-    project_name = metadata.get('project_name')
-
-    # Fallback: parse from tags
-    if not agent_id or not project_id:
-        for tag in tags:
-            if isinstance(tag, str):
-                if tag.startswith('agent_id:') and not agent_id:
-                    agent_id = tag.split(':', 1)[1]
-                elif tag.startswith('agent_name:') and not agent_name:
-                    agent_name = tag.split(':', 1)[1]
-                elif tag.startswith('project_id:') and not project_id:
-                    project_id = tag.split(':', 1)[1]
-                elif tag.startswith('project_name:') and not project_name:
-                    project_name = tag.split(':', 1)[1]
-
-    # Fallback: use trace name as agent_id if not found
-    if not agent_id:
-        agent_id = get_attr(trace, 'name')
-
-    return agent_id, agent_name, project_id, project_name
-
 
 # =============================================================================
 # Agent/Agent Endpoints
@@ -2738,7 +2741,6 @@ async def get_user_agents(
         raise
     except Exception as e:
         logger.error(f"Error fetching agents: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to fetch agents: {str(e)}")
 
@@ -2989,7 +2991,6 @@ async def get_agent_detail(
         raise
     except Exception as e:
         logger.error(f"Error fetching agent detail: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to fetch agent: {str(e)}")
 
@@ -3146,7 +3147,6 @@ async def get_user_projects(
         raise
     except Exception as e:
         logger.error(f"Error fetching projects: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to fetch projects: {str(e)}")
 
@@ -3365,6 +3365,5 @@ async def get_project_detail(
         raise
     except Exception as e:
         logger.error(f"Error fetching project detail: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to fetch project: {str(e)}")
