@@ -1,7 +1,7 @@
 """create_teams_app_table
 
 Revision ID: b9f48ef919cd
-Revises: f0a1b2c3d4e5
+Revises: l9a0b1c2d3e4
 Create Date: 2026-02-20 02:19:31.146278
 
 """
@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'b9f48ef919cd'
-down_revision: Union[str, None] = 'f0a1b2c3d4e5'
+down_revision: Union[str, None] = 'l9a0b1c2d3e4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -117,8 +117,6 @@ class ChildFlowAdapter:
             capabilities=["flow-execution", "child-flow"],
             metadata={
                 "agent_id": self.flow_id,
-                "is_component": self.flow_info.is_component,
-                "endpoint_name": self.flow_info.endpoint_name,
             },
         )
 

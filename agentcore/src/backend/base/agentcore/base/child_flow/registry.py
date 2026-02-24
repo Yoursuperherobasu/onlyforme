@@ -28,9 +28,7 @@ class FlowInfo:
     id: str
     name: str
     description: str | None
-    endpoint_name: str | None
-    folder_id: str | None
-    is_component: bool
+    project_id: str | None
     data: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,9 +37,7 @@ class FlowInfo:
             "id": self.id,
             "name": self.name,
             "description": self.description,
-            "endpoint_name": self.endpoint_name,
-            "folder_id": self.folder_id,
-            "is_component": self.is_component,
+            "project_id": self.project_id,
         }
 
 
@@ -57,7 +53,7 @@ class ChildFlowRegistry:
         cls,
         user_id: str,
         exclude_flow_id: str | None = None,
-        folder_id: str | None = None,
+        project_id: str | None = None,
     ) -> list[FlowInfo]:
         """List all agents available as child flows."""
         if not user_id:
@@ -68,15 +64,11 @@ class ChildFlowRegistry:
             async with session_scope() as session:
                 uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
 
-                stmt = (
-                    select(Agent)
-                    .where(Agent.user_id == uuid_user_id)
-                    .where(Agent.is_component == False)  # noqa: E712
-                )
+                stmt = select(Agent).where(Agent.user_id == uuid_user_id)
 
-                if folder_id:
-                    uuid_folder_id = UUID(folder_id) if isinstance(folder_id, str) else folder_id
-                    stmt = stmt.where(Agent.folder_id == uuid_folder_id)
+                if project_id:
+                    uuid_project_id = UUID(project_id) if isinstance(project_id, str) else project_id
+                    stmt = stmt.where(Agent.project_id == uuid_project_id)
 
                 agents = (await session.exec(stmt)).all()
 
@@ -91,9 +83,7 @@ class ChildFlowRegistry:
                             id=agent_id_str,
                             name=agent.name,
                             description=agent.description,
-                            endpoint_name=agent.endpoint_name,
-                            folder_id=str(agent.folder_id) if agent.folder_id else None,
-                            is_component=agent.is_component or False,
+                            project_id=str(agent.project_id) if agent.project_id else None,
                             data=agent.data,
                         )
                     )
@@ -132,9 +122,7 @@ class ChildFlowRegistry:
                         id=str(agent.id),
                         name=agent.name,
                         description=agent.description,
-                        endpoint_name=agent.endpoint_name,
-                        folder_id=str(agent.folder_id) if agent.folder_id else None,
-                        is_component=agent.is_component or False,
+                        project_id=str(agent.project_id) if agent.project_id else None,
                         data=agent.data,
                     )
 
@@ -165,9 +153,7 @@ class ChildFlowRegistry:
                         id=str(agent.id),
                         name=agent.name,
                         description=agent.description,
-                        endpoint_name=agent.endpoint_name,
-                        folder_id=str(agent.folder_id) if agent.folder_id else None,
-                        is_component=agent.is_component or False,
+                        project_id=str(agent.project_id) if agent.project_id else None,
                         data=agent.data,
                     )
 

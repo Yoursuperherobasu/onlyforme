@@ -166,7 +166,7 @@ class TeamsGraphAPIClient:
         headers = await self._get_headers()
         headers["Content-Type"] = "application/zip"
 
-        url = f"{self.GRAPH_BASE}/appCatalogs/teamsApps?requiresReview=false"
+        url = f"{self.GRAPH_BASE}/appCatalogs/teamsApps"
 
         async with httpx.AsyncClient() as client:
             response = await client.post(

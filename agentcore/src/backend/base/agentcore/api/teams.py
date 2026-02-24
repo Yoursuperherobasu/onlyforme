@@ -21,12 +21,13 @@ import secrets
 import time
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.utils import get_current_user_by_jwt
 from agentcore.schema.teams import (
     TeamsAppStatusResponse,
     TeamsPublishRequest,
@@ -196,13 +197,18 @@ async def test_bot_message() -> dict:
 
 @router.get("/oauth/authorize")
 async def teams_oauth_authorize(
-    current_user: CurrentActiveUser,
+    db: DbSession,
+    token: str = Query(..., description="JWT access token"),
 ) -> RedirectResponse:
     """Start the Microsoft OAuth flow.
 
     Redirects the user to Microsoft login to authorize Graph API access.
     Called from a popup window in the frontend.
+    Token is passed as query param because window.open() cannot set headers.
     """
+    # Manually validate the JWT token passed as query param
+    current_user = await get_current_user_by_jwt(token, db)
+
     teams_service = get_teams_service()
     redirect_uri = teams_service.get_redirect_uri()
 
