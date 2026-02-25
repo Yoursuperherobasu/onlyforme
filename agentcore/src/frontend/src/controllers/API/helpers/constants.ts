@@ -41,6 +41,7 @@ export const URLs = {
   ROLES: `roles`,
   HELP_SUPPORT: `help-support`,
   ORCHESTRATOR: `orchestrator`,
+  PACKAGES: `packages`,
   TEAMS: `teams`,
 } as const;
 

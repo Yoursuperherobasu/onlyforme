@@ -8,6 +8,7 @@ import { UseRequestProcessor } from "../../services/request-processor";
 interface IPostUploadFile {
   file: File;
   knowledgeBaseName?: string;
+  visibility?: string;
 }
 
 export const usePostUploadFileV2: useMutationFunctionType<
@@ -21,6 +22,9 @@ export const usePostUploadFileV2: useMutationFunctionType<
     formData.append("file", payload.file);
     if (payload.knowledgeBaseName) {
       formData.append("knowledge_base_name", payload.knowledgeBaseName);
+    }
+    if (payload.visibility) {
+      formData.append("visibility", payload.visibility);
     }
     const data = new Date().toISOString().split("Z")[0];
 
@@ -102,6 +106,9 @@ export const usePostUploadFileV2: useMutationFunctionType<
           if (!error) {
             queryClient.invalidateQueries({
               queryKey: ["useGetFilesV2"],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ["useGetKnowledgeBases"],
             });
           }
           options?.onSettled?.(data, error, variables, context);

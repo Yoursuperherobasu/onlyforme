@@ -4,6 +4,7 @@ import type { useMutationFunctionType } from "@/types/api";
 interface IPostUploadFile {
   file: File;
   knowledgeBaseName?: string;
+  visibility?: string;
 }
 
 export const customPostUploadFileV2: useMutationFunctionType<

@@ -117,6 +117,12 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug(f"Services initialized in {asyncio.get_event_loop().time() - start_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
+            logger.debug("Syncing packages to database")
+            from agentcore.services.packages import sync_packages_to_db
+            await sync_packages_to_db()
+            logger.debug(f"Packages synced in {asyncio.get_event_loop().time() - current_time:.2f}s")
+
+            current_time = asyncio.get_event_loop().time()
             logger.debug("Setting up LLM caching")
             setup_llm_caching()
             logger.debug(f"LLM caching setup in {asyncio.get_event_loop().time() - current_time:.2f}s")
