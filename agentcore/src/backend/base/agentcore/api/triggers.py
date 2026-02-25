@@ -210,16 +210,6 @@ async def _register_trigger(record) -> None:
             version=record.version or "",
         )
 
-    elif trigger_type == TriggerTypeEnum.EMAIL:
-        trigger_service = get_trigger_service()
-        await trigger_service.register_email_monitor(
-            trigger_config_id=record.id,
-            email_config=config,
-            poll_interval=config.get("poll_interval_seconds", 60),
-            agent_id=record.agent_id,
-            environment=record.environment,
-            version=record.version or "",
-        )
 
 
 async def _unregister_trigger(trigger_id: UUID, trigger_type: TriggerTypeEnum) -> None:

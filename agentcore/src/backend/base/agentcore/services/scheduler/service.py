@@ -69,8 +69,8 @@ class SchedulerService(Service):
                     await self._register_from_config(trigger)
 
                 logger.info(f"Loaded {len(triggers)} active schedule triggers")
-        except Exception:
-            logger.exception("Failed to load active schedules from database")
+        except Exception as e:
+            logger.warning(f"Failed to load active schedules (table may not exist yet): {e}")
 
     async def add_schedule(
         self,

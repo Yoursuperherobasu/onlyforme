@@ -17,7 +17,6 @@ class TriggerTypeEnum(str, Enum):
 
     SCHEDULE = "schedule"
     FOLDER_MONITOR = "folder_monitor"
-    EMAIL = "email"
 
 
 class TriggerExecutionStatusEnum(str, Enum):
@@ -55,7 +54,7 @@ class TriggerConfigBase(SQLModel):
     )
     trigger_config: dict = Field(
         sa_column=Column(JSON, nullable=False),
-        description="Type-specific configuration (cron, folder path, IMAP config, etc.).",
+        description="Type-specific configuration (cron, folder path, etc.).",
     )
     is_active: bool = Field(default=True, nullable=False)
     environment: str = Field(

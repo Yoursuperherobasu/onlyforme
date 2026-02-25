@@ -13,10 +13,10 @@ from agentcore.services.base import Service
 
 
 class TriggerService(Service):
-    """Manages non-schedule triggers: folder monitors and email monitors.
+    """Manages non-schedule triggers: folder monitors.
 
     Runs background asyncio tasks that poll external sources (local folders,
-    Azure Blob, SharePoint, IMAP) and invoke agent flows when new data is detected.
+    Azure Blob, SharePoint) and invoke agent flows when new data is detected.
     """
 
     name = "trigger_service"
@@ -60,15 +60,9 @@ class TriggerService(Service):
                 for trigger in folder_triggers:
                     await self.register_folder_monitor(trigger)
 
-                # Load email monitors
-                email_triggers = await get_active_triggers_by_type(session, TriggerTypeEnum.EMAIL)
-                for trigger in email_triggers:
-                    await self.register_email_monitor(trigger)
-
-                total = len(folder_triggers) + len(email_triggers)
-                logger.info(f"Loaded {total} active monitors ({len(folder_triggers)} folder, {len(email_triggers)} email)")
-        except Exception:
-            logger.exception("Failed to load active monitors from database")
+                logger.info(f"Loaded {len(folder_triggers)} active folder monitors")
+        except Exception as e:
+            logger.warning(f"Failed to load active monitors (table may not exist yet): {e}")
 
     async def register_folder_monitor(self, trigger_record) -> None:
         """Register a folder monitor from a TriggerConfigTable record."""
@@ -91,27 +85,6 @@ class TriggerService(Service):
         )
         self._monitors[task_id] = task
         logger.info(f"Registered folder monitor {task_id} for agent {trigger_record.agent_id}")
-
-    async def register_email_monitor(self, trigger_record) -> None:
-        """Register an email monitor from a TriggerConfigTable record."""
-        task_id = str(trigger_record.id)
-        if task_id in self._monitors:
-            await self.unregister(trigger_record.id)
-
-        config = trigger_record.trigger_config or {}
-
-        task = asyncio.create_task(
-            self._email_monitor_loop(
-                trigger_config_id=trigger_record.id,
-                agent_id=trigger_record.agent_id,
-                config=config,
-                environment=trigger_record.environment,
-                version=trigger_record.version,
-            ),
-            name=f"email_monitor_{task_id}",
-        )
-        self._monitors[task_id] = task
-        logger.info(f"Registered email monitor {task_id} for agent {trigger_record.agent_id}")
 
     async def unregister(self, trigger_config_id: UUID) -> bool:
         """Unregister and cancel a monitor task."""
@@ -352,124 +325,6 @@ class TriggerService(Service):
                     await asyncio.to_thread(os.rename, src, dst)
                 except OSError:
                     logger.warning(f"Could not move {src} to {dst}")
-
-    # ── Email Monitor Loop ─────────────────────────────────────────────────
-
-    async def _email_monitor_loop(
-        self,
-        trigger_config_id: UUID,
-        agent_id: UUID,
-        config: dict,
-        environment: str,
-        version: str | None,
-    ) -> None:
-        """Poll an IMAP inbox for new emails and trigger the agent flow."""
-        poll_interval = config.get("poll_interval_seconds", 60)
-        batch_size = config.get("batch_size", 5)
-        task_id = str(trigger_config_id)
-
-        logger.info(f"Email monitor started: poll={poll_interval}s, batch={batch_size}")
-
-        while True:
-            try:
-                await asyncio.sleep(poll_interval)
-
-                emails = await self._fetch_new_emails(config, batch_size)
-                if not emails:
-                    continue
-
-                logger.info(f"Email monitor {task_id}: found {len(emails)} new emails")
-
-                await self._execute_trigger(
-                    trigger_config_id=trigger_config_id,
-                    agent_id=agent_id,
-                    payload={"emails": emails},
-                    environment=environment,
-                    version=version,
-                )
-
-            except asyncio.CancelledError:
-                logger.debug(f"Email monitor {task_id} cancelled")
-                break
-            except Exception:
-                logger.exception(f"Error in email monitor {task_id}")
-                await asyncio.sleep(poll_interval)
-
-    async def _fetch_new_emails(self, config: dict, batch_size: int) -> list[dict]:
-        """Fetch new unseen emails via IMAP."""
-        import imaplib
-        import email as email_lib
-
-        server = config.get("imap_server", "")
-        port = config.get("imap_port", 993)
-        user = config.get("email_user", "")
-        password = config.get("email_password", "")
-        folder = config.get("folder", "INBOX")
-        mark_as_read = config.get("mark_as_read", True)
-
-        if not server or not user or not password:
-            return []
-
-        emails = []
-
-        def _do_fetch():
-            nonlocal emails
-            mail = imaplib.IMAP4_SSL(server, port)
-            try:
-                mail.login(user, password)
-                mail.select(folder)
-
-                # Search for unseen emails
-                _, msg_nums = mail.search(None, "UNSEEN")
-                msg_ids = msg_nums[0].split()
-
-                if not msg_ids:
-                    return
-
-                # Limit to batch size
-                msg_ids = msg_ids[:batch_size]
-
-                for msg_id in msg_ids:
-                    _, msg_data = mail.fetch(msg_id, "(RFC822)")
-                    if not msg_data or not msg_data[0]:
-                        continue
-
-                    raw_email = msg_data[0][1]
-                    msg = email_lib.message_from_bytes(raw_email)
-
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                payload = part.get_payload(decode=True)
-                                if payload:
-                                    body = payload.decode("utf-8", errors="replace")
-                                    break
-                    else:
-                        payload = msg.get_payload(decode=True)
-                        if payload:
-                            body = payload.decode("utf-8", errors="replace")
-
-                    emails.append({
-                        "subject": msg.get("Subject", ""),
-                        "from": msg.get("From", ""),
-                        "to": msg.get("To", ""),
-                        "date": msg.get("Date", ""),
-                        "body": body[:10000],  # Limit body size
-                        "message_id": msg.get("Message-ID", ""),
-                    })
-
-                    if mark_as_read:
-                        mail.store(msg_id, "+FLAGS", "\\Seen")
-
-            finally:
-                try:
-                    mail.logout()
-                except Exception:
-                    pass
-
-        await asyncio.to_thread(_do_fetch)
-        return emails
 
     # ── Common Execution ───────────────────────────────────────────────────
 

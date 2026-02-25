@@ -7,18 +7,15 @@ from agentcore.components._importing import import_mod
 if TYPE_CHECKING:
     from agentcore.components.triggers.schedule_trigger import ScheduleTrigger
     from agentcore.components.triggers.folder_monitor import FolderMonitor
-    from agentcore.components.triggers.email_trigger import EmailTrigger
 
 _dynamic_imports = {
     "ScheduleTrigger": "schedule_trigger",
     "FolderMonitor": "folder_monitor",
-    "EmailTrigger": "email_trigger",
 }
 
 __all__ = [
     "ScheduleTrigger",
     "FolderMonitor",
-    "EmailTrigger",
 ]
 
 
