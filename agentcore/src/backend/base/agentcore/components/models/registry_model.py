@@ -313,7 +313,7 @@ class RegistryModelComponent(LCModelNode):
                 azure_deployment=provider_config.get("azure_deployment", model_name),
                 azure_endpoint=base_url or provider_config.get("azure_endpoint", ""),
                 api_key=api_key,
-                api_version=provider_config.get("api_version", "2024-02-15-preview"),
+                api_version=provider_config.get("api_version", "2025-10-01-preview"),
                 temperature=temperature,
                 max_tokens=max_tokens,
                 streaming=stream,
