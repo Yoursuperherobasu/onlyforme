@@ -1,5 +1,5 @@
-import io
 import mimetypes
+import os
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -9,12 +9,6 @@ from loguru import logger
 from agentcore.custom.custom_node.node import Node
 from agentcore.io import BoolInput, DropdownInput, HandleInput, IntInput, Output
 from agentcore.schema.data import Data
-
-# ═══════════════════════════════════════════════════════════════
-#  HARDCODED API KEY — REPLACE WITH YOUR ACTUAL KEY
-# ═══════════════════════════════════════════════════════════════
-GEMINI_API_KEY = "AIzaSyC3UhBn_HLOEkvtbo1D8jhS58enFkaDjDo"
-# ═══════════════════════════════════════════════════════════════
 
 
 class GeminiOCRExtractorNode(Node):
@@ -68,7 +62,7 @@ class GeminiOCRExtractorNode(Node):
     def extract_documents(self) -> list[Data]:
         import google.generativeai as genai
 
-        genai.configure(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
         self._model = genai.GenerativeModel(self.gemini_model)
         self._genai = genai
 
@@ -90,38 +84,50 @@ class GeminiOCRExtractorNode(Node):
             self.status = "No files found. Check Knowledge Base connection."
             return [Data(text="No files found to process.", data={"error": True})]
 
-        # ── Extract text from each file ──
-        all_docs: list[Data] = []
+        # ── Extract text from each file, then merge pages into one document per file ──
+        merged_docs: list[Data] = []
         errors: list[str] = []
 
         for path in paths:
             try:
                 logger.info(f"[OCR] Extracting: {path} (exists={path.exists()})")
-                docs = self._extract_file(path)
-                logger.info(f"[OCR] Got {len(docs)} doc(s) from {path.name}")
-                for d in docs:
-                    logger.info(f"[OCR]   text length: {len(d.text) if d.text else 0}")
-                all_docs.extend(docs)
+                page_docs = self._extract_file(path)
+                logger.info(f"[OCR] Got {len(page_docs)} page(s) from {path.name}")
+
+                if not page_docs:
+                    continue
+
+                # Merge all pages into a single document for proper chunking
+                full_text = "\n\n".join(d.text for d in page_docs if d.text)
+                if full_text.strip():
+                    merged_docs.append(Data(text=full_text, data={
+                        "source_file": path.name,
+                        "file_path": str(path),
+                        "total_pages": len(page_docs),
+                        "file_type": path.suffix.lstrip(".").lower(),
+                        "extraction_method": "gemini_ocr",
+                    }))
+                    logger.info(f"[OCR] Merged {len(page_docs)} page(s) into 1 document ({len(full_text)} chars)")
             except Exception as e:
                 err_msg = f"{path.name}: {type(e).__name__}: {e}"
                 logger.error(f"[OCR] Error extracting {path}: {err_msg}")
                 logger.error(traceback.format_exc())
                 errors.append(err_msg)
 
-        status = f"Extracted {len(all_docs)} document(s) from {len(paths)} file(s)"
+        status = f"Extracted {len(merged_docs)} document(s) from {len(paths)} file(s)"
         if errors:
             status += f" | Errors: {'; '.join(errors[:3])}"
         self.status = status
         logger.info(f"[OCR] Final status: {status}")
 
         # If extraction produced nothing, return error info
-        if not all_docs:
+        if not merged_docs:
             return [Data(
                 text=f"Extraction returned 0 documents. Errors: {'; '.join(errors)}",
                 data={"error": True, "paths": [str(p) for p in paths]},
             )]
 
-        return all_docs
+        return merged_docs
 
     # ══════════════════════════════════════════════════════════
     #  PATH RESOLUTION — type-agnostic, no isinstance on custom types
@@ -214,38 +220,66 @@ class GeminiOCRExtractorNode(Node):
         return []
 
     def _extract_pdf(self, path: Path) -> list[Data]:
-        from PyPDF2 import PdfReader
+        import fitz  # PyMuPDF — already in dependencies
+
         docs = []
-        reader = PdfReader(str(path))
-        for page_num, page in enumerate(reader.pages, start=1):
-            native_text = (page.extract_text() or "").strip()
+        page_errors = []
+        pdf_doc = fitz.open(str(path))
+        total_pages = len(pdf_doc)
+        logger.info(f"[OCR] PDF '{path.name}' has {total_pages} page(s)")
+
+        for page_num in range(total_pages):
+            page = pdf_doc[page_num]
+            display_page = page_num + 1
+
+            # Step 1: try native text extraction
+            native_text = (page.get_text("text") or "").strip()
             if len(native_text) >= self.min_native_text_length:
+                logger.info(f"[OCR] Page {display_page}: native text OK ({len(native_text)} chars)")
                 docs.append(Data(text=native_text, data={
                     "source_file": path.name, "file_path": str(path),
-                    "page_number": page_num, "total_pages": len(reader.pages),
+                    "page_number": display_page, "total_pages": total_pages,
                     "file_type": "pdf", "extraction_method": "native",
                 }))
-            else:
-                ocr_text = self._ocr_pdf_page(path, page_num)
+                continue
+
+            # Step 2: scanned page — render to image and OCR via Gemini Vision
+            logger.info(f"[OCR] Page {display_page}: native text too short ({len(native_text)} chars), using Gemini Vision")
+            try:
+                ocr_text = self._ocr_pdf_page(pdf_doc, page_num)
                 if ocr_text:
                     docs.append(Data(text=ocr_text, data={
                         "source_file": path.name, "file_path": str(path),
-                        "page_number": page_num, "total_pages": len(reader.pages),
+                        "page_number": display_page, "total_pages": total_pages,
                         "file_type": "pdf", "extraction_method": "gemini_vision",
                     }))
+                else:
+                    page_errors.append(f"Page {display_page}: Gemini returned empty text")
+            except Exception as e:
+                page_errors.append(f"Page {display_page}: {type(e).__name__}: {e}")
+
+        pdf_doc.close()
+
+        # If no pages produced any text, raise so the error surfaces to the user
+        if not docs and page_errors:
+            raise RuntimeError(
+                f"All {total_pages} page(s) failed extraction. "
+                f"Errors: {'; '.join(page_errors[:5])}"
+            )
+
         return docs
 
-    def _ocr_pdf_page(self, pdf_path: Path, page_number: int) -> Optional[str]:
-        try:
-            from pdf2image import convert_from_path
-            images = convert_from_path(str(pdf_path), first_page=page_number, last_page=page_number, dpi=self.ocr_dpi)
-            if not images:
-                return None
-            buf = io.BytesIO()
-            images[0].save(buf, format="PNG")
-            return self._gemini_vision_extract(buf.getvalue(), "image/png")
-        except Exception:
-            return None
+    def _ocr_pdf_page(self, pdf_doc, page_index: int) -> Optional[str]:
+        """Render a PDF page to PNG using PyMuPDF and send to Gemini Vision."""
+        import fitz
+
+        page = pdf_doc[page_index]
+        zoom = self.ocr_dpi / 72.0
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        png_bytes = pix.tobytes("png")
+        logger.info(f"[OCR] Rendered page {page_index + 1} to PNG ({len(png_bytes)} bytes)")
+        return self._gemini_vision_extract(png_bytes, "image/png")
 
     def _extract_image(self, path: Path) -> list[Data]:
         mime, _ = mimetypes.guess_type(str(path))
@@ -348,13 +382,11 @@ class GeminiOCRExtractorNode(Node):
             "Format tables as markdown tables. "
             "Return ONLY the extracted text, no commentary or explanation."
         )
-        try:
-            response = self._model.generate_content(
-                [prompt, {"mime_type": mime_type, "data": image_bytes}],
-                generation_config=self._genai.types.GenerationConfig(temperature=0.0, max_output_tokens=4096),
-            )
-            text = response.text.strip()
-            return text if text else None
-        except Exception as e:
-            logger.error(f"[OCR] Gemini vision error: {e}")
-            return None
+        logger.info(f"[OCR] Calling Gemini Vision ({self.gemini_model}) with {len(image_bytes)} bytes ({mime_type})")
+        response = self._model.generate_content(
+            [prompt, {"mime_type": mime_type, "data": image_bytes}],
+            generation_config=self._genai.types.GenerationConfig(temperature=0.0, max_output_tokens=4096),
+        )
+        text = response.text.strip()
+        logger.info(f"[OCR] Gemini Vision returned {len(text)} chars")
+        return text if text else None

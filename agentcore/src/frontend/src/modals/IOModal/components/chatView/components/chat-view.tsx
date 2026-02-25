@@ -216,21 +216,16 @@ export default function ChatView({
             ))}
           </div>
         </div>
-        <div
-          className={
-            displayLoadingMessage
-              ? "mx-auto w-full max-w-4xl px-4 py-2 word-break-break-word md:px-6"
-              : ""
-          }
-          ref={ref}
-        >
-          {displayLoadingMessage &&
-            !(chatHistory?.[chatHistory.length - 1]?.category === "error") &&
-            agentRunningSkeletonMemo}
-        </div>
       </StickToBottom.Content>
 
-      <div className="border-t border-border bg-background px-4 pb-4 pt-3 md:px-6">
+      {displayLoadingMessage &&
+        !(chatHistory?.[chatHistory.length - 1]?.category === "error") && (
+        <div className="flex shrink-0 justify-center py-3">
+          {agentRunningSkeletonMemo}
+        </div>
+      )}
+
+      <div className="shrink-0 border-t border-border bg-background px-4 pb-4 pt-3 md:px-6">
         <div className="mx-auto w-full max-w-4xl">
           <CustomChatInput
             playgroundPage={!!playgroundPage}

@@ -57,6 +57,7 @@ import ObservabilityDashboard from "./pages/ObservabilityPage";
 import EvaluationPage from "./pages/EvaluationPage";
 import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
+import ConnectorsCatalogueView from "./pages/ConnectorsCatalogue";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const AccessControlPage = lazy(() => import("./pages/AccessControlPage"));
@@ -154,9 +155,15 @@ const router = createBrowserRouter(
                     }
                   />
                   <Route
+                    path="connectors"
+                    element={
+                        <ConnectorsCatalogueView />
+                    }
+                  />
+                  <Route
                     path="mcp-servers"
                     element={
-                     
+
                         <MCPServersPage />
                    
                     }
