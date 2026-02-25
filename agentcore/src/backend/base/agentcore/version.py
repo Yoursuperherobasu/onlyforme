@@ -8,7 +8,6 @@ def get_version() -> str:
     """
     names = [
         "agentcore",
-        "agentcore-base"
     ]
     version = None
     for pkg_name in names:
