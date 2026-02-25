@@ -1,0 +1,592 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import UUID
+
+from loguru import logger
+
+from agentcore.services.base import Service
+
+
+class TriggerService(Service):
+    """Manages non-schedule triggers: folder monitors and email monitors.
+
+    Runs background asyncio tasks that poll external sources (local folders,
+    Azure Blob, SharePoint, IMAP) and invoke agent flows when new data is detected.
+    """
+
+    name = "trigger_service"
+
+    def __init__(self) -> None:
+        self._monitors: dict[str, asyncio.Task] = {}
+        self._seen_files: dict[str, set[str]] = {}  # trigger_id -> set of seen file keys
+        self._started = False
+
+    def start(self) -> None:
+        """Start the trigger service."""
+        self._started = True
+        logger.info("TriggerService started")
+        self.set_ready()
+
+    async def teardown(self) -> None:
+        """Cancel all monitor tasks and clean up."""
+        for task_id, task in self._monitors.items():
+            if not task.done():
+                task.cancel()
+                logger.debug(f"Cancelled monitor task {task_id}")
+        self._monitors.clear()
+        self._seen_files.clear()
+        self._started = False
+        logger.info("TriggerService shut down")
+
+    async def load_active_monitors(self) -> None:
+        """Load all active folder/email monitors from the database."""
+        from agentcore.services.deps import get_db_service
+
+        try:
+            db_service = get_db_service()
+            async with db_service.with_session() as session:
+                from agentcore.services.database.models.trigger_config.crud import (
+                    get_active_triggers_by_type,
+                )
+                from agentcore.services.database.models.trigger_config.model import TriggerTypeEnum
+
+                # Load folder monitors
+                folder_triggers = await get_active_triggers_by_type(session, TriggerTypeEnum.FOLDER_MONITOR)
+                for trigger in folder_triggers:
+                    await self.register_folder_monitor(trigger)
+
+                # Load email monitors
+                email_triggers = await get_active_triggers_by_type(session, TriggerTypeEnum.EMAIL)
+                for trigger in email_triggers:
+                    await self.register_email_monitor(trigger)
+
+                total = len(folder_triggers) + len(email_triggers)
+                logger.info(f"Loaded {total} active monitors ({len(folder_triggers)} folder, {len(email_triggers)} email)")
+        except Exception:
+            logger.exception("Failed to load active monitors from database")
+
+    async def register_folder_monitor(self, trigger_record) -> None:
+        """Register a folder monitor from a TriggerConfigTable record."""
+        task_id = str(trigger_record.id)
+        if task_id in self._monitors:
+            await self.unregister(trigger_record.id)
+
+        config = trigger_record.trigger_config or {}
+        self._seen_files[task_id] = set()
+
+        task = asyncio.create_task(
+            self._folder_monitor_loop(
+                trigger_config_id=trigger_record.id,
+                agent_id=trigger_record.agent_id,
+                config=config,
+                environment=trigger_record.environment,
+                version=trigger_record.version,
+            ),
+            name=f"folder_monitor_{task_id}",
+        )
+        self._monitors[task_id] = task
+        logger.info(f"Registered folder monitor {task_id} for agent {trigger_record.agent_id}")
+
+    async def register_email_monitor(self, trigger_record) -> None:
+        """Register an email monitor from a TriggerConfigTable record."""
+        task_id = str(trigger_record.id)
+        if task_id in self._monitors:
+            await self.unregister(trigger_record.id)
+
+        config = trigger_record.trigger_config or {}
+
+        task = asyncio.create_task(
+            self._email_monitor_loop(
+                trigger_config_id=trigger_record.id,
+                agent_id=trigger_record.agent_id,
+                config=config,
+                environment=trigger_record.environment,
+                version=trigger_record.version,
+            ),
+            name=f"email_monitor_{task_id}",
+        )
+        self._monitors[task_id] = task
+        logger.info(f"Registered email monitor {task_id} for agent {trigger_record.agent_id}")
+
+    async def unregister(self, trigger_config_id: UUID) -> bool:
+        """Unregister and cancel a monitor task."""
+        task_id = str(trigger_config_id)
+        task = self._monitors.pop(task_id, None)
+        self._seen_files.pop(task_id, None)
+        if task and not task.done():
+            task.cancel()
+            logger.info(f"Unregistered monitor {task_id}")
+            return True
+        return False
+
+    # ── Folder Monitor Loop ────────────────────────────────────────────────
+
+    async def _folder_monitor_loop(
+        self,
+        trigger_config_id: UUID,
+        agent_id: UUID,
+        config: dict,
+        environment: str,
+        version: str | None,
+    ) -> None:
+        """Poll a folder for new/changed files and trigger the agent flow."""
+        storage_type = config.get("storage_type", "Local")
+        poll_interval = config.get("poll_interval_seconds", 30)
+        batch_size = config.get("batch_size", 10)
+        trigger_on = config.get("trigger_on", "New Files")
+        file_types = config.get("file_types", [])
+        task_id = str(trigger_config_id)
+
+        logger.info(
+            f"Folder monitor started: storage={storage_type}, "
+            f"poll={poll_interval}s, batch={batch_size}"
+        )
+
+        while True:
+            try:
+                await asyncio.sleep(poll_interval)
+
+                new_files = []
+                if storage_type == "Local":
+                    new_files = await self._scan_local_folder(task_id, config, file_types, trigger_on)
+                elif storage_type == "Azure Blob Storage":
+                    new_files = await self._scan_azure_blob(task_id, config, file_types, trigger_on)
+                elif storage_type == "SharePoint":
+                    new_files = await self._scan_sharepoint(task_id, config, file_types, trigger_on)
+
+                if not new_files:
+                    continue
+
+                # Apply batch size limit
+                if batch_size > 0:
+                    new_files = new_files[:batch_size]
+
+                logger.info(f"Folder monitor {task_id}: found {len(new_files)} new files")
+
+                # Trigger the agent flow with file list
+                await self._execute_trigger(
+                    trigger_config_id=trigger_config_id,
+                    agent_id=agent_id,
+                    payload={"files": new_files, "storage_type": storage_type},
+                    environment=environment,
+                    version=version,
+                )
+
+                # Move processed files if configured
+                if config.get("move_processed", True) and storage_type == "Local":
+                    await self._move_processed_files(config, new_files)
+
+            except asyncio.CancelledError:
+                logger.debug(f"Folder monitor {task_id} cancelled")
+                break
+            except Exception:
+                logger.exception(f"Error in folder monitor {task_id}")
+                await asyncio.sleep(poll_interval)
+
+    async def _scan_local_folder(
+        self, task_id: str, config: dict, file_types: list[str], trigger_on: str,
+    ) -> list[dict]:
+        """Scan a local folder for new/modified files."""
+        folder_path = config.get("folder_path", ".")
+        if not os.path.isdir(folder_path):
+            logger.warning(f"Folder monitor {task_id}: path '{folder_path}' does not exist")
+            return []
+
+        seen = self._seen_files.get(task_id, set())
+        new_files = []
+
+        for entry in os.scandir(folder_path):
+            if not entry.is_file():
+                continue
+
+            # Filter by file type
+            if file_types:
+                ext = Path(entry.name).suffix.lstrip(".")
+                if ext not in file_types:
+                    continue
+
+            file_key = f"{entry.name}:{entry.stat().st_mtime}"
+
+            if trigger_on in ("New Files", "Both") and entry.name not in {
+                k.split(":")[0] for k in seen
+            }:
+                new_files.append({
+                    "name": entry.name,
+                    "path": entry.path,
+                    "size": entry.stat().st_size,
+                    "modified": datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc).isoformat(),
+                })
+                seen.add(file_key)
+            elif trigger_on in ("Modified Files", "Both") and file_key not in seen:
+                new_files.append({
+                    "name": entry.name,
+                    "path": entry.path,
+                    "size": entry.stat().st_size,
+                    "modified": datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc).isoformat(),
+                })
+                seen.add(file_key)
+
+        self._seen_files[task_id] = seen
+        return new_files
+
+    async def _scan_azure_blob(
+        self, task_id: str, config: dict, file_types: list[str], trigger_on: str,
+    ) -> list[dict]:
+        """Scan an Azure Blob container for new/modified blobs."""
+        try:
+            from azure.storage.blob.aio import BlobServiceClient
+        except ImportError:
+            logger.error("azure-storage-blob not installed. Install with: pip install azure-storage-blob")
+            return []
+
+        connection_string = config.get("azure_connection_string", "")
+        container_name = config.get("azure_container", "")
+        prefix = config.get("azure_prefix", "")
+
+        if not connection_string or not container_name:
+            return []
+
+        seen = self._seen_files.get(task_id, set())
+        new_files = []
+
+        async with BlobServiceClient.from_connection_string(connection_string) as client:
+            container = client.get_container_client(container_name)
+            async for blob in container.list_blobs(name_starts_with=prefix or None):
+                if file_types:
+                    ext = Path(blob.name).suffix.lstrip(".")
+                    if ext not in file_types:
+                        continue
+
+                blob_key = f"{blob.name}:{blob.last_modified.isoformat() if blob.last_modified else ''}"
+
+                if blob_key not in seen:
+                    new_files.append({
+                        "name": blob.name,
+                        "path": f"azure://{container_name}/{blob.name}",
+                        "size": blob.size,
+                        "modified": blob.last_modified.isoformat() if blob.last_modified else None,
+                    })
+                    seen.add(blob_key)
+
+        self._seen_files[task_id] = seen
+        return new_files
+
+    async def _scan_sharepoint(
+        self, task_id: str, config: dict, file_types: list[str], trigger_on: str,
+    ) -> list[dict]:
+        """Scan a SharePoint document library for new/modified files."""
+        try:
+            from office365.runtime.auth.client_credential import ClientCredential
+            from office365.sharepoint.client_context import ClientContext
+        except ImportError:
+            logger.error(
+                "Office365-REST-Python-Client not installed. "
+                "Install with: pip install Office365-REST-Python-Client"
+            )
+            return []
+
+        site_url = config.get("sharepoint_site_url", "")
+        client_id = config.get("sharepoint_client_id", "")
+        client_secret = config.get("sharepoint_client_secret", "")
+        tenant_id = config.get("sharepoint_tenant_id", "")
+        library = config.get("sharepoint_library", "Shared Documents")
+        folder_path = config.get("sharepoint_folder", "")
+
+        if not site_url or not client_id or not client_secret:
+            return []
+
+        seen = self._seen_files.get(task_id, set())
+        new_files = []
+
+        try:
+            credentials = ClientCredential(client_id, client_secret)
+            ctx = ClientContext(site_url).with_credentials(credentials)
+
+            target_folder = ctx.web.get_folder_by_server_relative_url(
+                f"{library}/{folder_path}" if folder_path else library
+            )
+            files = target_folder.files
+            ctx.load(files)
+            await asyncio.to_thread(ctx.execute_query)
+
+            for sp_file in files:
+                if file_types:
+                    ext = Path(sp_file.name).suffix.lstrip(".")
+                    if ext not in file_types:
+                        continue
+
+                modified = sp_file.time_last_modified if hasattr(sp_file, "time_last_modified") else ""
+                file_key = f"{sp_file.name}:{modified}"
+
+                if file_key not in seen:
+                    new_files.append({
+                        "name": sp_file.name,
+                        "path": sp_file.serverRelativeUrl,
+                        "size": sp_file.length if hasattr(sp_file, "length") else 0,
+                        "modified": str(modified),
+                    })
+                    seen.add(file_key)
+
+        except Exception:
+            logger.exception(f"Error scanning SharePoint for trigger {task_id}")
+
+        self._seen_files[task_id] = seen
+        return new_files
+
+    async def _move_processed_files(self, config: dict, files: list[dict]) -> None:
+        """Move processed local files to a 'processed' subfolder."""
+        folder_path = config.get("folder_path", ".")
+        processed_dir = os.path.join(folder_path, "processed")
+        os.makedirs(processed_dir, exist_ok=True)
+
+        for file_info in files:
+            src = file_info.get("path", "")
+            if src and os.path.isfile(src):
+                dst = os.path.join(processed_dir, os.path.basename(src))
+                try:
+                    await asyncio.to_thread(os.rename, src, dst)
+                except OSError:
+                    logger.warning(f"Could not move {src} to {dst}")
+
+    # ── Email Monitor Loop ─────────────────────────────────────────────────
+
+    async def _email_monitor_loop(
+        self,
+        trigger_config_id: UUID,
+        agent_id: UUID,
+        config: dict,
+        environment: str,
+        version: str | None,
+    ) -> None:
+        """Poll an IMAP inbox for new emails and trigger the agent flow."""
+        poll_interval = config.get("poll_interval_seconds", 60)
+        batch_size = config.get("batch_size", 5)
+        task_id = str(trigger_config_id)
+
+        logger.info(f"Email monitor started: poll={poll_interval}s, batch={batch_size}")
+
+        while True:
+            try:
+                await asyncio.sleep(poll_interval)
+
+                emails = await self._fetch_new_emails(config, batch_size)
+                if not emails:
+                    continue
+
+                logger.info(f"Email monitor {task_id}: found {len(emails)} new emails")
+
+                await self._execute_trigger(
+                    trigger_config_id=trigger_config_id,
+                    agent_id=agent_id,
+                    payload={"emails": emails},
+                    environment=environment,
+                    version=version,
+                )
+
+            except asyncio.CancelledError:
+                logger.debug(f"Email monitor {task_id} cancelled")
+                break
+            except Exception:
+                logger.exception(f"Error in email monitor {task_id}")
+                await asyncio.sleep(poll_interval)
+
+    async def _fetch_new_emails(self, config: dict, batch_size: int) -> list[dict]:
+        """Fetch new unseen emails via IMAP."""
+        import imaplib
+        import email as email_lib
+
+        server = config.get("imap_server", "")
+        port = config.get("imap_port", 993)
+        user = config.get("email_user", "")
+        password = config.get("email_password", "")
+        folder = config.get("folder", "INBOX")
+        mark_as_read = config.get("mark_as_read", True)
+
+        if not server or not user or not password:
+            return []
+
+        emails = []
+
+        def _do_fetch():
+            nonlocal emails
+            mail = imaplib.IMAP4_SSL(server, port)
+            try:
+                mail.login(user, password)
+                mail.select(folder)
+
+                # Search for unseen emails
+                _, msg_nums = mail.search(None, "UNSEEN")
+                msg_ids = msg_nums[0].split()
+
+                if not msg_ids:
+                    return
+
+                # Limit to batch size
+                msg_ids = msg_ids[:batch_size]
+
+                for msg_id in msg_ids:
+                    _, msg_data = mail.fetch(msg_id, "(RFC822)")
+                    if not msg_data or not msg_data[0]:
+                        continue
+
+                    raw_email = msg_data[0][1]
+                    msg = email_lib.message_from_bytes(raw_email)
+
+                    body = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            if part.get_content_type() == "text/plain":
+                                payload = part.get_payload(decode=True)
+                                if payload:
+                                    body = payload.decode("utf-8", errors="replace")
+                                    break
+                    else:
+                        payload = msg.get_payload(decode=True)
+                        if payload:
+                            body = payload.decode("utf-8", errors="replace")
+
+                    emails.append({
+                        "subject": msg.get("Subject", ""),
+                        "from": msg.get("From", ""),
+                        "to": msg.get("To", ""),
+                        "date": msg.get("Date", ""),
+                        "body": body[:10000],  # Limit body size
+                        "message_id": msg.get("Message-ID", ""),
+                    })
+
+                    if mark_as_read:
+                        mail.store(msg_id, "+FLAGS", "\\Seen")
+
+            finally:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
+
+        await asyncio.to_thread(_do_fetch)
+        return emails
+
+    # ── Common Execution ───────────────────────────────────────────────────
+
+    async def _execute_trigger(
+        self,
+        trigger_config_id: UUID,
+        agent_id: UUID,
+        payload: dict,
+        environment: str,
+        version: str | None,
+    ) -> None:
+        """Execute the agent flow with the trigger payload."""
+        from agentcore.services.deps import get_db_service
+
+        start_time = time.perf_counter()
+
+        try:
+            db_service = get_db_service()
+            async with db_service.with_session() as session:
+                from agentcore.services.database.models.trigger_config.crud import (
+                    log_trigger_execution,
+                    update_trigger_last_run,
+                )
+                from agentcore.services.database.models.trigger_config.model import (
+                    TriggerExecutionStatusEnum,
+                )
+
+                await log_trigger_execution(
+                    session,
+                    trigger_config_id=trigger_config_id,
+                    agent_id=agent_id,
+                    status=TriggerExecutionStatusEnum.STARTED,
+                    payload=payload,
+                )
+                await update_trigger_last_run(session, trigger_config_id)
+
+            # Run the agent flow
+            await self._run_agent_flow(agent_id, environment, version, trigger_config_id, payload)
+
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            async with db_service.with_session() as session:
+                await log_trigger_execution(
+                    session,
+                    trigger_config_id=trigger_config_id,
+                    agent_id=agent_id,
+                    status=TriggerExecutionStatusEnum.SUCCESS,
+                    execution_duration_ms=elapsed_ms,
+                )
+
+        except Exception as exc:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            logger.exception(f"Trigger execution failed: {exc}")
+
+            try:
+                async with db_service.with_session() as session:
+                    from agentcore.services.database.models.trigger_config.crud import log_trigger_execution
+                    from agentcore.services.database.models.trigger_config.model import TriggerExecutionStatusEnum
+
+                    await log_trigger_execution(
+                        session,
+                        trigger_config_id=trigger_config_id,
+                        agent_id=agent_id,
+                        status=TriggerExecutionStatusEnum.ERROR,
+                        error_message=str(exc),
+                        execution_duration_ms=elapsed_ms,
+                    )
+            except Exception:
+                logger.exception("Failed to log trigger execution error")
+
+    async def _run_agent_flow(
+        self,
+        agent_id: UUID,
+        environment: str,
+        version: str | None,
+        trigger_config_id: UUID,
+        payload: dict,
+    ) -> None:
+        """Invoke the agent flow using the existing execution pipeline."""
+        import json
+
+        from agentcore.services.deps import get_db_service
+
+        db_service = get_db_service()
+        async with db_service.with_session() as session:
+            from sqlmodel import select
+
+            from agentcore.services.database.models.agent.model import Agent
+
+            stmt = select(Agent).where(Agent.id == agent_id)
+            result = await session.exec(stmt)
+            agent = result.first()
+
+            if not agent:
+                msg = f"Agent {agent_id} not found"
+                raise ValueError(msg)
+
+        from agentcore.api.endpoints import _resolve_agent_data_for_env, simple_run_agent_task
+        from agentcore.api.schemas import SimplifiedAPIRequest
+
+        agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
+            agent_id=agent.id,
+            env=environment,
+            version=version or "v1",
+        )
+
+        input_request = SimplifiedAPIRequest(
+            input_value=json.dumps(payload),
+            input_type="chat",
+            output_type="chat",
+            tweaks={},
+            session_id=None,
+        )
+
+        await simple_run_agent_task(
+            agent=agent,
+            input_request=input_request,
+            api_key_user=None,
+            prod_deployment=prod_deployment,
+            uat_deployment=uat_deployment,
+        )

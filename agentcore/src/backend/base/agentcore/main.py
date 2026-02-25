@@ -43,8 +43,10 @@ from agentcore.logging.logger import configure
 from agentcore.middleware import ContentSizeLimitMiddleware
 from agentcore.services.deps import (
     get_queue_service,
+    get_scheduler_service,
     get_settings_service,
     get_telemetry_service,
+    get_trigger_service,
 )
 from agentcore.services.utils import initialize_services, teardown_services
 
@@ -141,6 +143,20 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug("Loading mcp servers for projects")
             await init_mcp_servers()
             logger.debug(f"mcp servers loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
+
+            current_time = asyncio.get_event_loop().time()
+            logger.debug("Starting scheduler and trigger services")
+            try:
+                scheduler_service = get_scheduler_service()
+                scheduler_service.start()
+                await scheduler_service.load_active_schedules()
+
+                trigger_service = get_trigger_service()
+                trigger_service.start()
+                await trigger_service.load_active_monitors()
+                logger.debug(f"Trigger services started in {asyncio.get_event_loop().time() - current_time:.2f}s")
+            except Exception as e:
+                logger.warning(f"Failed to start trigger services: {e}")
 
             total_time = asyncio.get_event_loop().time() - start_time
             logger.debug(f"Total initialization time: {total_time:.2f}s")

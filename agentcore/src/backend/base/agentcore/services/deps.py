@@ -19,12 +19,14 @@ if TYPE_CHECKING:
 
     from agentcore.services.database.service import DatabaseService
     from agentcore.services.job_queue.service import JobQueueService
+    from agentcore.services.scheduler.service import SchedulerService
     from agentcore.services.session.service import SessionService
     from agentcore.services.settings.service import SettingsService
 
     from agentcore.services.storage.service import StorageService
     from agentcore.services.telemetry.service import TelemetryService
     from agentcore.services.tracing.service import TracingService
+    from agentcore.services.trigger.service import TriggerService
 
 
 
@@ -213,3 +215,17 @@ def get_queue_service() -> JobQueueService:
     from agentcore.services.job_queue.factory import JobQueueServiceFactory
 
     return get_service(ServiceType.JOB_QUEUE_SERVICE, JobQueueServiceFactory())
+
+
+def get_scheduler_service() -> SchedulerService:
+    """Retrieves the SchedulerService instance from the service manager."""
+    from agentcore.services.scheduler.factory import SchedulerServiceFactory
+
+    return get_service(ServiceType.SCHEDULER_SERVICE, SchedulerServiceFactory())
+
+
+def get_trigger_service() -> TriggerService:
+    """Retrieves the TriggerService instance from the service manager."""
+    from agentcore.services.trigger.factory import TriggerServiceFactory
+
+    return get_service(ServiceType.TRIGGER_SERVICE, TriggerServiceFactory())

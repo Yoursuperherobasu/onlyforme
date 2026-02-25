@@ -38,6 +38,7 @@ from agentcore.api.guardrails_catalogue import router as guardrails_catalogue_ro
 from agentcore.api.help_support import router as help_support_router
 from agentcore.api.a2a import router as a2a_router
 from agentcore.api.teams import router as teams_router
+from agentcore.api.triggers import router as triggers_router
 
 router = APIRouter(
     prefix="/api",
@@ -80,3 +81,4 @@ router.include_router(guardrails_catalogue_router)
 router.include_router(help_support_router)
 router.include_router(a2a_router)
 router.include_router(teams_router)
+router.include_router(triggers_router)
