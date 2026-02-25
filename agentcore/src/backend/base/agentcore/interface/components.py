@@ -132,6 +132,10 @@ def _process_single_module(modname: str) -> tuple[str, dict] | None:
         ):
             continue
 
+        # Skip components marked as hidden
+        if _getattr(obj, "hidden", False):
+            continue
+
         try:
             comp_instance = obj()
             # modname is the full module name without the name of the obj
