@@ -41,6 +41,7 @@ export const URLs = {
   ROLES: `roles`,
   HELP_SUPPORT: `help-support`,
   ORCHESTRATOR: `orchestrator`,
+  CONNECTOR_CATALOGUE: `connector-catalogue`,
   TEAMS: `teams`,
 } as const;
 

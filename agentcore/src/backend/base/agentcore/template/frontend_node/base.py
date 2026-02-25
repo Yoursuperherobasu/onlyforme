@@ -58,6 +58,8 @@ class FrontendNode(BaseModel):
     """Metadata for the component node."""
     tool_mode: bool = False
     """Whether the frontend node is in tool mode."""
+    hidden: bool = False
+    """Whether the frontend node is hidden from the sidebar."""
 
     @field_serializer("base_classes")
     def process_base_classes(self, base_classes: list[str]) -> list[str]:
