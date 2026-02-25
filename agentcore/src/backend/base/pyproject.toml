@@ -71,6 +71,7 @@ dependencies = [
     "langgraph>=1.0.8",
     "langfuse>=3.0.0,<4.0.0",
     "trustcall",
+    "azure-storage-blob>=12.20.0,<13.0.0",
 ]
 
 

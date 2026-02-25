@@ -108,6 +108,7 @@ class BaseFileNode(Node, ABC):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._temp_dirs: list[TemporaryDirectory] = []
         # Dynamically update FileInput to include valid extensions and bundles
         self._base_inputs[0].file_types = [
             *self.valid_extensions,
@@ -194,13 +195,24 @@ class BaseFileNode(Node, ABC):
             list[BaseFile]: A list of BaseFile objects with updated `data`.
         """
 
+    def _cleanup_temp_dirs(self):
+        """Clean up all temporary directories created for remote storage downloads."""
+        for temp_dir in self._temp_dirs:
+            try:
+                temp_dir.cleanup()
+            except Exception:
+                pass
+        self._temp_dirs = []
+
+    def __del__(self):
+        self._cleanup_temp_dirs()
+
     def load_files_base(self) -> list[Data]:
         """Loads and parses file(s), including unpacked file bundles.
 
         Returns:
             list[Data]: Parsed data from the processed files.
         """
-        self._temp_dirs: list[TemporaryDirectory] = []
         final_files = []  # Initialize to avoid UnboundLocalError
         try:
             # Step 1: Validate the provided paths
@@ -219,9 +231,7 @@ class BaseFileNode(Node, ABC):
             return [data for file in processed_files for data in file.data if file.data]
 
         finally:
-            # Delete temporary directories
-            for temp_dir in self._temp_dirs:
-                temp_dir.cleanup()
+            self._cleanup_temp_dirs()
 
             # Delete files marked for deletion
             for file in final_files:
@@ -269,7 +279,7 @@ class BaseFileNode(Node, ABC):
             Message: Message containing file paths
         """
         files = self._validate_and_resolve_paths()
-        paths = [file.path.as_posix() for file in files if file.path.exists()]
+        paths = [file.path.as_posix() for file in files]
 
         return Message(text="\n".join(paths) if paths else "")
 
@@ -492,6 +502,97 @@ class BaseFileNode(Node, ABC):
 
         return file_paths
 
+    def _is_remote_storage(self) -> bool:
+        """Check if the current storage backend is remote (non-local) by reading env directly."""
+        import os
+        storage_type = os.environ.get("STORAGE_TYPE", "local").strip().strip("'\"").lower()
+        return storage_type != "local"
+
+    def _resolve_via_storage(self, path_str: str) -> Path:
+        """Resolve a storage-relative path to a local filesystem path.
+
+        For local storage: uses the storage service to build the real filesystem path.
+        For remote storage (Azure): downloads the file to a temp directory
+        so downstream processors can read it via Path.
+        """
+        import os
+
+        # Must contain a "/" to be a storage-relative path (agent_id/file_name)
+        if "/" not in path_str:
+            return Path(self.resolve_path(path_str))
+
+        storage_type = os.environ.get("STORAGE_TYPE", "local").strip().strip("'\"").lower()
+        logger.info(f"[BaseFile] _resolve_via_storage: path='{path_str}', STORAGE_TYPE='{storage_type}'")
+
+        if storage_type == "azure":
+            return self._download_from_azure(path_str)
+
+        # Local storage — use the storage service to build the full path
+        try:
+            from agentcore.services.deps import get_storage_service
+            storage_svc = get_storage_service()
+            agent_id, file_name = path_str.split("/", 1)
+            full_path = storage_svc.build_full_path(agent_id, file_name)
+            return Path(full_path)
+        except Exception as e:
+            logger.warning(f"[BaseFile] Local storage lookup failed: {e}")
+            return Path(self.resolve_path(path_str))
+
+    def _download_from_azure(self, blob_path: str) -> Path:
+        """Download a file from Azure Blob Storage to a local temp directory.
+
+        Args:
+            blob_path: The full blob path, e.g. 'agent-id/subfolder/file.pdf'
+
+        Returns:
+            Path to the downloaded local file.
+        """
+        import os
+
+        conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+        # Strip any surrounding quotes that dotenv might have kept
+        conn_str = conn_str.strip().strip("'\"")
+        container_name = os.environ.get("AZURE_STORAGE_CONTAINER_NAME", "agentcore-knowledge-container")
+        container_name = container_name.strip().strip("'\"")
+
+        logger.info(
+            f"[BaseFile] Azure download: blob='{blob_path}', container='{container_name}', "
+            f"conn_str_len={len(conn_str)}, conn_str_start='{conn_str[:40]}...'"
+        )
+
+        if not conn_str:
+            raise FileNotFoundError(
+                f"AZURE_STORAGE_CONNECTION_STRING is empty — cannot download '{blob_path}'"
+            )
+
+        from azure.storage.blob import BlobServiceClient
+
+        sync_client = BlobServiceClient.from_connection_string(conn_str)
+        try:
+            blob_client = sync_client.get_container_client(container_name).get_blob_client(blob_path)
+            logger.info(f"[BaseFile] Downloading blob '{blob_path}' from container '{container_name}'...")
+            downloader = blob_client.download_blob()
+            file_bytes = downloader.readall()
+            logger.info(f"[BaseFile] Downloaded {len(file_bytes)} bytes for '{blob_path}'")
+        except Exception as e:
+            logger.error(f"[BaseFile] Azure blob download FAILED for '{blob_path}': {type(e).__name__}: {e}")
+            raise
+        finally:
+            sync_client.close()
+
+        # Write to temp dir (tracked in self._temp_dirs for cleanup)
+        temp_dir = TemporaryDirectory()
+        if not hasattr(self, "_temp_dirs"):
+            self._temp_dirs = []
+        self._temp_dirs.append(temp_dir)
+
+        # Use only the filename (last segment) for the temp file
+        file_name = Path(blob_path).name
+        local_path = Path(temp_dir.name) / file_name
+        local_path.write_bytes(file_bytes)
+        logger.info(f"[BaseFile] Saved to temp: {local_path} ({local_path.exists()=})")
+        return local_path
+
     def _validate_and_resolve_paths(self) -> list[BaseFile]:
         """Validate that all input paths exist and are valid, and create BaseFile instances.
 
@@ -505,12 +606,24 @@ class BaseFileNode(Node, ABC):
 
         def add_file(data: Data, path: str | Path, *, delete_after_processing: bool):
             path_str = str(path)
-            resolved_path_str = self.resolve_path(path_str)
-            resolved_path = Path(resolved_path_str)
+
+            try:
+                resolved_path = self._resolve_via_storage(path_str)
+            except Exception as e:
+                logger.warning(
+                    f"[BaseFile] Storage lookup failed for '{path_str}': "
+                    f"{type(e).__name__}: {e}"
+                )
+                resolved_path = Path(self.resolve_path(path_str))
 
             if not resolved_path.exists():
                 msg = f"File or directory not found: {path}"
                 self.log(msg)
+                logger.error(
+                    f"[BaseFile] File not found after resolution: "
+                    f"original='{path_str}', resolved='{resolved_path}', "
+                    f"exists={resolved_path.exists()}"
+                )
                 if not self.silent_errors:
                     raise ValueError(msg)
             resolved_files.append(

@@ -1,21 +1,30 @@
 """
-Pinecone Vector Store Component — API keys hardcoded
+Pinecone Vector Store Component
 """
 
+import hashlib
+import os
 import time
+
 import numpy as np
 from langchain_core.vectorstores import VectorStore
+from loguru import logger
 
 from agentcore.base.vectorstores.model import LCVectorStoreNode, check_cached_vector_store
-from agentcore.helpers.data import docs_to_data
 from agentcore.io import BoolInput, DropdownInput, HandleInput, IntInput, StrInput
 from agentcore.schema.data import Data
 from agentcore.schema.message import Message
 
 
-PINECONE_API_KEY = "pcsk_92555_7xKAYZfyv7MXJQ4C349Y1VNDtqvui5Wu76FfSeGSyMNze6TBy9dWUD3bvuvVdv1"
-GOOGLE_API_KEY = "AIzaSyC3UhBn_HLOEkvtbo1D8jhS58enFkaDjDo"
-
+def _get_env_key(name: str) -> str:
+    """Retrieve a required environment variable or raise a clear error."""
+    value = os.getenv(name)
+    if not value:
+        raise EnvironmentError(
+            f"Environment variable '{name}' is not set. "
+            f"Please set it before using the Pinecone component."
+        )
+    return value
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -56,7 +65,7 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
 
     def _get_pinecone_client(self):
         from pinecone import Pinecone
-        return Pinecone(api_key=PINECONE_API_KEY)
+        return Pinecone(api_key=_get_env_key("PINECONE_API_KEY"))
 
     def _get_alpha(self) -> float:
         try:
@@ -91,7 +100,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         if self.index_name in names:
             return
 
-        # Always create with dotproduct — works for both dense-only and hybrid
         from pinecone import ServerlessSpec
         pc.create_index(
             name=self.index_name,
@@ -116,25 +124,18 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
     def _get_embedding_model(self):
         emb = self.embedding
         if hasattr(emb, "build_embeddings"):
-            try:
-                model = emb.build_embeddings()
-                if model is not None:
-                    return model
-            except Exception:
-                pass
+            model = emb.build_embeddings()
+            if model is not None:
+                return model
         if hasattr(emb, "build"):
-            try:
-                model = emb.build()
-                if model and hasattr(model, "embed_documents"):
-                    return model
-            except Exception:
-                pass
-        # Hardcoded fallback
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        return GoogleGenerativeAIEmbeddings(
-            model="models/gemini-embedding-001",
-            google_api_key=GOOGLE_API_KEY,
-            output_dimensionality=768,
+            model = emb.build()
+            if model and hasattr(model, "embed_documents"):
+                return model
+        if hasattr(emb, "embed_documents") and hasattr(emb, "embed_query"):
+            return emb
+        raise ValueError(
+            "No valid embedding model provided. Please connect an Embedding component "
+            "that implements embed_documents() and embed_query()."
         )
 
     # ══════════════════════════════════════════════════════════
@@ -173,16 +174,20 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
     #  INGESTION — always dense, optionally adds sparse
     # ══════════════════════════════════════════════════════════
 
+    @staticmethod
+    def _stable_doc_id(namespace: str, index: int, content: str) -> str:
+        """Generate a deterministic vector ID using SHA-256 (stable across Python sessions)."""
+        digest = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+        return f"{namespace or 'ns'}_{index}_{digest}"
+
     def _ingest_documents(self, documents, embedder):
         """Upsert documents with dense vectors + optional sparse vectors."""
         pc = self._get_pinecone_client()
         index = pc.Index(self.index_name)
         texts = [doc.page_content for doc in documents]
 
-        # Always generate dense embeddings
         dense_embeddings = embedder.embed_documents(texts)
 
-        # Generate sparse vectors if hybrid is enabled
         sparse_vectors = None
         if self.use_hybrid_search:
             try:
@@ -194,7 +199,7 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         for i, (doc, dense) in enumerate(zip(documents, dense_embeddings)):
             metadata = dict(doc.metadata) if doc.metadata else {}
             metadata[self.text_key] = doc.page_content[:40000]
-            vec_id = f"{self.namespace or 'ns'}_{i}_{hash(doc.page_content[:50]) % 10**8}"
+            vec_id = self._stable_doc_id(self.namespace, i, doc.page_content)
 
             vec_data = {"id": vec_id, "values": dense, "metadata": metadata}
             if sparse_vectors and i < len(sparse_vectors):
@@ -238,7 +243,7 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             embedding=wrapped,
             text_key=self.text_key,
             namespace=self.namespace,
-            pinecone_api_key=PINECONE_API_KEY,
+            pinecone_api_key=_get_env_key("PINECONE_API_KEY"),
         )
 
         try:
@@ -268,7 +273,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         real_embedding = self._get_embedding_model()
         wrapped = Float32Embeddings(real_embedding)
 
-        # Ingest pending documents
         try:
             count = self._ingest_if_needed(wrapped)
             if count > 0:
@@ -282,14 +286,14 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             retrieve_k = max(self.number_of_results, 20)
 
         search_method = "dense"
-        scores_map = {}
+        scores = []
 
         try:
             if self.use_hybrid_search:
-                docs, scores_map = self._hybrid_search(query, wrapped, k=retrieve_k)
+                docs, scores = self._hybrid_search(query, wrapped, k=retrieve_k)
                 search_method = f"hybrid (alpha={self._get_alpha()})"
             else:
-                docs, scores_map = self._dense_search(query, wrapped, k=retrieve_k)
+                docs, scores = self._dense_search(query, wrapped, k=retrieve_k)
                 search_method = "dense"
         except Exception as e:
             raise ValueError(f"Error searching: {type(e).__name__}: {e}") from e
@@ -298,21 +302,19 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         rerank_info = "disabled"
         if self.use_reranking and docs:
             try:
-                docs, rerank_scores = self._rerank_documents(query, docs)
+                docs, scores = self._rerank_documents(query, docs)
                 rerank_info = f"{self.rerank_model} (top {len(docs)})"
-                # Update scores with rerank scores
-                scores_map = rerank_scores
             except Exception as e:
                 rerank_info = f"failed: {e}"
                 logger.warning(f"[Pinecone] Reranking failed: {e}")
 
         # ── Build output with metadata ─────────────────────
-        data = self._build_output(docs, scores_map, search_method, rerank_info, query)
+        data = self._build_output(docs, scores, search_method, rerank_info, query)
         self.status = f"{len(data)} result(s) | method={search_method} | rerank={rerank_info}"
         return data
 
     def _dense_search(self, query, wrapped_embeddings, k=10):
-        """Pure dense vector search."""
+        """Pure dense vector search. Returns (docs, scores) as parallel lists."""
         from langchain_core.documents import Document
         pc = self._get_pinecone_client()
         index = pc.Index(self.index_name)
@@ -326,19 +328,19 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         )
 
         docs = []
-        scores_map = {}
+        scores = []
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
             text = metadata.pop(self.text_key, "")
             score = match.get("score", 0.0)
             doc = Document(page_content=text, metadata=metadata)
             docs.append(doc)
-            scores_map[id(doc)] = {"score": round(score, 4), "type": "dense"}
+            scores.append({"score": round(score, 4), "type": "dense"})
 
-        return docs, scores_map
+        return docs, scores
 
     def _hybrid_search(self, query, wrapped_embeddings, k=10):
-        """Hybrid dense + sparse search."""
+        """Hybrid dense + sparse search. Returns (docs, scores) as parallel lists."""
         from langchain_core.documents import Document
         pc = self._get_pinecone_client()
         index = pc.Index(self.index_name)
@@ -358,23 +360,23 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         )
 
         docs = []
-        scores_map = {}
+        scores = []
         for match in results.get("matches", []):
             metadata = match.get("metadata", {})
             text = metadata.pop(self.text_key, "")
             score = match.get("score", 0.0)
             doc = Document(page_content=text, metadata=metadata)
             docs.append(doc)
-            scores_map[id(doc)] = {
+            scores.append({
                 "score": round(score, 4),
                 "type": "hybrid",
                 "alpha": alpha,
-            }
+            })
 
-        return docs, scores_map
+        return docs, scores
 
     def _rerank_documents(self, query, docs):
-        """Rerank documents and return new scores."""
+        """Rerank documents. Returns (reranked_docs, scores) as parallel lists."""
         pc = self._get_pinecone_client()
         rerank_input = [
             {"id": str(i), "text": doc.page_content if hasattr(doc, "page_content") else str(doc)}
@@ -388,31 +390,28 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         )
 
         reranked_docs = []
-        rerank_scores = {}
+        rerank_scores = []
         for rank, r in enumerate(response.data):
             if r.index < len(docs):
-                doc = docs[r.index]
-                reranked_docs.append(doc)
-                rerank_scores[id(doc)] = {
+                reranked_docs.append(docs[r.index])
+                rerank_scores.append({
                     "rerank_score": round(r.score, 4),
                     "rerank_position": rank + 1,
                     "rerank_model": self.rerank_model,
                     "type": "reranked",
-                }
+                })
 
         return reranked_docs, rerank_scores
 
-    def _build_output(self, docs, scores_map, search_method, rerank_info, query):
+    def _build_output(self, docs, scores, search_method, rerank_info, query):
         """Build Data output with search metadata and scores."""
         results = []
         for rank, doc in enumerate(docs):
             text = doc.page_content if hasattr(doc, "page_content") else str(doc)
             metadata = doc.metadata if hasattr(doc, "metadata") else {}
 
-            # Get score info for this doc
-            score_info = scores_map.get(id(doc), {})
+            score_info = scores[rank] if rank < len(scores) else {}
 
-            # Build rich metadata
             result_data = {
                 "text": text,
                 "rank": rank + 1,

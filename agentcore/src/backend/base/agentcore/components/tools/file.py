@@ -72,15 +72,13 @@ class File(BaseFileNode):
                         Output(display_name="Structured Content", name="json", method="load_files_json"),
                     )
 
-                # All files get the raw content and path outputs
-                # frontend_node["outputs"].append(
-                #     Output(display_name="Raw Content", name="message", method="load_files_message"),
-                # )
-                frontend_node["outputs"].append(
-                    Output(display_name="Knowledge Base", name="path", method="load_files_path"),
-                )
-            else:
-                # For multiple files, we only show the files output
+            # Always include path output so OCR and other downstream components can connect
+            frontend_node["outputs"].append(
+                Output(display_name="Knowledge Base", name="path", method="load_files_path"),
+            )
+
+            if len(field_value) > 1:
+                # For multiple files, also show the combined files output
                 frontend_node["outputs"].append(
                     Output(display_name="Knowledge Bases", name="dataframe", method="load_files"),
                 )
