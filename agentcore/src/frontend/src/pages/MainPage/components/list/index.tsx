@@ -23,7 +23,6 @@ import { cn, getNumberFromString } from "@/utils/utils";
 import { useGetApprovalDetails } from "@/controllers/API/queries/approvals";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import useDescriptionModal from "../../hooks/use-description-modal";
-import { useGetTemplateStyle } from "../../utils/get-template-style";
 import { timeElapsed } from "../../utils/time-elapse";
 import DropdownComponent from "../dropdown";
 

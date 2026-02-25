@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
 import useAddAgent from "@/hooks/agents/use-add-agent";
+import { useFolderStore } from "@/stores/foldersStore";
 import type { newAgentModalPropsType } from "../../types/components";
 import BaseModal from "../baseModal";
 import TemplateContentComponent from "./components/TemplateContentComponent";
@@ -17,6 +18,8 @@ export default function TemplatesModal({
   const addAgent = useAddAgent();
   const navigate = useCustomNavigate();
   const { folderId } = useParams();
+  const myCollectionId = useFolderStore((state) => state.myCollectionId);
+  const folders = useFolderStore((state) => state.folders);
 
   const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -24,6 +27,32 @@ export default function TemplatesModal({
     can("edit_agents") ||
     can("view_projects_page") ||
     can("view_project_page");
+  const hasValidProject =
+    Boolean(folderId) ||
+    Boolean(
+      myCollectionId &&
+        folders?.some((folder) => folder.id === myCollectionId),
+    );
+
+  const createBlankAgent = async (projectId?: string) => {
+    const id = await addAgent({ projectId });
+    if (!id) return;
+    const targetFolderId = projectId ?? folderId;
+    navigate(`/agent/${id}${targetFolderId ? `/folder/${targetFolderId}` : ""}`);
+    track("New Agent Created", { template: "Blank Agent" });
+  };
+
+  const handleBlankAgentClick = async () => {
+    if (!hasValidProject) {
+      setOpen(false);
+      navigate("/agents?openCreateProject=1");
+      return;
+    }
+
+    try {
+      await createBlankAgent();
+    } catch {}
+  };
 
   return (
     <BaseModal size="templates" open={open} setOpen={setOpen} className="p-0">
@@ -51,14 +80,7 @@ export default function TemplatesModal({
                 </div>
                  {canCreateAgent && (
                 <Button
-                  onClick={() => {
-                    addAgent().then((id) => {
-                      navigate(
-                        `/agent/${id}${folderId ? `/folder/${folderId}` : ""}`,
-                      );
-                    });
-                    track("New Agent Created", { template: "Blank Agent" });
-                  }}
+                  onClick={handleBlankAgentClick}
                   size="sm"
                   data-testid="blank-agent"
                   className="shrink-0"
@@ -67,7 +89,7 @@ export default function TemplatesModal({
                     name="Plus"
                     className="h-4 w-4 shrink-0"
                   />
-                  Blank Agent
+                  {hasValidProject ? "Blank Agent" : "Create Project First"}
                 </Button>
                  )}
               </div>

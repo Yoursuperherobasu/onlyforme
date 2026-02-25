@@ -3,6 +3,7 @@ import { CheckCircle2, XCircle, Play, FileText } from "lucide-react";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
+import { useTranslation } from "react-i18next";
 
 interface AgentCardProps {
   id: string;
@@ -37,6 +38,8 @@ export function AgentCard({
   onReviewDetails,
   onRunTest,
 }: AgentCardProps) {
+  const { t } = useTranslation();
+
   const statusColors = {
     pending:
       "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
@@ -52,6 +55,12 @@ export function AgentCard({
     if (Number.isNaN(dt.getTime())) return submitted;
     return dt.toLocaleString();
   })();
+  const submittedByDisplay = (() => {
+    const raw = submittedBy?.name?.trim() ?? "";
+    if (!raw) return t("Unknown");
+    const atIndex = raw.indexOf("@");
+    return atIndex > 0 ? raw.slice(0, atIndex) : raw;
+  })();
 
   return (
     <div className="rounded-lg border border-border bg-card p-6 transition-shadow hover:shadow-md">
@@ -63,7 +72,7 @@ export function AgentCard({
             <span
               className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColors[status]}`}
             >
-              {status.charAt(0).toUpperCase() + status.slice(1)}
+              {t(status.charAt(0).toUpperCase() + status.slice(1))}
             </span>
           </div>
           <p className="text-sm text-muted-foreground">{description}</p>
@@ -72,20 +81,22 @@ export function AgentCard({
 
       {/* Metadata */}
       <div className="mb-4 grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-        <div>
-          <div className="text-xs text-muted-foreground">Submitted By</div>
-          <div className="font-medium">{submittedBy.name}</div>
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">{t("Submitted By")}</div>
+          <div className="truncate font-medium" title={submittedByDisplay}>
+            {submittedByDisplay}
+          </div>
         </div>
         <div>
-          <div className="text-xs text-muted-foreground">Project</div>
+          <div className="text-xs text-muted-foreground">{t("Project")}</div>
           <div className="font-medium">{project}</div>
         </div>
         <div>
-          <div className="text-xs text-muted-foreground">Version</div>
+          <div className="text-xs text-muted-foreground">{t("Version")}</div>
           <div className="font-medium">{version}</div>
         </div>
         <div>
-          <div className="text-xs text-muted-foreground">Submitted</div>
+          <div className="text-xs text-muted-foreground">{t("Submitted")}</div>
           <div className="font-medium">{submittedDisplay}</div>
         </div>
       </div>
@@ -93,7 +104,7 @@ export function AgentCard({
       {/* Recent Changes */}
       <div className="mb-4 rounded-md bg-muted/50 p-3">
         <div className="mb-1 text-xs font-medium text-muted-foreground">
-          Recent Changes
+          {t("Recent Changes")}
         </div>
         <div className="text-sm">{recentChanges}</div>
       </div>
@@ -105,11 +116,11 @@ export function AgentCard({
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={onReviewDetails} className="gap-2">
             <FileText className="h-4 w-4" />
-            Review Details
+            {t("Review Details")}
           </Button>
           <Button variant="outline" onClick={onRunTest} className="gap-2">
             <Play className="h-4 w-4" />
-            Run Test
+            {t("Run Test")}
           </Button>
         </div>
 
@@ -117,7 +128,7 @@ export function AgentCard({
         {status === "pending" && (
           <div className="ml-auto flex items-center gap-2">
            <ShadTooltip 
-  content={!can("prod_publish_approval_required") ? "You don't have permission to reject" : ""}
+  content={!can("prod_publish_approval_required") ? t("You don't have permission to reject") : ""}
 >
   <span className="inline-block">
     <Button
@@ -133,13 +144,13 @@ export function AgentCard({
       "
     >
       <XCircle className="h-4 w-4" />
-      Reject
+      {t("Reject")}
     </Button>
   </span>
 </ShadTooltip>
            
           <ShadTooltip 
-  content={!can("prod_publish_approval_required") ? "You don't have permission to approve" : ""}
+  content={!can("prod_publish_approval_required") ? t("You don't have permission to approve") : ""}
 >
             <Button
               variant="outline"
@@ -158,7 +169,7 @@ export function AgentCard({
   disabled={!can("prod_publish_approval_required")}
             >
               <CheckCircle2 className="h-4 w-4" />
-              Approve
+              {t("Approve")}
             </Button>
           </ShadTooltip>
           </div>

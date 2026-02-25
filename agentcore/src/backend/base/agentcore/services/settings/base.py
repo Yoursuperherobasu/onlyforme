@@ -255,6 +255,24 @@ class Settings(BaseSettings):
     This significantly reduces startup time but may cause a slight delay when a component is first used."""
 
     # Starter Projects
+    # Microsoft Teams Bot Integration
+    teams_bot_app_id: str | None = None
+    """Azure AD App ID for the Teams bot registration."""
+    teams_bot_app_secret: str | None = None
+    """Azure AD App Secret for the Teams bot registration."""
+    teams_bot_tenant_id: str | None = None
+    """Azure AD Tenant ID for Teams bot. Defaults to AZURE_TENANT_ID if not set."""
+    teams_graph_client_id: str | None = None
+    """Azure AD App ID for Microsoft Graph API access (app catalog management).
+    Can be the same as teams_bot_app_id if permissions are combined."""
+    teams_graph_client_secret: str | None = None
+    """Azure AD App Secret for Microsoft Graph API access."""
+    teams_bot_endpoint_base: str | None = None
+    """Public base URL for the bot messaging endpoint, e.g. https://agentcore.yourcompany.com"""
+    teams_graph_redirect_uri: str | None = None
+    """OAuth redirect URI for Microsoft Graph delegated auth.
+    Defaults to http://localhost:{BACKEND_PORT}/api/teams/oauth/callback"""
+
     create_starter_projects: bool = True
     """If set to True, Agentcore will create starter projects. If False, skips all starter project setup.
     Note that this doesn't check if the starter projects are already loaded in the db;

@@ -113,10 +113,10 @@ export default function CollectionPage(): JSX.Element {
 
   const showEmptyState =
     hasContent &&
-    agents.length === examples.length &&
-    folders.length <= 1;
+    folders.length === 0 &&
+    !new URLSearchParams(location.search).has("openCreateProject");
 
-  const showSidebar = Boolean(hasContent && folders.length > 0);
+  const showSidebar = true;
 
   /* ================= SHARED SIDEBAR ================= */
 
@@ -149,7 +149,11 @@ export default function CollectionPage(): JSX.Element {
         ) : isAgentsRoute ? (
           <div className="relative mx-auto flex h-full w-full flex-col overflow-hidden">
             {showEmptyState ? (
-              <CustomEmptyPageCommunity setOpenModal={setOpenModal} />
+              <CustomEmptyPageCommunity
+                setOpenModal={() => {
+                  navigate("/agents?openCreateProject=1");
+                }}
+              />
             ) : (
               <FolderCardsView
                 setOpenModal={setOpenModal}

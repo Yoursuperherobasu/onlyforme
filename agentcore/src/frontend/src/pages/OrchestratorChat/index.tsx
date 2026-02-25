@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
   useGetOrchSessions,
@@ -73,7 +74,10 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
   }));
 }
 
-function groupSessionsByDate(sessions: OrchSessionSummary[]): Record<string, OrchSessionSummary[]> {
+function groupSessionsByDate(
+  sessions: OrchSessionSummary[],
+  getLabel: (key: string) => string,
+): Record<string, OrchSessionSummary[]> {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today);
@@ -86,10 +90,10 @@ function groupSessionsByDate(sessions: OrchSessionSummary[]): Record<string, Orc
   for (const s of sessions) {
     const ts = s.last_timestamp ? new Date(s.last_timestamp) : new Date(0);
     let label: string;
-    if (ts >= today) label = "Today";
-    else if (ts >= yesterday) label = "Yesterday";
-    else if (ts >= weekAgo) label = "Previous 7 Days";
-    else label = "Older";
+    if (ts >= today) label = getLabel("Today");
+    else if (ts >= yesterday) label = getLabel("Yesterday");
+    else if (ts >= weekAgo) label = getLabel("Previous 7 Days");
+    else label = getLabel("Older");
 
     if (!groups[label]) groups[label] = [];
     groups[label].push(s);
@@ -100,6 +104,7 @@ function groupSessionsByDate(sessions: OrchSessionSummary[]): Record<string, Orc
 /* ------------------ COMPONENT ------------------ */
 
 export default function AgentOrchestrator() {
+  const { t } = useTranslation();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [showMentions, setShowMentions] = useState(false);
@@ -435,8 +440,8 @@ export default function AgentOrchestrator() {
 
   /* ---- group chat history by date ---- */
   const grouped = useMemo(
-    () => groupSessionsByDate(apiSessions || []),
-    [apiSessions],
+    () => groupSessionsByDate(apiSessions || [], t),
+    [apiSessions, t],
   );
 
   /* ------------------ RENDER ------------------ */
@@ -484,7 +489,7 @@ export default function AgentOrchestrator() {
                     }`}
                   >
                     <MessageSquare size={14} className="shrink-0 opacity-50" />
-                    <span className="truncate">{chat.preview || "New conversation"}</span>
+                    <span className="truncate">{chat.preview || t("New conversation")}</span>
                   </button>
                   {/* Delete button — visible on hover */}
                   <button
@@ -493,7 +498,7 @@ export default function AgentOrchestrator() {
                       handleDeleteSession(chat.session_id);
                     }}
                     className="invisible absolute right-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500 group-hover:visible"
-                    title="Delete session"
+                    title={t("Delete session")}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -506,7 +511,7 @@ export default function AgentOrchestrator() {
         {/* Agents Panel */}
         <div className="border-t border-border px-2 py-3">
           <div className="px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Agents
+            {t("Agents")}
           </div>
           <div className="flex flex-col gap-0.5">
             {agents.map((agent) => (
@@ -551,7 +556,7 @@ export default function AgentOrchestrator() {
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[15px] font-semibold text-foreground hover:bg-accent"
             >
               <Sparkles size={16} style={{ color: getAgentColor(selectedModel) }} />
-              {selectedModel || "Select Agent"}
+              {selectedModel || t("Select Agent")}
               <ChevronDown size={14} className="opacity-50" />
             </button>
 
@@ -628,7 +633,7 @@ export default function AgentOrchestrator() {
                   {/* Content */}
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
-                      {isUser ? "You" : msg.agentName}
+                      {isUser ? t("You") : msg.agentName}
                       <span className="text-xs font-normal text-muted-foreground">
                         {msg.timestamp}
                       </span>
@@ -636,7 +641,7 @@ export default function AgentOrchestrator() {
                     {isThinking ? (
                       <div className="flex items-center gap-2">
                         <Loader2 size={16} className="animate-spin text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">Thinking...</span>
+                        <span className="text-sm text-muted-foreground">{t("Thinking...")}</span>
                       </div>
                     ) : isUser ? (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
@@ -701,7 +706,7 @@ export default function AgentOrchestrator() {
                     handleSend();
                   }
                 }}
-                placeholder="Message agents or type @ to mention..."
+                placeholder={t("Message agents or type @ to mention...")}
                 rows={1}
                 className="w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
               />
@@ -721,7 +726,7 @@ export default function AgentOrchestrator() {
             </div>
 
             <div className="mt-2 text-center text-xs text-muted-foreground">
-              Agents can make mistakes. Review important info.
+              {t("Agents can make mistakes. Review important info.")}
             </div>
           </div>
         </div>

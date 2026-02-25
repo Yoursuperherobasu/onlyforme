@@ -48,6 +48,13 @@ class ApprovalAgent(BaseModel):
     adminAttachments: list[dict] | None = None
 
 
+class ApprovalPreviewResponse(BaseModel):
+    id: str
+    title: str
+    version: str
+    snapshot: dict
+
+
 class ApprovalResponse(BaseModel):
     success: bool
     message: str
@@ -461,6 +468,36 @@ async def get_agent_details(
         recentChanges="",  # intentionally blank for now
         adminComments=req.justification,
         adminAttachments=(req.file_path.get("files", []) if isinstance(req.file_path, dict) else []),
+    )
+
+
+@router.get("/{agent_id}/preview", response_model=ApprovalPreviewResponse)
+async def get_agent_preview(
+    agent_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> ApprovalPreviewResponse:
+    req = await _get_approval_for_view(
+        session=session,
+        approval_or_agent_id=agent_id,
+        current_user=current_user,
+    )
+    deployment = await session.get(AgentDeploymentProd, req.deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Linked deployment not found")
+
+    if not deployment.agent_snapshot:
+        raise HTTPException(
+            status_code=404,
+            detail="No deployment snapshot found for preview",
+        )
+
+    return ApprovalPreviewResponse(
+        id=str(req.id),
+        title=deployment.agent_name or "Review Details",
+        version=f"v{deployment.version_number}",
+        snapshot=deployment.agent_snapshot,
     )
 
 

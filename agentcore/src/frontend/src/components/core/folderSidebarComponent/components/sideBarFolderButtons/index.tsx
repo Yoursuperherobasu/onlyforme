@@ -2,6 +2,7 @@ import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useContext } from "react";
 import { useLocation, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { AuthContext } from "@/contexts/authContext";
 import { SidebarRail, SidebarTrigger } from "@/components/ui/sidebar";
@@ -69,6 +70,7 @@ const SideBarFoldersButtonsComponent = ({
   handleDeleteFolder,
   handleFilesClick,
 }: SideBarFoldersButtonsComponentProps) => {
+  const { t } = useTranslation();
   const location = useLocation();
   const pathname = location.pathname;
   const folders = useFolderStore((state) => state.folders);
@@ -424,7 +426,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="LayoutDashboard"
                 className="h-4 w-4"
               />
-              Dashboard
+              {t("Dashboard")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -442,7 +444,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="FolderKanban"
                 className="h-4 w-4"
               />
-              Projects
+              {t("Projects")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -460,7 +462,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="ClipboardCheck"
                 className="h-4 w-4"
               />
-              Review & Approval
+              {t("Review & Approval")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -478,7 +480,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Bot"
                 className="h-4 w-4"
               />
-              Agent Registry
+              {t("Agent Registry")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -496,7 +498,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Database"
                 className="h-4 w-4"
               />
-              Model Registry
+              {t("Model Registry")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -514,7 +516,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="PlayCircle"
                 className="h-4 w-4"
               />
-              Agent Control Panel
+              {t("Agent Control Panel")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -532,7 +534,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="GitBranch"
                 className="h-4 w-4"
               />
-              Orchestration Chat
+              {t("Orchestration Chat")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -550,7 +552,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Activity"
                 className="h-4 w-4"
               />
-              Observability
+              {t("Observability")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -568,7 +570,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Scale"
                 className="h-4 w-4"
               />
-              Evaluation
+              {t("Evaluation")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -585,7 +587,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="ShieldCheck"
                 className="h-4 w-4"
               />
-              Guardrails Catalogue
+              {t("Guardrails Catalogue")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -602,7 +604,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Database"
                 className="h-4 w-4"
               />
-              VectorDB Catalogue
+              {t("VectorDB Catalogue")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -634,7 +636,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Server"
                 className="h-4 w-4"
               />
-              MCP Servers
+              {t("MCP Servers")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -652,7 +654,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="BookOpen"
                 className="h-4 w-4"
               />
-              Knowledge Base Management
+              {t("Knowledge Base Management")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -669,7 +671,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Clock"
                 className="h-4 w-4"
               />
-              Platform Configurations
+              {t("Platform Configurations")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -685,7 +687,7 @@ const SideBarFoldersButtonsComponent = ({
               name="CircleHelp"
               className="h-4 w-4"
             />
-            Help & Support
+            {t("Help & Support")}
           </SidebarMenuButton>
         </SidebarMenuItem>
 

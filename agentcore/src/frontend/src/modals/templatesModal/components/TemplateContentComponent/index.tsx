@@ -72,9 +72,12 @@ export default function TemplateContentComponent({
 
   const handleCardClick = (example) => {
     updateIds(example.data);
-    addAgent({ agent: example }).then((id) => {
-      navigate(`/agent/${id}/folder/${folderIdUrl}`);
-    });
+    addAgent({ agent: example })
+      .then((id) => {
+        if (!id) return;
+        navigate(`/agent/${id}/folder/${folderIdUrl}`);
+      })
+      .catch(() => {});
     track("New Agent Created", { template: `${example.name} Template` });
   };
 

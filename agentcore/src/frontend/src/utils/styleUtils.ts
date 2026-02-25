@@ -131,6 +131,8 @@ export const nodeColors: { [char: string]: string } = {
   Agent: "#903BBE",
   AgentExecutor: "#903BBE",
   Tool: "#00fbfc",
+  a2a_agents: "#6366F1",
+  A2AAgents: "#6366F1",
 };
 
 export const nodeColorsName: { [char: string]: string } = {
@@ -186,6 +188,8 @@ export const nodeColorsName: { [char: string]: string } = {
   BaseChatMessageHistory: "orange",
   Memory: "orange",
   DataFrame: "pink",
+  a2a_agents: "indigo",
+  A2AAgents: "indigo",
 };
 
 export const FILE_ICONS = {

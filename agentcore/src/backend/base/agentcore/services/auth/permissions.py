@@ -14,6 +14,8 @@ ROLE_ALIASES = {
     "super admin": "super_admin",
     "department admin": "department_admin",
     "business user": "business_user",
+    "root admin": "root",
+    "root_admin": "root",
 }
 
 PERMISSION_ALIASES = {

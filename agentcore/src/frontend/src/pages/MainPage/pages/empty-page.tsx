@@ -23,7 +23,7 @@ const EMPTY_PAGE_DISCORD_DESCRIPTION =
 const EMPTY_PAGE_DRAG_AND_DROP_TEXT =
   "";
 const EMPTY_PAGE_FOLDER_DESCRIPTION = "Empty project";
-const EMPTY_PAGE_CREATE_FIRST_AGENT_BUTTON_TEXT = "Create first agent";
+const EMPTY_PAGE_CREATE_FIRST_PROJECT_BUTTON_TEXT = "Create first project";
 
 const EXTERNAL_LINK_ICON_CLASS =
   "absolute right-6 top-[35px] h-4 w-4 shrink-0 translate-x-0 opacity-0 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100";
@@ -107,7 +107,7 @@ export const EmptyPageCommunity = ({
                   aria-hidden="true"
                   className="h-4 w-4"
                 />
-                <span>{EMPTY_PAGE_CREATE_FIRST_AGENT_BUTTON_TEXT}</span>
+                <span>{EMPTY_PAGE_CREATE_FIRST_PROJECT_BUTTON_TEXT}</span>
               </Button>
             </div>
           </div>
@@ -124,5 +124,4 @@ export const EmptyPageCommunity = ({
 };
 
 export default EmptyPageCommunity;
-
 
