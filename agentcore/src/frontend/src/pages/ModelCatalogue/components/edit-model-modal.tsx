@@ -26,13 +26,7 @@ const PROVIDERS = [
   { value: "openai_compatible", label: "Custom Model" },
 ];
 
-const AZURE_API_VERSIONS = [
-  "2025-10-01-preview",
-  "2024-10-21",
-  "2024-08-01-preview",
-  "2024-06-01",
-  "2024-02-15-preview",
-];
+const DEFAULT_AZURE_API_VERSION = "2025-10-01-preview";
 
 const ENVIRONMENTS: { value: ModelEnvironment; label: string }[] = [
   { value: "test", label: "Test" },
@@ -73,7 +67,7 @@ export default function EditModelModal({
 
   // Provider-specific
   const [azureDeployment, setAzureDeployment] = useState("");
-  const [azureApiVersion, setAzureApiVersion] = useState(AZURE_API_VERSIONS[0]);
+  const [azureApiVersion, setAzureApiVersion] = useState(DEFAULT_AZURE_API_VERSION);
   const [organization, setOrganization] = useState("");
   const [customHeaders, setCustomHeaders] = useState("");
 
@@ -107,7 +101,7 @@ export default function EditModelModal({
 
       const pc = model.provider_config ?? {};
       setAzureDeployment(pc.azure_deployment ?? "");
-      setAzureApiVersion(pc.api_version ?? AZURE_API_VERSIONS[0]);
+      setAzureApiVersion(pc.api_version ?? DEFAULT_AZURE_API_VERSION);
       setOrganization(pc.organization ?? "");
       setCustomHeaders(pc.custom_headers ? JSON.stringify(pc.custom_headers, null, 2) : "");
 
@@ -134,7 +128,7 @@ export default function EditModelModal({
       setEnvironment("test");
       setIsActive(true);
       setAzureDeployment("");
-      setAzureApiVersion(AZURE_API_VERSIONS[0]);
+      setAzureApiVersion(DEFAULT_AZURE_API_VERSION);
       setOrganization("");
       setCustomHeaders("");
       setSupportsStreaming(true);
@@ -420,17 +414,11 @@ export default function EditModelModal({
                 </div>
                 <div>
                   <Label>API Version</Label>
-                  <select
+                  <Input
+                    placeholder="2025-10-01-preview"
                     value={azureApiVersion}
                     onChange={(e) => setAzureApiVersion(e.target.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    {AZURE_API_VERSIONS.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               </div>
             )}

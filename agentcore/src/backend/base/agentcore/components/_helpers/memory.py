@@ -137,10 +137,21 @@ class MemoryNode(Node):
                 ]
         return frontend_node
 
+    def _effective_session_id(self) -> str | None:
+        """Return the session_id to use: explicit input field → graph session → None."""
+        sid = self.session_id
+        if sid:
+            return sid
+        if hasattr(self, "_session_id") and self._session_id:
+            return self._session_id
+        if hasattr(self, "graph") and getattr(self.graph, "session_id", None):
+            return self.graph.session_id
+        return None
+
     async def store_message(self) -> Message:
         message = Message(text=self.message) if isinstance(self.message, str) else self.message
 
-        message.session_id = self.session_id or message.session_id
+        message.session_id = self._effective_session_id() or message.session_id
         message.sender = self.sender or message.sender or MESSAGE_SENDER_AI
         message.sender_name = self.sender_name or message.sender_name or MESSAGE_SENDER_NAME_AI
 
@@ -177,7 +188,7 @@ class MemoryNode(Node):
     async def retrieve_messages(self) -> Data:
         sender_type = self.sender_type
         sender_name = self.sender_name
-        session_id = self.session_id
+        session_id = self._effective_session_id()
         n_messages = self.n_messages
         order = "DESC" if self.order == "Descending" else "ASC"
 

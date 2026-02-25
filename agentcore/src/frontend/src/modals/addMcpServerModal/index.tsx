@@ -1,8 +1,4 @@
-import {
-  useIsFetching,
-  usePrefetchQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -11,11 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs-button";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { MAX_MCP_SERVER_NAME_LENGTH } from "@/constants/constants";
 import { useAddMCPServer } from "@/controllers/API/queries/mcp/use-add-mcp-server";
@@ -27,8 +24,6 @@ import type { MCPServerType } from "@/types/mcp";
 import { extractMcpServersFromJson } from "@/utils/mcpUtils";
 import { parseString } from "@/utils/stringManipulation";
 import { cn } from "@/utils/utils";
-
-//TODO IMPLEMENT FORM LOGIC
 
 export default function AddMcpServerModal({
   children,
@@ -49,12 +44,10 @@ export default function AddMcpServerModal({
       : useState(false);
 
   const [type, setType] = useState(
-    initialData ? (initialData.command ? "STDIO" : "SSE") : "JSON",
+    initialData ? (initialData.command ? "STDIO" : "SSE") : "SSE",
   );
   const [jsonValue, setJsonValue] = useState("");
-  const [error, setError] = useState<string | null>(
-    "Error downloading file: File _mcp_servers.json not found in agent 7e93e2c5-b979-49c0-b01b-4f4111d9230d",
-  );
+  const [error, setError] = useState<string | null>(null);
   const { mutateAsync: addMCPServer, isPending: isAddPending } =
     useAddMCPServer();
   const { mutateAsync: patchMCPServer, isPending: isPatchPending } =
@@ -65,18 +58,9 @@ export default function AddMcpServerModal({
   const modifyMCPServer = initialData ? patchMCPServer : addMCPServer;
   const isPending = isAddPending || isPatchPending;
 
-  const changeType = (type: string) => {
-    setType(type);
+  const handleTypeChange = (val: string) => {
+    setType(val);
     setError(null);
-    setJsonValue("");
-    setStdioName("");
-    setStdioCommand("");
-    setStdioArgs([""]);
-    setStdioEnv([]);
-    setSseName("");
-    setSseUrl("");
-    setSseEnv([]);
-    setSseHeaders([]);
   };
 
   // STDIO state
@@ -95,7 +79,7 @@ export default function AddMcpServerModal({
 
   useEffect(() => {
     if (open) {
-      setType(initialData ? (initialData.command ? "STDIO" : "SSE") : "JSON");
+      setType(initialData ? (initialData.command ? "STDIO" : "SSE") : "SSE");
       setError(null);
       setJsonValue("");
       setStdioName(initialData?.name || "");
@@ -238,7 +222,7 @@ export default function AddMcpServerModal({
     <BaseModal
       open={open}
       setOpen={setOpen}
-      size="x-small"
+      size="small-update"
       onSubmit={submitForm}
       className="!p-0"
     >
@@ -248,81 +232,71 @@ export default function AddMcpServerModal({
           <div className="flex flex-col gap-3 p-4 tracking-normal">
             <div className="flex items-center gap-2 text-sm font-medium">
               <ForwardedIconComponent
-                name="Mcp"
+                name="Server"
                 className="h-4 w-4 text-primary"
                 aria-hidden="true"
               />
-              {initialData ? "Update MCP Server" : "Add MCP Server"}
+              {initialData ? "Edit MCP Server" : "Register MCP Server"}
             </div>
             <span className="text-mmd font-normal text-muted-foreground">
-              Save MCP Servers. Manage added servers in{" "}
+              Configure and connect to external MCP servers. Manage servers in{" "}
               <CustomLink className="underline" to="/settings/mcp-servers">
                 settings
               </CustomLink>
               .
             </span>
           </div>
-          <div className="flex h-full w-full flex-col gap-4 overflow-hidden">
-            <Tabs
-              defaultValue={type}
-              onValueChange={changeType}
-              className="w-full"
-            >
-              <div className="px-4">
-                <TabsList className="mb-4 grid w-full grid-cols-3">
-                  <TabsTrigger
-                    disabled={!!initialData && type !== "JSON"}
-                    data-testid="json-tab"
-                    value="JSON"
+          <div className="flex h-full w-full flex-col overflow-hidden">
+            <div className="flex flex-col gap-4 border-y p-4">
+              <div className="flex flex-col gap-2">
+                <Label className="!text-mmd">Transport</Label>
+                <Select
+                  value={type}
+                  onValueChange={handleTypeChange}
+                  disabled={!!initialData}
+                >
+                  <SelectTrigger
+                    data-testid="connection-type-select"
+                    className="w-full"
                   >
-                    JSON
-                  </TabsTrigger>
-                  <TabsTrigger
-                    data-testid="stdio-tab"
-                    disabled={!!initialData && type !== "STDIO"}
-                    value="STDIO"
-                  >
-                    STDIO
-                  </TabsTrigger>
-                  <TabsTrigger
-                    data-testid="sse-tab"
-                    disabled={!!initialData && type !== "SSE"}
-                    value="SSE"
-                  >
-                    SSE
-                  </TabsTrigger>
-                </TabsList>
+                    <SelectValue placeholder="Select transport..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SSE">SSE</SelectItem>
+                    <SelectItem value="STDIO">STDIO</SelectItem>
+                    <SelectItem value="JSON">JSON</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+              {error && (
+                <ShadTooltip content={error}>
+                  <div
+                    className={cn(
+                      "truncate text-xs font-medium text-red-500",
+                    )}
+                  >
+                    {error}
+                  </div>
+                </ShadTooltip>
+              )}
               <div
-                className="relative flex max-h-[280px] min-h-[280px] w-full flex-1 flex-col gap-2 overflow-y-auto border-y p-4 pt-2"
+                className="flex max-h-[380px] flex-col gap-4 overflow-y-auto"
                 id="global-variable-modal-inputs"
               >
-                {error && (
-                  <ShadTooltip content={error}>
-                    <div
-                      className={cn(
-                        "absolute right-4 top-4 truncate text-xs font-medium text-red-500",
-                        type === "JSON" ? "w-3/5" : "w-4/5",
-                      )}
-                    >
-                      {error}
-                    </div>
-                  </ShadTooltip>
-                )}
-                <TabsContent value="JSON">
+                {type === "JSON" && (
                   <div className="flex flex-col gap-2">
-                    <Label className="!text-mmd">Paste in JSON config</Label>
+                    <Label className="!text-mmd">JSON Configuration</Label>
                     <Textarea
                       value={jsonValue}
                       data-testid="json-input"
                       onChange={(e) => setJsonValue(e.target.value)}
-                      className="min-h-[225px] font-mono text-mmd"
-                      placeholder="Paste in JSON config to add server"
+                      className="min-h-[200px] font-mono text-mmd"
+                      placeholder="MCP Server configuration JSON"
                       disabled={isPending}
                     />
                   </div>
-                </TabsContent>
-                <TabsContent value="STDIO">
+                )}
+                {type === "STDIO" && (
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">
                       <Label className="flex items-start gap-1 !text-mmd">
@@ -331,7 +305,7 @@ export default function AddMcpServerModal({
                       <Input
                         value={stdioName}
                         onChange={(e) => setStdioName(e.target.value)}
-                        placeholder="Type server name..."
+                        placeholder="Server name"
                         data-testid="stdio-name-input"
                         disabled={isPending}
                       />
@@ -343,7 +317,7 @@ export default function AddMcpServerModal({
                       <Input
                         value={stdioCommand}
                         onChange={(e) => setStdioCommand(e.target.value)}
-                        placeholder="Type command..."
+                        placeholder="Command to run"
                         data-testid="stdio-command-input"
                         disabled={isPending}
                       />
@@ -354,7 +328,7 @@ export default function AddMcpServerModal({
                         value={stdioArgs}
                         handleOnNewValue={({ value }) => setStdioArgs(value)}
                         disabled={isPending}
-                        placeholder="Type argument..."
+                        placeholder="Add argument"
                         listAddLabel="Add Argument"
                         editNode={false}
                         id="stdio-args"
@@ -373,8 +347,8 @@ export default function AddMcpServerModal({
                       />
                     </div>
                   </div>
-                </TabsContent>
-                <TabsContent value="SSE">
+                )}
+                {type === "SSE" && (
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">
                       <Label className="flex items-start gap-1 !text-mmd">
@@ -383,19 +357,19 @@ export default function AddMcpServerModal({
                       <Input
                         value={sseName}
                         onChange={(e) => setSseName(e.target.value)}
-                        placeholder="Name"
+                        placeholder="Server name"
                         data-testid="sse-name-input"
                         disabled={isPending}
                       />
                     </div>
                     <div className="flex flex-col gap-2">
                       <Label className="flex items-start gap-1 !text-mmd">
-                        SSE URL<span className="text-red-500">*</span>
+                        Endpoint URL<span className="text-red-500">*</span>
                       </Label>
                       <Input
                         value={sseUrl}
                         onChange={(e) => setSseUrl(e.target.value)}
-                        placeholder="SSE URL"
+                        placeholder="Server URL"
                         data-testid="sse-url-input"
                         disabled={isPending}
                       />
@@ -423,9 +397,9 @@ export default function AddMcpServerModal({
                       />
                     </div>
                   </div>
-                </TabsContent>
+                )}
               </div>
-            </Tabs>
+            </div>
           </div>
         </div>
         <div className="flex justify-end gap-2 p-4">
@@ -439,7 +413,7 @@ export default function AddMcpServerModal({
             loading={isPending}
           >
             <span className="text-mmd">
-              {initialData ? "Update Server" : "Add Server"}
+              {initialData ? "Save" : "Register"}
             </span>
           </Button>
         </div>

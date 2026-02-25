@@ -609,6 +609,21 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
+        <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/connectors")}
+              onClick={() => _navigate("/connectors")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Cable"
+                className="h-4 w-4"
+              />
+              Connectors
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
         {can("view_mcp_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton

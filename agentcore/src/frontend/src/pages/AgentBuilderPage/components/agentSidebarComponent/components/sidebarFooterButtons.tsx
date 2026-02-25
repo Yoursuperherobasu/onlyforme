@@ -35,7 +35,7 @@ const SidebarMenuButtons = ({
             className="h-4 w-4 text-muted-foreground"
           />
           <span className="group-data-[state=open]/collapsible:font-semibold">
-            {t("Add MCP Server")}
+            {t("Register MCP Server")}
           </span>
         </Button>
       </SidebarMenuButton>

@@ -31,12 +31,42 @@ export const MarkdownField = ({
         remarkPlugins={[remarkGfm as any]}
         linkTarget="_blank"
         rehypePlugins={[rehypeMathjax, rehypeRaw]}
+        transformImageUri={(uri) => uri}
         className={cn(
           "markdown prose flex w-full max-w-full flex-col items-baseline text-sm font-normal word-break-break-word dark:prose-invert",
           isEmpty ? "text-muted-foreground" : "text-primary",
         )}
         components={{
+          img({ node, src, alt, ...props }) {
+            return (
+              <img
+                src={src}
+                alt={alt || "visualization"}
+                style={{
+                  display: "block",
+                  maxWidth: "100%",
+                  width: "auto",
+                  height: "auto",
+                  borderRadius: "8px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                  margin: "12px 0",
+                }}
+                {...props}
+              />
+            );
+          },
           p({ node, ...props }) {
+            // Check if the paragraph contains an img - if so, render as div to avoid invalid nesting
+            const hasImg = node?.children?.some(
+              (child: any) => child.tagName === "img"
+            );
+            if (hasImg) {
+              return (
+                <div className="w-full max-w-full my-1.5 last:mb-0 first:mt-0">
+                  {props.children}
+                </div>
+              );
+            }
             return (
               <p className="w-fit max-w-full my-1.5 last:mb-0 first:mt-0">
                 {props.children}

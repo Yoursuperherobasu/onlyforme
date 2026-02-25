@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X, Info } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
@@ -55,6 +55,22 @@ export default function FolderCardsView({
   const displayFolders = folders || [];
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+
+  // Mirror backend ROLE_ALIASES so every role variant resolves identically.
+  const ROLE_ALIASES: Record<string, string> = {
+    admin: "super_admin",
+    super_admin: "super_admin",
+    department_admin: "department_admin",
+    business_user: "business_user",
+    root_admin: "root",
+    root: "root",
+  };
+  const rawNormalized = (role || "").toLowerCase().trim().replace(/\s+/g, "_");
+  const normalizedRole = ROLE_ALIASES[rawNormalized] || rawNormalized;
+
+  const showCreatedBy = normalizedRole === "department_admin" || normalizedRole === "super_admin" || normalizedRole === "root";
+  const showDepartment = normalizedRole === "super_admin" || normalizedRole === "root";
+  const showOrganization = normalizedRole === "root";
   // Filter folders based on search query
   const filteredFolders = displayFolders.filter(folder => 
     folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -91,6 +107,32 @@ export default function FolderCardsView({
     setProjectDescription("");
     setCreateModalOpen(true);
   };
+
+  useEffect(() => {
+    const openModalFromEvent = () => {
+      setProjectName("");
+      setProjectDescription("");
+      setCreateModalOpen(true);
+    };
+
+    window.addEventListener("open-create-project-modal", openModalFromEvent);
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("openCreateProject") === "1") {
+      openModalFromEvent();
+      url.searchParams.delete("openCreateProject");
+      const nextSearch = url.searchParams.toString();
+      window.history.replaceState(
+        {},
+        "",
+        `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`,
+      );
+    }
+
+    return () => {
+      window.removeEventListener("open-create-project-modal", openModalFromEvent);
+    };
+  }, []);
 
   // Open detail modal
   const handleOpenDetailModal = (folder: FolderType) => {
@@ -322,6 +364,25 @@ export default function FolderCardsView({
                           {folder.description}
                         </p>
                       )}
+                      {showCreatedBy && (folder.created_by_email || folder.is_own_project) && (
+                        <p className="text-[11px] text-muted-foreground line-clamp-1">
+                          {folder.is_own_project ? (
+                            <>Created by: <span className="font-semibold text-primary">You</span></>
+                          ) : (
+                            <>Created by: {folder.created_by_email}</>
+                          )}
+                        </p>
+                      )}
+                      {showDepartment && folder.department_name && (
+                        <p className="text-[11px] text-muted-foreground line-clamp-1">
+                          Department: {folder.department_name}
+                        </p>
+                      )}
+                      {showOrganization && folder.organization_name && (
+                        <p className="text-[11px] text-muted-foreground line-clamp-1">
+                          Organization: {folder.organization_name}
+                        </p>
+                      )}
                     </div>
                   </button>
 
@@ -346,12 +407,13 @@ export default function FolderCardsView({
             <div className="rounded-lg border bg-card overflow-hidden">
               {/* Table Header */}
               <div className="grid grid-cols-12 gap-4 border-b bg-muted/50 px-4 py-3 text-xs font-semibold text-muted-foreground sticky top-0">
-                <div className="col-span-6 flex items-center gap-2">
+                <div className="col-span-5 flex items-center gap-2">
                   <Folder className="h-4 w-4" />
                   <span>Name</span>
                 </div>
-                <div className="col-span-2 flex items-center">Owner</div>
-                <div className="col-span-3 flex items-center">Last opened</div>
+                {showCreatedBy && <div className="col-span-2 flex items-center">Created By</div>}
+                {showDepartment && <div className="col-span-2 flex items-center">Department</div>}
+                {showOrganization && <div className="col-span-2 flex items-center">Organization</div>}
                 <div className="col-span-1"></div>
               </div>
 
@@ -379,7 +441,7 @@ export default function FolderCardsView({
                         onClick={() => can("view_projects_page") && onFolderClick(folder.id)}
                       >
                         {/* Name Column */}
-                        <div className="col-span-6 flex items-center gap-3 min-w-0">
+                        <div className="col-span-5 flex items-center gap-3 min-w-0">
                           <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-primary/10">
                             <Folder className="h-4 w-4 text-primary" />
                           </div>
@@ -398,17 +460,25 @@ export default function FolderCardsView({
                           </div>
                         </div>
 
-                        {/* Owner Column */}
-                        <div className="col-span-2 flex items-center text-sm text-muted-foreground">
-                          <span className="truncate">me</span>
-                        </div>
-
-                        {/* Last Opened Column */}
-                        <div className="col-span-3 flex items-center text-sm text-muted-foreground">
-                          <span className="truncate">
-                            {folder.updated_at ? formatDate(folder.updated_at) : '--'}
-                          </span>
-                        </div>
+                        {showCreatedBy && (
+                          <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                            {folder.is_own_project ? (
+                              <span className="truncate font-semibold text-primary">You</span>
+                            ) : (
+                              <span className="truncate">{folder.created_by_email || "--"}</span>
+                            )}
+                          </div>
+                        )}
+                        {showDepartment && (
+                          <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                            <span className="truncate">{folder.department_name || "--"}</span>
+                          </div>
+                        )}
+                        {showOrganization && (
+                          <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                            <span className="truncate">{folder.organization_name || "--"}</span>
+                          </div>
+                        )}
 
                         {/* Actions Column - Only show if user has edit or delete permissions */}
                         <div className="col-span-1 flex items-center justify-end">
@@ -637,6 +707,13 @@ export default function FolderCardsView({
 
             {/* Details Content */}
             <div className="space-y-4 mb-6">
+              {/* Ownership Badge */}
+              {selectedFolderDetail.is_own_project && showCreatedBy && (
+                <div className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                  Own Project
+                </div>
+              )}
+
               {selectedFolderDetail.description && (
                 <div>
                   <h3 className="text-xs font-semibold text-muted-foreground mb-2">DESCRIPTION</h3>
@@ -662,6 +739,36 @@ export default function FolderCardsView({
                   </div>
                 )}
               </div>
+
+              {/* RBAC Metadata */}
+              {showCreatedBy && (selectedFolderDetail.created_by_email || selectedFolderDetail.is_own_project) && (
+                <div>
+                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">CREATED BY</h3>
+                  <p className="text-sm font-medium">
+                    {selectedFolderDetail.is_own_project ? (
+                      selectedFolderDetail.created_by_email ? (
+                        <><span className="text-primary">You</span> ({selectedFolderDetail.created_by_email})</>
+                      ) : (
+                        <span className="text-primary">You</span>
+                      )
+                    ) : (
+                      selectedFolderDetail.created_by_email
+                    )}
+                  </p>
+                </div>
+              )}
+              {showDepartment && selectedFolderDetail.department_name && (
+                <div>
+                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">DEPARTMENT</h3>
+                  <p className="text-sm font-medium">{selectedFolderDetail.department_name}</p>
+                </div>
+              )}
+              {showOrganization && selectedFolderDetail.organization_name && (
+                <div>
+                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">ORGANIZATION</h3>
+                  <p className="text-sm font-medium">{selectedFolderDetail.organization_name}</p>
+                </div>
+              )}
             </div>
 
             {/* Actions */}
