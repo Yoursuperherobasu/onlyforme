@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import JSON, Column, Enum as SQLEnum, Index, Text, text
+from sqlalchemy import JSON, Column, DateTime, Enum as SQLEnum, Index, Text, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -69,11 +69,20 @@ class TriggerConfigBase(SQLModel):
         nullable=True,
         description="Deployment version (e.g. 'v1').",
     )
-    last_triggered_at: datetime | None = Field(default=None, nullable=True)
+    last_triggered_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     trigger_count: int = Field(default=0, nullable=False)
     created_by: UUID = Field(foreign_key="user.id", nullable=False, index=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    )
 
     class Config:
         arbitrary_types_allowed = True
@@ -146,7 +155,10 @@ class TriggerExecutionLogBase(SQLModel):
 
     trigger_config_id: UUID = Field(foreign_key="trigger_config.id", index=True, nullable=False)
     agent_id: UUID = Field(nullable=False, index=True)
-    triggered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
+    triggered_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    )
     status: TriggerExecutionStatusEnum = Field(
         sa_column=Column(
             SQLEnum(

@@ -6,13 +6,16 @@ export interface CreateConnectorPayload {
   name: string;
   description?: string;
   provider: string;
-  host: string;
-  port: number;
-  database_name: string;
-  schema_name?: string;
-  username: string;
-  password: string;
+  // DB provider fields (optional for non-DB providers)
+  host?: string | null;
+  port?: number | null;
+  database_name?: string | null;
+  schema_name?: string | null;
+  username?: string | null;
+  password?: string | null;
   ssl_enabled?: boolean;
+  // Non-DB provider config (Azure Blob, SharePoint)
+  provider_config?: Record<string, any> | null;
   org_id?: string | null;
   dept_id?: string | null;
 }

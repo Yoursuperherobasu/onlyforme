@@ -12,6 +12,38 @@ from loguru import logger
 from agentcore.services.base import Service
 
 
+# ---------------------------------------------------------------------------
+# Connector catalogue helpers (async)
+# ---------------------------------------------------------------------------
+
+async def _get_storage_connector_config(connector_id: str) -> dict | None:
+    """Fetch and decrypt provider_config for a storage connector from the DB."""
+    from uuid import UUID as _UUID
+    try:
+        from agentcore.services.deps import get_db_service
+        from agentcore.services.database.models.connector_catalogue.model import ConnectorCatalogue
+        from agentcore.api.connector_catalogue import _decrypt_provider_config
+
+        db_service = get_db_service()
+        async with db_service.with_session() as session:
+            row = await session.get(ConnectorCatalogue, _UUID(str(connector_id)))
+            if row is None:
+                logger.warning(f"TriggerService: connector {connector_id} not found")
+                return None
+
+            raw = row.provider_config or {}
+            try:
+                config = _decrypt_provider_config(row.provider, raw)
+            except Exception as e:
+                logger.error(f"TriggerService: failed to decrypt provider_config: {e}")
+                config = raw
+
+            return {"provider": row.provider, **config}
+    except Exception as e:
+        logger.error(f"TriggerService: failed to load connector config {connector_id}: {e}", exc_info=True)
+        return None
+
+
 class TriggerService(Service):
     """Manages non-schedule triggers: folder monitors.
 
@@ -210,18 +242,35 @@ class TriggerService(Service):
     async def _scan_azure_blob(
         self, task_id: str, config: dict, file_types: list[str], trigger_on: str,
     ) -> list[dict]:
-        """Scan an Azure Blob container for new/modified blobs."""
+        """Scan an Azure Blob container for new/modified blobs.
+
+        Credentials are resolved from the connector_catalogue via `connector_id`
+        stored in the trigger_config JSON.
+        """
         try:
             from azure.storage.blob.aio import BlobServiceClient
         except ImportError:
             logger.error("azure-storage-blob not installed. Install with: pip install azure-storage-blob")
             return []
 
-        connection_string = config.get("azure_connection_string", "")
-        container_name = config.get("azure_container", "")
-        prefix = config.get("azure_prefix", "")
+        # Resolve credentials from connector catalogue
+        connector_id = config.get("connector_id")
+        if connector_id:
+            connector_cfg = await _get_storage_connector_config(str(connector_id))
+            if not connector_cfg:
+                logger.error(f"TriggerService: could not load Azure connector {connector_id}")
+                return []
+            connection_string = connector_cfg.get("connection_string", "")
+            container_name = connector_cfg.get("container_name", "")
+            prefix = connector_cfg.get("blob_prefix", config.get("azure_prefix", ""))
+        else:
+            # Fallback: legacy inline credentials (deprecated)
+            connection_string = config.get("azure_connection_string", "")
+            container_name = config.get("azure_container", "")
+            prefix = config.get("azure_prefix", "")
 
         if not connection_string or not container_name:
+            logger.warning(f"TriggerService: Azure Blob trigger {task_id} missing connection_string or container_name")
             return []
 
         seen = self._seen_files.get(task_id, set())
@@ -252,7 +301,11 @@ class TriggerService(Service):
     async def _scan_sharepoint(
         self, task_id: str, config: dict, file_types: list[str], trigger_on: str,
     ) -> list[dict]:
-        """Scan a SharePoint document library for new/modified files."""
+        """Scan a SharePoint document library for new/modified files.
+
+        Credentials are resolved from the connector_catalogue via `connector_id`
+        stored in the trigger_config JSON.
+        """
         try:
             from office365.runtime.auth.client_credential import ClientCredential
             from office365.sharepoint.client_context import ClientContext
@@ -263,14 +316,28 @@ class TriggerService(Service):
             )
             return []
 
-        site_url = config.get("sharepoint_site_url", "")
-        client_id = config.get("sharepoint_client_id", "")
-        client_secret = config.get("sharepoint_client_secret", "")
-        tenant_id = config.get("sharepoint_tenant_id", "")
-        library = config.get("sharepoint_library", "Shared Documents")
-        folder_path = config.get("sharepoint_folder", "")
+        # Resolve credentials from connector catalogue
+        connector_id = config.get("connector_id")
+        if connector_id:
+            connector_cfg = await _get_storage_connector_config(str(connector_id))
+            if not connector_cfg:
+                logger.error(f"TriggerService: could not load SharePoint connector {connector_id}")
+                return []
+            site_url = connector_cfg.get("site_url", "")
+            client_id = connector_cfg.get("client_id", "")
+            client_secret = connector_cfg.get("client_secret", "")
+            library = connector_cfg.get("library", "Shared Documents")
+            folder_path = connector_cfg.get("folder", config.get("sharepoint_folder", ""))
+        else:
+            # Fallback: legacy inline credentials (deprecated)
+            site_url = config.get("sharepoint_site_url", "")
+            client_id = config.get("sharepoint_client_id", "")
+            client_secret = config.get("sharepoint_client_secret", "")
+            library = config.get("sharepoint_library", "Shared Documents")
+            folder_path = config.get("sharepoint_folder", "")
 
         if not site_url or not client_id or not client_secret:
+            logger.warning(f"TriggerService: SharePoint trigger {task_id} missing site_url, client_id, or client_secret")
             return []
 
         seen = self._seen_files.get(task_id, set())

@@ -54,9 +54,12 @@ def upgrade() -> None:
         )
 
         op.create_index("ix_trigger_config_agent", "trigger_config", ["agent_id"])
+        op.create_index("ix_trigger_config_agent_id", "trigger_config", ["agent_id"])
         op.create_index("ix_trigger_config_type", "trigger_config", ["trigger_type"])
         op.create_index("ix_trigger_config_active", "trigger_config", ["is_active"])
         op.create_index("ix_trigger_config_env", "trigger_config", ["environment"])
+        op.create_index("ix_trigger_config_created_by", "trigger_config", ["created_by"])
+        op.create_index("ix_trigger_config_deployment_id", "trigger_config", ["deployment_id"])
 
     # ── trigger_execution_log ─────────────────────────────────────────────
     if not _table_exists(bind, "trigger_execution_log"):
@@ -84,6 +87,8 @@ def upgrade() -> None:
         op.create_index("ix_trigger_exec_agent", "trigger_execution_log", ["agent_id"])
         op.create_index("ix_trigger_exec_status", "trigger_execution_log", ["status"])
         op.create_index("ix_trigger_exec_triggered_at", "trigger_execution_log", ["triggered_at"])
+        op.create_index("ix_trigger_execution_log_agent_id", "trigger_execution_log", ["agent_id"])
+        op.create_index("ix_trigger_execution_log_trigger_config_id", "trigger_execution_log", ["trigger_config_id"])
 
 
 def downgrade() -> None:

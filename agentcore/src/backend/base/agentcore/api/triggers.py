@@ -201,14 +201,7 @@ async def _register_trigger(record) -> None:
 
     elif trigger_type == TriggerTypeEnum.FOLDER_MONITOR:
         trigger_service = get_trigger_service()
-        await trigger_service.register_folder_monitor(
-            trigger_config_id=record.id,
-            folder_config=config,
-            poll_interval=config.get("poll_interval_seconds", 30),
-            agent_id=record.agent_id,
-            environment=record.environment,
-            version=record.version or "",
-        )
+        await trigger_service.register_folder_monitor(record)
 
 
 
