@@ -128,10 +128,16 @@ def read_docx_file(file_path: str) -> str:
 
 
 def parse_pdf_to_text(file_path: str) -> str:
-    from pypdf import PdfReader
+    import fitz  # PyMuPDF — more robust than pypdf for complex/scanned PDFs
 
-    with Path(file_path).open("rb") as f, PdfReader(f) as reader:
-        return "\n\n".join([page.extract_text() for page in reader.pages])
+    doc = fitz.open(file_path)
+    pages = []
+    for page in doc:
+        text = page.get_text("text")
+        if text and text.strip():
+            pages.append(text.strip())
+    doc.close()
+    return "\n\n".join(pages)
 
 
 def parse_text_file_to_data(file_path: str, *, silent_errors: bool) -> Data | None:
