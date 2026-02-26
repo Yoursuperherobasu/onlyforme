@@ -78,6 +78,7 @@ dependencies = [
     "botbuilder-integration-aiohttp>=4.16.0,<5.0.0",
     "azure-identity>=1.16.0,<2.0.0",
     "msgraph-sdk>=1.0.0,<2.0.0",
+    "sqlparse>=0.5.5",
 ]
 
 
