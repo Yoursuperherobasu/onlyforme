@@ -26,6 +26,7 @@ from agentcore.api.help_support import router as help_support_router
 from agentcore.api.a2a import router as a2a_router
 from agentcore.api.packages import router as packages_router
 from agentcore.api.teams import router as teams_router
+from agentcore.api.triggers import router as triggers_router
 
 __all__ = [
     "api_key_router",
@@ -56,4 +57,5 @@ __all__ = [
     "a2a_router",
     "packages_router",
     "teams_router",
+    "triggers_router",
 ]

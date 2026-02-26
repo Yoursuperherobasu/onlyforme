@@ -18,6 +18,9 @@ from agentcore.services.database.models.connector_catalogue.model import Connect
 
 router = APIRouter(prefix="/connector-catalogue", tags=["Connector Catalogue"])
 
+DB_PROVIDERS = {"postgresql", "oracle", "sqlserver", "mysql"}
+STORAGE_PROVIDERS = {"azure_blob", "sharepoint"}
+
 
 # ---------- Encryption helpers ----------
 
@@ -64,19 +67,45 @@ def _decrypt_password(encrypted: str) -> str:
     return _get_fernet().decrypt(encrypted.encode()).decode()
 
 
+def _encrypt_provider_config(provider: str, config: dict) -> dict:
+    """Encrypt sensitive fields in provider_config before saving."""
+    encrypted = dict(config)
+    if provider == "azure_blob" and "connection_string" in encrypted:
+        encrypted["connection_string"] = _encrypt_password(encrypted["connection_string"])
+    elif provider == "sharepoint" and "client_secret" in encrypted:
+        encrypted["client_secret"] = _encrypt_password(encrypted["client_secret"])
+    return encrypted
+
+
+def _decrypt_provider_config(provider: str, config: dict) -> dict:
+    """Decrypt sensitive fields in provider_config when reading."""
+    decrypted = dict(config)
+    try:
+        if provider == "azure_blob" and "connection_string" in decrypted:
+            decrypted["connection_string"] = _decrypt_password(decrypted["connection_string"])
+        elif provider == "sharepoint" and "client_secret" in decrypted:
+            decrypted["client_secret"] = _decrypt_password(decrypted["client_secret"])
+    except Exception:
+        pass
+    return decrypted
+
+
 # ---------- Payloads ----------
 
 class ConnectorPayload(BaseModel):
     name: str
     description: str | None = None
-    provider: str  # postgresql, oracle, sqlserver, mysql
-    host: str
-    port: int
-    database_name: str
+    provider: str  # postgresql | oracle | sqlserver | mysql | azure_blob | sharepoint
+    # DB-only fields (optional for non-DB providers)
+    host: str | None = None
+    port: int | None = None
+    database_name: str | None = None
     schema_name: str = "public"
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     ssl_enabled: bool = False
+    # Non-DB provider config (Azure Blob, SharePoint)
+    provider_config: dict | None = None
     is_custom: bool = False
     org_id: UUID | None = None
     dept_id: UUID | None = None
@@ -93,6 +122,7 @@ class ConnectorUpdatePayload(BaseModel):
     username: str | None = None
     password: str | None = None
     ssl_enabled: bool | None = None
+    provider_config: dict | None = None
     is_custom: bool | None = None
     org_id: UUID | None = None
     dept_id: UUID | None = None
@@ -107,6 +137,7 @@ class TestConnectionPayload(BaseModel):
     username: str | None = None
     password: str | None = None
     ssl_enabled: bool | None = None
+    provider_config: dict | None = None
 
 
 # ---------- RBAC helpers (same pattern as VectorDB) ----------
@@ -168,6 +199,15 @@ async def _validate_scope_refs(session: DbSession, org_id: UUID | None, dept_id:
 # ---------- Serialization ----------
 
 def _serialize_connector(row: ConnectorCatalogue) -> dict:
+    # Return provider_config with secrets masked (not decrypted) for display
+    safe_config: dict | None = None
+    if row.provider_config:
+        safe_config = dict(row.provider_config)
+        if row.provider == "azure_blob" and "connection_string" in safe_config:
+            safe_config["connection_string"] = "********"
+        elif row.provider == "sharepoint" and "client_secret" in safe_config:
+            safe_config["client_secret"] = "********"
+
     return {
         "id": str(row.id),
         "name": row.name,
@@ -179,6 +219,7 @@ def _serialize_connector(row: ConnectorCatalogue) -> dict:
         "schema_name": row.schema_name,
         "username": row.username,
         "ssl_enabled": row.ssl_enabled,
+        "provider_config": safe_config,
         "status": row.status,
         "tables_metadata": row.tables_metadata,
         "last_tested_at": row.last_tested_at.isoformat() if row.last_tested_at else None,
@@ -259,6 +300,75 @@ def _test_db_connection(provider: str, host: str, port: int, database_name: str,
         )
 
 
+def _test_azure_blob_connection(config: dict) -> dict:
+    """Test an Azure Blob Storage connection."""
+    start = time.time()
+    try:
+        from azure.storage.blob import BlobServiceClient
+    except ImportError:
+        raise HTTPException(
+            status_code=400,
+            detail="azure-storage-blob not installed. Install with: pip install azure-storage-blob",
+        )
+
+    connection_string = config.get("connection_string", "")
+    container_name = config.get("container_name", "")
+
+    if not connection_string:
+        raise HTTPException(status_code=400, detail="connection_string is required for Azure Blob connector")
+    if not container_name:
+        raise HTTPException(status_code=400, detail="container_name is required for Azure Blob connector")
+
+    client = BlobServiceClient.from_connection_string(connection_string)
+    container_client = client.get_container_client(container_name)
+    blobs = list(container_client.list_blobs())
+    latency_ms = round((time.time() - start) * 1000, 2)
+
+    return {
+        "success": True,
+        "message": f"Connected successfully. Found {len(blobs)} blobs in '{container_name}'.",
+        "latency_ms": latency_ms,
+        "tables_metadata": None,
+    }
+
+
+def _test_sharepoint_connection(config: dict) -> dict:
+    """Test a SharePoint connection."""
+    start = time.time()
+    try:
+        from office365.runtime.auth.client_credential import ClientCredential
+        from office365.sharepoint.client_context import ClientContext
+    except ImportError:
+        raise HTTPException(
+            status_code=400,
+            detail="Office365-REST-Python-Client not installed. Install with: pip install Office365-REST-Python-Client",
+        )
+
+    site_url = config.get("site_url", "")
+    client_id = config.get("client_id", "")
+    client_secret = config.get("client_secret", "")
+
+    if not site_url or not client_id or not client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="site_url, client_id, and client_secret are required for SharePoint connector",
+        )
+
+    credentials = ClientCredential(client_id, client_secret)
+    ctx = ClientContext(site_url).with_credentials(credentials)
+    web = ctx.web
+    ctx.load(web)
+    ctx.execute_query()
+
+    latency_ms = round((time.time() - start) * 1000, 2)
+    return {
+        "success": True,
+        "message": f"Connected successfully to SharePoint site: {web.url}",
+        "latency_ms": latency_ms,
+        "tables_metadata": None,
+    }
+
+
 # ---------- Endpoints ----------
 
 @router.get("")
@@ -287,27 +397,57 @@ async def create_connector(
 
     await _validate_scope_refs(session, payload.org_id, payload.dept_id)
     now = datetime.now(timezone.utc)
+    provider = payload.provider.lower()
 
-    row = ConnectorCatalogue(
-        name=payload.name,
-        description=payload.description,
-        provider=payload.provider.lower(),
-        host=payload.host,
-        port=payload.port,
-        database_name=payload.database_name,
-        schema_name=payload.schema_name,
-        username=payload.username,
-        password_encrypted=_encrypt_password(payload.password),
-        ssl_enabled=payload.ssl_enabled,
-        status="disconnected",
-        is_custom=payload.is_custom,
-        org_id=payload.org_id,
-        dept_id=payload.dept_id,
-        created_by=current_user.id,
-        updated_by=current_user.id,
-        created_at=now,
-        updated_at=now,
-    )
+    if provider in STORAGE_PROVIDERS:
+        # Azure Blob / SharePoint: credentials go into provider_config, not DB fields
+        raw_config = payload.provider_config or {}
+        encrypted_config = _encrypt_provider_config(provider, raw_config)
+        row = ConnectorCatalogue(
+            name=payload.name,
+            description=payload.description,
+            provider=provider,
+            host=None,
+            port=None,
+            database_name=None,
+            schema_name=None,
+            username=None,
+            password_encrypted=None,
+            ssl_enabled=False,
+            provider_config=encrypted_config,
+            status="disconnected",
+            is_custom=payload.is_custom,
+            org_id=payload.org_id,
+            dept_id=payload.dept_id,
+            created_by=current_user.id,
+            updated_by=current_user.id,
+            created_at=now,
+            updated_at=now,
+        )
+    else:
+        # DB providers: use standard DB fields
+        row = ConnectorCatalogue(
+            name=payload.name,
+            description=payload.description,
+            provider=provider,
+            host=payload.host,
+            port=payload.port,
+            database_name=payload.database_name,
+            schema_name=payload.schema_name,
+            username=payload.username,
+            password_encrypted=_encrypt_password(payload.password) if payload.password else None,
+            ssl_enabled=payload.ssl_enabled,
+            provider_config=None,
+            status="disconnected",
+            is_custom=payload.is_custom,
+            org_id=payload.org_id,
+            dept_id=payload.dept_id,
+            created_by=current_user.id,
+            updated_by=current_user.id,
+            created_at=now,
+            updated_at=now,
+        )
+
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -337,20 +477,38 @@ async def update_connector(
         row.description = payload.description
     if payload.provider is not None:
         row.provider = payload.provider.lower()
-    if payload.host is not None:
-        row.host = payload.host
-    if payload.port is not None:
-        row.port = payload.port
-    if payload.database_name is not None:
-        row.database_name = payload.database_name
-    if payload.schema_name is not None:
-        row.schema_name = payload.schema_name
-    if payload.username is not None:
-        row.username = payload.username
-    if payload.password is not None:
-        row.password_encrypted = _encrypt_password(payload.password)
-    if payload.ssl_enabled is not None:
-        row.ssl_enabled = payload.ssl_enabled
+
+    effective_provider = row.provider
+
+    if effective_provider in STORAGE_PROVIDERS:
+        # Storage provider: update provider_config, clear DB fields
+        if payload.provider_config is not None:
+            row.provider_config = _encrypt_provider_config(effective_provider, payload.provider_config)
+        row.host = None
+        row.port = None
+        row.database_name = None
+        row.schema_name = None
+        row.username = None
+        row.password_encrypted = None
+        row.ssl_enabled = False
+    else:
+        # DB provider: update DB fields
+        if payload.host is not None:
+            row.host = payload.host
+        if payload.port is not None:
+            row.port = payload.port
+        if payload.database_name is not None:
+            row.database_name = payload.database_name
+        if payload.schema_name is not None:
+            row.schema_name = payload.schema_name
+        if payload.username is not None:
+            row.username = payload.username
+        if payload.password is not None:
+            row.password_encrypted = _encrypt_password(payload.password)
+        if payload.ssl_enabled is not None:
+            row.ssl_enabled = payload.ssl_enabled
+        row.provider_config = None
+
     if payload.is_custom is not None:
         row.is_custom = payload.is_custom
     row.org_id = payload.org_id
@@ -394,16 +552,33 @@ async def test_connector_connection(
         raise HTTPException(status_code=404, detail="Connector not found")
 
     provider = override.provider if override and override.provider else row.provider
-    host = override.host if override and override.host else row.host
-    port = override.port if override and override.port else row.port
-    database_name = override.database_name if override and override.database_name else row.database_name
-    schema_name = override.schema_name if override and override.schema_name else row.schema_name
-    username = override.username if override and override.username else row.username
-    password = override.password if override and override.password else _decrypt_password(row.password_encrypted)
-    ssl_enabled = override.ssl_enabled if override and override.ssl_enabled is not None else row.ssl_enabled
 
     try:
-        result = _test_db_connection(provider, host, port, database_name, schema_name, username, password, ssl_enabled)
+        if provider in STORAGE_PROVIDERS:
+            # Use provider_config (override or stored, decrypted)
+            if override and override.provider_config:
+                config = override.provider_config
+            else:
+                config = _decrypt_provider_config(provider, row.provider_config or {})
+
+            if provider == "azure_blob":
+                result = _test_azure_blob_connection(config)
+            else:  # sharepoint
+                result = _test_sharepoint_connection(config)
+        else:
+            # DB provider
+            host = override.host if override and override.host else row.host
+            port = override.port if override and override.port else row.port
+            database_name = override.database_name if override and override.database_name else row.database_name
+            schema_name = override.schema_name if override and override.schema_name else row.schema_name
+            username = override.username if override and override.username else row.username
+            password = (
+                override.password if override and override.password
+                else (_decrypt_password(row.password_encrypted) if row.password_encrypted else "")
+            )
+            ssl_enabled = override.ssl_enabled if override and override.ssl_enabled is not None else row.ssl_enabled
+            result = _test_db_connection(provider, host, port, database_name, schema_name, username, password, ssl_enabled)
+
         now = datetime.now(timezone.utc)
         row.status = "connected"
         row.tables_metadata = result.get("tables_metadata")

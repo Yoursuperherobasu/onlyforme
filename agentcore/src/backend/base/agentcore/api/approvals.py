@@ -311,6 +311,23 @@ async def approve_agent(
     except Exception as reg_err:
         logger.warning(f"Registry sync failed after approval {req.id}: {reg_err}")
 
+    # Sync FileTrigger nodes → auto-create trigger_config entries
+    if deployment.agent_snapshot:
+        try:
+            from agentcore.services.deps import get_trigger_service
+            trigger_svc = get_trigger_service()
+            await trigger_svc.sync_folder_monitors_for_agent(
+                session=session,
+                agent_id=deployment.agent_id,
+                environment="prod",
+                version=f"v{deployment.version_number}",
+                deployment_id=deployment.id,
+                flow_data=deployment.agent_snapshot,
+                created_by=req.requested_by,
+            )
+        except Exception as fm_err:
+            logger.warning(f"FileTrigger sync failed after approval {req.id}: {fm_err}")
+
     approver_name = getattr(current_user, "username", None)
     return ApprovalResponse(
         success=True,

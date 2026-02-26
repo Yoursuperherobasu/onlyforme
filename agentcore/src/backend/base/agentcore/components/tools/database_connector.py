@@ -52,10 +52,16 @@ def _get_sync_engine():
 
 
 def _run_async(coro):
-    """Run an async coroutine from a synchronous context."""
+    """Run an async coroutine from a synchronous context.
+
+    NOTE: import locally — components are loaded via exec() from string,
+    so module-level imports may not be in scope.
+    """
+    import concurrent.futures as _cf
+
     try:
         asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with _cf.ThreadPoolExecutor() as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=30)
     except RuntimeError:
