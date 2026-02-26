@@ -105,10 +105,6 @@ def upgrade() -> None:
         """
     )
 
-    # Remove legacy tables if present
-    op.execute("DROP TABLE IF EXISTS evaluator CASCADE;")
-    op.execute("DROP TABLE IF EXISTS vertex_build CASCADE;")
-
     # Remove deprecated agent columns
     op.execute("ALTER TABLE IF EXISTS agent DROP COLUMN IF EXISTS action_description;")
     op.execute("ALTER TABLE IF EXISTS agent DROP COLUMN IF EXISTS action_name;")

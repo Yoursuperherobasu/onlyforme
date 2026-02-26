@@ -95,22 +95,6 @@ def upgrade() -> None:
             if not _index_exists('teams_app', batch_op.f('ix_teams_app_agent_id')):
                 batch_op.create_index(batch_op.f('ix_teams_app_agent_id'), ['agent_id'], unique=False)
 
-    if _table_exists('vertex_build'):
-        with op.batch_alter_table('vertex_build', schema=None) as batch_op:
-            if _index_exists('vertex_build', batch_op.f('ix_vertex_build_dept_id')):
-                batch_op.drop_index(batch_op.f('ix_vertex_build_dept_id'))
-            if _index_exists('vertex_build', batch_op.f('ix_vertex_build_org_id')):
-                batch_op.drop_index(batch_op.f('ix_vertex_build_org_id'))
-        op.drop_table('vertex_build')
-    if _table_exists('evaluator'):
-        with op.batch_alter_table('evaluator', schema=None) as batch_op:
-            if _index_exists('evaluator', batch_op.f('ix_evaluator_dept_id')):
-                batch_op.drop_index(batch_op.f('ix_evaluator_dept_id'))
-            if _index_exists('evaluator', batch_op.f('ix_evaluator_org_id')):
-                batch_op.drop_index(batch_op.f('ix_evaluator_org_id'))
-            if _index_exists('evaluator', batch_op.f('ix_evaluator_user_id')):
-                batch_op.drop_index(batch_op.f('ix_evaluator_user_id'))
-        op.drop_table('evaluator')
     if _table_exists('agent'):
         with op.batch_alter_table('agent', schema=None) as batch_op:
             if _column_exists('agent', 'action_description'):
@@ -157,55 +141,6 @@ def downgrade() -> None:
         batch_op.add_column(sa.Column('mcp_enabled', sa.BOOLEAN(), server_default=sa.text('false'), autoincrement=False, nullable=True))
         batch_op.add_column(sa.Column('action_name', sa.VARCHAR(), autoincrement=False, nullable=True))
         batch_op.add_column(sa.Column('action_description', sa.TEXT(), autoincrement=False, nullable=True))
-
-    op.create_table('evaluator',
-    sa.Column('name', sa.VARCHAR(), autoincrement=False, nullable=False),
-    sa.Column('criteria', sa.TEXT(), autoincrement=False, nullable=False),
-    sa.Column('model', sa.VARCHAR(), server_default=sa.text("'gpt-4o'::character varying"), autoincrement=False, nullable=True),
-    sa.Column('preset_id', sa.VARCHAR(), autoincrement=False, nullable=True),
-    sa.Column('ground_truth', sa.TEXT(), autoincrement=False, nullable=True),
-    sa.Column('target', postgresql.JSON(astext_type=sa.Text()), autoincrement=False, nullable=True),
-    sa.Column('trace_id', sa.VARCHAR(), autoincrement=False, nullable=True),
-    sa.Column('agent_id', sa.VARCHAR(), autoincrement=False, nullable=True),
-    sa.Column('agent_ids', postgresql.JSON(astext_type=sa.Text()), autoincrement=False, nullable=True),
-    sa.Column('agent_name', sa.VARCHAR(), autoincrement=False, nullable=True),
-    sa.Column('session_id', sa.VARCHAR(), autoincrement=False, nullable=True),
-    sa.Column('project_name', sa.VARCHAR(), autoincrement=False, nullable=True),
-    sa.Column('ts_from', postgresql.TIMESTAMP(), autoincrement=False, nullable=True),
-    sa.Column('ts_to', postgresql.TIMESTAMP(), autoincrement=False, nullable=True),
-    sa.Column('model_api_key', sa.VARCHAR(), autoincrement=False, nullable=True),
-    sa.Column('id', sa.UUID(), autoincrement=False, nullable=False),
-    sa.Column('user_id', sa.UUID(), autoincrement=False, nullable=True),
-    sa.Column('created_at', postgresql.TIMESTAMP(), server_default=sa.text('now()'), autoincrement=False, nullable=False),
-    sa.Column('org_id', sa.UUID(), autoincrement=False, nullable=True),
-    sa.Column('dept_id', sa.UUID(), autoincrement=False, nullable=True),
-    sa.ForeignKeyConstraint(['dept_id'], ['department.id'], name=op.f('fk_evaluator_dept_id_department')),
-    sa.ForeignKeyConstraint(['org_id'], ['organization.id'], name=op.f('fk_evaluator_org_id_organization')),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_evaluator'))
-    )
-    with op.batch_alter_table('evaluator', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_evaluator_user_id'), ['user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_evaluator_org_id'), ['org_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_evaluator_dept_id'), ['dept_id'], unique=False)
-
-    op.create_table('vertex_build',
-    sa.Column('timestamp', postgresql.TIMESTAMP(), server_default=sa.text('now()'), autoincrement=False, nullable=False),
-    sa.Column('id', sa.VARCHAR(), autoincrement=False, nullable=False),
-    sa.Column('data', postgresql.JSON(astext_type=sa.Text()), autoincrement=False, nullable=True),
-    sa.Column('artifacts', postgresql.JSON(astext_type=sa.Text()), autoincrement=False, nullable=True),
-    sa.Column('params', sa.TEXT(), autoincrement=False, nullable=True),
-    sa.Column('valid', sa.BOOLEAN(), autoincrement=False, nullable=False),
-    sa.Column('agent_id', sa.UUID(), autoincrement=False, nullable=False),
-    sa.Column('build_id', sa.UUID(), autoincrement=False, nullable=False),
-    sa.Column('org_id', sa.UUID(), autoincrement=False, nullable=True),
-    sa.Column('dept_id', sa.UUID(), autoincrement=False, nullable=True),
-    sa.ForeignKeyConstraint(['dept_id'], ['department.id'], name=op.f('fk_vertex_build_dept_id_department')),
-    sa.ForeignKeyConstraint(['org_id'], ['organization.id'], name=op.f('fk_vertex_build_org_id_organization')),
-    sa.PrimaryKeyConstraint('build_id', name=op.f('pk_vertex_build'))
-    )
-    with op.batch_alter_table('vertex_build', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_vertex_build_org_id'), ['org_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_vertex_build_dept_id'), ['dept_id'], unique=False)
 
     with op.batch_alter_table('teams_app', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_teams_app_agent_id'))
