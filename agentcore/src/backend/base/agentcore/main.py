@@ -145,11 +145,6 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug(f"Agents loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
-            logger.debug("Loading mcp servers for projects")
-            await init_mcp_servers()
-            logger.debug(f"mcp servers loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
-
-            current_time = asyncio.get_event_loop().time()
             logger.debug("Starting scheduler and trigger services")
             try:
                 scheduler_service = get_scheduler_service()
