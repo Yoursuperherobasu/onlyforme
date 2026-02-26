@@ -3,7 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import JSON, Column, DateTime, Enum as SQLEnum, Index, Text, text
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -123,6 +123,8 @@ class TriggerConfigCreate(SQLModel):
 class TriggerConfigRead(BaseModel):
     """Model for reading trigger config data."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     agent_id: UUID
     deployment_id: UUID | None = None
@@ -192,6 +194,8 @@ class TriggerExecutionLogTable(TriggerExecutionLogBase, table=True):  # type: ig
 
 class TriggerExecutionLogRead(BaseModel):
     """Model for reading trigger execution log data."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     trigger_config_id: UUID

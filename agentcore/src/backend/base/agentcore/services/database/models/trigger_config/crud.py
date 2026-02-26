@@ -63,6 +63,19 @@ async def get_active_triggers_by_type(
     return list(result.all())
 
 
+async def get_all_triggers(
+    db: AsyncSession,
+    *,
+    trigger_type: TriggerTypeEnum | None = None,
+) -> list[TriggerConfigTable]:
+    """Get all trigger configs across all agents (admin view)."""
+    stmt = select(TriggerConfigTable).order_by(col(TriggerConfigTable.created_at).desc())
+    if trigger_type:
+        stmt = stmt.where(TriggerConfigTable.trigger_type == trigger_type)
+    result = await db.exec(stmt)
+    return list(result.all())
+
+
 async def get_all_active_triggers(db: AsyncSession) -> list[TriggerConfigTable]:
     """Get all active trigger configs across all agents."""
     stmt = (
@@ -111,10 +124,18 @@ async def toggle_trigger(db: AsyncSession, trigger_id: UUID) -> TriggerConfigTab
 
 
 async def delete_trigger_config(db: AsyncSession, trigger_id: UUID) -> bool:
-    """Delete a trigger configuration."""
+    """Delete a trigger configuration and its execution logs."""
     record = await get_trigger_config_by_id(db, trigger_id)
     if not record:
         return False
+
+    # Delete child execution logs first to satisfy FK constraint
+    logs_stmt = select(TriggerExecutionLogTable).where(
+        TriggerExecutionLogTable.trigger_config_id == trigger_id
+    )
+    logs_result = await db.exec(logs_stmt)
+    for log in logs_result.all():
+        await db.delete(log)
 
     await db.delete(record)
     await db.commit()

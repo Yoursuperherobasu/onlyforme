@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -65,7 +66,17 @@ class TriggerService(Service):
         self.set_ready()
 
     async def teardown(self) -> None:
-        """Cancel all monitor tasks and clean up."""
+        """Cancel all monitor tasks and clean up.
+
+        Persists seen-file sets to the DB before shutdown so they survive restart.
+        """
+        # Persist all seen files before shutting down
+        for task_id in list(self._seen_files.keys()):
+            try:
+                await self._persist_seen_files(UUID(task_id))
+            except Exception as e:
+                logger.warning(f"Failed to persist seen files for {task_id} on teardown: {e}")
+
         for task_id, task in self._monitors.items():
             if not task.done():
                 task.cancel()
@@ -76,7 +87,7 @@ class TriggerService(Service):
         logger.info("TriggerService shut down")
 
     async def load_active_monitors(self) -> None:
-        """Load all active folder/email monitors from the database."""
+        """Load all active file trigger monitors from the database."""
         from agentcore.services.deps import get_db_service
 
         try:
@@ -96,6 +107,145 @@ class TriggerService(Service):
         except Exception as e:
             logger.warning(f"Failed to load active monitors (table may not exist yet): {e}")
 
+    async def sync_folder_monitors_for_agent(
+        self,
+        session,
+        agent_id,
+        environment: str,
+        version: str,
+        deployment_id,
+        flow_data: dict,
+        created_by,
+    ) -> None:
+        """Called on publish. Scans the agent snapshot for FolderMonitor nodes and
+        auto-creates trigger_config entries so admins can toggle them on/off from
+        the Automations page. The connector/settings stay in the builder node —
+        we just mirror them into the trigger table so the service can poll.
+        """
+        from agentcore.services.database.models.trigger_config.crud import (
+            create_trigger_config,
+            get_triggers_by_agent_id,
+        )
+        from agentcore.services.database.models.trigger_config.model import (
+            TriggerConfigCreate,
+            TriggerTypeEnum,
+        )
+
+        nodes = flow_data.get("nodes", [])
+        node_types = [n.get("data", {}).get("type", "?") for n in nodes]
+        logger.info(f"Agent {agent_id} snapshot has {len(nodes)} node(s), types: {node_types}")
+        # Accept both old ("FolderMonitor") and new ("FileTrigger") node types
+        _FILE_TRIGGER_TYPES = {"FolderMonitor", "FileTrigger"}
+        fm_nodes = [n for n in nodes if n.get("data", {}).get("type") in _FILE_TRIGGER_TYPES]
+
+        if not fm_nodes:
+            logger.info(f"No FileTrigger nodes in agent {agent_id} snapshot — skipping sync")
+            return
+
+        logger.info(f"Syncing {len(fm_nodes)} FileTrigger node(s) for agent {agent_id}")
+
+        # Find existing folder-monitor triggers for this agent+env
+        existing = await get_triggers_by_agent_id(session, agent_id, active_only=False)
+        existing_fm = [
+            t for t in existing
+            if t.trigger_type == TriggerTypeEnum.FOLDER_MONITOR and t.environment == environment
+        ]
+
+        # Build a lookup: (node_id, deployment_id) → existing trigger
+        # We key by BOTH node_id AND deployment_id so that a new version of
+        # the same agent creates a NEW trigger entry instead of overwriting.
+        existing_by_key: dict[tuple[str, str], object] = {}
+        existing_by_node_only: dict[str, object] = {}
+        for t in existing_fm:
+            nid = (t.trigger_config or {}).get("node_id")
+            did = str(t.deployment_id) if t.deployment_id else None
+            if nid and did:
+                existing_by_key[(nid, did)] = t
+            if nid:
+                existing_by_node_only.setdefault(nid, [])
+                existing_by_node_only[nid].append(t)
+
+        dep_id_str = str(deployment_id)
+
+        for node in fm_nodes:
+            node_id = node.get("id")
+            template = node.get("data", {}).get("node", {}).get("template", {})
+            storage_type = template.get("storage_type", {}).get("value", "Azure Blob Storage")
+            connector_raw = template.get("connector", {}).get("value", "") or ""
+            file_types = template.get("file_types", {}).get("value", [])
+
+            # Parse "name | provider | target | uuid" → extract uuid
+            parts = connector_raw.split("|")
+            connector_id = parts[-1].strip() if len(parts) >= 4 else connector_raw.strip()
+
+            # Check if THIS exact deployment already has a trigger for this node
+            exact_match = existing_by_key.get((node_id, dep_id_str))
+
+            if exact_match:
+                # ── SAME deployment re-synced: update in-place ──
+                old_cfg = dict(exact_match.trigger_config or {})
+                old_cfg["storage_type"] = storage_type
+                old_cfg["connector_id"] = connector_id
+                old_cfg["file_types"] = file_types
+                old_cfg["node_id"] = node_id
+                old_cfg.setdefault("poll_interval_seconds", 30)
+                old_cfg.setdefault("trigger_on", "New Files")
+                old_cfg.setdefault("batch_size", 10)
+                exact_match.trigger_config = old_cfg
+                exact_match.is_active = True
+                session.add(exact_match)
+                await session.commit()
+                await session.refresh(exact_match)
+
+                await self.unregister(exact_match.id)
+                try:
+                    await self.register_folder_monitor(exact_match)
+                except Exception as e:
+                    logger.warning(f"Failed to re-register folder monitor for node {node_id}: {e}")
+                logger.info(f"Updated existing folder monitor {exact_match.id} for node {node_id} (same deployment)")
+            else:
+                # ── NEW deployment version → deactivate old triggers for this
+                #    node and create a fresh entry ──
+                old_triggers_for_node = existing_by_node_only.get(node_id, [])
+                for old_t in old_triggers_for_node:
+                    if old_t.is_active:
+                        old_t.is_active = False
+                        session.add(old_t)
+                        await self.unregister(old_t.id)
+                        logger.info(
+                            f"Deactivated old folder monitor {old_t.id} "
+                            f"(superseded by new deployment {deployment_id})"
+                        )
+
+                record = await create_trigger_config(
+                    session,
+                    TriggerConfigCreate(
+                        agent_id=agent_id,
+                        deployment_id=deployment_id,
+                        trigger_type=TriggerTypeEnum.FOLDER_MONITOR,
+                        trigger_config={
+                            "storage_type": storage_type,
+                            "connector_id": connector_id,
+                            "poll_interval_seconds": 30,
+                            "file_types": file_types,
+                            "trigger_on": "New Files",
+                            "batch_size": 10,
+                            "node_id": node_id,
+                        },
+                        is_active=True,
+                        environment=environment,
+                        version=version,
+                        created_by=created_by,
+                    ),
+                )
+                try:
+                    await self.register_folder_monitor(record)
+                except Exception as e:
+                    logger.warning(f"Failed to register folder monitor for node {node_id}: {e}")
+                logger.info(f"Created new folder monitor {record.id} for node {node_id} (new deployment)")
+
+        await session.commit()
+
     async def register_folder_monitor(self, trigger_record) -> None:
         """Register a folder monitor from a TriggerConfigTable record."""
         task_id = str(trigger_record.id)
@@ -103,7 +253,8 @@ class TriggerService(Service):
             await self.unregister(trigger_record.id)
 
         config = trigger_record.trigger_config or {}
-        self._seen_files[task_id] = set()
+        # Load previously seen files from DB so we don't re-process on restart
+        self._seen_files[task_id] = await self._load_seen_files(trigger_record.id)
 
         task = asyncio.create_task(
             self._folder_monitor_loop(
@@ -121,6 +272,8 @@ class TriggerService(Service):
     async def unregister(self, trigger_config_id: UUID) -> bool:
         """Unregister and cancel a monitor task."""
         task_id = str(trigger_config_id)
+        # Persist seen files before unregistering so they survive restart
+        await self._persist_seen_files(trigger_config_id)
         task = self._monitors.pop(task_id, None)
         self._seen_files.pop(task_id, None)
         if task and not task.done():
@@ -129,7 +282,64 @@ class TriggerService(Service):
             return True
         return False
 
-    # ── Folder Monitor Loop ────────────────────────────────────────────────
+    # ── Seen-files persistence ──────────────────────────────────────────────
+
+    async def _load_seen_files(self, trigger_config_id: UUID) -> set[str]:
+        """Load persisted seen-file keys from the trigger_config JSON.
+
+        The keys are stored under ``_seen_keys`` inside the ``trigger_config``
+        column so they survive server restarts.
+        """
+        try:
+            from agentcore.services.deps import get_db_service
+            from agentcore.services.database.models.trigger_config.crud import (
+                get_trigger_config_by_id,
+            )
+
+            db_service = get_db_service()
+            async with db_service.with_session() as session:
+                record = await get_trigger_config_by_id(session, trigger_config_id)
+                if record and record.trigger_config:
+                    keys = record.trigger_config.get("_seen_keys", [])
+                    if isinstance(keys, list):
+                        return set(keys)
+        except Exception as e:
+            logger.warning(f"TriggerService: failed to load seen files for {trigger_config_id}: {e}")
+        return set()
+
+    async def _persist_seen_files(self, trigger_config_id: UUID) -> None:
+        """Save the in-memory seen-file keys to the trigger_config JSON.
+
+        Only the most recent 500 keys are kept to prevent unbounded growth.
+        """
+        task_id = str(trigger_config_id)
+        seen = self._seen_files.get(task_id)
+        if seen is None:
+            return
+
+        try:
+            from agentcore.services.deps import get_db_service
+            from agentcore.services.database.models.trigger_config.crud import (
+                get_trigger_config_by_id,
+            )
+
+            # Keep only last 500 to prevent JSON bloat
+            keys_list = list(seen)[-500:]
+
+            db_service = get_db_service()
+            async with db_service.with_session() as session:
+                record = await get_trigger_config_by_id(session, trigger_config_id)
+                if record:
+                    config = dict(record.trigger_config or {})
+                    config["_seen_keys"] = keys_list
+                    record.trigger_config = config
+                    record.updated_at = datetime.now(timezone.utc)
+                    session.add(record)
+                    await session.commit()
+        except Exception as e:
+            logger.warning(f"TriggerService: failed to persist seen files for {trigger_config_id}: {e}")
+
+    # ── File Trigger Loop ──────────────────────────────────────────────────
 
     async def _folder_monitor_loop(
         self,
@@ -180,14 +390,20 @@ class TriggerService(Service):
                     payload={"files": new_files, "storage_type": storage_type},
                     environment=environment,
                     version=version,
+                    trigger_config=config,
                 )
 
                 # Move processed files if configured
                 if config.get("move_processed", True) and storage_type == "Local":
                     await self._move_processed_files(config, new_files)
 
+                # Persist seen files to DB so they survive server restart
+                await self._persist_seen_files(trigger_config_id)
+
             except asyncio.CancelledError:
                 logger.debug(f"Folder monitor {task_id} cancelled")
+                # Persist before shutdown
+                await self._persist_seen_files(trigger_config_id)
                 break
             except Exception:
                 logger.exception(f"Error in folder monitor {task_id}")
@@ -402,6 +618,7 @@ class TriggerService(Service):
         payload: dict,
         environment: str,
         version: str | None,
+        trigger_config: dict | None = None,
     ) -> None:
         """Execute the agent flow with the trigger payload."""
         from agentcore.services.deps import get_db_service
@@ -429,7 +646,10 @@ class TriggerService(Service):
                 await update_trigger_last_run(session, trigger_config_id)
 
             # Run the agent flow
-            await self._run_agent_flow(agent_id, environment, version, trigger_config_id, payload)
+            await self._run_agent_flow(
+                agent_id, environment, version, trigger_config_id, payload,
+                trigger_config=trigger_config,
+            )
 
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             async with db_service.with_session() as session:
@@ -468,6 +688,7 @@ class TriggerService(Service):
         version: str | None,
         trigger_config_id: UUID,
         payload: dict,
+        trigger_config: dict | None = None,
     ) -> None:
         """Invoke the agent flow using the existing execution pipeline."""
         import json
@@ -494,14 +715,24 @@ class TriggerService(Service):
         agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
             agent_id=agent.id,
             env=environment,
-            version=version or "v1",
+            version=version,  # None → latest active published deployment
         )
+
+        # Build tweaks to inject file metadata into the FolderMonitor node
+        # so it skips the storage scan and uses pre-detected files instead.
+        tweaks = {}
+        if trigger_config and payload.get("files"):
+            node_id = trigger_config.get("node_id")
+            if node_id:
+                tweaks[node_id] = {
+                    "_trigger_files": json.dumps(payload["files"]),
+                }
 
         input_request = SimplifiedAPIRequest(
             input_value=json.dumps(payload),
             input_type="chat",
             output_type="chat",
-            tweaks={},
+            tweaks=tweaks,
             session_id=None,
         )
 

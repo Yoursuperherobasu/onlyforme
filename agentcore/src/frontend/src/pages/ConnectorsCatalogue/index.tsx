@@ -198,8 +198,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         site_url: form.sharepoint_site_url,
         library: form.sharepoint_library,
         client_id: form.sharepoint_client_id,
-        tenant_id: form.sharepoint_tenant_id,
       };
+      if (form.sharepoint_tenant_id) {
+        provider_config.tenant_id = form.sharepoint_tenant_id;
+      }
       if (form.sharepoint_client_secret) {
         provider_config.client_secret = form.sharepoint_client_secret;
       }
@@ -237,7 +239,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       if (!form.azure_container_name) return true;
       if (!editingConnector && !form.azure_connection_string) return true;
     } else if (form.provider === "sharepoint") {
-      if (!form.sharepoint_site_url || !form.sharepoint_client_id || !form.sharepoint_tenant_id) return true;
+      if (!form.sharepoint_site_url || !form.sharepoint_client_id) return true;
       if (!editingConnector && !form.sharepoint_client_secret) return true;
     } else {
       // DB provider

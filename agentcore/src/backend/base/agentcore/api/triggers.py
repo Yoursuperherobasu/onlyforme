@@ -8,6 +8,7 @@ from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.trigger_config.crud import (
     create_trigger_config,
     delete_trigger_config,
+    get_all_triggers,
     get_trigger_config_by_id,
     get_trigger_execution_logs,
     get_triggers_by_agent_id,
@@ -38,6 +39,41 @@ class TriggerUpdateRequest(BaseModel):
     is_active: bool | None = None
     environment: str | None = None
     version: str | None = None
+
+
+@router.get("/", status_code=200)
+async def list_all_triggers(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    trigger_type: TriggerTypeEnum | None = None,
+) -> list[dict]:
+    """List all trigger configurations across all agents (admin view)."""
+    from agentcore.services.database.models.agent.model import Agent
+    from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
+    from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
+
+    triggers = await get_all_triggers(session, trigger_type=trigger_type)
+    result = []
+    for t in triggers:
+        agent = await session.get(Agent, t.agent_id)
+        row = TriggerConfigRead.model_validate(t).model_dump()
+
+        # Use deployment-specific agent name so each version keeps the name
+        # it was deployed with (even if the agent is later renamed/republished).
+        deploy_name = None
+        if t.deployment_id:
+            env = (t.environment or "").lower()
+            if env == "prod":
+                dep = await session.get(AgentDeploymentProd, t.deployment_id)
+                deploy_name = dep.agent_name if dep else None
+            elif env == "uat":
+                dep = await session.get(AgentDeploymentUAT, t.deployment_id)
+                deploy_name = dep.agent_name if dep else None
+
+        row["agent_name"] = deploy_name or (agent.name if agent else str(t.agent_id))
+        result.append(row)
+    return result
 
 
 @router.get("/{agent_id}", status_code=200)
@@ -167,6 +203,45 @@ async def get_trigger_logs(
     return [TriggerExecutionLogRead.model_validate(log) for log in logs]
 
 
+@router.post("/{trigger_id}/run-now", status_code=200)
+async def run_trigger_now(
+    *,
+    session: DbSession,
+    trigger_id: UUID,
+    current_user: CurrentActiveUser,
+) -> dict:
+    """Fire a trigger immediately, regardless of its schedule."""
+    import asyncio
+
+    record = await get_trigger_config_by_id(session, trigger_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Trigger not found")
+
+    try:
+        if record.trigger_type == TriggerTypeEnum.SCHEDULE:
+            # Execute immediately in background — _execute_trigger writes
+            # "started" to DB right away so the frontend can see Running...
+            from agentcore.services.deps import get_scheduler_service
+
+            scheduler = get_scheduler_service()
+            asyncio.create_task(
+                scheduler._execute_trigger(
+                    trigger_config_id=record.id,
+                    agent_id=record.agent_id,
+                    environment=record.environment,
+                    version=record.version,
+                )
+            )
+        else:
+            # For folder monitors, re-register to trigger an immediate scan
+            await _register_trigger(record)
+    except Exception as e:
+        logger.exception(f"Failed to manually fire trigger {trigger_id}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"message": "Trigger fired manually"}
+
+
 # ── Helper functions ─────────────────────────────────────────────────────
 
 
@@ -179,25 +254,18 @@ async def _register_trigger(record) -> None:
 
     if trigger_type == TriggerTypeEnum.SCHEDULE:
         scheduler = get_scheduler_service()
-        cron_expr = config.get("cron_expression")
-        interval_minutes = config.get("interval_minutes")
-        if cron_expr:
-            await scheduler.add_schedule(
-                trigger_config_id=record.id,
-                cron_expr=cron_expr,
-                agent_id=record.agent_id,
-                environment=record.environment,
-                version=record.version or "",
-            )
-        elif interval_minutes:
-            await scheduler.add_schedule(
-                trigger_config_id=record.id,
-                cron_expr=None,
-                agent_id=record.agent_id,
-                environment=record.environment,
-                version=record.version or "",
-                interval_minutes=interval_minutes,
-            )
+        schedule_type = config.get("schedule_type", "interval")
+        cron_expression = config.get("cron_expression", "0 * * * *")
+        interval_minutes = config.get("interval_minutes", 60)
+        await scheduler.add_schedule(
+            trigger_config_id=record.id,
+            agent_id=record.agent_id,
+            schedule_type=schedule_type,
+            cron_expression=cron_expression,
+            interval_minutes=interval_minutes,
+            environment=record.environment,
+            version=record.version or None,
+        )
 
     elif trigger_type == TriggerTypeEnum.FOLDER_MONITOR:
         trigger_service = get_trigger_service()

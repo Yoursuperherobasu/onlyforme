@@ -226,14 +226,39 @@ class SchedulerService(Service):
                     trigger_config_id=trigger_config_id,
                     agent_id=agent_id,
                     status=TriggerExecutionStatusEnum.STARTED,
-                    payload={"trigger_type": "schedule", "environment": environment, "version": version},
+                    payload={
+                        "trigger_type": "schedule",
+                        "environment": environment,
+                        "version": version,
+                    },
                 )
                 await update_trigger_last_run(session, trigger_config_id)
 
-            # Execute the agent flow
-            await self._run_agent_flow(agent_id, environment, version, trigger_config_id)
+            # Execute the agent flow — capture result so we can log the output
+            run_result = await self._run_agent_flow(agent_id, environment, version, trigger_config_id)
 
-            # Log success
+            # Best-effort extraction of session_id and first output text
+            session_id: str | None = None
+            output_text: str | None = None
+            if run_result is not None:
+                session_id = run_result.session_id
+                try:
+                    for run_out in run_result.outputs or []:
+                        for data in run_out.outputs or []:
+                            if data and data.messages:
+                                for msg in data.messages:
+                                    txt = getattr(msg, "text", None)
+                                    if txt:
+                                        output_text = txt[:2000]  # cap to keep DB tidy
+                                        break
+                            if output_text:
+                                break
+                        if output_text:
+                            break
+                except Exception:
+                    pass
+
+            # Log success — include session_id and output for the frontend detail view
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             async with db_service.with_session() as session:
                 await log_trigger_execution(
@@ -242,6 +267,10 @@ class SchedulerService(Service):
                     agent_id=agent_id,
                     status=TriggerExecutionStatusEnum.SUCCESS,
                     execution_duration_ms=elapsed_ms,
+                    payload={
+                        "session_id": session_id or str(agent_id),
+                        "output": output_text or "Agent completed (no text output captured)",
+                    },
                 )
 
             logger.info(f"Schedule execution completed for agent {agent_id} in {elapsed_ms}ms")
@@ -276,7 +305,7 @@ class SchedulerService(Service):
         environment: str,
         version: str | None,
         trigger_config_id: UUID,
-    ) -> None:
+    ):
         """Invoke the agent flow using the existing execution pipeline."""
         from agentcore.services.deps import get_db_service
 
@@ -301,18 +330,20 @@ class SchedulerService(Service):
         agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
             agent_id=agent.id,
             env=environment,
-            version=version or "v1",
+            version=version,  # None → latest active published deployment
         )
 
+        # Empty input_value so the flow runs with its own configured node values.
+        # The scheduler should NOT inject artificial text into the agent's inputs.
         input_request = SimplifiedAPIRequest(
-            input_value=f"Scheduled trigger fired (trigger_id={trigger_config_id})",
+            input_value="",
             input_type="chat",
             output_type="chat",
             tweaks={},
             session_id=None,
         )
 
-        await simple_run_agent_task(
+        return await simple_run_agent_task(
             agent=agent,
             input_request=input_request,
             api_key_user=None,

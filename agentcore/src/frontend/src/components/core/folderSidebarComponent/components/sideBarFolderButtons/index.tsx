@@ -521,6 +521,22 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
+        {/* Automations */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/automations")}
+            onClick={() => _navigate("/automations")}
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+          >
+            <ForwardedIconComponent
+              name="Zap"
+              className="h-4 w-4"
+            />
+            {t("Automations")}
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
         {/* Orchestrator */}
         {can("view_orchastration_page") && (
           <SidebarMenuItem>

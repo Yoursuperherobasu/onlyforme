@@ -510,6 +510,7 @@ export const nodeIconToDisplayIconMap: Record<string, string> = {
   triggers: "Zap",
   ScheduleTrigger: "Clock",
   FolderMonitor: "FolderSearch",
+  FileTrigger: "FolderSearch",
 };
 
 export const getLucideIconName = (name: string): string => {

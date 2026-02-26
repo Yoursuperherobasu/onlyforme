@@ -42,6 +42,7 @@ export const URLs = {
   HELP_SUPPORT: `help-support`,
   ORCHESTRATOR: `orchestrator`,
   CONNECTOR_CATALOGUE: `connector-catalogue`,
+  TRIGGERS: `triggers`,
   TEAMS: `teams`,
 } as const;
 
