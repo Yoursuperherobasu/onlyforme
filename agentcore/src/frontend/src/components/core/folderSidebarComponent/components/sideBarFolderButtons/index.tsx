@@ -662,8 +662,8 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
-              isActive={pathname.startsWith("/assets/files")}
-              onClick={() => _navigate("/assets/files")}
+              isActive={pathname.startsWith("/assets/knowledge-bases")}
+              onClick={() => _navigate("/assets/knowledge-bases")}
               className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
             >
               <ForwardedIconComponent
@@ -671,6 +671,24 @@ const SideBarFoldersButtonsComponent = ({
                 className="h-4 w-4"
               />
               {t("Knowledge Base Management")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
+
+        {/* Packages */}
+        {can("view_packages_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/packages")}
+              onClick={() => _navigate("/packages")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Package"
+                className="h-4 w-4"
+              />
+              {t("Packages")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -692,20 +710,22 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/help-support") || pathname.startsWith("/settings/help-support")}
-            onClick={() => _navigate("/help-support")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="CircleHelp"
-              className="h-4 w-4"
-            />
-            {t("Help & Support")}
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_help_support_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/help-support") || pathname.startsWith("/settings/help-support")}
+              onClick={() => _navigate("/help-support")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="CircleHelp"
+                className="h-4 w-4"
+              />
+              {t("Help & Support")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
       </SidebarMenu>
     </SidebarGroupContent>

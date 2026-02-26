@@ -106,6 +106,14 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Actions", keys: ["edit_platform_configs"] },
     ],
   },
+  { page: "Packages", sections: [{ name: "Page Access", keys: ["view_packages_page"] }] },
+  {
+    page: "Help & Support",
+    sections: [
+      { name: "Page Access", keys: ["view_help_support_page"] },
+      { name: "Actions", keys: ["add_faq"] },
+    ],
+  },
   { page: "Admin Page", sections: [{ name: "Page Access", keys: ["view_admin_page"] }] },
   { page: "Access Control", sections: [{ name: "Page Access", keys: ["view_access_control_page"] }] },
 ];

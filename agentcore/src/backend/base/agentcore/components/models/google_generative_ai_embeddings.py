@@ -1,11 +1,10 @@
+import os
+
 from langchain_core.embeddings import Embeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from agentcore.custom.custom_node.node import Node
 from agentcore.io import IntInput, MessageTextInput, Output
-
-
-GOOGLE_API_KEY = "AIzaSyC3UhBn_HLOEkvtbo1D8jhS58enFkaDjDo"
 
 
 MAX_DIMENSION = 3072
@@ -50,6 +49,6 @@ class GoogleGenerativeAIEmbeddingsNode(Node):
 
         return GoogleGenerativeAIEmbeddings(
             model=self.model_name,
-            google_api_key=GOOGLE_API_KEY,
+            google_api_key=os.environ["GOOGLE_API_KEY"],
             output_dimensionality=dimensionality,
         )

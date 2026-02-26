@@ -4,6 +4,8 @@ import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
+export type KBVisibility = "PRIVATE" | "DEPARTMENT" | "ORGANIZATION";
+
 export interface KnowledgeBaseInfo {
   id: string;
   name: string;
@@ -17,6 +19,14 @@ export interface KnowledgeBaseInfo {
   chunks: number;
   avg_chunk_size: number;
   file_count?: number;
+  visibility?: KBVisibility;
+  created_by?: string;
+  updated_at?: string | null;
+  last_activity?: string | null;
+  is_own_kb?: boolean;
+  created_by_email?: string | null;
+  department_name?: string | null;
+  organization_name?: string | null;
 }
 
 export const useGetKnowledgeBases: useQueryFunctionType<

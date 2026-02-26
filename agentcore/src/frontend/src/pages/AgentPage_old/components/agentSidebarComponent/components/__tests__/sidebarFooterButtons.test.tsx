@@ -77,7 +77,7 @@ jest.mock("@/customization/hooks/use-custom-navigate", () => ({
 }));
 
 // Mock modal component
-jest.mock("@/modals/addMcpServerModal", () => ({
+jest.mock("@/modals/mcpServerModal", () => ({
   __esModule: true,
   default: ({
     open,

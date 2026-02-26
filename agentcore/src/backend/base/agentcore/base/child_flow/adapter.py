@@ -136,7 +136,7 @@ class ChildFlowAdapter:
         start_time = datetime.now()
         a2a_messages: list[A2AMessage] = []
 
-        effective_session_id = session_id or parent_context.session_id
+        effective_session_id = session_id or parent_context.session_id or str(uuid4())
 
         # Create A2A task
         task = A2ATask(

@@ -5,10 +5,8 @@ import CardsWrapComponent from "@/components/core/cardsWrapComponent";
 import { IS_MAC } from "@/constants/constants";
 import { useGetFolderQuery } from "@/controllers/API/queries/folders/use-get-folder";
 import { CustomBanner } from "@/customization/components/custom-banner";
-import { CustomMcpServerTab } from "@/customization/components/custom-McpServerTab";
 import {
   ENABLE_DATASTAX_SENSEI,
-  ENABLE_MCP,
 } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { useFolderStore } from "@/stores/foldersStore";
@@ -237,7 +235,7 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
 
   return (
     <CardsWrapComponent
-      onFileDrop={agentType === "mcp" ? undefined : handleFileDrop}
+      onFileDrop={handleFileDrop}
       dragMessage={`Drop your ${isEmptyFolder ? "agents or components" : agentType} here`}
     >
       <div
@@ -275,8 +273,6 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
                         <ListSkeleton />
                       </div>
                     )
-                  ) : agentType === "mcp" ? (
-                    <CustomMcpServerTab folderName={folderName} />
                   ) : (agentType === "agents" || agentType === "components") &&
                     data &&
                     data.pagination.total > 0 ? (
