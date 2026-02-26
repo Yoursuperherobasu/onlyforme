@@ -8,7 +8,7 @@ import {
   SidebarMenu,
 } from "@/components/ui/sidebar";
 import { useDeleteMCPServer } from "@/controllers/API/queries/mcp/use-delete-mcp-server";
-import AddMcpServerModal from "@/modals/addMcpServerModal";
+import AddMcpServerModal from "@/modals/mcpServerModal";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import useAlertStore from "@/stores/alertStore";
 import type { APIClassType } from "@/types/api";
@@ -32,32 +32,6 @@ type McpSidebarGroupProps = {
   showSearchConfigTrigger: boolean;
   showConfig: boolean;
   setShowConfig: React.Dispatch<React.SetStateAction<boolean>>;
-};
-
-const McpEmptyState = ({ isLoading }: { isLoading?: boolean }) => {
-  const [addMcpOpen, setAddMcpOpen] = useState(false);
-  const { t } = useTranslation();
-  const handleAddMcpServerClick = () => {
-    setAddMcpOpen(true);
-  };
-
-  return (
-    <>
-      <div className="flex flex-col h-full w-full items-center justify-center py-8 px-4 text-center min-h-[200px]">
-        <p className="text-muted-foreground mb-4">No MCP Servers Added</p>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isLoading}
-          onClick={handleAddMcpServerClick}
-          data-testid="add-mcp-server-button-sidebar"
-        >
-          <span>{t("Add MCP Server")}</span>
-        </Button>
-      </div>
-      <AddMcpServerModal open={addMcpOpen} setOpen={setAddMcpOpen} />
-    </>
-  );
 };
 
 const McpSidebarGroup = ({
@@ -178,6 +152,32 @@ const McpSidebarGroup = ({
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
+  );
+};
+
+const McpEmptyState = ({ isLoading }: { isLoading?: boolean }) => {
+  const [addMcpOpen, setAddMcpOpen] = useState(false);
+  const { t } = useTranslation();
+  const handleAddMcpServerClick = () => {
+    setAddMcpOpen(true);
+  };
+
+  return (
+    <>
+      <div className="flex flex-col h-full w-full items-center justify-center py-8 px-4 text-center min-h-[200px]">
+        <p className="text-muted-foreground mb-4">No MCP Servers Added</p>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={isLoading}
+          onClick={handleAddMcpServerClick}
+          data-testid="add-mcp-server-button-sidebar"
+        >
+          <span>{t("Add MCP Server")}</span>
+        </Button>
+      </div>
+      <AddMcpServerModal open={addMcpOpen} setOpen={setAddMcpOpen} />
+    </>
   );
 };
 

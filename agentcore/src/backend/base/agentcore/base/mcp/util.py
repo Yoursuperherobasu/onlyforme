@@ -19,9 +19,6 @@ from loguru import logger
 from mcp import ClientSession
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
-from sqlmodel import select
-
-from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_settings_service
 
 HTTP_ERROR_STATUS_CODE = httpx_codes.BAD_REQUEST  # HTTP status code for client errors
@@ -263,21 +260,6 @@ def get_unique_name(base_name, max_length, existing_names):
             return candidate
         i += 1
 
-
-async def get_agent_snake_case(agent_name: str, user_id: str, session, is_action: bool | None = None) -> Agent | None:
-    uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
-    stmt = select(Agent).where(Agent.user_id == uuid_user_id)
-    agents = (await session.exec(stmt)).all()
-
-    for agent in agents:
-        if is_action and agent.action_name:
-            this_agent_name = sanitize_mcp_name(agent.action_name)
-        else:
-            this_agent_name = sanitize_mcp_name(agent.name)
-
-        if this_agent_name == agent_name:
-            return agent
-    return None
 
 
 def create_input_schema_from_json_schema(schema: dict[str, Any]) -> type[BaseModel]:

@@ -14,7 +14,7 @@ import FloatComponent from "./components/floatComponent";
 import InputListComponent from "./components/inputListComponent";
 import IntComponent from "./components/intComponent";
 import KeypairListComponent from "./components/keypairListComponent";
-import McpComponent from "./components/mcpComponent";
+import McpComponent from "./components/mcpField";
 import MultiselectComponent from "./components/multiselectComponent";
 import PromptAreaComponent from "./components/promptComponent";
 import QueryComponent from "./components/queryComponent";

@@ -34,27 +34,6 @@ class MCPToolsNode(NodeWithCache):
     _tool_cache: dict = {}
     _last_selected_server: str | None = None  # Cache for the last selected server
 
-    def __init__(self, **data) -> None:
-        super().__init__(**data)
-        # Initialize cache keys to avoid CacheMiss when accessing them
-        self._ensure_cache_structure()
-
-        # Initialize clients with access to the component cache
-        self.stdio_client: MCPStdioClient = MCPStdioClient(component_cache=self._shared_component_cache)
-        self.sse_client: MCPSseClient = MCPSseClient(component_cache=self._shared_component_cache)
-
-    def _ensure_cache_structure(self):
-        """Ensure the cache has the required structure."""
-        # Check if servers key exists and is not CacheMiss
-        servers_value = safe_cache_get(self._shared_component_cache, "servers")
-        if servers_value is None:
-            safe_cache_set(self._shared_component_cache, "servers", {})
-
-        # Check if last_selected_server key exists and is not CacheMiss
-        last_server_value = safe_cache_get(self._shared_component_cache, "last_selected_server")
-        if last_server_value is None:
-            safe_cache_set(self._shared_component_cache, "last_selected_server", "")
-
     default_keys: list[str] = [
         "code",
         "_type",
@@ -100,6 +79,50 @@ class MCPToolsNode(NodeWithCache):
         Output(display_name="Response", name="response", method="build_output"),
     ]
 
+    def __init__(self, **data) -> None:
+        super().__init__(**data)
+        # Initialize cache keys to avoid CacheMiss when accessing them
+        self._ensure_cache_structure()
+
+        # Initialize clients with access to the component cache
+        self.stdio_client: MCPStdioClient = MCPStdioClient(component_cache=self._shared_component_cache)
+        self.sse_client: MCPSseClient = MCPSseClient(component_cache=self._shared_component_cache)
+
+    def _ensure_cache_structure(self):
+        """Ensure the cache has the required structure."""
+        # Check if servers key exists and is not CacheMiss
+        servers_value = safe_cache_get(self._shared_component_cache, "servers")
+        if servers_value is None:
+            safe_cache_set(self._shared_component_cache, "servers", {})
+
+        # Check if last_selected_server key exists and is not CacheMiss
+        last_server_value = safe_cache_get(self._shared_component_cache, "last_selected_server")
+        if last_server_value is None:
+            safe_cache_set(self._shared_component_cache, "last_selected_server", "")
+
+    def _get_session_context(self) -> str | None:
+        """Get the Agentcore session ID for MCP session caching."""
+        # Try to get session ID from the component's execution context
+        if hasattr(self, "graph") and hasattr(self.graph, "session_id"):
+            session_id = self.graph.session_id
+            # Include server name to ensure different servers get different sessions
+            server_name = ""
+            mcp_server = getattr(self, "mcp_server", None)
+            if isinstance(mcp_server, dict):
+                server_name = mcp_server.get("name", "")
+            elif mcp_server:
+                server_name = str(mcp_server)
+            return f"{session_id}_{server_name}" if session_id else None
+        return None
+
+    async def _get_tools(self):
+        """Get cached tools or update if necessary."""
+        mcp_server = getattr(self, "mcp_server", None)
+        if not self._not_load_actions:
+            tools, _ = await self.update_tool_list(mcp_server)
+            return tools
+        return []
+
     async def _validate_schema_inputs(self, tool_obj) -> list[InputTypes]:
         """Validate and process schema inputs for a tool."""
         try:
@@ -126,94 +149,40 @@ class MCPToolsNode(NodeWithCache):
         else:
             return schema_inputs
 
-    async def update_tool_list(self, mcp_server_value=None):
-        # Accepts mcp_server_value as dict {name, config} or uses self.mcp_server
-        mcp_server = mcp_server_value if mcp_server_value is not None else getattr(self, "mcp_server", None)
-        server_name = None
-        server_config_from_value = None
-        if isinstance(mcp_server, dict):
-            server_name = mcp_server.get("name")
-            server_config_from_value = mcp_server.get("config")
-        else:
-            server_name = mcp_server
-        if not server_name:
-            self.tools = []
-            return [], {"name": server_name, "config": server_config_from_value}
-
-        # Use shared cache if available
-        servers_cache = safe_cache_get(self._shared_component_cache, "servers", {})
-        cached = servers_cache.get(server_name) if isinstance(servers_cache, dict) else None
-
-        if cached is not None:
-            self.tools = cached["tools"]
-            self.tool_names = cached["tool_names"]
-            self._tool_cache = cached["tool_cache"]
-            server_config_from_value = cached["config"]
-            return self.tools, {"name": server_name, "config": server_config_from_value}
-
+    async def build_output(self) -> DataFrame:
+        """Build output with improved error handling and validation."""
         try:
-            async for db in get_session():
-                # Use component's user_id from agent context
-                user_id = self.user_id
-                if not user_id:
-                    logger.warning("No user_id available in component context for MCP server lookup")
-                    self.tools = []
-                    return [], {"name": server_name, "config": server_config_from_value}
-                
-                current_user = await get_user_by_id(db, user_id)
-                if not current_user:
-                    logger.warning(f"User {user_id} not found in database")
-                    self.tools = []
-                    return [], {"name": server_name, "config": server_config_from_value}
+            self.tools, _ = await self.update_tool_list()
+            if self.tool != "":
+                # Set session context for persistent MCP sessions using Agentcore session ID
+                session_context = self._get_session_context()
+                if session_context:
+                    self.stdio_client.set_session_context(session_context)
+                    self.sse_client.set_session_context(session_context)
 
-                # Try to get server config from DB/API
-                server_config = await get_server(
-                    server_name,
-                    current_user,
-                    db,
-                    storage_service=get_storage_service(),
-                    settings_service=get_settings_service(),
-                )
+                exec_tool = self._tool_cache[self.tool]
+                tool_args = self.get_inputs_for_all_tools(self.tools)[self.tool]
+                kwargs = {}
+                for arg in tool_args:
+                    value = getattr(self, arg.name, None)
+                    if value is not None:
+                        if isinstance(value, Message):
+                            kwargs[arg.name] = value.text
+                        else:
+                            kwargs[arg.name] = value
 
-                # If get_server returns empty but we have a config, use it
-                if not server_config and server_config_from_value:
-                    server_config = server_config_from_value
+                unflattened_kwargs = maybe_unflatten_dict(kwargs)
 
-                if not server_config:
-                    self.tools = []
-                    return [], {"name": server_name, "config": server_config}
+                output = await exec_tool.coroutine(**unflattened_kwargs)
 
-                _, tool_list, tool_cache = await update_tools(
-                    server_name=server_name,
-                    server_config=server_config,
-                    mcp_stdio_client=self.stdio_client,
-                    mcp_sse_client=self.sse_client,
-                )
-
-                self.tool_names = [tool.name for tool in tool_list if hasattr(tool, "name")]
-                self._tool_cache = tool_cache
-                self.tools = tool_list
-                # Cache the result using shared cache
-                cache_data = {
-                    "tools": tool_list,
-                    "tool_names": self.tool_names,
-                    "tool_cache": tool_cache,
-                    "config": server_config,
-                }
-
-                # Safely update the servers cache
-                current_servers_cache = safe_cache_get(self._shared_component_cache, "servers", {})
-                if isinstance(current_servers_cache, dict):
-                    current_servers_cache[server_name] = cache_data
-                    safe_cache_set(self._shared_component_cache, "servers", current_servers_cache)
-
-                return tool_list, {"name": server_name, "config": server_config}
-        except (TimeoutError, asyncio.TimeoutError) as e:
-            msg = f"Timeout updating tool list: {e!s}"
-            logger.exception(msg)
-            raise TimeoutError(msg) from e
+                tool_content = []
+                for item in output.content:
+                    item_dict = item.model_dump()
+                    tool_content.append(item_dict)
+                return DataFrame(data=tool_content)
+            return DataFrame(data=[{"error": "You must select a tool"}])
         except Exception as e:
-            msg = f"Error updating tool list: {e!s}"
+            msg = f"Error in build_output: {e!s}"
             logger.exception(msg)
             raise ValueError(msg) from e
 
@@ -344,41 +313,6 @@ class MCPToolsNode(NodeWithCache):
         else:
             return build_config
 
-    def get_inputs_for_all_tools(self, tools: list) -> dict:
-        """Get input schemas for all tools."""
-        inputs = {}
-        for tool in tools:
-            if not tool or not hasattr(tool, "name"):
-                continue
-            try:
-                flat_schema = flatten_schema(tool.args_schema.schema())
-                input_schema = create_input_schema_from_json_schema(flat_schema)
-                agentcore_inputs = schema_to_agentcore_inputs(input_schema)
-                inputs[tool.name] = agentcore_inputs
-            except (AttributeError, ValueError, TypeError, KeyError) as e:
-                msg = f"Error getting inputs for tool {getattr(tool, 'name', 'unknown')}: {e!s}"
-                logger.exception(msg)
-                continue
-        return inputs
-
-    def remove_input_schema_from_build_config(
-        self, build_config: dict, tool_name: str, input_schema: dict[list[InputTypes], Any]
-    ):
-        """Remove the input schema for the tool from the build config."""
-        # Keep only schemas that don't belong to the current tool
-        input_schema = {k: v for k, v in input_schema.items() if k != tool_name}
-        # Remove all inputs from other tools
-        for value in input_schema.values():
-            for _input in value:
-                if _input.name in build_config:
-                    build_config.pop(_input.name)
-
-    def remove_non_default_keys(self, build_config: dict) -> None:
-        """Remove non-default keys from the build config."""
-        for key in list(build_config.keys()):
-            if key not in self.default_keys:
-                build_config.pop(key)
-
     async def _update_tool_config(self, build_config: dict, tool_name: str) -> None:
         """Update tool configuration with proper error handling."""
         if not self.tools:
@@ -446,62 +380,128 @@ class MCPToolsNode(NodeWithCache):
             logger.exception(msg)
             raise ValueError(msg) from e
 
-    async def build_output(self) -> DataFrame:
-        """Build output with improved error handling and validation."""
+    def get_inputs_for_all_tools(self, tools: list) -> dict:
+        """Get input schemas for all tools."""
+        inputs = {}
+        for tool in tools:
+            if not tool or not hasattr(tool, "name"):
+                continue
+            try:
+                flat_schema = flatten_schema(tool.args_schema.schema())
+                input_schema = create_input_schema_from_json_schema(flat_schema)
+                agentcore_inputs = schema_to_agentcore_inputs(input_schema)
+                inputs[tool.name] = agentcore_inputs
+            except (AttributeError, ValueError, TypeError, KeyError) as e:
+                msg = f"Error getting inputs for tool {getattr(tool, 'name', 'unknown')}: {e!s}"
+                logger.exception(msg)
+                continue
+        return inputs
+
+    def remove_non_default_keys(self, build_config: dict) -> None:
+        """Remove non-default keys from the build config."""
+        for key in list(build_config.keys()):
+            if key not in self.default_keys:
+                build_config.pop(key)
+
+    def remove_input_schema_from_build_config(
+        self, build_config: dict, tool_name: str, input_schema: dict[list[InputTypes], Any]
+    ):
+        """Remove the input schema for the tool from the build config."""
+        # Keep only schemas that don't belong to the current tool
+        input_schema = {k: v for k, v in input_schema.items() if k != tool_name}
+        # Remove all inputs from other tools
+        for value in input_schema.values():
+            for _input in value:
+                if _input.name in build_config:
+                    build_config.pop(_input.name)
+
+    async def update_tool_list(self, mcp_server_value=None):
+        # Accepts mcp_server_value as dict {name, config} or uses self.mcp_server
+        mcp_server = mcp_server_value if mcp_server_value is not None else getattr(self, "mcp_server", None)
+        server_name = None
+        server_config_from_value = None
+        if isinstance(mcp_server, dict):
+            server_name = mcp_server.get("name")
+            server_config_from_value = mcp_server.get("config")
+        else:
+            server_name = mcp_server
+        if not server_name:
+            self.tools = []
+            return [], {"name": server_name, "config": server_config_from_value}
+
+        # Use shared cache if available
+        servers_cache = safe_cache_get(self._shared_component_cache, "servers", {})
+        cached = servers_cache.get(server_name) if isinstance(servers_cache, dict) else None
+
+        if cached is not None:
+            self.tools = cached["tools"]
+            self.tool_names = cached["tool_names"]
+            self._tool_cache = cached["tool_cache"]
+            server_config_from_value = cached["config"]
+            return self.tools, {"name": server_name, "config": server_config_from_value}
+
         try:
-            self.tools, _ = await self.update_tool_list()
-            if self.tool != "":
-                # Set session context for persistent MCP sessions using Agentcore session ID
-                session_context = self._get_session_context()
-                if session_context:
-                    self.stdio_client.set_session_context(session_context)
-                    self.sse_client.set_session_context(session_context)
+            async for db in get_session():
+                # Use component's user_id from agent context
+                user_id = self.user_id
+                if not user_id:
+                    logger.warning("No user_id available in component context for MCP server lookup")
+                    self.tools = []
+                    return [], {"name": server_name, "config": server_config_from_value}
 
-                exec_tool = self._tool_cache[self.tool]
-                tool_args = self.get_inputs_for_all_tools(self.tools)[self.tool]
-                kwargs = {}
-                for arg in tool_args:
-                    value = getattr(self, arg.name, None)
-                    if value is not None:
-                        if isinstance(value, Message):
-                            kwargs[arg.name] = value.text
-                        else:
-                            kwargs[arg.name] = value
+                current_user = await get_user_by_id(db, user_id)
+                if not current_user:
+                    logger.warning(f"User {user_id} not found in database")
+                    self.tools = []
+                    return [], {"name": server_name, "config": server_config_from_value}
 
-                unflattened_kwargs = maybe_unflatten_dict(kwargs)
+                # Try to get server config from DB/API
+                server_config = await get_server(
+                    server_name,
+                    current_user,
+                    db,
+                    storage_service=get_storage_service(),
+                    settings_service=get_settings_service(),
+                )
 
-                output = await exec_tool.coroutine(**unflattened_kwargs)
+                # If get_server returns empty but we have a config, use it
+                if not server_config and server_config_from_value:
+                    server_config = server_config_from_value
 
-                tool_content = []
-                for item in output.content:
-                    item_dict = item.model_dump()
-                    tool_content.append(item_dict)
-                return DataFrame(data=tool_content)
-            return DataFrame(data=[{"error": "You must select a tool"}])
+                if not server_config:
+                    self.tools = []
+                    return [], {"name": server_name, "config": server_config}
+
+                _, tool_list, tool_cache = await update_tools(
+                    server_name=server_name,
+                    server_config=server_config,
+                    mcp_stdio_client=self.stdio_client,
+                    mcp_sse_client=self.sse_client,
+                )
+
+                self.tool_names = [tool.name for tool in tool_list if hasattr(tool, "name")]
+                self._tool_cache = tool_cache
+                self.tools = tool_list
+                # Cache the result using shared cache
+                cache_data = {
+                    "tools": tool_list,
+                    "tool_names": self.tool_names,
+                    "tool_cache": tool_cache,
+                    "config": server_config,
+                }
+
+                # Safely update the servers cache
+                current_servers_cache = safe_cache_get(self._shared_component_cache, "servers", {})
+                if isinstance(current_servers_cache, dict):
+                    current_servers_cache[server_name] = cache_data
+                    safe_cache_set(self._shared_component_cache, "servers", current_servers_cache)
+
+                return tool_list, {"name": server_name, "config": server_config}
+        except (TimeoutError, asyncio.TimeoutError) as e:
+            msg = f"Timeout updating tool list: {e!s}"
+            logger.exception(msg)
+            raise TimeoutError(msg) from e
         except Exception as e:
-            msg = f"Error in build_output: {e!s}"
+            msg = f"Error updating tool list: {e!s}"
             logger.exception(msg)
             raise ValueError(msg) from e
-
-    def _get_session_context(self) -> str | None:
-        """Get the Agentcore session ID for MCP session caching."""
-        # Try to get session ID from the component's execution context
-        if hasattr(self, "graph") and hasattr(self.graph, "session_id"):
-            session_id = self.graph.session_id
-            # Include server name to ensure different servers get different sessions
-            server_name = ""
-            mcp_server = getattr(self, "mcp_server", None)
-            if isinstance(mcp_server, dict):
-                server_name = mcp_server.get("name", "")
-            elif mcp_server:
-                server_name = str(mcp_server)
-            return f"{session_id}_{server_name}" if session_id else None
-        return None
-
-    async def _get_tools(self):
-        """Get cached tools or update if necessary."""
-        mcp_server = getattr(self, "mcp_server", None)
-        if not self._not_load_actions:
-            tools, _ = await self.update_tool_list(mcp_server)
-            return tools
-        return []

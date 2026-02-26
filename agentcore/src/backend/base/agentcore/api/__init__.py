@@ -6,8 +6,6 @@ from agentcore.api.agent import router as agents_router
 from agentcore.api.health_check_router import health_check_router
 from agentcore.api.log_router import log_router
 from agentcore.api.login import router as login_router
-from agentcore.api.mcp_server import router as mcp_router
-from agentcore.api.mcp_projects import router as mcp_projects_router
 from agentcore.api.monitor import router as monitor_router
 from agentcore.api.observability import router as observability_router
 from agentcore.api.evaluation import router as evaluation_router
@@ -39,8 +37,6 @@ __all__ = [
     "health_check_router",
     "log_router",
     "login_router",
-    "mcp_projects_router",
-    "mcp_router",
     "mcp_router_v2",
     "monitor_router",
     "observability_router",

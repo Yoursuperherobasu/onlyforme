@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAddMCPServer } from "@/controllers/API/queries/mcp/use-add-mcp-server";
 import { useGetMCPServers } from "@/controllers/API/queries/mcp/use-get-mcp-servers";
-import AddMcpServerModal from "@/modals/addMcpServerModal";
+import AddMcpServerModal from "@/modals/mcpServerModal";
 import useAlertStore from "@/stores/alertStore";
 import ListSelectionComponent from "../../../../../CustomNodes/GenericNode/components/ListSelectionComponent";
 import { cn } from "../../../../../utils/utils";
@@ -75,18 +75,9 @@ export default function McpComponent({
     setSelectedItem([{ name }]);
   }, [name, options]);
 
-  // Handle selection from dialog
-  const handleSelection = (item: any) => {
-    setSelectedItem([{ name: item.name }]);
-    handleOnNewValue(
-      { value: { name: item.name, config: {} } },
-      { skipSnapshot: true },
-    );
+  const handleSuccess = (server: string) => {
+    handleOnNewValue({ value: { name: server, config: {} } });
     setOpen(false);
-  };
-
-  const handleAddButtonClick = () => {
-    setAddOpen(true);
   };
 
   const handleSaveButtonClick = () => {
@@ -113,14 +104,23 @@ export default function McpComponent({
     handleOnNewValue({ value: { name: "", config: {} } });
   };
 
+  // Handle selection from dialog
+  const handleSelection = (item: any) => {
+    setSelectedItem([{ name: item.name }]);
+    handleOnNewValue(
+      { value: { name: item.name, config: {} } },
+      { skipSnapshot: true },
+    );
+    setOpen(false);
+  };
+
   const handleOpenListSelectionDialog = () => {
     setOpen(true);
   };
   const handleCloseListSelectionDialog = () => setOpen(false);
 
-  const handleSuccess = (server: string) => {
-    handleOnNewValue({ value: { name: server, config: {} } });
-    setOpen(false);
+  const handleAddButtonClick = () => {
+    setAddOpen(true);
   };
 
   const showSaveButton = useMemo(() => {

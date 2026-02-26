@@ -5,7 +5,7 @@ import { SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
 import { AuthContext } from "@/contexts/authContext";
 import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
-import AddMcpServerModal from "@/modals/addMcpServerModal";
+import AddMcpServerModal from "@/modals/mcpServerModal";
 import RequestMcpServerModal from "@/pages/McpServersPage/components/request-mcp-server-modal";
 import { useTranslation } from 'react-i18next';
 
