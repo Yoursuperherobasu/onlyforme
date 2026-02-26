@@ -36,7 +36,6 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from agentcore.api import health_check_router, log_router, router
 from agentcore.api.openai_compat_router import router as openai_router
-from agentcore.api.mcp_projects import init_mcp_servers
 from agentcore.interface.components import get_and_cache_all_types_dict
 from agentcore.interface.utils import setup_llm_caching
 from agentcore.logging.logger import configure
@@ -142,11 +141,6 @@ def get_lifespan(*, fix_migration=True, version=None):
             if not queue_service.is_started():  # Start if not already started
                 queue_service.start()
             logger.debug(f"Agents loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
-
-            current_time = asyncio.get_event_loop().time()
-            logger.debug("Loading mcp servers for projects")
-            await init_mcp_servers()
-            logger.debug(f"mcp servers loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
 
             total_time = asyncio.get_event_loop().time() - start_time
             logger.debug(f"Total initialization time: {total_time:.2f}s")
@@ -318,11 +312,6 @@ def create_app():
     app.add_middleware(BoundaryCheckMiddleware)
 
     settings = get_settings_service().settings
-
-    if settings.mcp_server_enabled:
-        from agentcore.api import mcp_router
-
-        router.include_router(mcp_router)
 
     app.include_router(router)
     app.include_router(health_check_router)

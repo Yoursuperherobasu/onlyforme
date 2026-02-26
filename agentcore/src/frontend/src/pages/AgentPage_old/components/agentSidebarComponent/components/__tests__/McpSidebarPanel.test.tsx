@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type React from "react";
 import type { APIClassType } from "@/types/api";
-import McpSidebarGroup from "../McpSidebarGroup";
+import McpSidebarGroup from "../McpSidebarPanel";
 
 // Mock the UI components
 jest.mock("@/components/ui/sidebar", () => ({
@@ -106,7 +106,7 @@ jest.mock("../sidebarDraggableComponent", () => ({
 }));
 
 // Mock AddMcpServerModal
-jest.mock("@/modals/addMcpServerModal", () => ({
+jest.mock("@/modals/mcpServerModal", () => ({
   __esModule: true,
   default: ({ open, setOpen }: any) => (
     <div data-testid="add-mcp-server-modal" data-open={open}>

@@ -46,15 +46,6 @@ class AgentBase(SQLModel):
     updated_at: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=True)
     tags: list[str] | None = None
     locked: bool | None = Field(default=False, nullable=True)
-    mcp_enabled: bool | None = Field(default=False, nullable=True, description="Can be exposed in the MCP server")
-    action_name: str | None = Field(
-        default=None, nullable=True, description="The name of the action associated with the agent"
-    )
-    action_description: str | None = Field(
-        default=None,
-        sa_column=Column(Text, nullable=True),
-        description="The description of the action associated with the agent",
-    )
     access_type: AccessTypeEnum = Field(
         default=AccessTypeEnum.PRIVATE,
         sa_column=Column(
@@ -205,9 +196,6 @@ class AgentHeader(BaseModel):
     data: dict | None = Field(None, description="The data of the component")
     access_type: AccessTypeEnum | None = Field(None, description="The access type of the agent")
     tags: list[str] | None = Field(None, description="The tags of the agent")
-    mcp_enabled: bool | None = Field(None, description="Flag indicating whether the agent is exposed in the MCP server")
-    action_name: str | None = Field(None, description="The name of the action associated with the agent")
-    action_description: str | None = Field(None, description="The description of the action associated with the agent")
 
 class AgentUpdate(SQLModel):
     name: str | None = None
@@ -215,10 +203,7 @@ class AgentUpdate(SQLModel):
     data: dict | None = None
     project_id: UUID | None = None
     folder_id: UUID | None = None
-    mcp_enabled: bool | None = None
     locked: bool | None = None
-    action_name: str | None = None
-    action_description: str | None = None
     access_type: AccessTypeEnum | None = None
     fs_path: str | None = None
     lifecycle_status: LifecycleStatusEnum | None = None

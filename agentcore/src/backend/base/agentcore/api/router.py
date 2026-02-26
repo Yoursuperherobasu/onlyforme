@@ -8,9 +8,7 @@ from agentcore.api.files_agent import router as files_router
 from agentcore.api.files_user import router as files_router_user
 from agentcore.api.agent import router as agents_router
 from agentcore.api.login import router as login_router
-from agentcore.api.mcp_server import router as mcp_router
 from agentcore.api.registry import router as registry_router
-from agentcore.api.mcp_projects import router as mcp_projects_router
 from agentcore.api.mcp_config import router as mcp_router_config
 from agentcore.api.monitor import router as monitor_router
 from agentcore.api.observability import router as observability_router
@@ -61,8 +59,6 @@ router.include_router(publish_router)
 router.include_router(registry_router)
 router.include_router(starter_projects_router)
 router.include_router(store_router)
-router.include_router(mcp_router)
-router.include_router(mcp_projects_router)
 router.include_router(observability_router)
 router.include_router(evaluation_router)
 router.include_router(files_router_user)

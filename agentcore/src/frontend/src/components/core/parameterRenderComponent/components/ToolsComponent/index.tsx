@@ -1,7 +1,6 @@
 import { useState } from "react";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { ICON_STROKE_WIDTH } from "@/constants/constants";
-import { ENABLE_MCP_COMPOSER } from "@/customization/feature-flags";
 import ToolsModal from "@/modals/toolsModal";
 import { cn, testIdCase } from "@/utils/utils";
 import { ForwardedIconComponent } from "../../../../common/genericIconComponent";
@@ -67,7 +66,7 @@ export default function ToolsComponent({
         {(visibleActions.length > 0 || isAction) && (
           <Button
             variant={
-              ENABLE_MCP_COMPOSER && button_description ? "outline" : "ghost"
+              button_description ? "outline" : "ghost"
             }
             disabled={!value || disabled}
             size="sm"
@@ -80,7 +79,7 @@ export default function ToolsComponent({
           >
             <ForwardedIconComponent
               name={
-                ENABLE_MCP_COMPOSER && button_description
+                button_description
                   ? "wrench"
                   : "Settings2"
               }

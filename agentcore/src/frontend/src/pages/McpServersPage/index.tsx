@@ -13,7 +13,7 @@ import Loading from "@/components/ui/loading";
 import { useDeleteMCPServer } from "@/controllers/API/queries/mcp/use-delete-mcp-server";
 import { useGetMCPServer } from "@/controllers/API/queries/mcp/use-get-mcp-server";
 import { useGetMCPServers } from "@/controllers/API/queries/mcp/use-get-mcp-servers";
-import AddMcpServerModal from "@/modals/addMcpServerModal";
+import AddMcpServerModal from "@/modals/mcpServerModal";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";

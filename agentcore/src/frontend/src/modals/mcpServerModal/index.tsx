@@ -58,11 +58,6 @@ export default function AddMcpServerModal({
   const modifyMCPServer = initialData ? patchMCPServer : addMCPServer;
   const isPending = isAddPending || isPatchPending;
 
-  const handleTypeChange = (val: string) => {
-    setType(val);
-    setError(null);
-  };
-
   // STDIO state
   const [stdioName, setStdioName] = useState(initialData?.name || "");
   const [stdioCommand, setStdioCommand] = useState(initialData?.command || "");
@@ -76,22 +71,6 @@ export default function AddMcpServerModal({
   const [sseUrl, setSseUrl] = useState(initialData?.url || "");
   const [sseEnv, setSseEnv] = useState<any>(initialData?.env || []);
   const [sseHeaders, setSseHeaders] = useState<any>(initialData?.headers || []);
-
-  useEffect(() => {
-    if (open) {
-      setType(initialData ? (initialData.command ? "STDIO" : "SSE") : "SSE");
-      setError(null);
-      setJsonValue("");
-      setStdioName(initialData?.name || "");
-      setStdioCommand(initialData?.command || "");
-      setStdioArgs(initialData?.args || [""]);
-      setStdioEnv(initialData?.env || []);
-      setSseName(initialData?.name || "");
-      setSseUrl(initialData?.url || "");
-      setSseEnv(initialData?.env || []);
-      setSseHeaders(initialData?.headers || []);
-    }
-  }, [open]);
 
   function parseEnvList(envList: any): Record<string, string> {
     // envList is an array of objects with one key each
@@ -217,6 +196,27 @@ export default function AddMcpServerModal({
       setError(err?.message || "Failed to add one or more MCP servers.");
     }
   }
+
+  const handleTypeChange = (val: string) => {
+    setType(val);
+    setError(null);
+  };
+
+  useEffect(() => {
+    if (open) {
+      setType(initialData ? (initialData.command ? "STDIO" : "SSE") : "SSE");
+      setError(null);
+      setJsonValue("");
+      setStdioName(initialData?.name || "");
+      setStdioCommand(initialData?.command || "");
+      setStdioArgs(initialData?.args || [""]);
+      setStdioEnv(initialData?.env || []);
+      setSseName(initialData?.name || "");
+      setSseUrl(initialData?.url || "");
+      setSseEnv(initialData?.env || []);
+      setSseHeaders(initialData?.headers || []);
+    }
+  }, [open]);
 
   return (
     <BaseModal

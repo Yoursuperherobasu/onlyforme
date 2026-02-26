@@ -2028,7 +2028,6 @@ export const createNewAgent = (
     project_id: folderId,
     endpoint_name: agent?.endpoint_name ?? undefined,
     tags: agent?.tags ?? [],
-    mcp_enabled: true,
   };
 };
 
