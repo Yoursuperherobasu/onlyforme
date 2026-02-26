@@ -172,9 +172,7 @@ class FileTrigger(Node):
         "Connect to the Multimodal Document Loader for text extraction."
     )
     icon = "FolderSearch"
-    # Keep internal name as "FolderMonitor" for backward compat with existing
-    # agent snapshots that store node.data.type = "FolderMonitor".
-    name = "FolderMonitor"
+    name = "FileTrigger"
 
     inputs = [
         DropdownInput(

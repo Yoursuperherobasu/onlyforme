@@ -509,7 +509,6 @@ export const nodeIconToDisplayIconMap: Record<string, string> = {
   // Trigger component icons
   triggers: "Zap",
   ScheduleTrigger: "Clock",
-  FolderMonitor: "FolderSearch",
   FileTrigger: "FolderSearch",
 };
 
