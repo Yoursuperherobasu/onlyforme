@@ -13,18 +13,19 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlmodel import col, select
-from sqlalchemy import and_, or_
+from sqlalchemy import or_, true
 
 from agentcore.api.schemas import UploadFileResponse
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.file.model import File as UserFile
-from agentcore.services.database.models.knowledge_base.model import KnowledgeBase
+from agentcore.services.database.models.knowledge_base.model import KBVisibilityEnum, KnowledgeBase
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.deps import get_settings_service, get_storage_service
 from agentcore.services.storage.service import StorageService
 
 from agentcore.services.auth.decorators import PermissionChecker
+from agentcore.services.auth.permissions import normalize_role
 
 
 router = APIRouter(tags=["Files"], prefix="/files")
@@ -68,8 +69,11 @@ async def _get_or_create_knowledge_base(
     session: DbSession,
     current_user: CurrentActiveUser,
     knowledge_base_name: str,
+    visibility: KBVisibilityEnum = KBVisibilityEnum.PRIVATE,
 ) -> KnowledgeBase:
     org_id, dept_id = await _resolve_default_tenant_scope(session, current_user.id)
+    role = normalize_role(getattr(current_user, "role", None) or "")
+    is_admin = role in {"root", "super_admin", "department_admin"}
     existing = (
         await session.exec(
             select(KnowledgeBase).where(
@@ -80,6 +84,8 @@ async def _get_or_create_knowledge_base(
         )
     ).first()
     if existing:
+        if existing.created_by != current_user.id and not is_admin:
+            raise HTTPException(status_code=403, detail="Not authorized to modify this knowledge base")
         return existing
 
     kb = KnowledgeBase(
@@ -87,6 +93,7 @@ async def _get_or_create_knowledge_base(
         org_id=org_id,
         dept_id=dept_id,
         created_by=current_user.id,
+        visibility=visibility,
     )
     session.add(kb)
     await session.flush()
@@ -94,27 +101,91 @@ async def _get_or_create_knowledge_base(
 
 
 async def _build_file_visibility_filters(session: DbSession, current_user: CurrentActiveUser):
-    role = getattr(current_user, "role", None)
+    role = normalize_role(getattr(current_user, "role", None) or "")
     org_ids, dept_ids = await _get_scope_memberships(session, current_user.id)
 
     filters = [UserFile.user_id == current_user.id]
 
-    if getattr(current_user, "is_superuser", False) or role in {"root", "super_admin"}:
+    if role == "root":
+        return [true()]
+
+    if getattr(current_user, "is_superuser", False) or role == "super_admin":
         if org_ids:
-            filters.append(UserFile.org_id.in_(list(org_ids)))
+            org_kb_access = (
+                select(KnowledgeBase.id)
+                .where(
+                    KnowledgeBase.id == UserFile.knowledge_base_id,
+                    KnowledgeBase.org_id.in_(list(org_ids)),
+                )
+                .exists()
+            )
+            filters.append(org_kb_access)
         return filters
 
     if role == "department_admin":
         if dept_ids:
-            filters.append(UserFile.dept_id.in_(list(dept_ids)))
-        elif org_ids:
-            filters.append(and_(UserFile.org_id.in_(list(org_ids)), UserFile.dept_id.is_(None)))
+            creator_shares_dept = (
+                select(UserDepartmentMembership.department_id)
+                .where(
+                    UserDepartmentMembership.user_id == KnowledgeBase.created_by,
+                    UserDepartmentMembership.status == "active",
+                    UserDepartmentMembership.department_id.in_(list(dept_ids)),
+                )
+                .exists()
+            )
+            dept_kb_access = (
+                select(KnowledgeBase.id)
+                .where(
+                    KnowledgeBase.id == UserFile.knowledge_base_id,
+                    creator_shares_dept,
+                )
+                .exists()
+            )
+            filters.append(dept_kb_access)
+        if org_ids:
+            org_kb_visible = (
+                select(KnowledgeBase.id)
+                .where(
+                    KnowledgeBase.id == UserFile.knowledge_base_id,
+                    KnowledgeBase.visibility == KBVisibilityEnum.ORGANIZATION,
+                    KnowledgeBase.org_id.in_(list(org_ids)),
+                )
+                .exists()
+            )
+            filters.append(org_kb_visible)
         return filters
 
     if dept_ids:
-        filters.append(UserFile.dept_id.in_(list(dept_ids)))
+        creator_shares_dept = (
+            select(UserDepartmentMembership.department_id)
+            .where(
+                UserDepartmentMembership.user_id == KnowledgeBase.created_by,
+                UserDepartmentMembership.status == "active",
+                UserDepartmentMembership.department_id.in_(list(dept_ids)),
+            )
+            .exists()
+        )
+        dept_kb_visible = (
+            select(KnowledgeBase.id)
+            .where(
+                KnowledgeBase.id == UserFile.knowledge_base_id,
+                KnowledgeBase.visibility == KBVisibilityEnum.DEPARTMENT,
+                creator_shares_dept,
+            )
+            .exists()
+        )
+        filters.append(dept_kb_visible)
     if org_ids:
-        filters.append(and_(UserFile.org_id.in_(list(org_ids)), UserFile.dept_id.is_(None)))
+        org_kb_visible = (
+            select(KnowledgeBase.id)
+            .where(
+                KnowledgeBase.id == UserFile.knowledge_base_id,
+                KnowledgeBase.visibility == KBVisibilityEnum.ORGANIZATION,
+                KnowledgeBase.org_id.in_(list(org_ids)),
+            )
+            .exists()
+        )
+        filters.append(org_kb_visible)
     return filters
 
 
@@ -191,6 +262,7 @@ async def upload_user_file(
     storage_service=Depends(get_storage_service),
     settings_service=Depends(get_settings_service),
     knowledge_base_name: Annotated[str | None, Form()] = None,
+    visibility: Annotated[str | None, Form()] = None,
 ) -> UploadFileResponse:
 
     """Upload a file for the current user and track it in the database."""
@@ -254,10 +326,14 @@ async def upload_user_file(
             safe_knowledge_base_name = sanitize_knowledge_base_name(knowledge_base_name)
             if not safe_knowledge_base_name:
                 raise HTTPException(status_code=400, detail="Invalid knowledge base name")
+            kb_visibility = KBVisibilityEnum.PRIVATE
+            if visibility and visibility.upper() in KBVisibilityEnum.__members__:
+                kb_visibility = KBVisibilityEnum(visibility.upper())
             knowledge_base = await _get_or_create_knowledge_base(
                 session=session,
                 current_user=current_user,
                 knowledge_base_name=safe_knowledge_base_name,
+                visibility=kb_visibility,
             )
 
         storage_file_name = (
@@ -403,13 +479,15 @@ async def delete_files_batch(
 
         # Delete all files from the storage service
         for file in files:
-            storage_path = get_storage_relative_path(file.path, current_user.id)
-            await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
+            storage_path = get_storage_relative_path(file.path, file.user_id)
+            await storage_service.delete_file(agent_id=str(file.user_id), file_name=storage_path)
             await session.delete(file)
 
         # Delete all files from the database
         await session.commit()  # Commit deletion
 
+    except HTTPException:
+        raise
     except Exception as e:
         await session.rollback()  # Rollback on failure
         raise HTTPException(status_code=500, detail=f"Error deleting files: {e}") from e
@@ -442,9 +520,9 @@ async def download_files_batch(
         with zipfile.ZipFile(zip_stream, "w") as zip_file:
             for file in files:
                 # Get the file content from storage
-                storage_path = get_storage_relative_path(file.path, current_user.id)
+                storage_path = get_storage_relative_path(file.path, file.user_id)
                 file_content = await storage_service.get_file(
-                    agent_id=str(current_user.id), file_name=storage_path
+                    agent_id=str(file.user_id), file_name=storage_path
                 )
 
                 # Get the file extension from the original filename
@@ -535,10 +613,10 @@ async def download_file(
         if not file:
             raise HTTPException(status_code=404, detail="File not found")
 
-        storage_path = get_storage_relative_path(file.path, current_user.id)
+        storage_path = get_storage_relative_path(file.path, file.user_id)
 
         # Get file stream
-        file_stream = await storage_service.get_file(agent_id=str(current_user.id), file_name=storage_path)
+        file_stream = await storage_service.get_file(agent_id=str(file.user_id), file_name=storage_path)
 
         if file_stream is None:
             raise HTTPException(status_code=404, detail="File stream not available")
@@ -603,8 +681,8 @@ async def delete_file(
             raise HTTPException(status_code=404, detail="File not found")
 
         # Delete the file from the storage service
-        storage_path = get_storage_relative_path(file_to_delete.path, current_user.id)
-        await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
+        storage_path = get_storage_relative_path(file_to_delete.path, file_to_delete.user_id)
+        await storage_service.delete_file(agent_id=str(file_to_delete.user_id), file_name=storage_path)
 
         # Delete from the database
         await session.delete(file_to_delete)
@@ -637,8 +715,8 @@ async def delete_all_files(
 
         # Delete all files from the storage service
         for file in files:
-            storage_path = get_storage_relative_path(file.path, current_user.id)
-            await storage_service.delete_file(agent_id=str(current_user.id), file_name=storage_path)
+            storage_path = get_storage_relative_path(file.path, file.user_id)
+            await storage_service.delete_file(agent_id=str(file.user_id), file_name=storage_path)
             await session.delete(file)
 
         # Delete all files from the database

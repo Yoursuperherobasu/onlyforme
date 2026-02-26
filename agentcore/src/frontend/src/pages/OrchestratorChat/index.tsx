@@ -16,6 +16,8 @@ import type {
 import { performStreamingRequest } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
 import { MarkdownField } from "@/modals/IOModal/components/chatView/chatMessage/components/edit-message";
+import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
+import type { ContentBlock } from "@/types/chat";
 
 /* ------------------ TYPES ------------------ */
 
@@ -37,6 +39,8 @@ interface Message {
   content: string;
   timestamp: string;
   category?: string;
+  contentBlocks?: ContentBlock[];
+  blocksState?: string;
 }
 
 /* ------------------ COLOR PALETTE ------------------ */
@@ -116,6 +120,7 @@ export default function AgentOrchestrator() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [streamingAgentName, setStreamingAgentName] = useState<string>("");
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -258,6 +263,7 @@ export default function AgentOrchestrator() {
 
     // Agent message placeholder — created upfront so "Thinking..." shows inside the bubble
     const agentMsgId = crypto.randomUUID();
+    setStreamingMsgId(agentMsgId);
 
     // Add both user message AND agent "thinking" placeholder.
     // flushSync commits the DOM update synchronously, then we await a
@@ -362,7 +368,34 @@ export default function AgentOrchestrator() {
           const eventType: string = event?.event;
           const data: any = event?.data;
 
-          if (eventType === "token" && data?.chunk) {
+          if (eventType === "add_message" && data?.content_blocks?.length) {
+            // Only show content_blocks that contain actual tool calls.
+            // Each flow node (Chat Input, Worker Node, Chat Output) sends its
+            // own add_message event; pipeline nodes only carry plain text steps
+            // which would appear as duplicate Input/Output entries. Filtering
+            // to tool_use blocks means we only show meaningful agent reasoning.
+            const toolBlocks = data.content_blocks.filter((block: any) =>
+              block.contents?.some((c: any) => c.type === "tool_use"),
+            );
+            if (toolBlocks.length > 0) {
+              flushSync(() => {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === agentMsgId
+                      ? {
+                          ...m,
+                          // Replace (not append) — each add_message is a
+                          // progressive update of the same Worker Node message
+                          // (Accessing → Executed), not a new block.
+                          contentBlocks: toolBlocks,
+                          blocksState: "partial",
+                        }
+                      : m,
+                  ),
+                );
+              });
+            }
+          } else if (eventType === "token" && data?.chunk) {
             // Progressive streaming — append each token chunk (throttled)
             accumulated += data.chunk;
             updateAgentMsg(accumulated);
@@ -374,12 +407,17 @@ export default function AgentOrchestrator() {
             if (data?.agent_text) {
               updateAgentMsg(data.agent_text, true);
             }
+            // Mark content blocks as fully finished
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === agentMsgId && m.contentBlocks?.length
+                  ? { ...m, blocksState: "complete" }
+                  : m,
+              ),
+            );
             refetchSessions();
             return false;
           }
-          // Ignore add_message events — the orchestrator pre-creates
-          // the message bubble and token events handle progressive
-          // rendering. The end event provides the final text.
           return true;
         },
         onError: (statusCode) => {
@@ -409,6 +447,7 @@ export default function AgentOrchestrator() {
       }
       setIsSending(false);
       setStreamingAgentName("");
+      setStreamingMsgId(null);
     }
   }, [input, isSending, agents, selectedModel, currentSessionId, refetchSessions]);
 
@@ -649,6 +688,14 @@ export default function AgentOrchestrator() {
                       </div>
                     ) : (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
+                        {msg.contentBlocks && msg.contentBlocks.length > 0 && (
+                          <ContentBlockDisplay
+                            contentBlocks={msg.contentBlocks}
+                            chatId={msg.id}
+                            state={msg.blocksState}
+                            isLoading={isSending && msg.id === streamingMsgId}
+                          />
+                        )}
                         <MarkdownField
                           chat={{}}
                           isEmpty={!msg.content}

@@ -18,6 +18,7 @@ import {
   trackAgentBuild,
 } from "@/customization/utils/analytics";
 import { brokenEdgeMessage } from "@/utils/utils";
+import { useMessagesStore } from "./messagesStore";
 import { BuildStatus, EventDeliveryType } from "../constants/enums";
 import type { LogsLogType, VertexBuildTypeAPI } from "../types/api";
 import type { ChatInputType, ChatOutputType } from "../types/chat";
@@ -867,6 +868,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
           list: list,
         });
         get().setIsBuilding(false);
+        useMessagesStore.getState().setDisplayLoadingMessage(false);
         get().buildController.abort();
         trackAgentBuild(get().currentAgent?.name ?? "Unknown", true, {
           agentId: get().currentAgent?.id,

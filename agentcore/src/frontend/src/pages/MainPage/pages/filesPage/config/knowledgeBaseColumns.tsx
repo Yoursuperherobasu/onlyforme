@@ -29,6 +29,24 @@ export const createKnowledgeBaseColumns = (): ColDef[] => {
       ),
     },
     {
+      headerName: "Visibility",
+      field: "visibility",
+      flex: 1,
+      sortable: false,
+      filter: "agTextColumnFilter",
+      editable: false,
+      cellClass: baseCellClass,
+      valueGetter: (params) => {
+        const v = params.data?.visibility || "PRIVATE";
+        const labels: Record<string, string> = {
+          PRIVATE: "Private",
+          DEPARTMENT: "Department",
+          ORGANIZATION: "Organization",
+        };
+        return labels[v] || v;
+      },
+    },
+    {
       headerName: "Embedding Model",
       field: "embedding_provider",
       flex: 2,

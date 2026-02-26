@@ -55,16 +55,6 @@ export default function SettingsPage(): JSX.Element {
       ),
       permissionKey: "view_settings_messages_tab",
     },
-    {
-      title: t("Help & Support"),
-      href: "/settings/help-support",
-      icon: (
-        <ForwardedIconComponent
-          name="HelpCircle"
-          className="w-4 flex-shrink-0 justify-start stroke-[1.5]"
-        />
-      ),
-    },
   );
 
 

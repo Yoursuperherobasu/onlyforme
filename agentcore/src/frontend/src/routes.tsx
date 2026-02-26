@@ -39,6 +39,7 @@ import GlobalVariablesPage from "./pages/SettingsPage/pages/GlobalVariablesPage"
 import HelpSupportPage from "./pages/SettingsPage/pages/HelpSupportPage";
 import MCPServersPage from "./pages/McpServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
+import PackagesPage from "./pages/SettingsPage/pages/PackagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
@@ -187,6 +188,10 @@ const router = createBrowserRouter(
                         <TimeoutSettings />
                       </ProtectedAccessControlRoute>
                     }
+                  />
+                  <Route
+                    path="packages"
+                    element={<PackagesPage />}
                   />
                   
                   <Route
