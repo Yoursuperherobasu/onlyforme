@@ -1,6 +1,9 @@
+<<<<<<< HEAD
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+=======
+>>>>>>> 56b9d6a3 (Guardrails WIP)
 import { Edit2, MoreVertical, Plus, Search, Trash2 } from "lucide-react";
 import { useContext, useEffect, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
