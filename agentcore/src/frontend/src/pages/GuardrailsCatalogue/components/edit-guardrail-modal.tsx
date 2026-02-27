@@ -1,7 +1,14 @@
-import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +18,7 @@ import {
   usePatchGuardrailCatalogue,
   usePostGuardrailCatalogue,
 } from "@/controllers/API/queries/guardrails";
+import { useGetRegistryModels } from "@/controllers/API/queries/models";
 import useAlertStore from "@/stores/alertStore";
 
 interface EditGuardrailModalProps {
@@ -19,37 +27,33 @@ interface EditGuardrailModalProps {
   guardrail?: GuardrailInfo | null;
 }
 
-const PROVIDER_OPTIONS = ["NVIDIA", "OpenAI", "Groq", "Google", "Azure", "Anthropic", "Custom"];
-const CATEGORY_OPTIONS = ["content-safety", "jailbreak", "topic-control", "pii-detection"];
+const CATEGORY_OPTIONS = [
+  "content-safety",
+  "jailbreak",
+  "topic-control",
+  "pii-detection",
+];
 
-const getConfigTemplate = (selectedProvider: string): string => {
-  const normalized = selectedProvider.trim().toLowerCase();
+const getConfigTemplate = (): string => {
+  return `# models section is auto-injected from Model Registry
+rails:
+  input:
+    flows:
+      - self check input`;
+};
 
-  if (normalized === "groq") {
-    return `models:
-  - type: main
-    engine: groq
-    model: llama-3.1-8b-instant`;
-  }
+const getPromptsTemplate = (): string => {
+  return `- task: self_check_input
+  content: |
+    You are a safety classifier for user input.
 
-  if (normalized === "google") {
-    return `models:
-  - type: main
-    engine: google_genai
-    model: gemini-1.5-flash`;
-  }
+    Block the message if it requests harmful, illegal, abusive, or violent guidance.
 
-  if (normalized === "openai") {
-    return `models:
-  - type: main
-    engine: openai
-    model: gpt-4o-mini`;
-  }
+    User message: "{{ user_input }}"
 
-  return `models:
-  - type: main
-    engine: <provider_engine>
-    model: <model_name>`;
+    Should this message be blocked?
+    Answer only Yes or No.
+    Answer:`;
 };
 
 const pickFirstString = (
@@ -73,21 +77,31 @@ export default function EditGuardrailModal({
   const createMutation = usePostGuardrailCatalogue();
   const updateMutation = usePatchGuardrailCatalogue();
 
+  const { data: registryModels = [], isLoading: isModelsLoading } =
+    useGetRegistryModels({
+      active_only: true,
+    });
+
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [provider, setProvider] = useState("NVIDIA");
+  const [modelRegistryId, setModelRegistryId] = useState("");
   const [category, setCategory] = useState("content-safety");
   const [status, setStatus] = useState<"active" | "inactive">("active");
   const [rulesCount, setRulesCount] = useState<number | "">(0);
   const [isCustom, setIsCustom] = useState(false);
 
   const [configYml, setConfigYml] = useState("");
-  const [railsCo, setRailsCo] = useState("");
   const [promptsYml, setPromptsYml] = useState("");
-  const [extraFiles, setExtraFiles] = useState("{}");
+  const [railsCo, setRailsCo] = useState("");
+  const [preservedFiles, setPreservedFiles] = useState<Record<string, string>>();
+
+  const selectedModel = useMemo(
+    () => registryModels.find((model) => model.id === modelRegistryId) ?? null,
+    [registryModels, modelRegistryId],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -95,82 +109,107 @@ export default function EditGuardrailModal({
     if (guardrail) {
       setName(guardrail.name ?? "");
       setDescription(guardrail.description ?? "");
-      setProvider(guardrail.provider ?? "NVIDIA");
+      setModelRegistryId(guardrail.modelRegistryId ?? "");
       setCategory(guardrail.category ?? "content-safety");
       setStatus((guardrail.status ?? "active") as "active" | "inactive");
-      setRulesCount(typeof guardrail.rulesCount === "number" ? guardrail.rulesCount : 0);
+      setRulesCount(
+        typeof guardrail.rulesCount === "number" ? guardrail.rulesCount : 0,
+      );
       setIsCustom(Boolean(guardrail.isCustom));
 
       const runtimeConfig = guardrail.runtimeConfig ?? undefined;
-      setConfigYml(pickFirstString(runtimeConfig, ["config_yml", "configYml", "config.yml"]));
-      setRailsCo(pickFirstString(runtimeConfig, ["rails_co", "railsCo", "rails.co"]));
-      setPromptsYml(pickFirstString(runtimeConfig, ["prompts_yml", "promptsYml", "prompts.yml"]));
+      setConfigYml(
+        pickFirstString(runtimeConfig, [
+          "config_yml",
+          "configYml",
+          "config.yml",
+        ]),
+      );
+      setRailsCo(
+        pickFirstString(runtimeConfig, ["rails_co", "railsCo", "rails.co"]),
+      );
+      setPromptsYml(
+        pickFirstString(runtimeConfig, [
+          "prompts_yml",
+          "promptsYml",
+          "prompts.yml",
+        ]),
+      );
       const files = runtimeConfig?.files;
-      setExtraFiles(files ? JSON.stringify(files, null, 2) : "{}");
+      if (files && typeof files === "object" && !Array.isArray(files)) {
+        const safeFiles = Object.fromEntries(
+          Object.entries(files).filter(
+            ([key, value]) => typeof key === "string" && typeof value === "string",
+          ),
+        ) as Record<string, string>;
+        setPreservedFiles(Object.keys(safeFiles).length > 0 ? safeFiles : undefined);
+      } else {
+        setPreservedFiles(undefined);
+      }
       return;
     }
 
     setName("");
     setDescription("");
-    setProvider("NVIDIA");
+    setModelRegistryId(registryModels[0]?.id ?? "");
     setCategory("content-safety");
     setStatus("active");
     setRulesCount(0);
     setIsCustom(false);
-    setConfigYml("");
+    setConfigYml(getConfigTemplate());
+    setPromptsYml(getPromptsTemplate());
     setRailsCo("");
-    setPromptsYml("");
-    setExtraFiles("{}");
-  }, [guardrail, open]);
+    setPreservedFiles(undefined);
+  }, [guardrail, open, registryModels]);
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
-  const buildRuntimeConfig = (): GuardrailCreateOrUpdatePayload["runtimeConfig"] => {
-    const normalizedConfigYml = configYml.trim();
-    const normalizedRailsCo = railsCo.trim();
-    const normalizedPromptsYml = promptsYml.trim();
-    const normalizedExtraFiles = extraFiles.trim();
+  const buildRuntimeConfig =
+    (): GuardrailCreateOrUpdatePayload["runtimeConfig"] => {
+      const normalizedConfigYml = configYml.trim();
+      const normalizedPromptsYml = promptsYml.trim();
+      const normalizedRailsCo = railsCo.trim();
+      const parsedExtraFiles =
+        preservedFiles && Object.keys(preservedFiles).length > 0
+          ? preservedFiles
+          : undefined;
 
-    let parsedExtraFiles: Record<string, string> | undefined;
-    if (normalizedExtraFiles && normalizedExtraFiles !== "{}") {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(normalizedExtraFiles);
-      } catch {
-        throw new Error("Extra runtime files must be valid JSON.");
+      const hasAnyRuntimeConfig =
+        normalizedConfigYml !== "" ||
+        normalizedPromptsYml !== "" ||
+        normalizedRailsCo !== "" ||
+        Boolean(parsedExtraFiles);
+
+      if (!hasAnyRuntimeConfig) {
+        return null;
       }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("Extra runtime files must be a JSON object.");
-      }
-      const invalidEntry = Object.entries(parsed as Record<string, unknown>).find(
-        ([key, value]) => typeof key !== "string" || typeof value !== "string",
-      );
-      if (invalidEntry) {
-        throw new Error("Extra runtime files must map string paths to string content.");
-      }
-      parsedExtraFiles = parsed as Record<string, string>;
-    }
 
-    const hasAnyRuntimeConfig =
-      normalizedConfigYml !== "" ||
-      normalizedRailsCo !== "" ||
-      normalizedPromptsYml !== "" ||
-      Boolean(parsedExtraFiles && Object.keys(parsedExtraFiles).length > 0);
-
-    if (!hasAnyRuntimeConfig) {
-      return null;
-    }
-
-    return {
-      config_yml: normalizedConfigYml || undefined,
-      rails_co: normalizedRailsCo || undefined,
-      prompts_yml: normalizedPromptsYml || undefined,
-      files: parsedExtraFiles,
+      return {
+        config_yml: normalizedConfigYml || undefined,
+        rails_co: normalizedRailsCo || undefined,
+        prompts_yml: normalizedPromptsYml || undefined,
+        files: parsedExtraFiles,
+      };
     };
-  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!modelRegistryId) {
+      setErrorData({
+        title: "Model is required",
+        list: ["Please select a model from Model Registry."],
+      });
+      return;
+    }
+
+    if (status === "active" && configYml.trim() === "") {
+      setErrorData({
+        title: "config_yml is required",
+        list: ["Active guardrails require config_yml. prompts_yml is optional."],
+      });
+      return;
+    }
 
     let runtimeConfig: GuardrailCreateOrUpdatePayload["runtimeConfig"] = null;
     try {
@@ -183,7 +222,7 @@ export default function EditGuardrailModal({
     const payload: GuardrailCreateOrUpdatePayload = {
       name: name.trim(),
       description: description.trim() || null,
-      provider,
+      modelRegistryId,
       category,
       status,
       rulesCount: rulesCount === "" ? 0 : Number(rulesCount),
@@ -204,7 +243,9 @@ export default function EditGuardrailModal({
       onOpenChange(false);
     } catch (error) {
       setErrorData({
-        title: isEditMode ? "Failed to update guardrail" : "Failed to create guardrail",
+        title: isEditMode
+          ? "Failed to update guardrail"
+          : "Failed to create guardrail",
         list: [String(error)],
       });
     }
@@ -214,9 +255,13 @@ export default function EditGuardrailModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEditMode ? "Edit Guardrail" : "Add Guardrail"}</DialogTitle>
+          <DialogTitle>
+            {isEditMode ? "Edit Guardrail" : "Add Guardrail"}
+          </DialogTitle>
           <DialogDescription>
-            Configure guardrail metadata and optional NeMo runtime configuration files.
+            Configure guardrail metadata and NeMo runtime files. You only need
+            `config_yml` and optional `prompts_yml`. Model details and
+            credentials come from Model Registry.
           </DialogDescription>
         </DialogHeader>
 
@@ -233,20 +278,40 @@ export default function EditGuardrailModal({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="guardrail-provider">Provider *</Label>
+              <Label htmlFor="guardrail-model">Model Registry Entry *</Label>
               <select
-                id="guardrail-provider"
+                id="guardrail-model"
                 required
-                value={provider}
-                onChange={(event) => setProvider(event.target.value)}
+                value={modelRegistryId}
+                onChange={(event) => setModelRegistryId(event.target.value)}
+                disabled={isModelsLoading || registryModels.length === 0}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                {PROVIDER_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
+                {registryModels.length === 0 ? (
+                  <option value="">
+                    {isModelsLoading
+                      ? "Loading models..."
+                      : "No active models in registry"}
                   </option>
-                ))}
+                ) : (
+                  registryModels.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.display_name} ({option.provider}/
+                      {option.model_name})
+                    </option>
+                  ))
+                )}
               </select>
+              {selectedModel && (
+                <p className="text-xs text-muted-foreground">
+                  Provider:{" "}
+                  <span className="font-medium">{selectedModel.provider}</span>{" "}
+                  | Model:{" "}
+                  <span className="font-medium">
+                    {selectedModel.model_name}
+                  </span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -284,7 +349,9 @@ export default function EditGuardrailModal({
                 id="guardrail-status"
                 required
                 value={status}
-                onChange={(event) => setStatus(event.target.value as "active" | "inactive")}
+                onChange={(event) =>
+                  setStatus(event.target.value as "active" | "inactive")
+                }
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="active">active</option>
@@ -320,11 +387,12 @@ export default function EditGuardrailModal({
           </div>
 
           <div className="space-y-3 rounded-md border p-4">
-            <div className="text-sm font-semibold">Runtime Configuration (Optional)</div>
+            <div className="text-sm font-semibold">Runtime Configuration</div>
             <p className="text-xs text-muted-foreground">
-              Use these fields to store NeMo runtime files. The backend expects `config_yml` and `rails_co`
-              for execution. For auth, set provider keys in backend env (for example `GROQ_API_KEY` or
-              `GOOGLE_API_KEY` / `GEMINI_API_KEY`).
+              Keep this simple: add `config_yml` and optional `prompts_yml`.
+              The backend injects model settings from Model Registry. You can
+              optionally customize `rails_co`; if left empty, a safe default is
+              applied.
             </p>
 
             <div className="space-y-1.5">
@@ -334,20 +402,19 @@ export default function EditGuardrailModal({
                 rows={8}
                 value={configYml}
                 onChange={(event) => setConfigYml(event.target.value)}
-                placeholder={getConfigTemplate(provider)}
+                placeholder={getConfigTemplate()}
               />
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="guardrail-rails-co">rails_co</Label>
+              <Label htmlFor="guardrail-rails-co">rails_co (Optional)</Label>
               <Textarea
                 id="guardrail-rails-co"
                 rows={8}
                 value={railsCo}
                 onChange={(event) => setRailsCo(event.target.value)}
-                placeholder="define flow self check input
-  user ...
-  bot refuse"
+                placeholder='define bot refuse to respond
+  ""'
               />
             </div>
 
@@ -358,29 +425,23 @@ export default function EditGuardrailModal({
                 rows={6}
                 value={promptsYml}
                 onChange={(event) => setPromptsYml(event.target.value)}
-                placeholder="- task: self_check_input
-  content: |-
-    ..."
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="guardrail-extra-files">Extra files JSON (`files`)</Label>
-              <Textarea
-                id="guardrail-extra-files"
-                rows={4}
-                value={extraFiles}
-                onChange={(event) => setExtraFiles(event.target.value)}
-                placeholder='{"policies/company.co": "define flow ..."}'
+                placeholder={getPromptsTemplate()}
               />
             </div>
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSaving}>
+            <Button
+              type="submit"
+              disabled={isSaving || registryModels.length === 0}
+            >
               {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isEditMode ? "Save Changes" : "Create Guardrail"}
             </Button>

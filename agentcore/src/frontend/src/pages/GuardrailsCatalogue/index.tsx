@@ -1,8 +1,5 @@
 import { Edit2, MoreVertical, Plus, Search, Trash2 } from "lucide-react";
 import { useContext, useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { AuthContext } from "@/contexts/authContext";
-import Loading from "@/components/ui/loading";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,6 +7,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import Loading from "@/components/ui/loading";
+import { AuthContext } from "@/contexts/authContext";
 import {
   type GuardrailInfo,
   useDeleteGuardrailCatalogue,
@@ -24,17 +23,22 @@ interface GuardrailsViewProps {
   setSearch?: (search: string) => void;
 }
 
-type CategoryType = "all" | "content-safety" | "jailbreak" | "topic-control" | "pii-detection";
+type CategoryType =
+  | "all"
+  | "content-safety"
+  | "jailbreak"
+  | "topic-control"
+  | "pii-detection";
 
 export default function GuardrailsView({
   guardrails = [],
   setSearch = () => {},
 }: GuardrailsViewProps): JSX.Element {
-  const { t } = useTranslation();
   const [filter] = useState<CategoryType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [selectedGuardrail, setSelectedGuardrail] = useState<GuardrailInfo | null>(null);
+  const [selectedGuardrail, setSelectedGuardrail] =
+    useState<GuardrailInfo | null>(null);
 
   const { role, permissions } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
@@ -45,11 +49,7 @@ export default function GuardrailsView({
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
-  const {
-    data: dbGuardrails,
-    isLoading,
-    error,
-  } = useGetGuardrailsCatalogue();
+  const { data: dbGuardrails, isLoading, error } = useGetGuardrailsCatalogue();
   const deleteMutation = useDeleteGuardrailCatalogue();
 
   const getProviderLogo = (provider: string) => {
@@ -63,7 +63,9 @@ export default function GuardrailsView({
     );
   };
 
-  const displayGuardrails = guardrails?.length ? guardrails : (dbGuardrails ?? []);
+  const displayGuardrails = guardrails?.length
+    ? guardrails
+    : (dbGuardrails ?? []);
 
   const filteredGuardrails = displayGuardrails.filter((guardrail) => {
     const matchesFilter = filter === "all" || guardrail.category === filter;
@@ -82,22 +84,29 @@ export default function GuardrailsView({
 
   const getCategoryLabel = (category: string) => {
     const labels: Record<string, string> = {
-      "content-safety": t("Content Safety"),
-      jailbreak: t("Jailbreak Prevention"),
-      "topic-control": t("Topic Control"),
-      "pii-detection": t("PII Detection"),
+      "content-safety": "Content Safety",
+      jailbreak: "Jailbreak Prevention",
+      "topic-control": "Topic Control",
+      "pii-detection": "PII Detection",
     };
     return labels[category] || category;
   };
 
   const getCategoryBadgeColor = (category: string) => {
     const colors: Record<string, string> = {
-      "content-safety": "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-      jailbreak: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
-      "topic-control": "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-      "pii-detection": "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+      "content-safety":
+        "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+      jailbreak:
+        "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+      "topic-control":
+        "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+      "pii-detection":
+        "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
     };
-    return colors[category] || "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400";
+    return (
+      colors[category] ||
+      "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400"
+    );
   };
 
   const handleCreateGuardrail = () => {
@@ -111,7 +120,9 @@ export default function GuardrailsView({
   };
 
   const handleDeleteGuardrail = async (guardrail: GuardrailInfo) => {
-    const shouldDelete = window.confirm(`Delete guardrail "${guardrail.name}"?`);
+    const shouldDelete = window.confirm(
+      `Delete guardrail "${guardrail.name}"?`,
+    );
     if (!shouldDelete) return;
 
     try {
@@ -127,10 +138,10 @@ export default function GuardrailsView({
       <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{t("Guardrails Catalogue")}</h1>
+            <h1 className="text-2xl font-semibold">Guardrails Catalogue</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("Manage and configure AI safety guardrails")}
+            Manage and configure AI safety guardrails
           </p>
         </div>
 
@@ -138,7 +149,7 @@ export default function GuardrailsView({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder={t("Search guardrails...")}
+              placeholder="Search guardrails..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
@@ -162,7 +173,7 @@ export default function GuardrailsView({
           <>
             {!!error && (
               <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                {t("Failed to load guardrails from database.")}
+                Failed to load guardrails from database.
               </div>
             )}
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -171,6 +182,7 @@ export default function GuardrailsView({
                   <tr className="border-b border-border">
                     {[
                       "Guardrail Name",
+                      "Model",
                       "Provider",
                       "Category",
                       "Status",
@@ -181,7 +193,7 @@ export default function GuardrailsView({
                         key={h}
                         className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                       >
-                        {t(h)}
+                        {h}
                       </th>
                     ))}
                   </tr>
@@ -191,21 +203,26 @@ export default function GuardrailsView({
                   {filteredGuardrails.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={canManage ? 6 : 5}
+                        colSpan={canManage ? 7 : 6}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
-                        {t("No guardrails found matching your criteria")}
+                        No guardrails found matching your criteria
                       </td>
                     </tr>
                   ) : (
                     filteredGuardrails.map((guardrail) => (
-                      <tr key={guardrail.id} className="group hover:bg-muted/50">
+                      <tr
+                        key={guardrail.id}
+                        className="group hover:bg-muted/50"
+                      >
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
-                            <div className="font-semibold">{guardrail.name}</div>
+                            <div className="font-semibold">
+                              {guardrail.name}
+                            </div>
                             {guardrail.isCustom && (
                               <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                                {t("Custom")}
+                                Custom
                               </span>
                             )}
                           </div>
@@ -217,11 +234,26 @@ export default function GuardrailsView({
                               Runtime ready
                             </div>
                           )}
-                          {guardrail.runtimeConfig && guardrail.runtimeReady === false && (
-                            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
-                              Runtime config incomplete
-                            </div>
-                          )}
+                          {guardrail.runtimeConfig &&
+                            guardrail.runtimeReady === false && (
+                              <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                                Runtime config incomplete
+                              </div>
+                            )}
+                        </td>
+
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-medium">
+                            {guardrail.modelDisplayName ||
+                              guardrail.modelName ||
+                              "Not linked"}
+                          </div>
+                          {guardrail.modelName &&
+                            guardrail.modelDisplayName && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {guardrail.modelName}
+                              </div>
+                            )}
                         </td>
 
                         <td className="px-6 py-4">
@@ -229,7 +261,9 @@ export default function GuardrailsView({
                             <div className="flex h-8 w-8 items-center justify-center rounded border">
                               {getProviderLogo(guardrail.provider)}
                             </div>
-                            <span className="text-sm">{t(guardrail.provider)}</span>
+                            <span className="text-sm">
+                              {guardrail.provider}
+                            </span>
                           </div>
                         </td>
 
@@ -247,14 +281,14 @@ export default function GuardrailsView({
                               className={`h-2 w-2 rounded-full ${guardrail.status === "active" ? "bg-green-500" : "bg-gray-400"}`}
                             ></span>
                             <span className="text-sm capitalize">
-                              {t(guardrail.status.charAt(0).toUpperCase() + guardrail.status.slice(1))}
+                              {guardrail.status}
                             </span>
                           </div>
                         </td>
 
                         <td className="px-6 py-4">
                           <span className="text-sm text-muted-foreground">
-                            {guardrail.rulesCount} {t("rules")}
+                            {guardrail.rulesCount} rules
                           </span>
                         </td>
 
@@ -268,14 +302,20 @@ export default function GuardrailsView({
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 {canCreateOrEdit && (
-                                  <DropdownMenuItem onClick={() => handleEditGuardrail(guardrail)}>
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      handleEditGuardrail(guardrail)
+                                    }
+                                  >
                                     <Edit2 className="mr-2 h-4 w-4" />
                                     Edit
                                   </DropdownMenuItem>
                                 )}
                                 {canDelete && (
                                   <DropdownMenuItem
-                                    onClick={() => handleDeleteGuardrail(guardrail)}
+                                    onClick={() =>
+                                      handleDeleteGuardrail(guardrail)
+                                    }
                                     className="text-destructive"
                                   >
                                     <Trash2 className="mr-2 h-4 w-4" />
@@ -294,10 +334,8 @@ export default function GuardrailsView({
             </div>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
-              {t("Showing {{shown}} of {{total}} guardrails", {
-                shown: filteredGuardrails.length,
-                total: displayGuardrails.length,
-              })}
+              Showing {filteredGuardrails.length} of {displayGuardrails.length}{" "}
+              guardrails
             </div>
           </>
         )}

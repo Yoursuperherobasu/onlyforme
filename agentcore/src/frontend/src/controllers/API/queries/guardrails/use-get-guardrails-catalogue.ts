@@ -16,6 +16,9 @@ export interface GuardrailInfo {
   name: string;
   description: string;
   provider: string;
+  modelRegistryId?: string | null;
+  modelName?: string | null;
+  modelDisplayName?: string | null;
   category: string;
   status: "active" | "inactive";
   rulesCount: number;
@@ -29,7 +32,7 @@ export interface GuardrailInfo {
 export interface GuardrailCreateOrUpdatePayload {
   name: string;
   description?: string | null;
-  provider: string;
+  modelRegistryId: string;
   category: string;
   status: "active" | "inactive";
   rulesCount: number;
