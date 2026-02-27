@@ -1097,11 +1097,4 @@ export const OPENAI_VOICES = [
 export const DEFAULT_POLLING_INTERVAL = 5000;
 export const DEFAULT_TIMEOUT = 30000;
 export const DEFAULT_FILE_PICKER_TIMEOUT = 60000;
-export const DISCORD_URL = "https://discord.com/invite/EqksyE2EX9";
-export const DOCS_URL = "https://www.motherson.com/";
-export const DATASTAX_DOCS_URL =
-  "https://docs.datastax.com/en/sensei/index.html";
-export const DESKTOP_URL = "https://www.sensei.org/desktop";
-export const BUG_REPORT_URL = "https://github.com/AgenticPlatform/sensei/issues";
-
 export const UUID_PARSING_ERROR = "uuid_parsing";
