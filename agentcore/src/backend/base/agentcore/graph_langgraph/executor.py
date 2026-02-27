@@ -59,8 +59,6 @@ class LangGraphExecutor:
         
         # Update input vertices with the input data (like ChatInput's input_value)
         if inputs:
-
-            print(inputs)
             for vertex_id in self.adapter._is_input_vertices:
                 vertex = self.adapter.get_vertex(vertex_id)
                 if vertex:
@@ -212,10 +210,13 @@ class LangGraphExecutor:
             # Cycles
             cycle_vertices=self.adapter.cycle_vertices,
             is_cyclic=self.adapter.is_cyclic,
-            
+
             # Layers
             current_layer=0,
             vertices_layers=self.adapter.vertices_layers,
+
+            # Input vertex tracking
+            input_vertex_ids=list(self.adapter._is_input_vertices),
         )
     
     def get_results(self, state: dict[str, Any]) -> list[Any]:

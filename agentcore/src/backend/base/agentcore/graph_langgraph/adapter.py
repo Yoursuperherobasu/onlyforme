@@ -342,55 +342,94 @@ class LangGraphAdapter:
                 self.has_session_id_vertices.append(vertex.id)
     
     def _build_langgraph_workflow(self) -> None:
-        """Build the LangGraph StateGraph from vertices and edges."""
+        """Build the LangGraph StateGraph from vertices and edges.
+
+        Handles:
+        - Cyclic graphs (Loop component): skips compilation, falls back to custom execution.
+        - Multiple root vertices: creates a no-op fan-out start node.
+        - Leaf vertices: connects them to LangGraph END.
+        - Duplicate edges: deduplicates to prevent LangGraph errors.
+        """
+        from langgraph.graph import END
+
         logger.info("Building LangGraph workflow")
-        
+
+        # Cyclic graphs (Loop component) are incompatible with LangGraph's DAG execution.
+        # Fall back to the custom vertex-by-vertex path (_arun_custom / build_vertex).
+        if self.is_cyclic:
+            logger.info(
+                "Graph has cycles (Loop component) — skipping LangGraph compilation, "
+                "will use custom execution path"
+            )
+            self.workflow = None
+            self.compiled_app = None
+            return
+
         # Create StateGraph
         self.workflow = StateGraph(AgentCoreState)
-        
-        # Add nodes to workflow
+
+        # Add nodes
         for vertex in self.vertices:
             node_func = create_node_function(vertex)
             self.workflow.add_node(vertex.id, node_func)
-        
-        # Add edges to workflow
+
+        # Add edges (deduplicated)
+        added_edges: set[tuple[str, str]] = set()
         for edge_data in self.edges:
             source_id = edge_data.get("source")
             target_id = edge_data.get("target")
-            
+            edge_key = (source_id, target_id)
+            if edge_key in added_edges:
+                continue
             if source_id and target_id and source_id in self.vertex_map and target_id in self.vertex_map:
                 try:
                     self.workflow.add_edge(source_id, target_id)
+                    added_edges.add(edge_key)
                 except Exception as e:
                     logger.warning(f"Failed to add edge {source_id} -> {target_id}: {e}")
-        
-        # Set entry point (first layer of vertices)
-        if self._is_input_vertices:
-            # Use input vertices as entry points
-            entry_point = self._is_input_vertices[0]
-        elif self.vertices:
-            # Use first vertex with no predecessors
-            for vertex_id, in_degree in self.in_degree_map.items():
-                if in_degree == 0:
-                    entry_point = vertex_id
-                    break
+
+        # Determine root vertices (in_degree == 0)
+        root_vertices = [vid for vid, deg in self.in_degree_map.items() if deg == 0]
+
+        if not root_vertices:
+            if self.vertices:
+                root_vertices = [self.vertices[0].id]
             else:
-                entry_point = self.vertices[0].id
+                logger.warning("No vertices found for entry point")
+                self.compiled_app = None
+                return
+
+        if len(root_vertices) == 1:
+            self.workflow.set_entry_point(root_vertices[0])
         else:
-            logger.warning("No vertices found for entry point")
-            return
-        
-        self.workflow.set_entry_point(entry_point)
-        logger.info(f"Set entry point: {entry_point}")
-        
-        # Compile the workflow
+            # Multiple roots: create a no-op fan-out node
+            async def _noop_start(state: AgentCoreState) -> AgentCoreState:
+                return state
+
+            self.workflow.add_node("__start_fan_out__", _noop_start)
+            self.workflow.set_entry_point("__start_fan_out__")
+            for root_id in root_vertices:
+                self.workflow.add_edge("__start_fan_out__", root_id)
+
+        logger.info(f"Entry point(s): {root_vertices}")
+
+        # Connect leaf vertices (no outgoing edges) to END
+        source_ids = {e.get("source") for e in self.edges}
+        for vid in self.vertex_map:
+            if vid not in source_ids:
+                try:
+                    self.workflow.add_edge(vid, END)
+                except Exception as e:
+                    logger.warning(f"Failed to add END edge for {vid}: {e}")
+
+        # Compile
         try:
             logger.info("Compiling LangGraph workflow...")
             self.compiled_app = self.workflow.compile()
             logger.info("LangGraph workflow compiled successfully")
         except Exception as e:
             logger.error(f"Failed to compile LangGraph workflow: {e}")
-            raise
+            self.compiled_app = None
     
     def get_vertex(self, vertex_id: str) -> LangGraphVertex | None:
         """Get a vertex by ID.
@@ -604,16 +643,17 @@ class LangGraphAdapter:
         session_id: str | None = None,
         stream: bool = False,
         fallback_to_env_vars: bool = False,
-        event_manager = None,
+        event_manager=None,
     ):
         """Run the graph with given inputs.
 
-        Uses the same adaptive layer-by-layer execution as the Playground:
-        after each vertex build, calls get_next_runnable_vertices() to
-        discover which vertices to build next.  This respects routing
-        decisions made by ANY component that calls self.stop() to mark
-        branches as INACTIVE (e.g. SmartRouter, ConditionalRouter, or
-        any future routing / orchestration component).
+        Dispatches between two execution modes:
+        - **LangGraph compiled path** (``compiled_app.ainvoke`` / ``astream``):
+          used for acyclic graphs (the common case).  ``ainvoke`` is used when
+          streaming is not needed; ``astream`` is used when an ``event_manager``
+          is provided so that per-node events reach the frontend.
+        - **Custom vertex-by-vertex path** (``_arun_custom``): fallback for
+          cyclic graphs (Loop component) that cannot be expressed as a DAG.
 
         Args:
             inputs: List of input dictionaries (e.g., [{"input_value": "hello"}])
@@ -621,17 +661,15 @@ class LangGraphAdapter:
             types: Optional list of input types for each input
             outputs: Optional list of output vertex IDs to retrieve
             session_id: Optional session ID
-            stream: Accepted for caller compatibility; streaming is handled
-                at the component level via event_manager, not here.
+            stream: When True and event_manager is set, use astream() for
+                per-node streaming; otherwise use ainvoke().
             fallback_to_env_vars: Whether to fallback to environment variables
             event_manager: Event manager for real-time token streaming
 
         Returns:
             List of RunOutputs objects with inputs and outputs
         """
-        import asyncio as _asyncio
         from agentcore.graph_langgraph.schema import RunOutputs
-        from agentcore.services.deps import get_chat_service
 
         if session_id:
             self._session_id = session_id
@@ -640,17 +678,125 @@ class LangGraphAdapter:
         # Initialize run (resets all vertex states, run_manager, etc.)
         await self.initialize_run()
 
+        # Cyclic graphs or failed compilation → custom execution
+        if self.is_cyclic or not self.compiled_app:
+            return await self._arun_custom(
+                inputs,
+                inputs_components=inputs_components,
+                types=types,
+                outputs=outputs,
+                session_id=session_id,
+                stream=stream,
+                fallback_to_env_vars=fallback_to_env_vars,
+                event_manager=event_manager,
+            )
+
+        # ── LangGraph compiled graph execution ──
+        logger.info("Running graph via LangGraph compiled execution")
+
+        # Sort vertices (sets up vertices_to_run, run_manager, etc.)
+        start_component_id = None
+        if getattr(self, "skip_dev_logging", False):
+            from agentcore.graph_langgraph.utils import find_start_component_id
+            start_component_id = find_start_component_id([v.id for v in self.vertices])
+        self.sort_vertices(start_component_id=start_component_id)
+
+        vertex_outputs = []
+
+        for idx, run_inputs in enumerate(inputs):
+            # Determine output vertices to collect
+            if outputs:
+                output_ids = list(outputs)
+            else:
+                output_ids = [v.id for v in self.vertices if v.is_output]
+
+            # Set input values on input vertices
+            from agentcore.schema.schema import INPUT_FIELD_NAME
+            for vid in self._is_input_vertices:
+                v = self.get_vertex(vid)
+                if v and INPUT_FIELD_NAME in run_inputs:
+                    v.update_raw_params({INPUT_FIELD_NAME: run_inputs[INPUT_FIELD_NAME]}, overwrite=True)
+
+            # Create initial state for LangGraph
+            initial_state = {
+                "vertices_results": {},
+                "artifacts": {},
+                "outputs_logs": {},
+                "current_vertex": "",
+                "completed_vertices": [],
+                "events": [],
+                "agent_id": str(self.agent_id) if self.agent_id else "",
+                "agent_name": self.agent_name,
+                "session_id": self._session_id or str(self.agent_id) if self.agent_id else "",
+                "user_id": self.user_id,
+                "event_manager": event_manager,
+                "input_data": run_inputs,
+                "files": None,
+                "fallback_to_env_vars": fallback_to_env_vars,
+                "stop_component_id": None,
+                "start_component_id": start_component_id,
+                "vertex_objects": self.vertex_map,
+                "predecessor_map": dict(self.predecessor_map),
+                "successor_map": dict(self.successor_map),
+                "in_degree_map": dict(self.in_degree_map),
+                "cycle_vertices": self.cycle_vertices,
+                "is_cyclic": self.is_cyclic,
+                "current_layer": 0,
+                "vertices_layers": self.vertices_layers if hasattr(self, "vertices_layers") else [],
+                "input_vertex_ids": list(self._is_input_vertices),
+            }
+
+            # Execute the compiled graph
+            final_state = None
+            if stream and event_manager:
+                # STREAMING: use astream() — yields state after each node
+                async for state_update in self.compiled_app.astream(initial_state):
+                    final_state = state_update
+            else:
+                # NON-STREAMING: use ainvoke() — returns final state directly
+                final_state = await self.compiled_app.ainvoke(initial_state)
+
+            # Collect results from final state
+            if final_state:
+                results = final_state.get("vertices_results", {})
+                run_outputs = [results.get(oid) for oid in output_ids]
+            else:
+                run_outputs = []
+
+            vertex_outputs.append(RunOutputs(inputs=run_inputs, outputs=run_outputs))
+
+        # End traces
+        await self.end_all_traces_in_context()
+
+        return vertex_outputs
+
+    async def _arun_custom(
+        self,
+        inputs: list[dict[str, str]],
+        *,
+        inputs_components: list[list[str]] | None = None,
+        types: list[str | None] | None = None,
+        outputs: list[str] | None = None,
+        session_id: str | None = None,
+        stream: bool = False,
+        fallback_to_env_vars: bool = False,
+        event_manager=None,
+    ):
+        """Original custom vertex-by-vertex execution.
+
+        Used as fallback for cyclic graphs (Loop component) or when
+        compiled_app is not available.  This is the pre-migration execution
+        path preserved verbatim.
+        """
+        import asyncio as _asyncio
+        from agentcore.graph_langgraph.schema import RunOutputs
+        from agentcore.services.deps import get_chat_service
+
+        logger.info("Running graph via custom vertex-by-vertex execution (fallback)")
+
         # Get chat service for caching
         chat_service = get_chat_service()
 
-        # Sort vertices to get the first layer — same as Playground.
-        # sort_vertices() sets up vertices_to_run and run_manager state.
-        #
-        # In orchestration mode (skip_dev_logging), filter execution to only the
-        # query path (starting from the input vertex).  This mirrors how the
-        # Playground's chat phase uses start_component_id to avoid re-running
-        # ingestion / build-only branches.  The filtering is fully generic — it
-        # uses the same DAG-reachability logic that sort_vertices already supports.
         start_component_id = None
         if getattr(self, "skip_dev_logging", False):
             from agentcore.graph_langgraph.utils import find_start_component_id
@@ -684,14 +830,6 @@ class LangGraphAdapter:
             built_results: dict[str, object] = {}
             completed_vertices: set[str] = set()
 
-            # ── Adaptive layer-by-layer execution (same as Playground) ──
-            #
-            # After each vertex build we call get_next_runnable_vertices()
-            # which checks vertex active/inactive state.  Any component
-            # (router, conditional, A2A, etc.) that calls self.stop() to
-            # deactivate a branch will cause those downstream vertices to
-            # be skipped here — automatically and generically.
-
             # Separate input vertices from non-input in first layer
             input_ids = [vid for vid in first_layer
                          if self.get_vertex(vid) and self.get_vertex(vid).is_input]
@@ -707,7 +845,7 @@ class LangGraphAdapter:
 
                 if is_orch:
                     display = getattr(vertex, "display_name", vertex_id)
-                    logger.info(f"[ORCH] ▶️  Building component: {display} ({vertex_id})")
+                    logger.info(f"[ORCH] Building component: {display} ({vertex_id})")
 
                 try:
                     result = await self.build_vertex(vertex_id=vertex_id, **build_kwargs)
@@ -715,22 +853,20 @@ class LangGraphAdapter:
                         result.result_dict if hasattr(result, 'result_dict') else result
                     )
                     if is_orch:
-                        logger.info(f"[ORCH] ✅ Built component: {display} ({vertex_id})")
+                        logger.info(f"[ORCH] Built component: {display} ({vertex_id})")
                 except Exception:
                     logger.exception(f"Error building vertex {vertex_id}")
                     built_results[vertex_id] = None
                     if is_orch:
-                        logger.error(f"[ORCH] ❌ Failed component: {display} ({vertex_id})")
+                        logger.error(f"[ORCH] Failed component: {display} ({vertex_id})")
 
                 completed_vertices.add(vertex_id)
 
-                # Reset per-vertex tracking (same as Playground's _build_vertex)
+                # Reset per-vertex tracking
                 self.reset_inactivated_vertices()
                 self.reset_activated_vertices()
 
-                # Discover which successors are now runnable.
-                # get_next_runnable_vertices respects INACTIVE state set by
-                # any component's self.stop() → graph.mark_branch().
+                # Discover which successors are now runnable
                 next_runnable = await self.get_next_runnable_vertices(
                     self._lock, vertex=vertex, cache=False,
                 )

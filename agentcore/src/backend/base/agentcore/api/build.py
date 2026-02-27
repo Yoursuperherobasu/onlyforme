@@ -484,40 +484,108 @@ async def generate_agent_events(
 
     event_manager.on_vertices_sorted(data={"ids": ids, "to_run": vertices_to_run})
 
-    # Separate input vertices from non-input vertices
-    # Input vertices (like ChatInput) must complete FIRST to ensure user message is stored
-    # before AI processing begins
-    input_ids = [vid for vid in ids if graph.get_vertex(vid) and graph.get_vertex(vid).is_input]
-    non_input_ids = [vid for vid in ids if vid not in input_ids]
+    # ── Decide execution mode ──
+    # Use LangGraph compiled execution for acyclic graphs (the common case).
+    # Fall back to custom vertex-by-vertex execution for cyclic graphs (Loop)
+    # or when compiled_app is not available.
+    use_langgraph = (
+        isinstance(graph, LangGraphAdapter)
+        and not graph.is_cyclic
+        and graph.compiled_app is not None
+    )
 
-    # First, build input vertices SEQUENTIALLY (ensures user message is stored first)
-    # Using sequential instead of parallel to guarantee event ordering
-    for vertex_id in input_ids:
-        await build_vertices(vertex_id, graph, event_manager)
-
-    # Then, build non-input vertices in parallel
-    if non_input_ids:
-        tasks = []
-        for vertex_id in non_input_ids:
-            task = asyncio.create_task(build_vertices(vertex_id, graph, event_manager))
-            tasks.append(task)
+    if use_langgraph:
+        # ── LangGraph compiled execution via astream() ──
+        # Events (end_vertex) are emitted from inside create_node_function()
+        # via the event_manager, so the frontend receives the exact same
+        # NDJSON event stream as the custom path. Zero frontend changes.
+        logger.info("Playground: using LangGraph compiled execution (astream)")
         try:
-            await asyncio.gather(*tasks)
+            from agentcore.schema.schema import INPUT_FIELD_NAME
+
+            run_inputs = inputs.model_dump() if inputs else {}
+
+            initial_state = {
+                "vertices_results": {},
+                "artifacts": {},
+                "outputs_logs": {},
+                "current_vertex": "",
+                "completed_vertices": [],
+                "events": [],
+                "agent_id": str(agent_id),
+                "agent_name": agent_name or "",
+                "session_id": getattr(inputs, "session", str(agent_id)) if inputs else str(agent_id),
+                "user_id": str(current_user.id),
+                "event_manager": event_manager,
+                "input_data": run_inputs,
+                "files": files,
+                "fallback_to_env_vars": False,
+                "stop_component_id": stop_component_id,
+                "start_component_id": start_component_id,
+                "vertex_objects": graph.vertex_map,
+                "predecessor_map": dict(graph.predecessor_map),
+                "successor_map": dict(graph.successor_map),
+                "in_degree_map": dict(graph.in_degree_map),
+                "cycle_vertices": graph.cycle_vertices,
+                "is_cyclic": graph.is_cyclic,
+                "current_layer": 0,
+                "vertices_layers": graph.vertices_layers if hasattr(graph, "vertices_layers") else [],
+                "input_vertex_ids": list(graph._is_input_vertices),
+            }
+
+            async for _state_update in graph.compiled_app.astream(initial_state):
+                pass  # end_vertex events already emitted by node_function
+
         except asyncio.CancelledError:
             background_tasks.add_task(graph.end_all_traces_in_context())
             raise
         except Exception as e:
-            logger.error(f"Error building vertices: {e}")
-            custom_component = graph.get_vertex(vertex_id).custom_component
-            trace_name = getattr(custom_component, "trace_name", None)
+            logger.error(f"Error in LangGraph execution: {e}")
             error_message = ErrorMessage(
                 agent_id=agent_id,
                 exception=e,
-                session_id=graph.session_id,
-                trace_name=trace_name,
+                session_id=graph.session_id if hasattr(graph, "session_id") else None,
             )
             event_manager.on_error(data=error_message.data)
             raise
+    else:
+        # ── Custom vertex-by-vertex execution (fallback for cyclic graphs) ──
+        logger.info("Playground: using custom vertex-by-vertex execution (fallback)")
+
+        # Separate input vertices from non-input vertices
+        # Input vertices (like ChatInput) must complete FIRST to ensure user message is stored
+        # before AI processing begins
+        input_ids = [vid for vid in ids if graph.get_vertex(vid) and graph.get_vertex(vid).is_input]
+        non_input_ids = [vid for vid in ids if vid not in input_ids]
+
+        # First, build input vertices SEQUENTIALLY (ensures user message is stored first)
+        # Using sequential instead of parallel to guarantee event ordering
+        for vertex_id in input_ids:
+            await build_vertices(vertex_id, graph, event_manager)
+
+        # Then, build non-input vertices in parallel
+        if non_input_ids:
+            tasks = []
+            for vertex_id in non_input_ids:
+                task = asyncio.create_task(build_vertices(vertex_id, graph, event_manager))
+                tasks.append(task)
+            try:
+                await asyncio.gather(*tasks)
+            except asyncio.CancelledError:
+                background_tasks.add_task(graph.end_all_traces_in_context())
+                raise
+            except Exception as e:
+                logger.error(f"Error building vertices: {e}")
+                custom_component = graph.get_vertex(vertex_id).custom_component
+                trace_name = getattr(custom_component, "trace_name", None)
+                error_message = ErrorMessage(
+                    agent_id=agent_id,
+                    exception=e,
+                    session_id=graph.session_id,
+                    trace_name=trace_name,
+                )
+                event_manager.on_error(data=error_message.data)
+                raise
 
     event_manager.on_end(data={})
     await graph.end_all_traces()

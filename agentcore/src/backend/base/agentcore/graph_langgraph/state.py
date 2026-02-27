@@ -53,3 +53,6 @@ class AgentCoreState(TypedDict):
     # Layer execution tracking
     current_layer: int
     vertices_layers: list[list[str]]
+
+    # Input vertex tracking (for parameter filtering in node_function)
+    input_vertex_ids: list[str]
