@@ -1,6 +1,9 @@
 export const BASENAME = "";
 export const PORT = 3000;
-export const PROXY_TARGET = "http://localhost:7860";
+export const PROXY_TARGET =
+  process.env.VITE_PROXY_TARGET ||
+  process.env.BACKEND_URL ||
+  `http://${process.env.HOST_IP || "127.0.0.1"}:${process.env.BACKEND_PORT || "7860"}`;
 export const API_ROUTES = ["^/api/", "^/api/", "/health"];
 export const BASE_URL_API = "/api/";
 export const BASE_URL_API_V2 = "/api/";

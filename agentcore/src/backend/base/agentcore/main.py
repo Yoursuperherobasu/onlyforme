@@ -309,8 +309,11 @@ def create_app():
         ContentSizeLimitMiddleware,
     )
 
-    origins = ["http://localhost:3000"]
-    # origins = os.getenv("CORS_ALLOWED_ORIGINS".split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else [["http://localhost:3000","http://localhost:8767"]])
+    cors_allowed_origins = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        os.getenv("CORS_ALLOW_ORIGIN", os.getenv("LOCALHOST_FRONTEND_ORIGIN", "http://localhost:3000")),
+    )
+    origins = [origin.strip() for origin in re.split(r"[;,]", cors_allowed_origins) if origin.strip()]
 
     app.add_middleware(
         CORSMiddleware,

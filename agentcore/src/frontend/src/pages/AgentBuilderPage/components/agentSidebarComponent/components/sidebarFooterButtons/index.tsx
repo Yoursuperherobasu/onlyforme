@@ -2,7 +2,7 @@ import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { CustomLink } from "@/customization/components/custom-link";
-import { ENABLE_SENSEI_STORE } from "@/customization/feature-flags";
+import { ENABLE_AGENTCORE_STORE } from "@/customization/feature-flags";
 import { useTranslation } from 'react-i18next';
 
 const SidebarMenuButtons = ({
@@ -15,7 +15,7 @@ const SidebarMenuButtons = ({
   return (
     <>
       {/* TODO: Remove this on cleanup */}
-      {ENABLE_SENSEI_STORE && hasStore && (
+      {ENABLE_AGENTCORE_STORE && hasStore && (
         <SidebarMenuButton asChild>
           <CustomLink
             to="/store"

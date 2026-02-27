@@ -3,7 +3,7 @@ import { ForwardedIconComponent } from "@/components/common/genericIconComponent
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { useLogout } from "@/controllers/API/queries/auth";
 import { CustomProfileIcon } from "@/customization/components/custom-profile-icon";
-import { ENABLE_SENSEI } from "@/customization/feature-flags";
+import { ENABLE_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { useDarkStore } from "@/stores/darkStore";
 import { stripReleaseStageFromVersion } from "@/utils/utils";

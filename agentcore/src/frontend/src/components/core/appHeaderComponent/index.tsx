@@ -5,15 +5,15 @@ import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import CustomAccountMenu from "@/customization/components/custom-AccountMenu";
-import CustomSenseiCounts from "@/customization/components/custom-sensei-counts";
+import CustomAgentCoreCounts from "@/customization/components/custom-agentcore-counts";
 import { CustomOrgSelector } from "@/customization/components/custom-org-selector";
 import { CustomProductSelector } from "@/customization/components/custom-product-selector";
-import { ENABLE_SENSEI } from "@/customization/feature-flags";
+import { ENABLE_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useTheme from "@/customization/hooks/use-custom-theme";
 import useAlertStore from "@/stores/alertStore";
 import AgentMenu from "./components/AgentMenu";
-import FullLogo from "@/assets/sensei.svg?react";
+import FullLogo from "@/assets/agentcore.svg?react";
 import IconLogo from "@/assets/mothersonLogo.svg?react";
 
 export default function AppHeader(): JSX.Element {
@@ -105,7 +105,7 @@ export default function AppHeader(): JSX.Element {
           </div>
         </Button>
         
-        {ENABLE_SENSEI && (
+        {ENABLE_AGENTCORE && (
           <>
             <CustomOrgSelector />
             <CustomProductSelector />
@@ -128,7 +128,7 @@ export default function AppHeader(): JSX.Element {
             unstyled
             className="hidden items-center whitespace-nowrap pr-2 lg:inline"
           >
-            <CustomSenseiCounts />
+            <CustomAgentCoreCounts />
           </Button>
         </>
         <AlertDropdown

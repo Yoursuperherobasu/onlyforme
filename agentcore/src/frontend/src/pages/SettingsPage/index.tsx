@@ -63,7 +63,7 @@ export default function SettingsPage(): JSX.Element {
     <PageLayout
       backTo={-1 as To}
       title={t("Settings")}
-      description={t("Manage the general settings for Sensei.")}
+      description={t("Manage the general settings for AgentCore.")}
     >
       <SidebarProvider width="15rem" defaultOpen={false}>
         <SideBarButtonsComponent items={sidebarNavItems} />
