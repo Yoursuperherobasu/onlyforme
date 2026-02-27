@@ -6,7 +6,7 @@ import { useDeleteUnpublishFromTeams } from "@/controllers/API/queries/teams/use
 import { useGetTeamsStatus } from "@/controllers/API/queries/teams/use-get-teams-status";
 import { usePostSyncTeamsApp } from "@/controllers/API/queries/teams/use-post-sync-teams-app";
 import { useGetTeamsOAuthStatus } from "@/controllers/API/queries/teams/use-get-teams-oauth-status";
-import { SENSEI_ACCESS_TOKEN } from "@/constants/constants";
+import { AGENTCORE_ACCESS_TOKEN } from "@/constants/constants";
 import type { TeamsPublishStatus } from "@/types/teams";
 
 interface TeamsPublishModalProps {
@@ -126,7 +126,7 @@ const TeamsPublishModal = ({ open, setOpen }: TeamsPublishModalProps) => {
     const top = window.screenY + (window.outerHeight - height) / 2;
 
     const cookies = new Cookies();
-    const token = cookies.get(SENSEI_ACCESS_TOKEN);
+    const token = cookies.get(AGENTCORE_ACCESS_TOKEN);
     const url = token
       ? `/api/teams/oauth/authorize?token=${encodeURIComponent(token)}`
       : "/api/teams/oauth/authorize";

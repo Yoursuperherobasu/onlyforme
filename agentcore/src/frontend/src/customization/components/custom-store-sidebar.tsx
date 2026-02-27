@@ -8,7 +8,7 @@ export const CustomStoreSidebar = (
 
   if (hasApiKey) {
     items.push({
-      title: "Sensei API Keys",
+      title: "AgentCore API Keys",
       href: "/settings/api-keys",
       icon: (
         <ForwardedIconComponent
@@ -21,7 +21,7 @@ export const CustomStoreSidebar = (
 
   if (hasStore) {
     items.push({
-      title: "Sensei Store",
+      title: "AgentCore Store",
       href: "/settings/store",
       icon: (
         <ForwardedIconComponent

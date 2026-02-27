@@ -4,7 +4,7 @@ import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlo
 import { useUpdateMessage } from "@/controllers/API/queries/messages";
 import { CustomMarkdownField } from "@/customization/components/custom-markdown-field";
 import { CustomProfileIcon } from "@/customization/components/custom-profile-icon";
-import { ENABLE_SENSEI } from "@/customization/feature-flags";
+import { ENABLE_AGENTCORE } from "@/customization/feature-flags";
 import useAgentStore from "@/stores/agentStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import Robot from "../../../../../assets/robot.png";
@@ -256,7 +256,7 @@ export default function ChatMessage({
                   ) : (
                     <ForwardedIconComponent name={chat.properties.icon} />
                   )
-                ) : !ENABLE_SENSEI && !playgroundPage ? (
+                ) : !ENABLE_AGENTCORE && !playgroundPage ? (
                   <CustomProfileIcon />
                 ) : playgroundPage ? (
                   <ForwardedIconComponent name="User" />

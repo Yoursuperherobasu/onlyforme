@@ -4,7 +4,7 @@ import { DISCORD_URL } from "@/constants/constants";
 import { useDarkStore } from "@/stores/darkStore";
 import { formatNumber } from "@/utils/utils";
 
-export const SenseiCounts = () => {
+export const AgentCoreCounts = () => {
   const stars: number | undefined = useDarkStore((state) => state.stars);
   const discordCount: number = useDarkStore((state) => state.discordCount);
 
@@ -18,4 +18,4 @@ export const SenseiCounts = () => {
   );
 };
 
-export default SenseiCounts;
+export default AgentCoreCounts;

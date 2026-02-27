@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { HelpDropdownView } from "@/components/core/canvasControlsComponent/HelpDropdownView";
-import { ENABLE_SENSEI } from "@/customization/feature-flags";
+import { ENABLE_AGENTCORE } from "@/customization/feature-flags";
 import useAgentStore from "@/stores/agentStore";
 
 const HelpDropdown = () => {

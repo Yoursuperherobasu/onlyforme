@@ -61,7 +61,7 @@ export default function PlaygroundPage() {
   }, []);
 
   useEffect(() => {
-    document.title = currentSavedAgent?.name || t("Sensei");
+    document.title = currentSavedAgent?.name || t("AgentCore");
     if (currentSavedAgent?.data) {
       const { inputs, outputs } = getInputsAndOutputs(
         currentSavedAgent?.data?.nodes || [],
