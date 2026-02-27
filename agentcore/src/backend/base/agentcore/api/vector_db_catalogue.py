@@ -53,7 +53,8 @@ async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set
             )
         )
     ).all()
-    return set(org_rows), [(row[0], row[1]) for row in dept_rows]
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
+    return org_ids, [(row[0], row[1]) for row in dept_rows]
 
 
 async def _visibility_filters(session: DbSession, current_user: CurrentActiveUser):

@@ -2,6 +2,7 @@ import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useContext } from "react";
 import { useLocation, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { AuthContext } from "@/contexts/authContext";
 import { SidebarRail, SidebarTrigger } from "@/components/ui/sidebar";
@@ -29,7 +30,7 @@ import { useGetDownloadFolders } from "@/controllers/API/queries/folders/use-get
 import { CustomStoreButton } from "@/customization/components/custom-store-button";
 import {
   ENABLE_CUSTOM_PARAM,
-  ENABLE_DATASTAX_AGENTCORE,
+  ENABLE_DATASTAX_SENSEI,
   ENABLE_FILE_MANAGEMENT,
   ENABLE_KNOWLEDGE_BASES,
   ENABLE_MCP_NOTICE,
@@ -69,6 +70,7 @@ const SideBarFoldersButtonsComponent = ({
   handleDeleteFolder,
   handleFilesClick,
 }: SideBarFoldersButtonsComponentProps) => {
+  const { t } = useTranslation();
   const location = useLocation();
   const pathname = location.pathname;
   const folders = useFolderStore((state) => state.folders);
@@ -424,7 +426,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="LayoutDashboard"
                 className="h-4 w-4"
               />
-              Dashboard
+              {t("Dashboard")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -442,7 +444,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="FolderKanban"
                 className="h-4 w-4"
               />
-              Projects
+              {t("Projects")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -460,7 +462,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="ClipboardCheck"
                 className="h-4 w-4"
               />
-              Review & Approval
+              {t("Review & Approval")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -478,7 +480,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Bot"
                 className="h-4 w-4"
               />
-              Agent Registry
+              {t("Agent Registry")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -496,7 +498,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Database"
                 className="h-4 w-4"
               />
-              Model Registry
+              {t("Model Registry")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -514,10 +516,26 @@ const SideBarFoldersButtonsComponent = ({
                 name="PlayCircle"
                 className="h-4 w-4"
               />
-              Agent Control Panel
+              {t("Agent Control Panel")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
+
+        {/* Automations */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/automations")}
+            onClick={() => _navigate("/automations")}
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+          >
+            <ForwardedIconComponent
+              name="Zap"
+              className="h-4 w-4"
+            />
+            {t("Automations")}
+          </SidebarMenuButton>
+        </SidebarMenuItem>
 
         {/* Orchestrator */}
         {can("view_orchastration_page") && (
@@ -532,7 +550,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="GitBranch"
                 className="h-4 w-4"
               />
-              Orchestration Chat
+              {t("Orchestration Chat")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -550,7 +568,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Activity"
                 className="h-4 w-4"
               />
-              Observability
+              {t("Observability")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -568,7 +586,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Scale"
                 className="h-4 w-4"
               />
-              Evaluation
+              {t("Evaluation")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -585,7 +603,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="ShieldCheck"
                 className="h-4 w-4"
               />
-              Guardrails Catalogue
+              {t("Guardrails Catalogue")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -602,10 +620,25 @@ const SideBarFoldersButtonsComponent = ({
                 name="Database"
                 className="h-4 w-4"
               />
-              VectorDB Catalogue
+              {t("VectorDB Catalogue")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
+
+        <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/connectors")}
+              onClick={() => _navigate("/connectors")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Cable"
+                className="h-4 w-4"
+              />
+              Connectors
+            </SidebarMenuButton>
+          </SidebarMenuItem>
 
         {can("view_mcp_page") && (
           <SidebarMenuItem>
@@ -619,7 +652,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Server"
                 className="h-4 w-4"
               />
-              MCP Servers
+              {t("MCP Servers")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -629,15 +662,33 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
-              isActive={pathname.startsWith("/assets/files")}
-              onClick={() => _navigate("/assets/files")}
+              isActive={pathname.startsWith("/assets/knowledge-bases")}
+              onClick={() => _navigate("/assets/knowledge-bases")}
               className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
             >
               <ForwardedIconComponent
                 name="BookOpen"
                 className="h-4 w-4"
               />
-              Knowledge Base Management
+              {t("Knowledge Base Management")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
+
+        {/* Packages */}
+        {can("view_packages_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/packages")}
+              onClick={() => _navigate("/packages")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Package"
+                className="h-4 w-4"
+              />
+              {t("Packages")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -654,7 +705,24 @@ const SideBarFoldersButtonsComponent = ({
                 name="Clock"
                 className="h-4 w-4"
               />
-              Platform Configurations
+              {t("Platform Configurations")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
+
+        {can("view_help_support_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/help-support") || pathname.startsWith("/settings/help-support")}
+              onClick={() => _navigate("/help-support")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="CircleHelp"
+                className="h-4 w-4"
+              />
+              {t("Help & Support")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}

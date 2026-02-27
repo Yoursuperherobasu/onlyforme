@@ -5,6 +5,11 @@ export type FolderType = {
   description: string;
   id?: string | null;
   parent_id: string;
+  updated_at?: string;
+  is_own_project?: boolean;
+  created_by_email?: string | null;
+  department_name?: string | null;
+  organization_name?: string | null;
   agents: AgentType[];
   components: string[];
 };

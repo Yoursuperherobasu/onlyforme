@@ -1,10 +1,12 @@
 import { Outlet, type To } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import SideBarButtonsComponent from "@/components/core/sidebarComponent";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useStoreStore } from "@/stores/storeStore";
 import ForwardedIconComponent from "../../components/common/genericIconComponent";
 import PageLayout from "../../components/common/pageLayout";
 export default function SettingsPage(): JSX.Element {
+  const { t } = useTranslation();
   const hasStore = useStoreStore((state) => state.hasStore);
 
 
@@ -20,7 +22,7 @@ export default function SettingsPage(): JSX.Element {
 
   sidebarNavItems.push(
     {
-      title: "Global Variables",
+      title: t("Global Variables"),
       href: "/settings/global-variables",
       icon: (
         <ForwardedIconComponent
@@ -32,7 +34,7 @@ export default function SettingsPage(): JSX.Element {
     },
 
     {
-      title: "Shortcuts",
+      title: t("Shortcuts"),
       href: "/settings/shortcuts",
       icon: (
         <ForwardedIconComponent
@@ -43,7 +45,7 @@ export default function SettingsPage(): JSX.Element {
       permissionKey: "view_settings_shortcuts_tab",
     },
     {
-      title: "Messages",
+      title: t("Messages"),
       href: "/settings/messages",
       icon: (
         <ForwardedIconComponent
@@ -60,8 +62,8 @@ export default function SettingsPage(): JSX.Element {
   return (
     <PageLayout
       backTo={-1 as To}
-      title="Settings"
-      description="Manage the general settings for AgentCore."
+      title={t("Settings")}
+      description={t("Manage the general settings for Sensei.")}
     >
       <SidebarProvider width="15rem" defaultOpen={false}>
         <SideBarButtonsComponent items={sidebarNavItems} />

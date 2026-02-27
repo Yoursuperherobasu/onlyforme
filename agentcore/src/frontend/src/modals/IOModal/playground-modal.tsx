@@ -7,10 +7,10 @@ import { useGetSessionsFromAgentQuery } from "@/controllers/API/queries/messages
 import { ENABLE_PUBLISH } from "@/customization/feature-flags";
 import { track } from "@/customization/utils/analytics";
 import { customOpenNewTab } from "@/customization/utils/custom-open-new-tab";
-import { AgentCoreButtonRedirectTarget } from "@/customization/utils/urls";
+import { SenseiButtonRedirectTarget } from "@/customization/utils/urls";
 import { useUtilityStore } from "@/stores/utilityStore";
 import { swatchColors } from "@/utils/styleUtils";
-import AgentCoreLogoColor from "../../assets/motherson_name.svg";
+import SenseiLogoColor from "../../assets/motherson_name.svg";
 import IconComponent from "../../components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import useAlertStore from "../../stores/alertStore";
@@ -21,7 +21,6 @@ import type { IOModalPropsType } from "../../types/components";
 import { cn, getNumberFromString } from "../../utils/utils";
 import BaseModal from "../baseModal";
 import { ChatViewWrapper } from "./components/chat-view-wrapper";
-import { createNewSessionName } from "./components/chatView/chatInput/components/voice-assistant/helpers/create-new-session-name";
 import { SelectedViewField } from "./components/selected-view-field";
 import { SidebarOpenView } from "./components/sidebar-open-view";
 import { useGetAgentId } from "./hooks/useGetAgentId";
@@ -197,6 +196,10 @@ export default function IOModal({
   const eventDeliveryConfig = useUtilityStore((state) => state.eventDelivery);
 
   // ─── sendMessage (UNCHANGED) ──────────────────────────────────────
+  const setDisplayLoadingMessage = useMessagesStore(
+    (state) => state.setDisplayLoadingMessage,
+  );
+
   const sendMessage = useCallback(
     async ({
       repeat = 1,
@@ -207,6 +210,7 @@ export default function IOModal({
     }): Promise<void> => {
       if (isBuilding) return;
       setChatValue("");
+      setDisplayLoadingMessage(true);
       for (let i = 0; i < repeat; i++) {
         await buildAgent({
           input_value: chatValue,
@@ -221,36 +225,31 @@ export default function IOModal({
         });
       }
     },
-    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent],
+    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent, setDisplayLoadingMessage],
   );
 
-  // ─── Effects (UNCHANGED) ──────────────────────────────────────────
+  // ─── Effects ─────────────────────────────────────────────────────
   useEffect(() => {
     if (playgroundPage && messages.length > 0) {
       window.sessionStorage.setItem(currentAgentId, JSON.stringify(messages));
     }
-    if (newChatOnPlayground && !sessionsLoading) {
-      const handleRefetchAndSetSession = async () => {
-        try {
-          const result = await refetchSessions();
-          if (result.data?.sessions && result.data.sessions.length > 0) {
-            setvisibleSession(
-              result.data.sessions[result.data.sessions.length - 1],
-            );
-          }
-        } catch (error) {
-          console.error("Error refetching sessions:", error);
-        }
-      };
-
-      handleRefetchAndSetSession();
+    if (newChatOnPlayground && !sessionsLoading && !isBuilding) {
+      // Refetch sessions to update the sidebar list
+      refetchSessions();
+      // Set visible session to the current sessionId (generated when
+      // "New Chat" was clicked) instead of picking the last session from
+      // the DB, which may not be the newly created session due to
+      // unordered results or timing issues during the build.
+      if (sessionId && sessionId !== currentAgentId) {
+        setvisibleSession(sessionId);
+      }
       setNewChatOnPlayground(false);
     }
-  }, [messages, playgroundPage]);
+  }, [messages, playgroundPage, isBuilding]);
 
   useEffect(() => {
     if (!visibleSession) {
-      setSessionId(createNewSessionName());
+      setSessionId(crypto.randomUUID());
       setCurrentSessionId(currentAgentId);
     } else if (visibleSession) {
       setSessionId(visibleSession);
@@ -276,9 +275,9 @@ export default function IOModal({
 
   const showPublishOptions = playgroundPage && ENABLE_PUBLISH;
 
-  const AgentCoreButtonClick = () => {
-    track("AgentCoreButtonClick");
-    customOpenNewTab(AgentCoreButtonRedirectTarget());
+  const SenseiButtonClick = () => {
+    track("SenseiButtonClick");
+    customOpenNewTab(SenseiButtonRedirectTarget());
   };
 
   const swatchIndex =
@@ -377,12 +376,12 @@ export default function IOModal({
           </div>
 
           <Button
-            onClick={AgentCoreButtonClick}
+            onClick={SenseiButtonClick}
             variant="primary"
             className="w-full !rounded-lg"
           >
-            <AgentCoreLogoColor />
-            <span className="ml-1 text-sm">Built with AgentCore</span>
+            <SenseiLogoColor />
+            <span className="ml-1 text-sm">Built with Sensei</span>
           </Button>
         </div>
       )}

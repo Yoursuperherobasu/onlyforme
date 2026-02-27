@@ -17,7 +17,7 @@ import { loginRequest } from "@/authConfig";
 import { useTranslation } from "react-i18next";
 import useAuthStore from "@/stores/authStore";
 
-import MothersonLogo from "@/assets/agentcore.svg";
+import MothersonLogo from "@/assets/sensei.svg";
 import { DotPattern } from "./components/DotPattern";
 import { Starfield } from "./components/StarField";
 
@@ -162,7 +162,7 @@ export default function LoginPage(): JSX.Element {
           <div className="mb-6 sm:mb-8">
             <img 
               src={MothersonLogo} 
-              alt="AgentCore Logo" 
+              alt={t("Sensei Logo")} 
               className="h-12 sm:h-16 md:h-20 w-auto"
             />
           </div>
@@ -173,7 +173,7 @@ export default function LoginPage(): JSX.Element {
             </h1>
             <p className="text-sm sm:text-base lg:text-lg text-gray-600 mb-6 sm:mb-8">
               {t(
-                "Connect your ideas to reality with AgentCore's powerful platform.",
+                "Connect your ideas to reality with Sensei's powerful platform.",
               )}
             </p>
           </div>
@@ -229,7 +229,7 @@ export default function LoginPage(): JSX.Element {
               
               <div className="mt-4 sm:mt-6 text-center">
                 <p className="text-[10px] sm:text-xs text-gray-500 px-2">
-                  By signing in, you agree to our Terms of Service and Privacy Policy
+                  {t("By signing in, you agree to our Terms of Service and Privacy Policy")}
                 </p>
               </div>
             </div>

@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useDeleteDeleteAgents } from "@/controllers/API/queries/agents/use-delete-delete-agents";
 import { useGetDownloadAgents } from "@/controllers/API/queries/agents/use-get-download-agents";
-import { ENABLE_MCP } from "@/customization/feature-flags";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import useAlertStore from "@/stores/alertStore";
 import { cn } from "@/utils/utils";
@@ -38,7 +37,6 @@ const HeaderComponent = ({
   selectedAgents,
 }: HeaderComponentProps) => {
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const isMCPEnabled = ENABLE_MCP;
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   // Debounce the setSearch function from the parent
   const debouncedSetSearch = useCallback(
@@ -67,22 +65,11 @@ const HeaderComponent = ({
     };
   }, [debouncedSearch, debouncedSetSearch]);
 
-  // If current agentType is not available based on feature flag, switch to agents
-  useEffect(() => {
-    if (
-      (agentType === "mcp" && !isMCPEnabled) ||
-      (agentType === "components" && isMCPEnabled)
-    ) {
-      setAgentType("agents");
-    }
-  }, [agentType, isMCPEnabled, setAgentType]);
-
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setDebouncedSearch(e.target.value);
   };
 
-  // Determine which tabs to show based on feature flag
-  const tabTypes = isMCPEnabled ? ["mcp", "agents"] : ["components", "agents"];
+  const tabTypes = ["components", "agents"];
 
   const handleDownload = () => {
     downloadAgents({ ids: selectedAgents });

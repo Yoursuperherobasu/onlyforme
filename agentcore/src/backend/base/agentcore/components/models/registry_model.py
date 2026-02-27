@@ -61,10 +61,16 @@ def _get_sync_engine():
 # ---------------------------------------------------------------------------
 
 def _run_async(coro):
-    """Run an async coroutine from a synchronous context, handling existing event loops."""
+    """Run an async coroutine from a synchronous context, handling existing event loops.
+
+    NOTE: import locally — components are loaded via exec() from string,
+    so module-level imports may not be in scope.
+    """
+    import concurrent.futures as _cf
+
     try:
         asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with _cf.ThreadPoolExecutor() as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=30)
     except RuntimeError:
@@ -313,7 +319,7 @@ class RegistryModelComponent(LCModelNode):
                 azure_deployment=provider_config.get("azure_deployment", model_name),
                 azure_endpoint=base_url or provider_config.get("azure_endpoint", ""),
                 api_key=api_key,
-                api_version=provider_config.get("api_version", "2024-02-15-preview"),
+                api_version=provider_config.get("api_version", "2025-10-01-preview"),
                 temperature=temperature,
                 max_tokens=max_tokens,
                 streaming=stream,

@@ -7,12 +7,13 @@ from urllib.parse import quote
 from uuid import UUID
 
 import orjson
+from loguru import logger
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Params
 from fastapi_pagination.ext.sqlmodel import apaginate
-from sqlalchemy import or_, update
+from sqlalchemy import func, or_, update
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
@@ -24,6 +25,8 @@ from agentcore.helpers.folders import generate_unique_folder_name
 from agentcore.initial_setup.constants import STARTER_FOLDER_NAME
 from agentcore.services.database.models.agent.model import Agent, AgentCreate, AgentRead
 from agentcore.services.database.models.project.constants import DEFAULT_FOLDER_NAME as DEFAULT_PROJECT_NAME
+from agentcore.services.database.models.department.model import Department
+from agentcore.services.database.models.organization.model import Organization
 from agentcore.services.database.models.project.model import (
     Project,
     ProjectCreate,
@@ -32,8 +35,10 @@ from agentcore.services.database.models.project.model import (
     ProjectUpdate,
 )
 from agentcore.services.database.models.project.pagination_model import ProjectWithPaginatedAgents
+from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.auth.permissions import normalize_role
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -59,14 +64,42 @@ async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set
             )
         )
     ).all()
-    return set(org_rows), set(dept_rows)
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
+    dept_ids = {r if isinstance(r, UUID) else r[0] for r in dept_rows}
+    return org_ids, dept_ids
+
+
+def _excluded_higher_role_user_ids(role: str):
+    """Return a subquery of user IDs whose projects should be hidden from the given role.
+
+    Uses SQL-level normalization so all role name variants (e.g. "Root Admin",
+    "root_admin", "root") are matched correctly.
+    """
+    normalized_db_role = func.lower(func.replace(User.role, " ", "_"))
+
+    if role == "super_admin":
+        # Super admin must NOT see root admin projects
+        return select(User.id).where(normalized_db_role.in_(["root", "root_admin"]))
+
+    if role == "department_admin":
+        # Dept admin must NOT see root admin or super admin projects
+        return select(User.id).where(
+            normalized_db_role.in_(["root", "root_admin", "super_admin", "admin"])
+        )
+
+    return None
 
 
 async def _build_project_visibility_statement(session: DbSession, current_user: CurrentActiveUser):
     own_condition = or_(Project.user_id == current_user.id, Project.owner_user_id == current_user.id)
-    role = getattr(current_user, "role", None)
+    role = normalize_role(getattr(current_user, "role", None))
 
-    if role in {"super_admin", "root"}:
+    if role == "root":
+        return select(Project)
+
+    excluded_ids = _excluded_higher_role_user_ids(role)
+
+    if role == "super_admin":
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
         if org_ids:
             org_user_subquery = (
@@ -75,14 +108,17 @@ async def _build_project_visibility_statement(session: DbSession, current_user: 
                     UserOrganizationMembership.status.in_(["accepted", "active"]),
                 )
             )
-            return select(Project).where(
+            stmt = select(Project).where(
                 or_(
                     own_condition,
                     Project.org_id.in_(list(org_ids)),
                     Project.user_id.in_(org_user_subquery),
                     Project.owner_user_id.in_(org_user_subquery),
-                )
+                ),
             )
+            if excluded_ids is not None:
+                stmt = stmt.where(~Project.user_id.in_(excluded_ids))
+            return stmt
         return select(Project).where(own_condition)
 
     if role == "department_admin":
@@ -94,25 +130,42 @@ async def _build_project_visibility_statement(session: DbSession, current_user: 
                     UserDepartmentMembership.status == "active",
                 )
             )
-            return select(Project).where(
+            stmt = select(Project).where(
                 or_(
                     own_condition,
                     Project.dept_id.in_(list(dept_ids)),
                     Project.user_id.in_(dept_user_subquery),
                     Project.owner_user_id.in_(dept_user_subquery),
-                )
+                ),
             )
+            if excluded_ids is not None:
+                stmt = stmt.where(~Project.user_id.in_(excluded_ids))
+            return stmt
         return select(Project).where(own_condition)
 
     return select(Project).where(own_condition)
 
 
 async def _can_access_project(session: DbSession, current_user: CurrentActiveUser, project: Project) -> bool:
-    role = getattr(current_user, "role", None)
+    role = normalize_role(getattr(current_user, "role", None))
+    if role == "root":
+        return True
     if project.user_id == current_user.id or project.owner_user_id == current_user.id:
         return True
 
-    if role in {"super_admin", "root"}:
+    # Deny access when the project owner has a higher role than the requester.
+    if role in ("super_admin", "department_admin"):
+        owner_id = project.user_id or project.owner_user_id
+        if owner_id:
+            owner_user = (await session.exec(select(User).where(User.id == owner_id))).first()
+            if owner_user:
+                owner_role = normalize_role(owner_user.role)
+                if role == "super_admin" and owner_role == "root":
+                    return False
+                if role == "department_admin" and owner_role in ("root", "super_admin"):
+                    return False
+
+    if role == "super_admin":
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
         if project.org_id and project.org_id in org_ids:
             return True
@@ -162,11 +215,20 @@ async def create_project(
         new_project = Project.model_validate(project, from_attributes=True)
         new_project.user_id = current_user.id
         new_project.owner_user_id = current_user.id
+        new_project.created_by = current_user.id
+        new_project.updated_by = current_user.id
 
         # Default project tenancy scope from user's memberships.
         org_ids, dept_ids = await _get_scope_memberships(session, current_user.id)
+        user_role = normalize_role(getattr(current_user, "role", None))
+
+        if user_role != "root" and not org_ids:
+            raise HTTPException(status_code=400, detail="No active organization mapping found for user.")
+
         if new_project.org_id is None and org_ids:
             new_project.org_id = sorted(org_ids, key=str)[0]
+        if user_role in {"department_admin", "developer", "business_user"} and not dept_ids:
+            raise HTTPException(status_code=400, detail="No active department mapping found for user.")
         if new_project.dept_id is None and dept_ids:
             new_project.dept_id = sorted(dept_ids, key=str)[0]
         # First check if the project.name is unique
@@ -227,7 +289,118 @@ async def read_projects(
         statement = await _build_project_visibility_statement(session, current_user)
         projects = (await session.exec(statement)).all()
         projects = [project for project in projects if project.name != STARTER_FOLDER_NAME]
-        return sorted(projects, key=lambda x: x.name != DEFAULT_PROJECT_NAME)
+        try:
+            role = normalize_role(getattr(current_user, "role", None))
+            creator_ids = {
+                (project.created_by or project.owner_user_id or project.user_id)
+                for project in projects
+                if (project.created_by or project.owner_user_id or project.user_id)
+            }
+
+            creator_rows = []
+            if creator_ids:
+                creator_rows = (
+                    await session.exec(
+                        select(User.id, User.email, User.username).where(User.id.in_(list(creator_ids)))
+                    )
+                ).all()
+            creator_email_map = {
+                uid: (email or username) for uid, email, username in creator_rows
+            }
+
+            dept_map: dict[UUID, str] = {}
+            if creator_ids and role in {"super_admin", "root", "department_admin"}:
+                dept_rows = (
+                    await session.exec(
+                        select(UserDepartmentMembership.user_id, Department.name)
+                        .join(Department, Department.id == UserDepartmentMembership.department_id)
+                        .where(
+                            UserDepartmentMembership.user_id.in_(list(creator_ids)),
+                            UserDepartmentMembership.status == "active",
+                        )
+                    )
+                ).all()
+                for user_id, dept_name in dept_rows:
+                    if user_id not in dept_map:
+                        dept_map[user_id] = dept_name
+
+            org_map: dict[UUID, str] = {}
+            if creator_ids and role == "root":
+                org_rows = (
+                    await session.exec(
+                        select(UserOrganizationMembership.user_id, Organization.name)
+                        .join(Organization, Organization.id == UserOrganizationMembership.org_id)
+                        .where(
+                            UserOrganizationMembership.user_id.in_(list(creator_ids)),
+                            UserOrganizationMembership.status.in_(["accepted", "active"]),
+                        )
+                    )
+                ).all()
+                for user_id, org_name in org_rows:
+                    if user_id not in org_map:
+                        org_map[user_id] = org_name
+
+            result: list[ProjectRead] = []
+            for project in projects:
+                creator_id = project.created_by or project.owner_user_id or project.user_id
+                is_own = (
+                    creator_id is not None
+                    and (
+                        creator_id == current_user.id
+                        or project.user_id == current_user.id
+                        or project.owner_user_id == current_user.id
+                    )
+                )
+                created_by_email = creator_email_map.get(creator_id) if creator_id else None
+                department_name = dept_map.get(creator_id) if creator_id else None
+                organization_name = org_map.get(creator_id) if creator_id else None
+
+                if role in {"developer", "business_user"}:
+                    created_by_email = None
+                    department_name = None
+                    organization_name = None
+                elif role == "department_admin":
+                    department_name = None
+                    organization_name = None
+                elif role == "super_admin":
+                    organization_name = None
+
+                # Root admin transcends orgs/depts; hide for own projects.
+                if role == "root" and is_own:
+                    organization_name = None
+                    department_name = None
+
+                result.append(
+                    ProjectRead(
+                        id=project.id,
+                        name=project.name,
+                        description=project.description,
+                        auth_settings=project.auth_settings,
+                        is_own_project=is_own,
+                        created_by_email=created_by_email,
+                        department_name=department_name,
+                        organization_name=organization_name,
+                    )
+                )
+
+            return sorted(result, key=lambda x: (x.name or "").lower())
+        except Exception:
+            logger.exception("read_projects: metadata enrichment failed, returning fallback without creator info")
+            fallback = [
+                ProjectRead(
+                    id=project.id,
+                    name=project.name,
+                    description=project.description,
+                    auth_settings=project.auth_settings,
+                    is_own_project=(
+                        project.user_id == current_user.id
+                        or project.owner_user_id == current_user.id
+                        or project.created_by == current_user.id
+                    ),
+                )
+                for project in projects
+            ]
+            return sorted(fallback, key=lambda x: (x.name or "").lower())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -259,6 +432,21 @@ async def read_project(
     try:
         if params and params.page and params.size:
             stmt = select(Agent).where(Agent.project_id == project_id)
+            current_role = normalize_role(getattr(current_user, "role", None))
+            if current_role in {"developer", "business_user"}:
+                stmt = stmt.where(Agent.user_id == current_user.id)
+            elif current_role == "department_admin":
+                _, dept_ids = await _get_scope_memberships(session, current_user.id)
+                if dept_ids:
+                    stmt = stmt.where(Agent.dept_id.in_(list(dept_ids)))
+                else:
+                    stmt = stmt.where(Agent.user_id == current_user.id)
+            elif current_role == "super_admin":
+                org_ids, _ = await _get_scope_memberships(session, current_user.id)
+                if org_ids:
+                    stmt = stmt.where(Agent.org_id.in_(list(org_ids)))
+                else:
+                    stmt = stmt.where(Agent.user_id == current_user.id)
 
             if Agent.updated_at is not None:
                 stmt = stmt.order_by(Agent.updated_at.desc())  # type: ignore[attr-defined]
@@ -277,10 +465,30 @@ async def read_project(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    if not _is_admin_role(getattr(current_user, "role", None)):
-        agents_from_current_user_in_project = [agent for agent in project.agents if agent.user_id == current_user.id]
-        project.agents = agents_from_current_user_in_project
-    return project
+    current_role = normalize_role(getattr(current_user, "role", None))
+    agents_in_scope = project.agents
+    if current_role in {"developer", "business_user"}:
+        agents_in_scope = [agent for agent in project.agents if agent.user_id == current_user.id]
+    elif current_role == "department_admin":
+        _, dept_ids = await _get_scope_memberships(session, current_user.id)
+        if dept_ids:
+            agents_in_scope = [agent for agent in project.agents if agent.dept_id in dept_ids]
+        else:
+            agents_in_scope = [agent for agent in project.agents if agent.user_id == current_user.id]
+    elif current_role == "super_admin":
+        org_ids, _ = await _get_scope_memberships(session, current_user.id)
+        if org_ids:
+            agents_in_scope = [agent for agent in project.agents if agent.org_id in org_ids]
+        else:
+            agents_in_scope = [agent for agent in project.agents if agent.user_id == current_user.id]
+
+    return ProjectReadWithAgents(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        auth_settings=project.auth_settings,
+        agents=agents_in_scope,
+    )
 
 
 @router.patch("/{project_id}", response_model=ProjectRead, status_code=200)

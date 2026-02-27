@@ -36,14 +36,18 @@ import SettingsPage from "./pages/SettingsPage";
 import ApiKeysPage from "./pages/SettingsPage/pages/ApiKeysPage";
 
 import GlobalVariablesPage from "./pages/SettingsPage/pages/GlobalVariablesPage";
+import HelpSupportPage from "./pages/SettingsPage/pages/HelpSupportPage";
 import MCPServersPage from "./pages/McpServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
+import PackagesPage from "./pages/SettingsPage/pages/PackagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
+import ApprovalPreviewPage from "./pages/ApprovalPreviewPage";
 import ModelCatalogue from "./pages/ModelCatalogue";
 import AgentOrchestrator from "./pages/OrchestratorChat";
 import AgentCatalogueView from "./pages/AgentCatalogue";
+import AgentCataloguePreviewPage from "./pages/AgentCataloguePreview";
 import { Workflow } from "lucide-react";
 import WorkflowsView from "./pages/WorkflowPage";
 import Dashboard from "./pages/DashboardPage";
@@ -53,6 +57,8 @@ import ObservabilityDashboard from "./pages/ObservabilityPage";
 import EvaluationPage from "./pages/EvaluationPage";
 import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
+import ConnectorsCatalogueView from "./pages/ConnectorsCatalogue";
+import AutomationsPage from "./pages/AutomationsPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const AccessControlPage = lazy(() => import("./pages/AccessControlPage"));
@@ -110,6 +116,14 @@ const router = createBrowserRouter(
                     }
                   />
                   <Route
+                    path="approval/:agentId/review"
+                    element={
+                      <ProtectedPermissionRoute permission="view_approval_page">
+                        <ApprovalPreviewPage />
+                      </ProtectedPermissionRoute>
+                    }
+                  />
+                  <Route
                     path="model-catalogue"
                     element={
                       
@@ -142,9 +156,19 @@ const router = createBrowserRouter(
                     }
                   />
                   <Route
+                    path="connectors"
+                    element={
+                        <ConnectorsCatalogueView />
+                    }
+                  />
+                  <Route
+                    path="automations"
+                    element={<AutomationsPage />}
+                  />
+                  <Route
                     path="mcp-servers"
                     element={
-                     
+
                         <MCPServersPage />
                    
                     }
@@ -165,6 +189,10 @@ const router = createBrowserRouter(
                       </ProtectedAccessControlRoute>
                     }
                   />
+                  <Route
+                    path="packages"
+                    element={<PackagesPage />}
+                  />
                   
                   <Route
                     path="agent-catalogue"
@@ -173,6 +201,10 @@ const router = createBrowserRouter(
                         <AgentCatalogueView />
                      
                     }
+                  />
+                  <Route
+                    path="agent-catalogue/:registryId/view"
+                    element={<AgentCataloguePreviewPage />}
                   />
                   <Route
                     path="observability-dashboard"
@@ -281,8 +313,10 @@ const router = createBrowserRouter(
                  
                   <Route path="shortcuts" element={<ShortcutsPage />} />
                   <Route path="messages" element={<MessagesPage />} />
+                  <Route path="help-support" element={<HelpSupportPage />} />
                   {CustomRoutesStore()}
                 </Route>
+                <Route path="help-support" element={<HelpSupportPage />} />
                 {CustomRoutesStorePages()}
                 <Route path="account">
                   <Route path="delete" element={<DeleteAccountPage />}></Route>

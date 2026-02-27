@@ -1,4 +1,5 @@
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from agentcore.base.data.base_file import BaseFileNode
@@ -51,11 +52,54 @@ class File(BaseFileNode):
         Output(display_name="Raw Content", name="message", method="load_files_message"),
     ]
 
+    def _has_selectable_content(self, path_value: str) -> bool:
+        """Return True when a path points to at least one processable file."""
+        if not path_value:
+            return False
+
+        path = Path(self.resolve_path(path_value))
+        supported_extensions = set(self.valid_extensions) | set(self.SUPPORTED_BUNDLE_EXTENSIONS)
+
+        if path.is_file():
+            suffix = path.suffix[1:].lower()
+            return suffix in supported_extensions
+
+        if path.is_dir():
+            return any(
+                candidate.is_file() and candidate.suffix[1:].lower() in supported_extensions
+                for candidate in path.rglob("*")
+            )
+
+        return False
+
+    def _filter_selectable_paths(self, path_values: list[str]) -> list[str]:
+        return [path_value for path_value in path_values if self._has_selectable_content(path_value)]
+
     def update_outputs(self, frontend_node: dict, field_name: str, field_value: Any) -> dict:
         """Dynamically show only the relevant output based on the number of files processed."""
         if field_name == "path":
+            selected_paths = field_value if isinstance(field_value, list) else [field_value]
+            selected_paths = [path for path in selected_paths if isinstance(path, str)]
+            filtered_paths = self._filter_selectable_paths(selected_paths)
+            invalid_paths = [path for path in selected_paths if path not in filtered_paths]
+
+            if invalid_paths:
+                invalid_display = ", ".join(invalid_paths)
+                msg = (
+                    "Some selected knowledge bases cannot be used. "
+                    f"They are empty or contain only unsupported file types: {invalid_display}"
+                )
+                raise ValueError(msg)
+
+            path_template = frontend_node.get("template", {}).get("path")
+            if isinstance(path_template, dict):
+                path_template["file_path"] = filtered_paths
+
+            field_value = filtered_paths
+
             # Add outputs based on the number of files in the path
             if len(field_value) == 0:
+                frontend_node["outputs"] = []
                 return frontend_node
 
             frontend_node["outputs"] = []
@@ -72,15 +116,13 @@ class File(BaseFileNode):
                         Output(display_name="Structured Content", name="json", method="load_files_json"),
                     )
 
-                # All files get the raw content and path outputs
-                # frontend_node["outputs"].append(
-                #     Output(display_name="Raw Content", name="message", method="load_files_message"),
-                # )
-                frontend_node["outputs"].append(
-                    Output(display_name="Knowledge Base", name="path", method="load_files_path"),
-                )
-            else:
-                # For multiple files, we only show the files output
+            # Always include path output so OCR and other downstream components can connect
+            frontend_node["outputs"].append(
+                Output(display_name="Knowledge Base", name="path", method="load_files_path"),
+            )
+
+            if len(field_value) > 1:
+                # For multiple files, also show the combined files output
                 frontend_node["outputs"].append(
                     Output(display_name="Knowledge Bases", name="dataframe", method="load_files"),
                 )

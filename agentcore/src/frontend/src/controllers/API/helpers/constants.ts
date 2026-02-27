@@ -38,6 +38,12 @@ export const URLs = {
   CONTROL_PANEL: `control-panel`,
   PUBLISH: `publish`,
   ROLES: `roles`,
+  HELP_SUPPORT: `help-support`,
+  ORCHESTRATOR: `orchestrator`,
+  PACKAGES: `packages`,
+  CONNECTOR_CATALOGUE: `connector-catalogue`,
+  TRIGGERS: `triggers`,
+  TEAMS: `teams`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

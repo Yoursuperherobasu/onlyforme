@@ -178,6 +178,7 @@ export type resetPasswordType = {
 export type Users = {
   id: string;
   username: string;
+  email?: string | null;
   is_active: boolean;
   is_superuser: boolean;
   role: string;
@@ -190,6 +191,9 @@ export type Users = {
   department_admin_email?: string | null;
   department_admin?: string | null;
   department_name?: string | null;
+  department_id?: string | null;
+  organization_name?: string | null;
+  created_by_username?: string | null;
   optins?: {
     github_starred?: boolean;
     discord_clicked?: boolean;

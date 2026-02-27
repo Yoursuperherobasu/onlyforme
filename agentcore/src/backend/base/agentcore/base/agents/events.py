@@ -1,9 +1,9 @@
 # Add helper functions for each event type
+import re
 from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Protocol
-import logging
-logger = logging.getLogger(__name__)
+from loguru import logger
 from langchain_core.agents import AgentFinish
 from langchain_core.messages import AIMessageChunk, BaseMessage
 from typing_extensions import TypedDict
@@ -263,13 +263,15 @@ async def handle_on_chain_stream(
     event_manager: "EventManager | None" = None,
 ) -> tuple[Message, float]:
     """Handle chain stream events with optimized token streaming.
-    
+
     OPTIMIZATION: Instead of calling send_message for each chunk (which writes to DB),
     we now send 'token' SSE events directly via EventManager for real-time streaming.
     This reduces DB writes from 100+ per message to just 1.
     """
+    import asyncio as _asyncio
+
     data_chunk = event["data"].get("chunk", {})
-    
+
     if isinstance(data_chunk, dict) and data_chunk.get("output"):
         # Final output - this is handled by on_chain_end, skip here
         output = data_chunk.get("output")
@@ -287,20 +289,24 @@ async def handle_on_chain_stream(
             else:
                 agent_message.text = output_text
             agent_message.properties.state = "partial"
-            
-            # OPTIMIZATION: Send token event via EventManager (SSE only, no DB write)
-            # This gives smooth real-time streaming in UI
-            if event_manager and hasattr(agent_message, 'id') and agent_message.id:
+
+            # Send token event via EventManager (SSE only, no DB write)
+            has_id = hasattr(agent_message, 'id') and agent_message.id
+            if event_manager and has_id:
                 event_manager.on_token(
                     data={
                         "chunk": output_text,
                         "id": str(agent_message.id),
                     }
                 )
+                # Yield to event loop so the queue consumer can send
+                # this chunk to the HTTP response immediately, rather
+                # than buffering all tokens until the next natural await.
+                await _asyncio.sleep(0)
             elif not event_manager:
                 # Fallback: If no event_manager, use old behavior (DB write per chunk)
                 agent_message = await send_message_method(message=agent_message)
-                
+
         if not agent_message.text:
             start_time = perf_counter()
     return agent_message, start_time
@@ -349,6 +355,58 @@ TOOL_EVENT_HANDLERS: dict[str, ToolEventHandler] = {
 }
 
 
+def _inject_tool_visualizations(agent_message: Message) -> None:
+    """Inject base64 images from tool outputs into the final message text.
+
+    When the LLM agent uses a visualization tool, the tool output contains
+    base64-encoded chart images in markdown format. The LLM's final text
+    response typically references these images but cannot reproduce the full
+    base64 data URL (it's too large). This results in broken image tags like
+    ``![title]`` or ``![title]()`` in the output.
+
+    This function scans the tool outputs stored in ``content_blocks`` for
+    base64 images and either replaces broken references in the text or
+    appends the images at the end.
+    """
+    if not agent_message.content_blocks or not isinstance(agent_message.text, str):
+        return
+
+    # Collect all base64 images from tool outputs: (alt_text, full_markdown)
+    tool_images: list[tuple[str, str]] = []
+    for block in agent_message.content_blocks:
+        for content in block.contents:
+            if isinstance(content, ToolContent) and content.output:
+                output = str(content.output)
+                for match in re.finditer(
+                    r"!\[([^\]]*)\]\(data:image/[^)]+\)", output
+                ):
+                    tool_images.append((match.group(1), match.group(0)))
+
+    if not tool_images:
+        return
+
+    text = agent_message.text
+    for alt_text, full_image_md in tool_images:
+        # Skip if the full image markdown is already present in the text
+        if full_image_md in text:
+            continue
+
+        # Look for broken image references with this alt text:
+        #   ![alt text]          — no URL at all
+        #   ![alt text]()        — empty URL
+        #   ![alt text](http..)  — wrong/placeholder URL (not a data: URI)
+        broken_ref = re.compile(
+            re.escape(f"![{alt_text}]") + r"(?:\((?!data:)[^)]*\))?"
+        )
+        if broken_ref.search(text):
+            text = broken_ref.sub(full_image_md, text, count=1)
+        else:
+            # No matching broken reference; append at end
+            text += f"\n\n{full_image_md}"
+
+    agent_message.text = text
+
+
 async def process_agent_events(
     agent_executor: AsyncIterator[dict[str, Any]],
     agent_message: Message,
@@ -356,12 +414,12 @@ async def process_agent_events(
     event_manager: "EventManager | None" = None,
 ) -> Message:
     """Process agent events and return the final output.
-    
+
     OPTIMIZATION: When event_manager is provided, streaming chunks are sent as 'token' SSE events
     directly to the UI, avoiding DB writes for each chunk. The message is stored to DB only:
     1. Once at the start (initial empty message)
     2. Once at the end (final complete message)
-    
+
     This reduces DB writes from 100+ per message to just 2, while maintaining real-time UI streaming.
     """
     if isinstance(agent_message.properties, dict):
@@ -369,16 +427,15 @@ async def process_agent_events(
     else:
         agent_message.properties.icon = "Bot"
         agent_message.properties.state = "partial"
-    
-    # Store the initial message - this is the FIRST DB insert
-    # This creates the message in DB and gets us an ID for SSE events
+
+    # Store the initial message — creates the DB row and gets us an ID for SSE events
     agent_message = await send_message_method(message=agent_message)
-    
+
     try:
         # Create a mapping of run_ids to tool contents
         tool_blocks_map: dict[str, ToolContent] = {}
         start_time = perf_counter()
-        
+
         async for event in agent_executor:
             if event["event"] in TOOL_EVENT_HANDLERS:
                 tool_handler = TOOL_EVENT_HANDLERS[event["event"]]
@@ -396,14 +453,17 @@ async def process_agent_events(
                     agent_message, start_time = await chain_handler(
                         event, agent_message, send_message_method, start_time
                     )
-        
+
         agent_message.properties.state = "complete"
-        
-        # OPTIMIZATION: Final DB update with complete message
-        # This is the SECOND (and last) DB write
+
+        # Inject base64 images from tool outputs into the final text so they
+        # render in the chat output (not just in the expandable steps).
+        _inject_tool_visualizations(agent_message)
+
+        # Final DB update with complete message
         agent_message = await send_message_method(message=agent_message)
-        
+
     except Exception as e:
         raise ExceptionWithMessageError(agent_message, str(e)) from e
-    
+
     return agent_message

@@ -7,7 +7,7 @@ import {
   DESKTOP_URL,
   DOCS_URL,
 } from "@/constants/constants";
-import { ENABLE_DATASTAX_AGENTCORE } from "@/customization/feature-flags";
+import { ENABLE_DATASTAX_SENSEI } from "@/customization/feature-flags";
 import useAgentStore from "@/stores/agentStore";
 
 const HelpDropdown = () => {
@@ -22,7 +22,7 @@ const HelpDropdown = () => {
     setHelperLineEnabled(!helperLineEnabled);
   }, [helperLineEnabled]);
 
-  const docsUrl = ENABLE_DATASTAX_AGENTCORE ? DATASTAX_DOCS_URL : DOCS_URL;
+  const docsUrl = ENABLE_DATASTAX_SENSEI ? DATASTAX_DOCS_URL : DOCS_URL;
 
   return (
     <HelpDropdownView

@@ -126,6 +126,14 @@ class PublishRequest(BaseModel):
         default=None,
         description="Release notes / description for this deployment action",
     )
+    promoted_from_uat_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Optional: UAT deployment ID to promote from. When set, the PROD "
+            "snapshot is copied from this UAT record instead of agent.data. "
+            "Only valid when environment='prod'."
+        ),
+    )
 
 
 class CloneFromPublishRequest(BaseModel):
@@ -160,6 +168,7 @@ class PublishRecordSummary(BaseModel):
     visibility: str
     error_message: str | None = None
     environment: str  # "uat" or "prod"
+    promoted_from_uat_id: UUID | None = None
 
     class Config:
         from_attributes = True
@@ -225,6 +234,7 @@ class PublishActionResponse(BaseModel):
     status: str
     is_active: bool
     version_number: str
+    promoted_from_uat_id: UUID | None = None
 
 class ValidatePublishEmailResponse(BaseModel):
     """Validation response for publish recipient emails."""
@@ -576,6 +586,7 @@ def _record_to_summary(record: AgentDeploymentUAT | AgentDeploymentProd, environ
         visibility=record.visibility.value if hasattr(record.visibility, "value") else str(record.visibility),
         error_message=record.error_message,
         environment=environment,
+        promoted_from_uat_id=getattr(record, "promoted_from_uat_id", None),
     )
 
 
@@ -866,17 +877,7 @@ async def prod_deploy_action(
                         detail=f"Cannot set status to PUBLISHED from '{current_status_val}'. "
                                f"Only UNPUBLISHED records can be republished.",
                     )
-                # Deactivate other active versions for this agent
-                existing_active = (await session.exec(
-                    select(AgentDeploymentProd).where(
-                        AgentDeploymentProd.agent_id == record.agent_id,
-                        AgentDeploymentProd.id != record.id,
-                        AgentDeploymentProd.is_active == True,  # noqa: E712
-                    )
-                )).all()
-                for rec in existing_active:
-                    rec.is_active = False
-                    session.add(rec)
+                # Shadow deployment: keep other active versions running.
 
                 record.status = DeploymentPRODStatusEnum.PUBLISHED
                 if new_is_active is None:
@@ -1003,6 +1004,46 @@ async def publish_agent(
         # Freeze snapshot — immutable copy of the current agent flow
         snapshot = agent.data.copy()
         env = body.environment.value  # "uat" or "prod"
+        promoted_from_uat_id = body.promoted_from_uat_id
+
+        # ── Validate & resolve UAT promotion ──
+        if promoted_from_uat_id is not None:
+            if env != "prod":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="promoted_from_uat_id is only valid when environment='prod'.",
+                )
+            uat_record = (await session.exec(
+                select(AgentDeploymentUAT).where(AgentDeploymentUAT.id == promoted_from_uat_id)
+            )).first()
+            if not uat_record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"UAT deployment {promoted_from_uat_id} not found.",
+                )
+            if uat_record.agent_id != agent_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"UAT deployment {promoted_from_uat_id} belongs to agent {uat_record.agent_id}, "
+                        f"not {agent_id}."
+                    ),
+                )
+            # Use the UAT-tested snapshot instead of the current draft
+            snapshot = uat_record.agent_snapshot.copy()
+            logger.info(
+                f"Promoting from UAT v{uat_record.version_number} ({promoted_from_uat_id}) "
+                f"to PROD for agent {agent_id}"
+            )
+
+        # ── Derive agent input type from snapshot nodes ──────────
+        _node_types = {n.get("data", {}).get("type") for n in snapshot.get("nodes", [])}
+        if "ChatInput" in _node_types:
+            snapshot["_input_type"] = "chat"
+        elif _node_types & {"FolderMonitor", "FileTrigger"}:
+            snapshot["_input_type"] = "file_processing"
+        else:
+            snapshot["_input_type"] = "autonomous"
 
         if env == "uat":
             # ─── UAT: always direct deploy ───────────────────────
@@ -1046,19 +1087,21 @@ async def publish_agent(
                 f"by user {current_user.id} [dept={resolved_department_id}]"
             )
 
-            # Sync schedule if flow contains a ScheduleTrigger node
+            # Sync FileTrigger nodes → auto-create trigger_config entries
             try:
-                from agentcore.services.deps import get_scheduler_service
-                scheduler = get_scheduler_service()
-                await scheduler.sync_schedule_for_agent(
+                from agentcore.services.deps import get_trigger_service
+                trigger_svc = get_trigger_service()
+                await trigger_svc.sync_folder_monitors_for_agent(
+                    session=session,
                     agent_id=agent_id,
                     environment="uat",
                     version=f"v{next_version}",
+                    deployment_id=new_record.id,
                     flow_data=snapshot,
                     created_by=current_user.id,
                 )
             except Exception as sched_err:
-                logger.warning(f"Schedule sync failed for UAT deploy of {agent_id}: {sched_err}")
+                logger.warning(f"FileTrigger sync failed for UAT deploy of {agent_id}: {sched_err}")
 
             # ─── Sync agent registry after UAT publish ──
             try:
@@ -1096,6 +1139,7 @@ async def publish_agent(
                 new_record = AgentDeploymentProd(
                     agent_id=agent_id,
                     org_id=agent.org_id,
+                    promoted_from_uat_id=promoted_from_uat_id,
                     version_number=next_version,
                     agent_snapshot=snapshot,
                     agent_name=agent.name,
@@ -1110,17 +1154,8 @@ async def publish_agent(
                 )
                 session.add(new_record)
 
-                # Deactivate previous versions
-                existing = (await session.exec(
-                    select(AgentDeploymentProd).where(
-                        AgentDeploymentProd.agent_id == agent_id,
-                        AgentDeploymentProd.id != new_record.id,
-                        AgentDeploymentProd.is_active == True,  # noqa: E712
-                    )
-                )).all()
-                for rec in existing:
-                    rec.is_active = False
-                    session.add(rec)
+                # Shadow deployment: keep previous versions active so
+                # multiple versions can run side-by-side.
 
                 await session.commit()
                 await session.refresh(new_record)
@@ -1129,20 +1164,6 @@ async def publish_agent(
                     f"Admin direct-deployed agent '{agent.name}' ({agent_id}) to PROD "
                     f"as v{next_version} by {current_user.id} [dept={resolved_department_id}]"
                 )
-
-                # Sync schedule
-                try:
-                    from agentcore.services.deps import get_scheduler_service
-                    scheduler = get_scheduler_service()
-                    await scheduler.sync_schedule_for_agent(
-                        agent_id=agent_id,
-                        environment="prod",
-                        version=f"v{next_version}",
-                        flow_data=snapshot,
-                        created_by=current_user.id,
-                    )
-                except Exception as sched_err:
-                    logger.warning(f"Schedule sync failed for PROD deploy of {agent_id}: {sched_err}")
 
                 # ─── Sync agent registry after PROD admin publish ──
                 try:
@@ -1157,6 +1178,22 @@ async def publish_agent(
                 except Exception as reg_err:
                     logger.warning(f"Registry sync failed after PROD publish of {agent_id}: {reg_err}")
 
+                # Sync FileTrigger nodes → auto-create trigger_config entries
+                try:
+                    from agentcore.services.deps import get_trigger_service
+                    trigger_svc = get_trigger_service()
+                    await trigger_svc.sync_folder_monitors_for_agent(
+                        session=session,
+                        agent_id=agent_id,
+                        environment="prod",
+                        version=f"v{next_version}",
+                        deployment_id=new_record.id,
+                        flow_data=snapshot,
+                        created_by=current_user.id,
+                    )
+                except Exception as fm_err:
+                    logger.warning(f"FileTrigger sync failed for PROD deploy of {agent_id}: {fm_err}")
+
                 return PublishActionResponse(
                     success=True,
                     message=f"Agent '{agent.name}' deployed to PROD as v{next_version}",
@@ -1165,6 +1202,7 @@ async def publish_agent(
                     status=DeploymentPRODStatusEnum.PUBLISHED.value,
                     is_active=True,
                     version_number=f"v{next_version}",
+                    promoted_from_uat_id=promoted_from_uat_id,
                 )
 
             else:
@@ -1172,6 +1210,7 @@ async def publish_agent(
                 new_record = AgentDeploymentProd(
                     agent_id=agent_id,
                     org_id=agent.org_id,
+                    promoted_from_uat_id=promoted_from_uat_id,
                     version_number=next_version,
                     agent_snapshot=snapshot,
                     agent_name=agent.name,
@@ -1225,6 +1264,7 @@ async def publish_agent(
                     status=DeploymentPRODStatusEnum.PENDING_APPROVAL.value,
                     is_active=False,
                     version_number=f"v{next_version}",
+                    promoted_from_uat_id=promoted_from_uat_id,
                 )
 
     except HTTPException:

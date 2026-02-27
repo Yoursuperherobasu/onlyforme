@@ -200,3 +200,6 @@ src/frontend/temp
 
 member_servers.json
 myenv/
+
+.DS_Store
+nohup.out

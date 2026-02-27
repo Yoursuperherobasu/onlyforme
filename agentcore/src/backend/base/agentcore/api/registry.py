@@ -95,6 +95,16 @@ class RegistryEntryDetailResponse(RegistryEntryResponse):
     deployed_at: datetime | None = None
 
 
+class RegistryPreviewResponse(BaseModel):
+    """Read-only canvas payload for previewing a registry agent."""
+
+    registry_id: UUID
+    title: str
+    deployment_env: str
+    version_number: str | None = None
+    snapshot: dict
+
+
 class RegistryListResponse(BaseModel):
     """Paginated list of registry entries."""
 
@@ -416,6 +426,69 @@ async def get_registry_entry(
         raise
     except Exception as e:
         logger.error(f"Error getting registry entry {registry_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/{registry_id}/preview", response_model=RegistryPreviewResponse, status_code=200)
+async def get_registry_preview(
+    *,
+    session: DbSession,
+    registry_id: UUID,
+    current_user: CurrentActiveUser,
+):
+    """Return the frozen deployment snapshot for read-only canvas preview."""
+    try:
+        entry = (await session.exec(
+            select(AgentRegistry).where(
+                AgentRegistry.id == registry_id,
+                AgentRegistry.visibility == RegistryVisibilityEnum.PUBLIC,
+            )
+        )).first()
+
+        if not entry:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Registry entry {registry_id} not found or not publicly visible",
+            )
+
+        version_number: str | None = None
+        snapshot: dict | None = None
+
+        if entry.deployment_env == RegistryDeploymentEnvEnum.PROD:
+            deploy_record = await session.get(AgentDeploymentProd, entry.agent_deployment_id)
+        else:
+            deploy_record = await session.get(AgentDeploymentUAT, entry.agent_deployment_id)
+
+        if not deploy_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Deployment record {entry.agent_deployment_id} referenced by "
+                    f"registry entry {registry_id} no longer exists"
+                ),
+            )
+
+        snapshot = deploy_record.agent_snapshot
+        version_number = f"v{deploy_record.version_number}"
+
+        if not snapshot:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Deployment record has no snapshot data to preview",
+            )
+
+        return RegistryPreviewResponse(
+            registry_id=entry.id,
+            title=entry.title,
+            deployment_env=entry.deployment_env.value,
+            version_number=version_number,
+            snapshot=snapshot,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting registry preview {registry_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

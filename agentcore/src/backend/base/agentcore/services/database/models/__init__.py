@@ -19,16 +19,23 @@ from .user_department_membership import UserDepartmentMembership
 from .vector_db_catalogue import VectorDBCatalogue
 from .knowledge_base import KnowledgeBase
 from .agent_bundle import AgentBundle
+from .agent_edit_lock import AgentEditLock
 from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
+from .orch_conversation import OrchConversationTable
+from .orch_transaction import OrchTransactionTable
 from .timeout_settings import TimeoutSettings
 from .guardrail_catalogue import GuardrailCatalogue
+from .help_support import HelpSupportQuestion
+from .package import Package
+from .teams_app import TeamsApp
 
 __all__ = [
     "Agent",
     "AgentBundle",
+    "AgentEditLock",
     "AgentDeploymentProd",
     "AgentDeploymentUAT",
     "AgentRegistry",
@@ -59,7 +66,12 @@ __all__ = [
     "KnowledgeBase",
     "TimeoutSettings",
     "GuardrailCatalogue",
+    "HelpSupportQuestion",
+    "TeamsApp",
     "TransactionTable",
     "TransactionUATTable",
+    "OrchConversationTable",
+    "OrchTransactionTable",
+    "Package",
     "User",
 ]

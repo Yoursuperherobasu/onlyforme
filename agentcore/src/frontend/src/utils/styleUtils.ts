@@ -131,6 +131,9 @@ export const nodeColors: { [char: string]: string } = {
   Agent: "#903BBE",
   AgentExecutor: "#903BBE",
   Tool: "#00fbfc",
+  a2a_agents: "#6366F1",
+  A2AAgents: "#6366F1",
+  triggers: "#F59E0B",
 };
 
 export const nodeColorsName: { [char: string]: string } = {
@@ -186,6 +189,9 @@ export const nodeColorsName: { [char: string]: string } = {
   BaseChatMessageHistory: "orange",
   Memory: "orange",
   DataFrame: "pink",
+  a2a_agents: "indigo",
+  A2AAgents: "indigo",
+  triggers: "amber",
 };
 
 export const FILE_ICONS = {
@@ -226,6 +232,7 @@ export const SIDEBAR_CATEGORIES = [
   { display_name: "Vector DB", name: "vectorstores", icon: "Layers" },
   { display_name: "Processing", name: "processing", icon: "ListFilter" },
   { display_name: "Logic", name: "logic", icon: "ArrowRightLeft" },
+  { display_name: "Triggers", name: "triggers", icon: "Zap" },
   { display_name: "Helpers", name: "helpers", icon: "Wand2" },
   { display_name: "Inputs", name: "inputs", icon: "Download" },
   { display_name: "Outputs", name: "outputs", icon: "Upload" },
@@ -370,6 +377,7 @@ export const categoryIcons: Record<string, string> = {
   tools: "Hammer",
   custom: "Edit",
   custom_components: "GradientInfinity",
+  triggers: "Zap",
 };
 
 export const nodeIconToDisplayIconMap: Record<string, string> = {
@@ -498,6 +506,10 @@ export const nodeIconToDisplayIconMap: Record<string, string> = {
   ScrapeGraphSmartScraperApi: "ScrapeGraph",
   ScrapeGraphMarkdownifyApi: "ScrapeGraph",
   note: "StickyNote",
+  // Trigger component icons
+  triggers: "Zap",
+  ScheduleTrigger: "Clock",
+  FileTrigger: "FolderSearch",
 };
 
 export const getLucideIconName = (name: string): string => {

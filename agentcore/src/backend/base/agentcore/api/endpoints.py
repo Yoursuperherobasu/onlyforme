@@ -74,17 +74,25 @@ class RunEnvironment(str, Enum):
 async def _resolve_agent_data_for_env(
     agent_id: UUID,
     env: RunEnvironment,
-    version: str,
-) -> dict:
+    version: str | None = None,
+) -> tuple[dict, AgentDeploymentProd | None, AgentDeploymentUAT | None]:
     """Return the flow JSON (nodes/edges) for the requested environment & version.
+
     - **dev**  → reads ``agent.data`` directly (current draft). Version is ignored.
-    - **uat**  → reads ``agent_deployment_uat.agent_snapshot`` for the given version.
-    - **prod** → reads ``agent_deployment_prod.agent_snapshot`` for the given version.
+    - **uat**  → reads ``agent_deployment_uat.agent_snapshot``.
+                 If *version* is given (e.g. "v2"), fetches that exact version.
+                 If *version* is None, fetches the latest active PUBLISHED deployment.
+    - **prod** → reads ``agent_deployment_prod.agent_snapshot``.
+                 Same version-or-latest logic as UAT.
+
     Returns:
-        dict: The flow data dict containing {"nodes": [...], "edges": [...]}.
+        tuple: (flow_data_dict, prod_deployment_record_or_None, uat_deployment_record_or_None).
+
     Raises:
         HTTPException 404 if no matching published record is found.
     """
+    from sqlalchemy import desc
+
     async with session_scope() as session:
         if env == RunEnvironment.DEV:
             agent = await session.get(Agent, agent_id)
@@ -93,37 +101,53 @@ async def _resolve_agent_data_for_env(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Agent {agent_id} not found or has no data",
                 )
-            return agent.data
+            return agent.data, None, None
 
         if env == RunEnvironment.UAT:
             stmt = (
                 select(AgentDeploymentUAT)
                 .where(AgentDeploymentUAT.agent_id == agent_id)
-                .where(AgentDeploymentUAT.version_number == int(version.lstrip("v")))
                 .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
             )
+            if version is not None:
+                stmt = stmt.where(AgentDeploymentUAT.version_number == int(version.lstrip("v")))
+            else:
+                # No version specified → pick the latest active published deployment
+                stmt = stmt.where(AgentDeploymentUAT.is_active == True).order_by(  # noqa: E712
+                    desc(AgentDeploymentUAT.version_number)
+                )
             record = (await session.exec(stmt)).first()
             if not record:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No PUBLISHED UAT version '{version}' found for agent {agent_id}",
+                detail = (
+                    f"No PUBLISHED UAT version '{version}' found for agent {agent_id}"
+                    if version
+                    else f"No active PUBLISHED UAT deployment found for agent {agent_id}"
                 )
-            return record.agent_snapshot
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+            return record.agent_snapshot, None, record
 
         # env == RunEnvironment.PROD
         stmt = (
             select(AgentDeploymentProd)
             .where(AgentDeploymentProd.agent_id == agent_id)
-            .where(AgentDeploymentProd.version_number == int(version.lstrip("v")))
             .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
         )
+        if version is not None:
+            stmt = stmt.where(AgentDeploymentProd.version_number == int(version.lstrip("v")))
+        else:
+            # No version specified → pick the latest active published deployment
+            stmt = stmt.where(AgentDeploymentProd.is_active == True).order_by(  # noqa: E712
+                desc(AgentDeploymentProd.version_number)
+            )
         record = (await session.exec(stmt)).first()
         if not record:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No PUBLISHED PROD version '{version}' found for agent {agent_id}",
+            detail = (
+                f"No PUBLISHED PROD version '{version}' found for agent {agent_id}"
+                if version
+                else f"No active PUBLISHED PROD deployment found for agent {agent_id}"
             )
-        return record.agent_snapshot
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+        return record.agent_snapshot, record, None
 
 @router.get("/all", dependencies=[Depends(get_current_active_user)])
 async def get_all():
@@ -181,7 +205,9 @@ async def simple_run_agent(
     stream: bool = False,
     api_key_user: User | None = None,
     event_manager: EventManager | None = None,
-):  
+    prod_deployment: AgentDeploymentProd | None = None,
+    uat_deployment: AgentDeploymentUAT | None = None,
+):
     validate_input_and_tweaks(input_request)
     try:
         from agentcore.api.utils import build_graph_from_data
@@ -201,6 +227,19 @@ async def simple_run_agent(
             user_id=str(user_id) if user_id else None,
             agent_name=agent.name,
         )
+
+        # Set PROD deployment context so adapter logs to transaction_prod
+        if prod_deployment is not None:
+            graph.prod_deployment_id = str(prod_deployment.id)
+            graph.prod_org_id = str(prod_deployment.org_id) if prod_deployment.org_id else None
+            graph.prod_dept_id = str(prod_deployment.dept_id) if prod_deployment.dept_id else None
+
+        # Set UAT deployment context so adapter logs to transaction_uat
+        if uat_deployment is not None:
+            graph.uat_deployment_id = str(uat_deployment.id)
+            graph.uat_org_id = str(uat_deployment.org_id) if uat_deployment.org_id else None
+            graph.uat_dept_id = str(uat_deployment.dept_id) if uat_deployment.dept_id else None
+
         inputs = None
         if input_request.input_value is not None:
             inputs = [
@@ -245,6 +284,8 @@ async def simple_run_agent_task(
     stream: bool = False,
     api_key_user: User | None = None,
     event_manager: EventManager | None = None,
+    prod_deployment: AgentDeploymentProd | None = None,
+    uat_deployment: AgentDeploymentUAT | None = None,
 ):
     """Run a agent task as a BackgroundTask, therefore it should not throw exceptions."""
     try:
@@ -254,6 +295,8 @@ async def simple_run_agent_task(
             stream=stream,
             api_key_user=api_key_user,
             event_manager=event_manager,
+            prod_deployment=prod_deployment,
+            uat_deployment=uat_deployment,
         )
 
     except Exception:  # noqa: BLE001
@@ -301,6 +344,8 @@ async def run_agent_generator(
     api_key_user: User | None,
     event_manager: EventManager,
     client_consumed_queue: asyncio.Queue,
+    prod_deployment: AgentDeploymentProd | None = None,
+    uat_deployment: AgentDeploymentUAT | None = None,
 ) -> None:
     """Executes a agent asynchronously and manages event streaming to the client.
 
@@ -313,6 +358,8 @@ async def run_agent_generator(
         api_key_user (User | None): Optional authenticated user running the agent
         event_manager (EventManager): Manages the streaming of events to the client
         client_consumed_queue (asyncio.Queue): Tracks client consumption of events
+        prod_deployment: Optional PROD deployment record for prod-table logging
+        uat_deployment: Optional UAT deployment record for uat-table logging
 
     Events Generated:
         - "add_message": Sent when new messages are added during agent execution
@@ -333,6 +380,8 @@ async def run_agent_generator(
             stream=True,
             api_key_user=api_key_user,
             event_manager=event_manager,
+            prod_deployment=prod_deployment,
+            uat_deployment=uat_deployment,
         )
         event_manager.on_end(data={"result": result.model_dump()})
         await client_consumed_queue.get()
@@ -399,7 +448,7 @@ env: RunEnvironment = Query(
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
     # --- Resolve flow data from the correct environment / version ---
-    agent.data= await _resolve_agent_data_for_env(
+    agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
         agent_id=agent.id, env=env, version=version
     )
     start_time = time.perf_counter()
@@ -415,6 +464,8 @@ env: RunEnvironment = Query(
                 api_key_user=api_key_user,
                 event_manager=event_manager,
                 client_consumed_queue=asyncio_queue_client_consumed,
+                prod_deployment=prod_deployment,
+                uat_deployment=uat_deployment,
             )
         )
 
@@ -434,6 +485,8 @@ env: RunEnvironment = Query(
             input_request=input_request,
             stream=stream,
             api_key_user=api_key_user,
+            prod_deployment=prod_deployment,
+            uat_deployment=uat_deployment,
         )
         end_time = time.perf_counter()
         background_tasks.add_task(
@@ -510,6 +563,12 @@ async def webhook_run_agent(
     start_time = time.perf_counter()
     logger.debug("Received webhook request")
     error_msg = ""
+
+    # Resolve flow data for the requested environment / version
+    agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
+        agent_id=agent.id, env=env, version=version
+    )
+
     try:
         try:
             data = await request.body()
@@ -542,6 +601,8 @@ async def webhook_run_agent(
                 agent=agent,
                 input_request=input_request,
                 api_key_user=user,
+                prod_deployment=prod_deployment,
+                uat_deployment=uat_deployment,
             )
         except Exception as exc:
             error_msg = str(exc)

@@ -14,17 +14,17 @@ export default function getWidgetCode({
 }: GetCodeType): string {
   const source = copy
     ? `<script
-  src="https://cdn.jsdelivr.net/gh/logspace-ai/agentcore-embedded-chat@v1.0.7/dist/build/static/js/bundle.min.js">
+  src="https://cdn.jsdelivr.net/gh/logspace-ai/sensei-embedded-chat@v1.0.7/dist/build/static/js/bundle.min.js">
 </script>`
     : `<script
-  src="https://cdn.jsdelivr.net/gh/logspace-ai/agentcore-embedded-chat@v1.0.7/dist/
+  src="https://cdn.jsdelivr.net/gh/logspace-ai/sensei-embedded-chat@v1.0.7/dist/
 build/static/js/bundle.min.js">
 </script>`;
 
   const { protocol, host } = customGetHostProtocol();
 
   return `${source}
-  <agentcore-chat
+  <sensei-chat
     window_title="${agentName}"
     agent_id="${agentId}"
     host_url="${protocol}//${host}"${
@@ -33,5 +33,5 @@ build/static/js/bundle.min.js">
     api_key="..."`
         : ""
     }>
-</agentcore-chat>`;
+</sensei-chat>`;
 }

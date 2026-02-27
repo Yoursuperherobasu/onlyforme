@@ -14,7 +14,7 @@ import { useFolderStore } from "@/stores/foldersStore";
 import { formatNumber } from "@/utils/utils";
 import useFileDrop from "../hooks/use-on-file-drop";
 
-const EMPTY_PAGE_TITLE = "Welcome to AgentCore";
+const EMPTY_PAGE_TITLE = "Welcome to Sensei";
 const EMPTY_PAGE_DESCRIPTION = "Your new favorite way to ship Agents";
 const EMPTY_PAGE_GITHUB_DESCRIPTION =
   "Follow development, star the repo, and shape the future.";
@@ -23,7 +23,7 @@ const EMPTY_PAGE_DISCORD_DESCRIPTION =
 const EMPTY_PAGE_DRAG_AND_DROP_TEXT =
   "";
 const EMPTY_PAGE_FOLDER_DESCRIPTION = "Empty project";
-const EMPTY_PAGE_CREATE_FIRST_AGENT_BUTTON_TEXT = "Create first agent";
+const EMPTY_PAGE_CREATE_FIRST_PROJECT_BUTTON_TEXT = "Create first project";
 
 const EXTERNAL_LINK_ICON_CLASS =
   "absolute right-6 top-[35px] h-4 w-4 shrink-0 translate-x-0 opacity-0 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100";
@@ -68,7 +68,7 @@ export const EmptyPageCommunity = ({
             <div className="z-50 flex flex-col items-center gap-2">
               <div className="z-50">
                 <MothersonLogo
-                  title="AgentCore Logo"
+                  title="Sensei Logo"
                   data-testid="empty_page_logo"
                   className="relative top-2 h-14 w-auto"
                 />
@@ -107,7 +107,7 @@ export const EmptyPageCommunity = ({
                   aria-hidden="true"
                   className="h-4 w-4"
                 />
-                <span>{EMPTY_PAGE_CREATE_FIRST_AGENT_BUTTON_TEXT}</span>
+                <span>{EMPTY_PAGE_CREATE_FIRST_PROJECT_BUTTON_TEXT}</span>
               </Button>
             </div>
           </div>
@@ -124,5 +124,4 @@ export const EmptyPageCommunity = ({
 };
 
 export default EmptyPageCommunity;
-
 

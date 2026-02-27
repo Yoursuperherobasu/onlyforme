@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AgentCard } from "./components/AgentCard";
 import { Button } from "@/components/ui/button";
 import { Search } from "lucide-react";
@@ -6,6 +7,7 @@ import ActionModal from "./components/ActionModal";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
+import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 
 import { useGetApprovals, type ApprovalAgent } from "@/controllers/API/queries/approvals";
 import { useApprovalActionModal, useApprovalActions } from "./hooks";
@@ -15,7 +17,7 @@ type FilterType = "all" | "pending" | "approved" | "rejected";
 type ApprovalTabType = "agent" | "model" | "mcp";
 
 const APPROVAL_TABS: Array<{ id: ApprovalTabType; label: string; permission: string }> = [
-  { id: "agent", label: "Agent", permission: "view_agent" },
+  { id: "agent", label: "AI Agent", permission: "view_agent" },
   { id: "model", label: "Model", permission: "view_model" },
   { id: "mcp", label: "MCP", permission: "view_mcp" },
 ];
@@ -24,10 +26,12 @@ const APPROVAL_TABS: Array<{ id: ApprovalTabType; label: string; permission: str
 const APPROVAL_ENTITY_TYPE_BY_ID: Record<string, ApprovalTabType> = {};
 
 export default function ApprovalPage() {
+  const { t } = useTranslation();
   /* ================= STATE ================= */
   const [filter, setFilter] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ApprovalTabType>("agent");
+  const navigate = useCustomNavigate();
   const { permissions } = useContext(AuthContext);
   const setNoticeData = useAlertStore((state) => state.setNoticeData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -63,14 +67,24 @@ export default function ApprovalPage() {
   });
 
   const pendingCount = agents.filter((a) => a.status === "pending").length;
+  const noAgentsMessage =
+    filter === "pending"
+      ? t("No pending agents found")
+      : filter === "approved"
+        ? t("No approved agents found")
+        : filter === "rejected"
+          ? t("No rejected agents found")
+          : t("No agents found");
 
   useEffect(() => {
     if (pendingCount > 0) {
       setNoticeData({
-        title: `${pendingCount} publish request(s) awaiting your approval.`,
+        title: t("{{count}} publish request(s) awaiting your approval.", {
+          count: pendingCount,
+        }),
       });
     }
-  }, [pendingCount, setNoticeData]);
+  }, [pendingCount, setNoticeData, t]);
 
   /* ================= EVENT HANDLERS ================= */
   const handleApproveClick = (agent: ApprovalAgent) => {
@@ -107,10 +121,10 @@ export default function ApprovalPage() {
       <div className="flex items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Review & Approval</h1>
+            <h1 className="text-2xl font-semibold">{t("Review & Approval")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Review and approve AI agents before deployment
+            {t("Review and approve AI agents before deployment")}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -119,7 +133,7 @@ export default function ApprovalPage() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Search agents..."
+              placeholder={t("Search agents...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
@@ -136,7 +150,7 @@ export default function ApprovalPage() {
             variant={activeTab === tab.id ? "default" : "outline"}
             onClick={() => setActiveTab(tab.id)}
           >
-            {tab.label}
+            {t(tab.label)}
           </Button>
         ))}
       </div>
@@ -150,7 +164,7 @@ export default function ApprovalPage() {
               variant={filter === type ? "default" : "outline"}
               onClick={() => setFilter(type)}
             >
-              {type.charAt(0).toUpperCase() + type.slice(1)}
+              {t(type.charAt(0).toUpperCase() + type.slice(1))}
             </Button>
           ),
         )}
@@ -168,8 +182,8 @@ export default function ApprovalPage() {
               <div className="rounded-lg border border-border bg-card p-12 text-center">
                 <p className="text-muted-foreground">
                   {searchQuery
-                    ? "No agents found matching your search"
-                    : `No ${filter !== "all" ? filter : ""} agents found`}
+                    ? t("No agents found matching your search")
+                    : noAgentsMessage}
                 </p>
               </div>
             ) : (
@@ -179,7 +193,9 @@ export default function ApprovalPage() {
                   {...agent}
                   onReject={() => handleRejectClick(agent)}
                   onApprove={() => handleApproveClick(agent)}
-                  onReviewDetails={() => console.log("Review Details", agent.id)}
+                  onReviewDetails={() =>
+                    navigate(`/approval/${agent.id}/review`)
+                  }
                   onRunTest={() => console.log("Run Test", agent.id)}
                 />
               ))

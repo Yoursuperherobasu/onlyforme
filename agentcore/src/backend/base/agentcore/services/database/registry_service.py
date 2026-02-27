@@ -9,9 +9,11 @@ Business rule:
         • ``status     = PUBLISHED``
         • ``visibility = PUBLIC``
 
-    Each (agent, env) pair maps to at most **one** registry row.  When none of
-    that agent's deployments in the given environment satisfy the conditions the
-    corresponding registry entry is removed (delisted).
+    Each *deployment* maps to at most **one** registry row (keyed by
+    ``agent_deployment_id + deployment_env``).  When an agent is republished
+    with a new version, a **new** registry entry is created — the previous
+    version's entry is preserved as long as its deployment still qualifies.
+    Entries whose deployment no longer qualifies are cleaned up automatically.
 
 This module exposes helpers that should be called from the publish endpoint
 and from any action endpoint that mutates ``is_active``, ``visibility``, or
@@ -67,8 +69,10 @@ async def sync_agent_registry(
         1. Find the **latest** deployment (UAT or PROD) for this agent where
            ``is_active=True``, ``is_enabled=True``, ``status=PUBLISHED``,
            ``visibility=PUBLIC``.
-        2. If one exists → upsert the ``agent_registry`` row (create or update).
-        3. If none exists → delete any existing registry row for that env (delist).
+        2. If one exists → upsert keyed by **deployment_id** (not agent_id).
+           This means each version gets its own registry row.
+        3. If none exists → delete all registry rows for that agent+env (delist).
+        4. Always clean up stale entries whose deployments no longer qualify.
 
     Args:
         session:        The current async DB session (caller manages commit).
@@ -84,23 +88,26 @@ async def sync_agent_registry(
     # ── 1. Find the best candidate deployment ─────────────────────
     candidate = await _find_qualifying_deployment(session, agent_id, deployment_env)
 
-    # ── 2. Fetch existing registry row (if any) for this env ──────
-    existing = (
-        await session.exec(
-            select(AgentRegistry).where(
-                AgentRegistry.agent_id == agent_id,
-                AgentRegistry.deployment_env == deployment_env,
-            )
-        )
-    ).first()
-
     now = datetime.now(timezone.utc)
     env_label = deployment_env.value  # "UAT" or "PROD"
 
-    # ── 3a. Candidate found → upsert ─────────────────────────────
+    # ── 2. Candidate found → upsert keyed by deployment_id ────────
+    #    Each deployment version gets its own registry row instead of
+    #    overwriting the previous version's entry.
+    result: AgentRegistry | None = None
+
     if candidate is not None:
+        existing = (
+            await session.exec(
+                select(AgentRegistry).where(
+                    AgentRegistry.agent_deployment_id == candidate.id,
+                    AgentRegistry.deployment_env == deployment_env,
+                )
+            )
+        ).first()
+
         if existing is not None:
-            existing.agent_deployment_id = candidate.id
+            # Same deployment re-synced (e.g. title/description changed)
             existing.title = candidate.agent_name
             existing.summary = candidate.agent_description
             existing.visibility = RegistryVisibilityEnum.PUBLIC
@@ -110,37 +117,39 @@ async def sync_agent_registry(
                 f"Registry UPDATED [{env_label}] for agent {agent_id} → "
                 f"deployment {candidate.id} v{candidate.version_number}"
             )
-            return existing
+            result = existing
+        else:
+            # New deployment version → create a NEW registry entry
+            registry_entry = AgentRegistry(
+                org_id=org_id,
+                agent_id=agent_id,
+                agent_deployment_id=candidate.id,
+                deployment_env=deployment_env,
+                title=candidate.agent_name,
+                summary=candidate.agent_description,
+                visibility=RegistryVisibilityEnum.PUBLIC,
+                listed_by=acted_by,
+                listed_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(registry_entry)
+            logger.info(
+                f"Registry LISTED [{env_label}] agent {agent_id} → "
+                f"deployment {candidate.id} v{candidate.version_number}"
+            )
+            result = registry_entry
 
-        registry_entry = AgentRegistry(
-            org_id=org_id,
-            agent_id=agent_id,
-            agent_deployment_id=candidate.id,
-            deployment_env=deployment_env,
-            title=candidate.agent_name,
-            summary=candidate.agent_description,
-            visibility=RegistryVisibilityEnum.PUBLIC,
-            listed_by=acted_by,
-            listed_at=now,
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(registry_entry)
-        logger.info(
-            f"Registry LISTED [{env_label}] agent {agent_id} → "
-            f"deployment {candidate.id} v{candidate.version_number}"
-        )
-        return registry_entry
+    # ── 3. Clean up stale entries whose deployments no longer qualify ─
+    await _cleanup_stale_registry_entries(session, agent_id, deployment_env)
 
-    # ── 3b. No qualifying deployment → delist ─────────────────────
-    if existing is not None:
-        await session.delete(existing)
+    if candidate is None and result is None:
         logger.info(
             f"Registry DELISTED [{env_label}] agent {agent_id} "
             f"(no active+public {env_label} deployment)"
         )
 
-    return None
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -182,6 +191,54 @@ async def delist_from_registry(
 # ═══════════════════════════════════════════════════════════════════════════
 # Internal helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+async def _cleanup_stale_registry_entries(
+    session: AsyncSession,
+    agent_id: UUID,
+    deployment_env: RegistryDeploymentEnvEnum,
+) -> None:
+    """Remove registry entries whose referenced deployment no longer satisfies
+    all four listing conditions (is_active, is_enabled, PUBLISHED, PUBLIC).
+
+    Called after every upsert to keep the registry tidy.
+    """
+    entries = (
+        await session.exec(
+            select(AgentRegistry).where(
+                AgentRegistry.agent_id == agent_id,
+                AgentRegistry.deployment_env == deployment_env,
+            )
+        )
+    ).all()
+
+    for entry in entries:
+        if deployment_env == RegistryDeploymentEnvEnum.PROD:
+            dep = await session.get(AgentDeploymentProd, entry.agent_deployment_id)
+            qualifies = (
+                dep is not None
+                and dep.is_active
+                and dep.is_enabled
+                and dep.status == DeploymentPRODStatusEnum.PUBLISHED
+                and dep.visibility == ProdDeploymentVisibilityEnum.PUBLIC
+            )
+        else:
+            dep = await session.get(AgentDeploymentUAT, entry.agent_deployment_id)
+            qualifies = (
+                dep is not None
+                and dep.is_active
+                and dep.is_enabled
+                and dep.status == DeploymentUATStatusEnum.PUBLISHED
+                and dep.visibility == DeploymentVisibilityEnum.PUBLIC
+            )
+
+        if not qualifies:
+            await session.delete(entry)
+            dep_id = entry.agent_deployment_id
+            logger.info(
+                f"Registry CLEANED stale entry for agent {agent_id} "
+                f"deployment {dep_id} [{deployment_env.value}]"
+            )
 
 
 async def _find_qualifying_deployment(

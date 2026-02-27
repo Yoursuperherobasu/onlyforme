@@ -48,6 +48,13 @@ class ApprovalAgent(BaseModel):
     adminAttachments: list[dict] | None = None
 
 
+class ApprovalPreviewResponse(BaseModel):
+    id: str
+    title: str
+    version: str
+    snapshot: dict
+
+
 class ApprovalResponse(BaseModel):
     success: bool
     message: str
@@ -287,20 +294,8 @@ async def approve_agent(
     deployment.updated_at = now
     session.add(deployment)
 
-    # Keep one active PROD version per agent by default.
-    previous = (
-        await session.exec(
-            select(AgentDeploymentProd).where(
-                AgentDeploymentProd.agent_id == deployment.agent_id,
-                AgentDeploymentProd.id != deployment.id,
-                AgentDeploymentProd.is_active == True,  # noqa: E712
-            )
-        )
-    ).all()
-    for rec in previous:
-        rec.is_active = False
-        rec.updated_at = now
-        session.add(rec)
+    # Shadow deployment: keep previous versions active so
+    # multiple versions can run side-by-side.
 
     await session.commit()
 
@@ -315,6 +310,23 @@ async def approve_agent(
         await session.commit()
     except Exception as reg_err:
         logger.warning(f"Registry sync failed after approval {req.id}: {reg_err}")
+
+    # Sync FileTrigger nodes → auto-create trigger_config entries
+    if deployment.agent_snapshot:
+        try:
+            from agentcore.services.deps import get_trigger_service
+            trigger_svc = get_trigger_service()
+            await trigger_svc.sync_folder_monitors_for_agent(
+                session=session,
+                agent_id=deployment.agent_id,
+                environment="prod",
+                version=f"v{deployment.version_number}",
+                deployment_id=deployment.id,
+                flow_data=deployment.agent_snapshot,
+                created_by=req.requested_by,
+            )
+        except Exception as fm_err:
+            logger.warning(f"FileTrigger sync failed after approval {req.id}: {fm_err}")
 
     approver_name = getattr(current_user, "username", None)
     return ApprovalResponse(
@@ -473,6 +485,36 @@ async def get_agent_details(
         recentChanges="",  # intentionally blank for now
         adminComments=req.justification,
         adminAttachments=(req.file_path.get("files", []) if isinstance(req.file_path, dict) else []),
+    )
+
+
+@router.get("/{agent_id}/preview", response_model=ApprovalPreviewResponse)
+async def get_agent_preview(
+    agent_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> ApprovalPreviewResponse:
+    req = await _get_approval_for_view(
+        session=session,
+        approval_or_agent_id=agent_id,
+        current_user=current_user,
+    )
+    deployment = await session.get(AgentDeploymentProd, req.deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Linked deployment not found")
+
+    if not deployment.agent_snapshot:
+        raise HTTPException(
+            status_code=404,
+            detail="No deployment snapshot found for preview",
+        )
+
+    return ApprovalPreviewResponse(
+        id=str(req.id),
+        title=deployment.agent_name or "Review Details",
+        version=f"v{deployment.version_number}",
+        snapshot=deployment.agent_snapshot,
     )
 
 

@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Loading from "@/components/ui/loading";
 import { useGetGuardrailsCatalogue } from "@/controllers/API/queries/guardrails/use-get-guardrails-catalogue";
 import { getProviderIcon } from "@/utils/logo_provider";
@@ -26,6 +27,7 @@ export default function GuardrailsView({
   guardrails = [],
   setSearch = () => {},
 }: GuardrailsViewProps): JSX.Element {
+  const { t } = useTranslation();
   const [filter] = useState<CategoryType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const {
@@ -64,10 +66,10 @@ export default function GuardrailsView({
 
   const getCategoryLabel = (category: string) => {
     const labels: Record<string, string> = {
-      "content-safety": "Content Safety",
-      jailbreak: "Jailbreak Prevention",
-      "topic-control": "Topic Control",
-      "pii-detection": "PII Detection",
+      "content-safety": t("Content Safety"),
+      jailbreak: t("Jailbreak Prevention"),
+      "topic-control": t("Topic Control"),
+      "pii-detection": t("PII Detection"),
     };
     return labels[category] || category;
   };
@@ -87,10 +89,10 @@ export default function GuardrailsView({
       <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Guardrails Catalogue</h1>
+            <h1 className="text-2xl font-semibold">{t("Guardrails Catalogue")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Manage and configure AI safety guardrails
+            {t("Manage and configure AI safety guardrails")}
           </p>
         </div>
 
@@ -98,7 +100,7 @@ export default function GuardrailsView({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder="Search guardrails..."
+              placeholder={t("Search guardrails...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
@@ -116,7 +118,7 @@ export default function GuardrailsView({
           <>
             {!!error && (
               <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                Failed to load guardrails from database.
+                {t("Failed to load guardrails from database.")}
               </div>
             )}
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -134,7 +136,7 @@ export default function GuardrailsView({
                         key={h}
                         className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                       >
-                        {h}
+                        {t(h)}
                       </th>
                     ))}
                   </tr>
@@ -147,7 +149,7 @@ export default function GuardrailsView({
                         colSpan={5}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
-                        No guardrails found matching your criteria
+                        {t("No guardrails found matching your criteria")}
                       </td>
                     </tr>
                   ) : (
@@ -158,7 +160,7 @@ export default function GuardrailsView({
                             <div className="font-semibold">{guardrail.name}</div>
                             {guardrail.isCustom && (
                               <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                                Custom
+                                {t("Custom")}
                               </span>
                             )}
                           </div>
@@ -172,7 +174,7 @@ export default function GuardrailsView({
                             <div className="flex h-8 w-8 items-center justify-center rounded border">
                               {getProviderLogo(guardrail.provider)}
                             </div>
-                            <span className="text-sm">{guardrail.provider}</span>
+                            <span className="text-sm">{t(guardrail.provider)}</span>
                           </div>
                         </td>
 
@@ -190,14 +192,14 @@ export default function GuardrailsView({
                               className={`h-2 w-2 rounded-full ${guardrail.status === "active" ? "bg-green-500" : "bg-gray-400"}`}
                             ></span>
                             <span className="text-sm capitalize">
-                              {guardrail.status}
+                              {t(guardrail.status.charAt(0).toUpperCase() + guardrail.status.slice(1))}
                             </span>
                           </div>
                         </td>
 
                         <td className="px-6 py-4">
                           <span className="text-sm text-muted-foreground">
-                            {guardrail.rulesCount} rules
+                            {guardrail.rulesCount} {t("rules")}
                           </span>
                         </td>
                       </tr>
@@ -208,8 +210,10 @@ export default function GuardrailsView({
             </div>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
-              Showing {filteredGuardrails.length} of {displayGuardrails.length}{" "}
-              guardrails
+              {t("Showing {{shown}} of {{total}} guardrails", {
+                shown: filteredGuardrails.length,
+                total: displayGuardrails.length,
+              })}
             </div>
           </>
         )}

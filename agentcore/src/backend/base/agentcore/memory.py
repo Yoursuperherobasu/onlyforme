@@ -142,9 +142,7 @@ async def aupdate_messages(messages: Message | list[Message]) -> list[Message]:
                 await session.refresh(msg)
                 updated_messages.append(msg)
             else:
-                error_message = f"Message with id {message.id} not found"
-                logger.warning(error_message)
-                raise ValueError(error_message)
+                logger.debug(f"Message with id {message.id} not found, skipping update")
         return [ConversationRead.model_validate(message, from_attributes=True) for message in updated_messages]
 
 
@@ -247,11 +245,11 @@ async def astore_message(
     
     msg_id = message.data.get("id") if hasattr(message, "data") else None
     if msg_id:
-        # if message has an id and exist in the database, update it
-        try:
-            return await aupdate_messages([message])
-        except ValueError as e:
-            logger.error(e)
+        # if message has an id and exists in the database, update it
+        result = await aupdate_messages([message])
+        if result:
+            return result
+        # Message not in DB yet — fall through to insert
     if agent_id and not isinstance(agent_id, UUID):
         agent_id = UUID(agent_id)
     return await aadd_messages([message], agent_id=agent_id)

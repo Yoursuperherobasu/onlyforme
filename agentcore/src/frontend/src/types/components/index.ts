@@ -428,12 +428,13 @@ export type patchUserInputStateType = {
 
 export type UserInputType = {
   username: string;
-  password: string;
+  password?: string;
   is_active?: boolean;
   is_superuser?: boolean;
   role?: string;
   department_admin_email?: string;
   department_name?: string;
+  department_id?: string;
   organization_name?: string;
   organization_description?: string;
   id?: string;

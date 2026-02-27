@@ -38,8 +38,8 @@ function CsvOutputComponent({
           {CSVViewErrorTitle}
         </div>
         <div className="align-center flex w-full justify-center">
-          <div className="agentcore-chat-desc align-center flex justify-center px-6 py-8">
-            <div className="agentcore-chat-desc-span">{CSVError}</div>
+          <div className="sensei-chat-desc align-center flex justify-center px-6 py-8">
+            <div className="sensei-chat-desc-span">{CSVError}</div>
           </div>
         </div>
       </div>
@@ -89,8 +89,8 @@ function CsvOutputComponent({
             {CSVViewErrorTitle}
           </div>
           <div className="align-center flex w-full justify-center">
-            <div className="agentcore-chat-desc align-center flex justify-center px-6 py-8">
-              <div className="agentcore-chat-desc-span">{CSVNoDataError}</div>
+            <div className="sensei-chat-desc align-center flex justify-center px-6 py-8">
+              <div className="sensei-chat-desc-span">{CSVNoDataError}</div>
             </div>
           </div>
         </div>
@@ -102,8 +102,8 @@ function CsvOutputComponent({
             {CSVViewErrorTitle}
           </div>
           <div className="align-center flex w-full justify-center">
-            <div className="agentcore-chat-desc align-center flex justify-center px-6 py-8">
-              <div className="agentcore-chat-desc-span">{CSVError}</div>
+            <div className="sensei-chat-desc align-center flex justify-center px-6 py-8">
+              <div className="sensei-chat-desc-span">{CSVError}</div>
             </div>
           </div>
         </div>

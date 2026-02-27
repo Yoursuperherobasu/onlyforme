@@ -21,9 +21,10 @@ export const useGetFoldersQuery: useQueryFunctionType<
   const getFoldersFn = async (): Promise<FolderType[]> => {
     if (!isAuthenticated) return [];
     const res = await api.get(`${getURL("PROJECTS")}/`);
-    const data = res.data;
+    const data = Array.isArray(res.data) ? res.data : [];
 
-    const myCollectionId = data?.find((f) => f.name === DEFAULT_FOLDER)?.id;
+    const myCollectionId =
+      data?.find((f) => f.name === DEFAULT_FOLDER)?.id ?? data?.[0]?.id ?? "";
     setMyCollectionId(myCollectionId);
     setFolders(data);
 
