@@ -3,7 +3,7 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import resourcesToBackend from "i18next-resources-to-backend";
 import { initReactI18next } from "react-i18next";
 
-const localeModules = import.meta.glob("./locales/*/translation.json");
+const localeModules = import.meta.glob("./locales/*/*.json");
 export const SUPPORTED_LOCALES = Object.keys(localeModules)
   .map((path) => path.match(/\.\/locales\/([^/]+)\/translation\.json$/)?.[1])
   .filter((locale): locale is string => Boolean(locale))
@@ -62,16 +62,23 @@ const normalizeLocale = (language?: string | null) => {
 };
 
 const loadResource = async (language: string, namespace: string) => {
-  try {
-    const normalizedLanguage = normalizeLocale(language);
-    const module = await import(
-      `./locales/${normalizedLanguage}/${namespace}.json`
-    );
-    return module.default;
-  } catch {
-    const module = await import(`./locales/en-US/${namespace}.json`);
+  const normalizedLanguage = normalizeLocale(language);
+  const primaryKey = `./locales/${normalizedLanguage}/${namespace}.json`;
+  const fallbackKey = `./locales/${FALLBACK_LOCALE}/${namespace}.json`;
+
+  const primaryLoader = localeModules[primaryKey];
+  if (primaryLoader) {
+    const module = (await primaryLoader()) as { default: Record<string, string> };
     return module.default;
   }
+
+  const fallbackLoader = localeModules[fallbackKey];
+  if (fallbackLoader) {
+    const module = (await fallbackLoader()) as { default: Record<string, string> };
+    return module.default;
+  }
+
+  return {};
 };
 
 i18n
