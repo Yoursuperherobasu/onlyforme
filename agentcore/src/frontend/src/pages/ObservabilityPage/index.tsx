@@ -416,6 +416,7 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
 async function fetchSessions(params: FetchMetricsParams = {}): Promise<{ sessions: SessionListItem[]; total: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
   searchParams.set("limit", "50");
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
   if (params.fetch_all) searchParams.set("fetch_all", "true");
@@ -440,6 +441,7 @@ async function fetchTraceDetail(traceId: string): Promise<TraceDetailResponse> {
 
 async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: AgentListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
   if (params.search) searchParams.set("search", params.search);
@@ -463,6 +465,7 @@ async function fetchAgentDetail(agentId: string, params: FetchMetricsParams = {}
 
 async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ projects: ProjectListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
   if (params.fetch_all) searchParams.set("fetch_all", "true");
@@ -514,6 +517,15 @@ function Sparkline({ data, dataKey, color = THEME.primary, height = 40 }: {
         />
       </AreaChart>
     </ResponsiveContainer>
+  );
+}
+
+function LoadingIndicator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm" style={{ color: THEME.textSecondary }}>
+      <span className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+      <span>{label}</span>
+    </div>
   );
 }
 
@@ -793,7 +805,7 @@ export default function ObservabilityPage(): JSX.Element {
 
   // Filter state
   const [filters, setFilters] = useState<Filters>({
-    dateRange: "today",
+    dateRange: "7d",
     search: "",
     models: [],
   });
@@ -824,7 +836,7 @@ export default function ObservabilityPage(): JSX.Element {
     refetchInterval: 60000,
   });
 
-  const { data: metrics, isLoading: metricsLoading } = useQuery({
+  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
     queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(","), fetchAllMode],
     queryFn: () => fetchMetrics({
       ...dateParams,
@@ -834,6 +846,7 @@ export default function ObservabilityPage(): JSX.Element {
     enabled: status?.connected,
     refetchInterval: activeTab === "overview" ? 60000 : false,
     staleTime: 30000,
+    placeholderData: (previousData: any) => previousData,
   });
 
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
@@ -842,17 +855,18 @@ export default function ObservabilityPage(): JSX.Element {
     enabled: status?.connected && (activeTab === "overview" || activeTab === "sessions"),
     refetchInterval: activeTab === "sessions" ? 60000 : false,
     staleTime: 30000,
+    placeholderData: (previousData: any) => previousData,
   });
 
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
-    queryKey: ["observability-agents", filters.dateRange, filters.search, fetchAllMode],
+    queryKey: ["observability-agents", filters.dateRange, fetchAllMode],
     queryFn: () => fetchAgents({
       ...dateParams,
-      search: filters.search || undefined,
     }),
     enabled: status?.connected && (activeTab === "overview" || activeTab === "agents"),
     refetchInterval: activeTab === "agents" ? 60000 : false,
     staleTime: 30000,
+    placeholderData: (previousData: any) => previousData,
   });
 
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
@@ -861,6 +875,7 @@ export default function ObservabilityPage(): JSX.Element {
     enabled: status?.connected && (activeTab === "projects"),
     refetchInterval: activeTab === "projects" ? 60000 : false,
     staleTime: 30000,
+    placeholderData: (previousData: any) => previousData,
   });
 
   const { data: sessionDetail, isLoading: sessionDetailLoading } = useQuery({
@@ -880,7 +895,7 @@ export default function ObservabilityPage(): JSX.Element {
     },
   });
 
-  const { data: agentDetail } = useQuery({
+  const { data: agentDetail, isLoading: agentDetailLoading } = useQuery({
     queryKey: ["agent-detail", selectedAgent, filters.dateRange, fetchAllMode],
     queryFn: () => fetchAgentDetail(selectedAgent!, dateParams),
     enabled: !!selectedAgent,
@@ -1082,7 +1097,7 @@ export default function ObservabilityPage(): JSX.Element {
               size="sm"
               variant="ghost"
               onClick={() => {
-                setFilters({ dateRange: "today", search: "", models: [] });
+                setFilters({ dateRange: "7d", search: "", models: [] });
                 setSearchInput("");
                 setFetchAllMode(false);
               }}
@@ -1144,6 +1159,14 @@ export default function ObservabilityPage(): JSX.Element {
                 onLoadAll={() => setFetchAllMode(true)}
                 isLoading={metricsLoading}
               />
+            )}
+            {metricsFetching && !metricsLoading && (
+              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <LoadingIndicator label="Updating metrics for selected date range..." />
+                <span className="text-xs" style={{ color: THEME.textSecondary }}>
+                  Data will refresh automatically
+                </span>
+              </div>
             )}
             {metricsLoading ? (
               <div className="grid gap-4 md:grid-cols-4">
@@ -2363,7 +2386,15 @@ export default function ObservabilityPage(): JSX.Element {
               {agentDetail?.agent_name || "Agent Details"}
             </DialogTitle>
           </DialogHeader>
-          {agentDetail && (
+          {agentDetailLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div
+                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                style={{ borderTopColor: THEME.primary }}
+              />
+              <p className="text-sm" style={{ color: THEME.textSecondary }}>Loading agent details…</p>
+            </div>
+          ) : agentDetail && (
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 {[
