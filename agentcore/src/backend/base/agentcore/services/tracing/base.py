@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
     from langchain_core.callbacks import BaseCallbackHandler
 
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphVertex
     from agentcore.services.tracing.schema import Log
 
 
@@ -41,7 +41,7 @@ class BaseTracer(ABC):
         trace_type: str,
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
-        vertex: Vertex | None = None,
+        vertex: LangGraphVertex | None = None,
     ) -> None:
         raise NotImplementedError
 

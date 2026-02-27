@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from agentcore.base.tools.component_tool import ComponentToolkit
     from agentcore.events.event_manager import EventManager
     from agentcore.graph_langgraph import EdgeData
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphVertex
     from agentcore.inputs.inputs import InputTypes
     from agentcore.schema.dataframe import DataFrame
     from agentcore.schema.log import LoggableType
@@ -379,11 +379,11 @@ class Node(ExecutableNode):
         """
         return await self._run()
 
-    def set_vertex(self, vertex: Vertex) -> None:
+    def set_vertex(self, vertex: LangGraphVertex) -> None:
         """Sets the vertex for the component.
 
         Args:
-            vertex (Vertex): The vertex to set.
+            vertex (LangGraphVertex): The vertex to set.
 
         Returns:
             None

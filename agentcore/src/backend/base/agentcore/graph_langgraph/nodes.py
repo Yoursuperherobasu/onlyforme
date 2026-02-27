@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 from loguru import logger
 
@@ -228,6 +227,12 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
             if vertex.outputs_logs:
                 updates["outputs_logs"] = {vertex.id: vertex.outputs_logs}
 
+            logger.debug(
+                f"[node_function] vertex={vertex.id} ({vertex.display_name}), "
+                f"built_result type={type(vertex.built_result).__name__}, "
+                f"built_result is None={vertex.built_result is None}, "
+                f"built_object type={type(vertex.built_object).__name__}"
+            )
             return updates
 
         except Exception as e:

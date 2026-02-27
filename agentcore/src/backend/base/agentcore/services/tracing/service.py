@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from langchain_core.callbacks import BaseCallbackHandler
 
     from agentcore.custom.custom_node.node import Node
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphVertex
     from agentcore.services.settings.service import SettingsService
     from agentcore.services.tracing.base import BaseTracer
     from agentcore.services.tracing.schema import Log
@@ -72,14 +72,14 @@ class ComponentTraceContext:
         trace_id: str,
         trace_name: str,
         trace_type: str,
-        vertex: Vertex | None,
+        vertex: LangGraphVertex | None,
         inputs: dict[str, dict],
         metadata: dict[str, dict] | None = None,
     ):
         self.trace_id: str = trace_id
         self.trace_name: str = trace_name
         self.trace_type: str = trace_type
-        self.vertex: Vertex | None = vertex
+        self.vertex: LangGraphVertex | None = vertex
         self.inputs: dict[str, dict] = inputs
         self.inputs_metadata: dict[str, dict] = metadata or {}
         self.outputs: dict[str, dict] = defaultdict(dict)

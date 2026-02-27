@@ -18,11 +18,11 @@ if TYPE_CHECKING:
     from agentcore.custom.custom_node.node import Node
     from agentcore.custom.custom_node.custom_node import ExecutableNode
     from agentcore.events.event_manager import EventManager
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphVertex
 
 
 def instantiate_class(
-    vertex: Vertex,
+    vertex: LangGraphVertex,
     user_id=None,
     event_manager: EventManager | None = None,
 ) -> Any:
@@ -54,7 +54,7 @@ def instantiate_class(
 async def get_instance_results(
     custom_component,
     custom_params: dict,
-    vertex: Vertex,
+    vertex: LangGraphVertex,
     *,
     fallback_to_env_vars: bool = False,
     base_type: str = "component",

@@ -7,8 +7,8 @@ from loguru import logger
 from typing_extensions import override
 
 from agentcore.base.agent_processing.utils import build_data_from_result_data, format_agent_output_data
-from agentcore.graph_langgraph import LangGraphAdapter as Graph  # cannot be a part of TYPE_CHECKING   # noqa: TC001
-from agentcore.graph_langgraph import LangGraphVertex as Vertex  # cannot be a part of TYPE_CHECKING  # noqa: TC001
+from agentcore.graph_langgraph import LangGraphAdapter  # cannot be a part of TYPE_CHECKING   # noqa: TC001
+from agentcore.graph_langgraph import LangGraphVertex  # cannot be a part of TYPE_CHECKING  # noqa: TC001
 from agentcore.helpers.agent import build_schema_from_inputs, get_arg_names, get_agent_inputs, run_agent
 from agentcore.utils.async_helpers import run_until_complete
 
@@ -20,11 +20,11 @@ if TYPE_CHECKING:
 class AgentTool(BaseTool):
     name: str
     description: str
-    graph: Graph | None = None
+    graph: LangGraphAdapter | None = None
     agent_id: str | None = None
     user_id: str | None = None
     session_id: str | None = None
-    inputs: list[Vertex] = []
+    inputs: list[LangGraphVertex] = []
     get_final_results_only: bool = True
 
     @property

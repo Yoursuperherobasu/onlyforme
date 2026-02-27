@@ -21,7 +21,7 @@ from agentcore.api.v1_schemas import (
     InputValueRequest,
 )
 from agentcore.events.event_manager import EventManager
-from agentcore.graph_langgraph import Graph, LangGraphAdapter
+from agentcore.graph_langgraph import LangGraphAdapter
 from agentcore.schema.message import ErrorMessage
 from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_chat_service, get_telemetry_service, session_scope
@@ -198,7 +198,7 @@ async def generate_agent_events(
     if not inputs:
         inputs = InputValueRequest(session=str(agent_id))
 
-    async def build_graph_and_get_order() -> tuple[list[str], list[str], Graph | LangGraphAdapter]:
+    async def build_graph_and_get_order() -> tuple[list[str], list[str], LangGraphAdapter]:
         start_time = time.perf_counter()
         components_count = 0
         graph = None
@@ -245,7 +245,7 @@ async def generate_agent_events(
             ),
         )
 
-    async def create_graph(fresh_session, agent_id_str: str, agent_name: str | None) -> Graph | LangGraphAdapter:
+    async def create_graph(fresh_session, agent_id_str: str, agent_name: str | None) -> LangGraphAdapter:
         if inputs is not None and getattr(inputs, "session", None) is not None:
             effective_session_id = inputs.session
         else:
@@ -273,9 +273,8 @@ async def generate_agent_events(
             session_id=effective_session_id,
         )
 
-    def sort_vertices(graph: Graph | LangGraphAdapter) -> list[str]:
+    def sort_vertices(graph: LangGraphAdapter) -> list[str]:
         try:
-            # LangGraphAdapter uses its own sorting logic with stop/start component support
             if isinstance(graph, LangGraphAdapter):
                 # Call sort_vertices with stop/start component IDs for filtering
                 # This enables "Run Till Specific Component" functionality

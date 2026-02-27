@@ -30,9 +30,9 @@ class SessionService(Service):
         if data_graph is None:
             return None, None
         # If not cached, build the graph and cache it
-        from agentcore.graph_langgraph import LangGraphAdapter as Graph
+        from agentcore.graph_langgraph import LangGraphAdapter
 
-        graph = Graph.from_payload(data_graph, agent_id=agent_id)
+        graph = LangGraphAdapter.from_payload(data_graph, agent_id=agent_id)
         artifacts: dict = {}
         await self.cache_service.set(key, (graph, artifacts))
 

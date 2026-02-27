@@ -471,8 +471,8 @@ class LangGraphAdapter:
             self.workflow.set_entry_point(root_vertices[0])
         else:
             # Multiple roots: create a no-op fan-out node
-            async def _noop_start(state: AgentCoreState) -> AgentCoreState:
-                return state
+            async def _noop_start(state: AgentCoreState) -> dict[str, Any]:
+                return {}  # Empty update — nothing to change, just fan out
 
             self.workflow.add_node("__start_fan_out__", _noop_start)
             self.workflow.set_entry_point("__start_fan_out__")
@@ -616,7 +616,7 @@ class LangGraphAdapter:
         # 4. Reset execution state
         self._prepared = False
         self._run_queue = deque()
-        
+
         # 5. Set up run state with all vertices
         self.vertices_to_run = set(self.vertex_map.keys())
         
@@ -815,12 +815,35 @@ class LangGraphAdapter:
                 # NON-STREAMING: use ainvoke() — returns final state directly
                 final_state = await self.compiled_app.ainvoke(initial_state)
 
-            # Collect results from final state
+            # Collect results from output vertices.
+            # After ainvoke()/astream() completes, the vertex objects have been
+            # built in-memory by node_function.  Reading vertex.result directly
+            # is more reliable than extracting from LangGraph state channels,
+            # which may not propagate correctly with complex state schemas.
+            run_outputs = []
+            for oid in output_ids:
+                vertex = self.get_vertex(oid)
+                if vertex and vertex.built and vertex.result is not None:
+                    run_outputs.append(vertex.result)
+                else:
+                    # Vertex didn't build or has no result
+                    logger.warning(
+                        f"[arun] Output vertex {oid}: "
+                        f"built={getattr(vertex, 'built', None)}, "
+                        f"result is None={vertex.result is None if vertex else 'vertex not found'}, "
+                        f"is_active={vertex.is_active() if vertex else 'N/A'}"
+                    )
+                    run_outputs.append(None)
+
             if final_state:
-                results = final_state.get("vertices_results", {})
-                run_outputs = [results.get(oid) for oid in output_ids]
+                state_results = final_state.get("vertices_results", {})
+                logger.debug(
+                    f"[arun] output_ids={output_ids}, "
+                    f"vertices_results keys={list(state_results.keys())}, "
+                    f"vertex built states={[(oid, getattr(self.get_vertex(oid), 'built', None)) for oid in output_ids]}"
+                )
             else:
-                run_outputs = []
+                logger.warning("[arun] final_state is None/empty after execution")
 
             vertex_outputs.append(RunOutputs(inputs=run_inputs, outputs=run_outputs))
 
