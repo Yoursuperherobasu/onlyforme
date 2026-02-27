@@ -59,6 +59,10 @@ const PROVIDER_PORTS: Record<string, number> = {
 
 const DB_PROVIDERS = new Set(["postgresql", "oracle", "sqlserver", "mysql"]);
 const STORAGE_PROVIDERS = new Set(["azure_blob", "sharepoint"]);
+const DEFAULT_CONNECTOR_HOST =
+  process.env.DEFAULT_CONNECTOR_HOST ||
+  process.env.HOST_IP ||
+  window.location.hostname;
 
 function isDbProvider(provider: string): boolean {
   return DB_PROVIDERS.has(provider);
@@ -69,7 +73,7 @@ const BLANK_FORM = {
   description: "",
   provider: "postgresql",
   // DB fields
-  host: "localhost",
+  host: DEFAULT_CONNECTOR_HOST,
   port: 5432,
   database_name: "",
   schema_name: "public",
@@ -134,7 +138,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       description: connector.description || "",
       provider: connector.provider,
       // DB fields
-      host: connector.host ?? "localhost",
+      host: connector.host ?? DEFAULT_CONNECTOR_HOST,
       port: connector.port ?? PROVIDER_PORTS[connector.provider] ?? 5432,
       database_name: connector.database_name ?? "",
       schema_name: connector.schema_name ?? "public",
@@ -660,7 +664,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                         value={form.host}
                         onChange={(e) => setForm({ ...form, host: e.target.value })}
                         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="localhost"
+                        placeholder={DEFAULT_CONNECTOR_HOST}
                       />
                     </div>
                     <div>

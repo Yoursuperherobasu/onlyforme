@@ -266,11 +266,16 @@ async def get_permissions_for_role(role: str) -> List[str]:
             all_perm_rows = (await session.exec(select(Permission.key))).all()
         return _expand_permissions([p for p in all_perm_rows if p])
 
+    global permission_cache
     if permission_cache is None:
-        perms = await _get_permissions_for_role_db(normalized)
-        if perms:
-            return _expand_permissions(perms)
-        return []
+        try:
+            from agentcore.services.deps import get_settings_service
+            permission_cache = PermissionCacheService(get_settings_service())
+        except Exception:
+            perms = await _get_permissions_for_role_db(normalized)
+            if perms:
+                return _expand_permissions(perms)
+            return []
 
     perms = await permission_cache.get_permissions_for_role(role)
     if perms:

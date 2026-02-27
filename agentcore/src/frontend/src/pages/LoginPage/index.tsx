@@ -21,6 +21,19 @@ import MothersonLogo from "@/assets/agentcore.svg";
 import { DotPattern } from "./components/DotPattern";
 import { Starfield } from "./components/StarField";
 
+function getBackendBaseUrl(): string {
+  const candidates = [
+    process.env.BACKEND_URL,
+    process.env.VITE_API_URL,
+  ].filter(Boolean) as string[];
+
+  const valid = candidates.find(
+    (value) => !value.includes("${") && /^https?:\/\//.test(value),
+  );
+
+  return (valid || window.location.origin).replace(/\/$/, "");
+}
+
 export default function LoginPage(): JSX.Element {
   const [inputState, setInputState] =
     useState<loginInputStateType>(CONTROL_LOGIN_STATE);
@@ -57,9 +70,10 @@ export default function LoginPage(): JSX.Element {
       const idToken = response.idToken;
 
       console.log("🟣 [SSO] Sending token to backend...");
+      const backendBaseUrl = getBackendBaseUrl();
 
       const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/azure/sso`,
+        `${backendBaseUrl}/api/azure/sso`,
         {
           method: "POST",
           credentials: "include",

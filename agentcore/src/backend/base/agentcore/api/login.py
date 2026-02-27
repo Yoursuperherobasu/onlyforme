@@ -306,5 +306,3 @@ async def logout(response: Response):
 #     response.delete_cookie("apikey_tkn_lflw", **cookie_params)
     
 #     return {"message": "Logout successful"}
-
-

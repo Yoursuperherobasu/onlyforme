@@ -25,6 +25,10 @@ interface SavedConnection {
 }
 
 const STORAGE_KEY = "agentcore_connections";
+const DEFAULT_AGENTCORE_PUBLISH_URL =
+  process.env.AGENTCORE_PUBLISH_URL ||
+  process.env.BACKEND_URL ||
+  `${window.location.protocol}//${window.location.host}`;
 
 // Helper functions for localStorage
 const loadConnections = (): SavedConnection[] => {
@@ -101,7 +105,7 @@ export default function PublishModal({
   setOpen,
   onSuccess,
 }: PublishModalProps) {
-  const [agentcoreUrl, setAgentCoreUrl] = useState("http://localhost:5839");
+  const [agentcoreUrl, setAgentCoreUrl] = useState(DEFAULT_AGENTCORE_PUBLISH_URL);
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState(agentName);
   const [error, setError] = useState<string | null>(null);
@@ -140,7 +144,7 @@ export default function PublishModal({
 
     if (value === "new") {
       // Clear fields for new connection
-      setAgentCoreUrl("http://localhost:5839");
+      setAgentCoreUrl(DEFAULT_AGENTCORE_PUBLISH_URL);
       setApiKey("");
     } else {
       // Load selected connection
@@ -279,7 +283,7 @@ export default function PublishModal({
             <Input
               id="agentcore-url"
               type="url"
-              placeholder="http://localhost:5839"
+              placeholder={DEFAULT_AGENTCORE_PUBLISH_URL}
               value={agentcoreUrl}
               onChange={(e) => setAgentCoreUrl(e.target.value)}
               disabled={publishMutation.isPending}

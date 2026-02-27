@@ -136,14 +136,14 @@ class Settings(BaseSettings):
     cache_type: Literal["async", "redis", "memory"] = "redis"
     """The cache type can be 'async', 'redis' or 'memory'. Default is 'redis' for distributed caching."""
     """The cache type can be 'async' or 'redis'."""
-    redis_host: str = "newrediscachedb.redis.cache.windows.net"
-    redis_port: int = 6380
+    redis_host: str = os.getenv("REDIS_HOST")
+    redis_port: int =os.getenv("REDIS_PORT")
     redis_db: int = 0
     redis_url: str | None = None
-    redis_password: str = "fYNFRYrtcDx1fXEGz2hXr4SQRFtBKpgm0AzCaLrURyo="
-    redis_ssl: bool = True
-    cache_expire: int = 3600
-    redis_cache_expire: int = 3600
+    redis_password: str =os.getenv("REDIS_PASSWORD")
+    redis_ssl: bool = os.getenv("REDIS_SSL")
+    cache_expire: int = os.getenv("REDIS_CACHE_EXPIRE")
+    redis_cache_expire: int = os.getenv("REDIS_CACHE_EXPIRE")
     
 
     """The cache expire in seconds."""
@@ -185,16 +185,16 @@ class Settings(BaseSettings):
     # Telemetry
     do_not_track: bool = True
     """If set to True, Agentcore will not track telemetry."""
-    telemetry_base_url: str = "https://localhost:7860"  # Disabled endpoint
+    telemetry_base_url: str = os.getenv("LOCALHOST_TELEMETRY_BASE_URL")  # Disabled endpoint
     transactions_storage_enabled: bool = True
     """If set to True, Agentcore will track transactions between agents."""
     vertex_builds_storage_enabled: bool = True
     """If set to True, Agentcore will keep track of each vertex builds (outputs) in the UI for any agent."""
 
     # Config
-    host: str = "localhost"
+    host: str = os.getenv("LOCALHOST_HOST")
     """The host on which Agentcore will run."""
-    port: int = 7860
+    port: int = os.getenv("BACKEND_PORT")
     """The port on which Agentcore will run."""
     workers: int = 1
     """The number of workers to run."""
