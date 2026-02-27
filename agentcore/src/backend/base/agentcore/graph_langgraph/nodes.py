@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from agentcore.graph_langgraph.vertex_wrapper import LangGraphVertex
 
 
-def create_node_function(vertex: LangGraphVertex):
+def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = False):
     """Convert an AgentCore Vertex to a LangGraph node function.
 
     The returned async callable is used by ``StateGraph.add_node()`` so that
@@ -21,19 +21,51 @@ def create_node_function(vertex: LangGraphVertex):
     (via ``compiled_app.ainvoke()`` / ``compiled_app.astream()``).
 
     The function handles the complete vertex lifecycle:
-    1. Routing guard (``is_active()`` check)
-    2. Frozen vertex cache restore
-    3. Input parameter filtering for input vertices
-    4. Dependency resolution from state
-    5. Vertex build (component execution)
-    6. Transaction logging to all applicable tables
-    7. Frozen vertex cache save
-    8. ``end_vertex`` event emission for Playground streaming
+    1. Cycle router reset (re-activate successors for re-entry)
+    2. Routing guard (``is_active()`` check)
+    3. Frozen vertex cache restore
+    4. Input parameter filtering for input vertices
+    5. Dependency resolution from state
+    6. Vertex build (component execution)
+    7. Transaction logging to all applicable tables
+    8. Frozen vertex cache save
+    9. ``end_vertex`` event emission for Playground streaming
+
+    Args:
+        vertex: The vertex to wrap as a node function.
+        is_cycle_router: If True, this vertex is a routing cycle vertex
+            (e.g. SmartRouter, Loop) whose successors must be reset to
+            ACTIVE before each re-execution so the routing function can
+            route correctly after the build.
     """
 
-    async def node_function(state: AgentCoreState) -> AgentCoreState:
-        """Execute this vertex and update state."""
+    async def node_function(state: AgentCoreState) -> dict[str, Any]:
+        """Execute this vertex and return only the updated state fields.
+
+        Returns a partial dict (not the full state) so that parallel nodes
+        in the same LangGraph superstep don't conflict on channels they
+        didn't modify.  Reducer-annotated channels (``_merge_dicts``,
+        ``add``) merge the partial updates automatically.
+        """
         graph = vertex.graph  # LangGraphAdapter instance
+
+        # ------------------------------------------------------------------
+        # 0. CYCLE ROUTER RESET — for routing cycle vertices, reset successor
+        #    states to ACTIVE before each execution.  This ensures:
+        #    a) The component's build() sees fresh state on re-entry
+        #    b) After build(), the routing function can check is_active()
+        #       to determine where to route (the component's stop()/start()
+        #       calls during build will mark the correct branches).
+        # ------------------------------------------------------------------
+        if is_cycle_router:
+            for sid in graph.successor_map.get(vertex.id, []):
+                successor = graph.get_vertex(sid)
+                if successor is not None:
+                    successor.set_state("ACTIVE")
+            # Reset own built state so the component re-executes on cycle re-entry
+            vertex.built = False
+            vertex.built_object = None
+            vertex.built_result = None
 
         # ------------------------------------------------------------------
         # 1. ROUTING GUARD — skip vertices marked INACTIVE by upstream routers.
@@ -43,7 +75,8 @@ def create_node_function(vertex: LangGraphVertex):
         # ------------------------------------------------------------------
         if not vertex.is_active():
             logger.debug(f"Skipping INACTIVE vertex: {vertex.id} ({vertex.display_name})")
-            return state
+            # Return empty update — nothing changed
+            return {}
 
         logger.debug(f"Executing node for vertex: {vertex.id} ({vertex.display_name})")
         start_time = time.time()
@@ -119,19 +152,9 @@ def create_node_function(vertex: LangGraphVertex):
                     fallback_to_env_vars=state.get("fallback_to_env_vars", False),
                 )
 
-            # Store results in state
-            state["vertices_results"][vertex.id] = vertex.built_result
-            state["artifacts"][vertex.id] = vertex.artifacts
-            if vertex.outputs_logs:
-                state["outputs_logs"][vertex.id] = vertex.outputs_logs
-
-            # Track completion
-            state["current_vertex"] = vertex.id
-            state["completed_vertices"].append(vertex.id)
-
             elapsed_time = time.time() - start_time
 
-            # Add event for streaming
+            # Build the success event
             vertex_event = {
                 "vertex_id": vertex.id,
                 "display_name": vertex.display_name,
@@ -140,7 +163,6 @@ def create_node_function(vertex: LangGraphVertex):
                 "elapsed_time": elapsed_time,
                 "status": "success",
             }
-            state["events"].append(vertex_event)
 
             logger.debug(f"Vertex {vertex.id} completed in {elapsed_time:.2f}s")
 
@@ -190,6 +212,24 @@ def create_node_function(vertex: LangGraphVertex):
                     elapsed_time=elapsed_time,
                 )
 
+            # ----------------------------------------------------------
+            # 9. RETURN ONLY UPDATED FIELDS (partial state update)
+            #    Reducers handle merging: _merge_dicts for dicts, add for lists.
+            #    Static fields (agent_id, session_id, etc.) are NOT returned
+            #    so parallel nodes don't conflict on them.
+            # ----------------------------------------------------------
+            updates: dict[str, Any] = {
+                "vertices_results": {vertex.id: vertex.built_result},
+                "artifacts": {vertex.id: vertex.artifacts},
+                "current_vertex": vertex.id,
+                "completed_vertices": [vertex.id],
+                "events": [vertex_event],
+            }
+            if vertex.outputs_logs:
+                updates["outputs_logs"] = {vertex.id: vertex.outputs_logs}
+
+            return updates
+
         except Exception as e:
             logger.exception(f"Error building vertex {vertex.id}: {e}")
 
@@ -202,7 +242,6 @@ def create_node_function(vertex: LangGraphVertex):
                 "status": "error",
                 "error": str(e),
             }
-            state["events"].append(error_event)
 
             # Error transaction logging
             from agentcore.graph_langgraph.transaction_logging import (
@@ -216,8 +255,6 @@ def create_node_function(vertex: LangGraphVertex):
             )
 
             raise
-
-        return state
 
     # Set function name for debugging
     node_function.__name__ = f"node_{vertex.id}"
@@ -233,9 +270,9 @@ def _emit_end_vertex_event(
 ) -> None:
     """Emit an ``end_vertex`` event in the exact format the Playground frontend expects.
 
-    This mirrors the event emission in ``build.py:_build_vertex`` so that the
-    frontend receives identical NDJSON events whether execution goes through the
-    custom path or the LangGraph compiled path.
+    This emits end_vertex events in the exact format the Playground frontend
+    expects, so that the frontend receives identical NDJSON events via the
+    LangGraph compiled execution path.
     """
     import json
 
@@ -285,6 +322,45 @@ def _emit_end_vertex_event(
         graph.reset_activated_vertices()
     except Exception:
         logger.opt(exception=True).warning(f"Error emitting end_vertex event for {vertex.id}")
+
+
+def create_routing_function(
+    *,
+    vertex_id: str,
+    successor_ids: list[str],
+    graph_adapter: Any,
+):
+    """Create a routing function for ``add_conditional_edges()``.
+
+    The returned callable runs **after** the cycle router node's
+    ``node_function`` has completed.  It inspects the ``is_active()``
+    state of each successor (which was set by the component's
+    ``stop()`` / ``start()`` calls during build) and returns the ID
+    of the first active successor, or ``END`` if none is active
+    (which terminates the cycle).
+
+    Args:
+        vertex_id: ID of the routing cycle vertex.
+        successor_ids: Ordered list of successor vertex IDs.
+        graph_adapter: The ``LangGraphAdapter`` instance (for vertex lookup).
+
+    Returns:
+        A callable ``route(state) -> str`` suitable for
+        ``StateGraph.add_conditional_edges()``.
+    """
+    from langgraph.graph import END
+
+    def route(state: AgentCoreState) -> str:
+        for sid in successor_ids:
+            v = graph_adapter.get_vertex(sid)
+            if v is not None and v.is_active():
+                logger.debug(f"Routing from {vertex_id} -> {sid}")
+                return sid
+        logger.debug(f"Routing from {vertex_id} -> END (no active successors)")
+        return END
+
+    route.__name__ = f"route_{vertex_id}"
+    return route
 
 
 def _resolve_vertex_dependencies(vertex: LangGraphVertex, state: AgentCoreState) -> dict[str, Any]:

@@ -252,6 +252,9 @@ class LangGraphAdapter:
         if self.is_cyclic:
             self.cycle_vertices = set(find_cycle_vertices(edge_tuples))
             logger.info(f"Detected cycles in graph. Cycle vertices: {self.cycle_vertices}")
+
+        # Will be populated after edges and successor_map are built
+        self._routing_cycle_vertices: set[str] = set()
         
         # Build vertices
         self._build_vertices(vertices_data)
@@ -276,7 +279,12 @@ class LangGraphAdapter:
         
         # Categorize vertices
         self._define_vertices_lists()
-        
+
+        # Identify routing cycle vertices (routers/loops in cycles with multiple outputs)
+        if self.is_cyclic:
+            self._routing_cycle_vertices = self._identify_routing_cycle_vertices()
+            logger.info(f"Routing cycle vertices: {self._routing_cycle_vertices}")
+
         # Build LangGraph workflow
         self._build_langgraph_workflow()
     
@@ -340,53 +348,113 @@ class LangGraphAdapter:
                 self._is_output_vertices.append(vertex.id)
             if vertex.has_session_id:
                 self.has_session_id_vertices.append(vertex.id)
-    
+
+    def _identify_routing_cycle_vertices(self) -> set[str]:
+        """Find cycle vertices that act as routers (multiple outgoing edges via different outputs).
+
+        These vertices use ``add_conditional_edges()`` in the compiled graph so
+        LangGraph can handle cycles natively.  Covers SmartRouter, ConditionalRouter,
+        DataConditionalRouter, and Loop components that are part of a cycle.
+        """
+        result: set[str] = set()
+        for vid in self.cycle_vertices:
+            successors = self.successor_map.get(vid, [])
+            if len(successors) < 2:
+                continue
+            # Check if outgoing edges use different source handle names
+            source_names: set[str | None] = set()
+            for edge_data in self.edges:
+                if edge_data.get("source") == vid:
+                    sh = edge_data.get("data", {}).get("sourceHandle", {})
+                    if isinstance(sh, dict):
+                        source_names.add(sh.get("name"))
+            if len(source_names) >= 2:
+                result.add(vid)
+        return result
+
     def _build_langgraph_workflow(self) -> None:
         """Build the LangGraph StateGraph from vertices and edges.
 
+        Compiles ALL graphs — including cyclic ones — into a LangGraph
+        ``CompiledStateGraph``.  Cyclic graphs use ``add_conditional_edges()``
+        for routing cycle vertices (routers / Loop), while all other edges
+        use regular ``add_edge()``.
+
         Handles:
-        - Cyclic graphs (Loop component): skips compilation, falls back to custom execution.
+        - Cyclic graphs: conditional edges for routing vertices in cycles.
         - Multiple root vertices: creates a no-op fan-out start node.
         - Leaf vertices: connects them to LangGraph END.
         - Duplicate edges: deduplicates to prevent LangGraph errors.
         """
         from langgraph.graph import END
 
-        logger.info("Building LangGraph workflow")
+        from agentcore.graph_langgraph.nodes import create_routing_function
 
-        # Cyclic graphs (Loop component) are incompatible with LangGraph's DAG execution.
-        # Fall back to the custom vertex-by-vertex path (_arun_custom / build_vertex).
-        if self.is_cyclic:
-            logger.info(
-                "Graph has cycles (Loop component) — skipping LangGraph compilation, "
-                "will use custom execution path"
-            )
-            self.workflow = None
-            self.compiled_app = None
-            return
+        logger.info("Building LangGraph workflow")
 
         # Create StateGraph
         self.workflow = StateGraph(AgentCoreState)
 
-        # Add nodes
+        # Routing cycle vertices get conditional edges; others get normal edges
+        routing_vids = self._routing_cycle_vertices
+
+        # Add nodes — routing cycle vertices get the is_cycle_router flag
         for vertex in self.vertices:
-            node_func = create_node_function(vertex)
+            is_router = vertex.id in routing_vids
+            node_func = create_node_function(vertex, is_cycle_router=is_router)
             self.workflow.add_node(vertex.id, node_func)
 
-        # Add edges (deduplicated)
-        added_edges: set[tuple[str, str]] = set()
+        # Separate edges: routing-cycle-vertex outgoing vs everything else
+        routing_outgoing: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+        regular_edges: list[tuple[str, str]] = []
+
         for edge_data in self.edges:
             source_id = edge_data.get("source")
             target_id = edge_data.get("target")
+            if not source_id or not target_id:
+                continue
+            if source_id not in self.vertex_map or target_id not in self.vertex_map:
+                continue
+
+            if source_id in routing_vids:
+                # Outgoing edges from routing cycle vertex → conditional edges
+                routing_outgoing[source_id].append((target_id, edge_data))
+            else:
+                # Regular edge (includes worker→supervisor back-edges)
+                regular_edges.append((source_id, target_id))
+
+        # Add regular edges (deduplicated)
+        added_edges: set[tuple[str, str]] = set()
+        for source_id, target_id in regular_edges:
             edge_key = (source_id, target_id)
             if edge_key in added_edges:
                 continue
-            if source_id and target_id and source_id in self.vertex_map and target_id in self.vertex_map:
-                try:
-                    self.workflow.add_edge(source_id, target_id)
-                    added_edges.add(edge_key)
-                except Exception as e:
-                    logger.warning(f"Failed to add edge {source_id} -> {target_id}: {e}")
+            try:
+                self.workflow.add_edge(source_id, target_id)
+                added_edges.add(edge_key)
+            except Exception as e:
+                logger.warning(f"Failed to add edge {source_id} -> {target_id}: {e}")
+
+        # Add conditional edges for each routing cycle vertex
+        for rv_id, outgoing in routing_outgoing.items():
+            # Deduplicate target IDs while preserving order
+            seen: set[str] = set()
+            unique_targets: list[str] = []
+            for tid, _ in outgoing:
+                if tid not in seen:
+                    seen.add(tid)
+                    unique_targets.append(tid)
+
+            routing_func = create_routing_function(
+                vertex_id=rv_id,
+                successor_ids=unique_targets,
+                graph_adapter=self,
+            )
+            try:
+                self.workflow.add_conditional_edges(rv_id, routing_func)
+                logger.debug(f"Added conditional edges for cycle vertex {rv_id} -> {unique_targets}")
+            except Exception as e:
+                logger.warning(f"Failed to add conditional edges for {rv_id}: {e}")
 
         # Determine root vertices (in_degree == 0)
         root_vertices = [vid for vid, deg in self.in_degree_map.items() if deg == 0]
@@ -413,10 +481,12 @@ class LangGraphAdapter:
 
         logger.info(f"Entry point(s): {root_vertices}")
 
-        # Connect leaf vertices (no outgoing edges) to END
+        # Connect leaf vertices (no outgoing edges) to END.
+        # For routing cycle vertices, END is handled by the routing function
+        # returning END when no successor is active.
         source_ids = {e.get("source") for e in self.edges}
         for vid in self.vertex_map:
-            if vid not in source_ids:
+            if vid not in source_ids and vid not in routing_vids:
                 try:
                     self.workflow.add_edge(vid, END)
                 except Exception as e:
@@ -424,8 +494,11 @@ class LangGraphAdapter:
 
         # Compile
         try:
+            compile_kwargs: dict[str, Any] = {}
+            if self.is_cyclic:
+                compile_kwargs["recursion_limit"] = 50
             logger.info("Compiling LangGraph workflow...")
-            self.compiled_app = self.workflow.compile()
+            self.compiled_app = self.workflow.compile(**compile_kwargs)
             logger.info("LangGraph workflow compiled successfully")
         except Exception as e:
             logger.error(f"Failed to compile LangGraph workflow: {e}")
@@ -645,15 +718,10 @@ class LangGraphAdapter:
         fallback_to_env_vars: bool = False,
         event_manager=None,
     ):
-        """Run the graph with given inputs.
+        """Run the graph with given inputs via LangGraph compiled execution.
 
-        Dispatches between two execution modes:
-        - **LangGraph compiled path** (``compiled_app.ainvoke`` / ``astream``):
-          used for acyclic graphs (the common case).  ``ainvoke`` is used when
-          streaming is not needed; ``astream`` is used when an ``event_manager``
-          is provided so that per-node events reach the frontend.
-        - **Custom vertex-by-vertex path** (``_arun_custom``): fallback for
-          cyclic graphs (Loop component) that cannot be expressed as a DAG.
+        All graphs — including cyclic ones — are executed through
+        ``compiled_app.ainvoke()`` / ``compiled_app.astream()``.
 
         Args:
             inputs: List of input dictionaries (e.g., [{"input_value": "hello"}])
@@ -678,21 +746,12 @@ class LangGraphAdapter:
         # Initialize run (resets all vertex states, run_manager, etc.)
         await self.initialize_run()
 
-        # Cyclic graphs or failed compilation → custom execution
-        if self.is_cyclic or not self.compiled_app:
-            return await self._arun_custom(
-                inputs,
-                inputs_components=inputs_components,
-                types=types,
-                outputs=outputs,
-                session_id=session_id,
-                stream=stream,
-                fallback_to_env_vars=fallback_to_env_vars,
-                event_manager=event_manager,
-            )
+        if not self.compiled_app:
+            msg = "LangGraph workflow not compiled. Check graph structure for errors."
+            raise ValueError(msg)
 
         # ── LangGraph compiled graph execution ──
-        logger.info("Running graph via LangGraph compiled execution")
+        logger.info("Executing graph via compiled LangGraph")
 
         # Sort vertices (sets up vertices_to_run, run_manager, etc.)
         start_component_id = None
@@ -770,143 +829,6 @@ class LangGraphAdapter:
 
         return vertex_outputs
 
-    async def _arun_custom(
-        self,
-        inputs: list[dict[str, str]],
-        *,
-        inputs_components: list[list[str]] | None = None,
-        types: list[str | None] | None = None,
-        outputs: list[str] | None = None,
-        session_id: str | None = None,
-        stream: bool = False,
-        fallback_to_env_vars: bool = False,
-        event_manager=None,
-    ):
-        """Original custom vertex-by-vertex execution.
-
-        Used as fallback for cyclic graphs (Loop component) or when
-        compiled_app is not available.  This is the pre-migration execution
-        path preserved verbatim.
-        """
-        import asyncio as _asyncio
-        from agentcore.graph_langgraph.schema import RunOutputs
-        from agentcore.services.deps import get_chat_service
-
-        logger.info("Running graph via custom vertex-by-vertex execution (fallback)")
-
-        # Get chat service for caching
-        chat_service = get_chat_service()
-
-        start_component_id = None
-        if getattr(self, "skip_dev_logging", False):
-            from agentcore.graph_langgraph.utils import find_start_component_id
-
-            start_component_id = find_start_component_id(
-                [v.id for v in self.vertices]
-            )
-        first_layer = self.sort_vertices(start_component_id=start_component_id)
-
-        vertex_outputs = []
-
-        # Process each input
-        for idx, run_inputs in enumerate(inputs):
-            input_components = inputs_components[idx] if inputs_components and idx < len(inputs_components) else []
-
-            # Determine which outputs to collect
-            if outputs:
-                output_ids = set(outputs)
-            else:
-                output_ids = {v.id for v in self.vertices if v.is_output}
-
-            build_kwargs = dict(
-                user_id=self.user_id,
-                inputs_dict=run_inputs,
-                get_cache=chat_service.get_cache,
-                set_cache=chat_service.set_cache,
-                fallback_to_env_vars=fallback_to_env_vars,
-                event_manager=event_manager,
-            )
-
-            built_results: dict[str, object] = {}
-            completed_vertices: set[str] = set()
-
-            # Separate input vertices from non-input in first layer
-            input_ids = [vid for vid in first_layer
-                         if self.get_vertex(vid) and self.get_vertex(vid).is_input]
-            non_input_ids = [vid for vid in first_layer if vid not in input_ids]
-
-            is_orch = getattr(self, "skip_dev_logging", False)
-
-            async def _build_and_follow(vertex_id: str) -> None:
-                """Build one vertex, then recursively build its runnable successors."""
-                vertex = self.get_vertex(vertex_id)
-                if not vertex:
-                    return
-
-                if is_orch:
-                    display = getattr(vertex, "display_name", vertex_id)
-                    logger.info(f"[ORCH] Building component: {display} ({vertex_id})")
-
-                try:
-                    result = await self.build_vertex(vertex_id=vertex_id, **build_kwargs)
-                    built_results[vertex_id] = (
-                        result.result_dict if hasattr(result, 'result_dict') else result
-                    )
-                    if is_orch:
-                        logger.info(f"[ORCH] Built component: {display} ({vertex_id})")
-                except Exception:
-                    logger.exception(f"Error building vertex {vertex_id}")
-                    built_results[vertex_id] = None
-                    if is_orch:
-                        logger.error(f"[ORCH] Failed component: {display} ({vertex_id})")
-
-                completed_vertices.add(vertex_id)
-
-                # Reset per-vertex tracking
-                self.reset_inactivated_vertices()
-                self.reset_activated_vertices()
-
-                # Discover which successors are now runnable
-                next_runnable = await self.get_next_runnable_vertices(
-                    self._lock, vertex=vertex, cache=False,
-                )
-
-                if self.stop_vertex and self.stop_vertex in next_runnable:
-                    next_runnable = [self.stop_vertex]
-
-                if not next_runnable:
-                    return
-
-                # Only schedule successors whose predecessors are ALL done
-                tasks = []
-                for next_vid in next_runnable:
-                    predecessors = self.predecessor_map.get(next_vid, [])
-                    if all(p in completed_vertices for p in predecessors):
-                        tasks.append(_asyncio.create_task(_build_and_follow(next_vid)))
-
-                if tasks:
-                    await _asyncio.gather(*tasks)
-
-            # 1) Build input vertices sequentially (user message stored first)
-            for vid in input_ids:
-                await _build_and_follow(vid)
-
-            # 2) Build remaining first-layer vertices concurrently
-            if non_input_ids:
-                tasks = [_asyncio.create_task(_build_and_follow(vid))
-                         for vid in non_input_ids]
-                await _asyncio.gather(*tasks)
-
-            # Collect results only for the requested output vertices
-            run_outputs = [built_results.get(oid) for oid in (outputs or list(output_ids))]
-
-            vertex_outputs.append(RunOutputs(inputs=run_inputs, outputs=run_outputs))
-
-        # End traces
-        await self.end_all_traces_in_context()
-
-        return vertex_outputs
-    
     async def build_vertex(self, vertex_id: str, **kwargs):
         """Build a single vertex (compatibility method).
         

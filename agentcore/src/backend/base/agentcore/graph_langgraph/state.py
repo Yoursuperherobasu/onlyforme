@@ -4,21 +4,42 @@ from __future__ import annotations
 from operator import add
 from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
+
+def _merge_dicts(left: dict, right: dict) -> dict:
+    """Reducer that merges two dicts.
+
+    Used for state channels that can be written by parallel nodes
+    (e.g. ``vertices_results``, ``artifacts``, ``outputs_logs``).
+    Without this, LangGraph raises ``InvalidUpdateError`` when two
+    nodes in the same superstep both return state updates for the
+    same dict key.
+    """
+    merged = left.copy()
+    merged.update(right)
+    return merged
+
+
+def _last_value(left: str, right: str) -> str:
+    """Reducer that simply takes the latest value (last writer wins)."""
+    return right
+
+
 # EventManager is optional and only used at runtime, use string annotation
 class AgentCoreState(TypedDict):
     """State that agents through the LangGraph execution.
-    
+
     This state is passed between nodes and maintains the execution context,
     results, and events for the entire agent.
     """
-    
-    # Core execution results
-    vertices_results: dict[str, Any]  # Maps vertex_id to its built result
-    artifacts: dict[str, Any]  # Maps vertex_id to its artifacts
-    outputs_logs: dict[str, dict[str, Any]]  # Maps vertex_id to output logs
-    
-    # Current execution context
-    current_vertex: str  # ID of currently executing vertex
+
+    # Core execution results — use _merge_dicts reducer so parallel nodes
+    # can each contribute their vertex's results without conflicting.
+    vertices_results: Annotated[dict[str, Any], _merge_dicts]
+    artifacts: Annotated[dict[str, Any], _merge_dicts]
+    outputs_logs: Annotated[dict[str, Any], _merge_dicts]
+
+    # Current execution context — last writer wins for parallel nodes
+    current_vertex: Annotated[str, _last_value]
     completed_vertices: Annotated[list[str], add]  # List of completed vertex IDs
     
     # Event streaming (accumulate events as list)
