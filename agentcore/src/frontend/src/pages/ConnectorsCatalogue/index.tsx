@@ -390,7 +390,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
           {isRoot && (
             <button
               onClick={openAddModal}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg  px-4 py-2.5 text-sm font-medium !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
             >
               <Plus className="h-4 w-4" />
               Add Connector
@@ -407,7 +407,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             onClick={() => setFilter(f)}
             className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
               filter === f
-                ? "bg-primary text-primary-foreground"
+                ? "!bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
                 : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
           >
@@ -926,7 +926,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               <button
                 onClick={handleSave}
                 disabled={isSaveDisabled()}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-2 rounded-lg  px-4 py-2 text-sm font-medium !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground "
               >
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="h-4 w-4 animate-spin" />

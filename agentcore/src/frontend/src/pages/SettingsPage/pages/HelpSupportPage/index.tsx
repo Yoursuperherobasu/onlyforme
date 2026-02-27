@@ -345,9 +345,9 @@ export default function HelpSupportPage() {
               {t("Cancel")}
             </Button>
             <Button
-              variant="primary"
+              variant=""
               size="sm"
-              className="gap-1.5 text-xs"
+              className="gap-1.5 text-xs !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground "
               onClick={() =>
                 createMutation.mutate({
                   question: newQuestion.trim(),
@@ -360,7 +360,7 @@ export default function HelpSupportPage() {
                 createMutation.isPending
               }
             >
-              <Save className="h-3.5 w-3.5" />
+              <Save className="h-3.5 w-3.5 " />
               {t("Save")}
             </Button>
           </DialogFooter>

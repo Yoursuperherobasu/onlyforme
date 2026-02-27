@@ -13,6 +13,7 @@ import {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  
 
   const envSenseiResult = dotenv.config({
     path: path.resolve(__dirname, "../../.env"),
