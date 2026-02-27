@@ -292,6 +292,7 @@ class LangFuseTracer(BaseTracer):
         trace_id: str,
         trace_name: str,
         outputs: dict[str, Any] | None = None,
+        output_metadata: dict[str, Any] | None = None,
         error: Exception | None = None,
         logs: Sequence[Log | dict] = (),
     ) -> None:
@@ -314,7 +315,10 @@ class LangFuseTracer(BaseTracer):
         try:
             # v3: Update span with output before exiting
             if hasattr(span, 'update'):
-                span.update(output=serialize(output))
+                update_payload: dict[str, Any] = {"output": serialize(output)}
+                if output_metadata:
+                    update_payload["metadata"] = serialize(output_metadata)
+                span.update(**update_payload)
 
             # Exit the span context
             if span_context:

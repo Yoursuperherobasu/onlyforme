@@ -381,6 +381,7 @@ interface FetchMetricsParams {
   to_date?: string;
   search?: string;
   models?: string;
+  include_model_breakdown?: boolean;
   tz_offset?: number;
   fetch_all?: boolean;
 }
@@ -403,6 +404,7 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   if (params.to_date) searchParams.set("to_date", params.to_date);
   if (params.search) searchParams.set("search", params.search);
   if (params.models) searchParams.set("models", params.models);
+  if (params.include_model_breakdown) searchParams.set("include_model_breakdown", "true");
   // Always send timezone offset for correct date grouping
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
@@ -416,9 +418,9 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
 async function fetchSessions(params: FetchMetricsParams = {}): Promise<{ sessions: SessionListItem[]; total: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
   searchParams.set("limit", "50");
-  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const response = await api.get(`/api/observability/sessions?${searchParams.toString()}`);
@@ -441,10 +443,10 @@ async function fetchTraceDetail(traceId: string): Promise<TraceDetailResponse> {
 
 async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: AgentListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
-  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
   if (params.search) searchParams.set("search", params.search);
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const queryString = searchParams.toString();
@@ -465,9 +467,9 @@ async function fetchAgentDetail(agentId: string, params: FetchMetricsParams = {}
 
 async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ projects: ProjectListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
   const searchParams = new URLSearchParams();
-  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const queryString = searchParams.toString();
@@ -517,15 +519,6 @@ function Sparkline({ data, dataKey, color = THEME.primary, height = 40 }: {
         />
       </AreaChart>
     </ResponsiveContainer>
-  );
-}
-
-function LoadingIndicator({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 text-sm" style={{ color: THEME.textSecondary }}>
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
-      <span>{label}</span>
-    </div>
   );
 }
 
@@ -803,7 +796,7 @@ export default function ObservabilityPage(): JSX.Element {
   const [expandedObservation, setExpandedObservation] = useState<string | null>(null);
   const [fetchAllMode, setFetchAllMode] = useState(false);
 
-  // Filter state
+  // Filter state — default to 7d so data is visible on first load
   const [filters, setFilters] = useState<Filters>({
     dateRange: "7d",
     search: "",
@@ -821,6 +814,7 @@ export default function ObservabilityPage(): JSX.Element {
   // Compute date params from filter
   const dateParams = useMemo(() => ({
     ...getDateRangeParams(filters.dateRange),
+    tz_offset: getUserTimezoneOffset(),
     ...(fetchAllMode ? { fetch_all: true } : {}),
   }), [filters.dateRange, fetchAllMode]);
 
@@ -836,75 +830,81 @@ export default function ObservabilityPage(): JSX.Element {
     refetchInterval: 60000,
   });
 
+  const includeModelBreakdown = activeTab === "models";
+
   const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
-    queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(","), fetchAllMode],
+    queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(","), fetchAllMode, includeModelBreakdown],
     queryFn: () => fetchMetrics({
       ...dateParams,
       search: filters.search || undefined,
       models: filters.models.length > 0 ? filters.models.join(",") : undefined,
+      include_model_breakdown: includeModelBreakdown,
     }),
-    enabled: status?.connected,
+    enabled: !!status?.connected,
     refetchInterval: activeTab === "overview" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
   });
 
-  const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
+  const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching } = useQuery({
     queryKey: ["observability-sessions", filters.dateRange, fetchAllMode],
     queryFn: () => fetchSessions(dateParams),
-    enabled: status?.connected && (activeTab === "overview" || activeTab === "sessions"),
+    enabled: !!status?.connected && activeTab === "sessions",
     refetchInterval: activeTab === "sessions" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
   });
 
-  const { data: agentsData, isLoading: agentsLoading } = useQuery({
-    queryKey: ["observability-agents", filters.dateRange, fetchAllMode],
+  const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching } = useQuery({
+    queryKey: ["observability-agents", filters.dateRange, filters.search, fetchAllMode],
     queryFn: () => fetchAgents({
       ...dateParams,
+      search: filters.search || undefined,
     }),
-    enabled: status?.connected && (activeTab === "overview" || activeTab === "agents"),
+    enabled: !!status?.connected && activeTab === "agents",
     refetchInterval: activeTab === "agents" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
   });
 
-  const { data: projectsData, isLoading: projectsLoading } = useQuery({
+  const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching } = useQuery({
     queryKey: ["observability-projects", filters.dateRange, fetchAllMode],
     queryFn: () => fetchProjects(dateParams),
-    enabled: status?.connected && (activeTab === "projects"),
+    enabled: !!status?.connected && activeTab === "projects",
     refetchInterval: activeTab === "projects" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
   });
 
-  const { data: sessionDetail, isLoading: sessionDetailLoading } = useQuery({
+  const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching } = useQuery({
     queryKey: ["session-detail", selectedSession, filters.dateRange],
     queryFn: () => fetchSessionDetail(selectedSession!, dateParams),
     enabled: !!selectedSession,
+    staleTime: 30000,
   });
 
-  const { data: traceDetail, isLoading: traceDetailLoading } = useQuery({
+  const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError } = useQuery({
     queryKey: ["trace-detail", selectedTrace],
     queryFn: () => fetchTraceDetail(selectedTrace!),
     enabled: !!selectedTrace,
-    retry: (failureCount, error: any) => {
-      const status = error?.response?.status;
-      if (status === 404) return false;
-      return failureCount < 1;
-    },
+    staleTime: 5000,
+    retry: false,
   });
 
-  const { data: agentDetail, isLoading: agentDetailLoading } = useQuery({
-    queryKey: ["agent-detail", selectedAgent, filters.dateRange, fetchAllMode],
+  const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching } = useQuery({
+    queryKey: ["agent-detail", selectedAgent, filters.dateRange],
     queryFn: () => fetchAgentDetail(selectedAgent!, dateParams),
     enabled: !!selectedAgent,
+    staleTime: 30000,
+    placeholderData: (previousData: any) => previousData,
   });
 
-  const { data: projectDetail } = useQuery({
+  const { data: projectDetail, isLoading: projectDetailLoading } = useQuery({
     queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode],
     queryFn: () => fetchProjectDetail(selectedProject!, dateParams),
     enabled: !!selectedProject,
+    staleTime: 30000,
+    placeholderData: (previousData: any) => previousData,
   });
 
   // Get available models from metrics for filter dropdown
@@ -1092,7 +1092,7 @@ export default function ObservabilityPage(): JSX.Element {
           )}
 
           {/* Clear Filters */}
-          {(filters.search || filters.models.length > 0 || filters.dateRange !== "today") && (
+          {(filters.search || filters.models.length > 0 || filters.dateRange !== "7d") && (
             <Button
               size="sm"
               variant="ghost"
@@ -1107,6 +1107,15 @@ export default function ObservabilityPage(): JSX.Element {
               <X className="h-4 w-4 mr-1" />
               Clear
             </Button>
+          )}
+
+          {/* Global refreshing indicator — shows a subtle spinner whenever any query is background-fetching */}
+          {(metricsFetching || agentsFetching || sessionsFetching || projectsFetching) &&
+           !(metricsLoading || agentsLoading || sessionsLoading || projectsLoading) && (
+            <div className="flex items-center gap-1.5 ml-auto">
+              <div className="h-3.5 w-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: THEME.primary, borderTopColor: 'transparent' }} />
+              <span className="text-xs" style={{ color: THEME.textSecondary }}>Updating…</span>
+            </div>
           )}
 
           {/* Active Filters Display */}
@@ -1159,14 +1168,6 @@ export default function ObservabilityPage(): JSX.Element {
                 onLoadAll={() => setFetchAllMode(true)}
                 isLoading={metricsLoading}
               />
-            )}
-            {metricsFetching && !metricsLoading && (
-              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-                <LoadingIndicator label="Updating metrics for selected date range..." />
-                <span className="text-xs" style={{ color: THEME.textSecondary }}>
-                  Data will refresh automatically
-                </span>
-              </div>
             )}
             {metricsLoading ? (
               <div className="grid gap-4 md:grid-cols-4">
@@ -2177,7 +2178,7 @@ export default function ObservabilityPage(): JSX.Element {
               {selectedSession}
             </DialogDescription>
           </DialogHeader>
-          {sessionDetailLoading ? (
+          {sessionDetailLoading || sessionDetailFetching ? (
             <div className="flex flex-col items-center justify-center py-12 gap-3">
               <div
                 className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
@@ -2245,7 +2246,7 @@ export default function ObservabilityPage(): JSX.Element {
               {traceDetail?.name || selectedTrace}
             </DialogDescription>
           </DialogHeader>
-          {traceDetailLoading ? (
+          {traceDetailLoading || traceDetailFetching ? (
             <div className="flex flex-col items-center justify-center py-12 gap-3">
               <div
                 className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
@@ -2373,6 +2374,14 @@ export default function ObservabilityPage(): JSX.Element {
                 )}
               </div>
             </div>
+          ) : traceDetailError ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <AlertCircle className="h-10 w-10" style={{ color: THEME.error }} />
+              <p className="text-sm font-semibold" style={{ color: THEME.textMain }}>Trace could not be loaded</p>
+              <p className="text-xs text-center max-w-xs" style={{ color: THEME.textSecondary }}>
+                The trace may have been deleted, or is not accessible in the current time range. Try widening the date filter.
+              </p>
+            </div>
           ) : null}
         </DialogContent>
       </Dialog>
@@ -2394,7 +2403,7 @@ export default function ObservabilityPage(): JSX.Element {
               />
               <p className="text-sm" style={{ color: THEME.textSecondary }}>Loading agent details…</p>
             </div>
-          ) : agentDetail && (
+          ) : agentDetail ? (
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 {[
@@ -2445,7 +2454,7 @@ export default function ObservabilityPage(): JSX.Element {
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -2458,7 +2467,7 @@ export default function ObservabilityPage(): JSX.Element {
               {projectDetail?.project_name || "Project Details"}
             </DialogTitle>
             <DialogDescription style={{ color: THEME.textSecondary }}>
-              {projectDetail?.agent_count ?? 0} agents
+              {projectDetailLoading && !projectDetail ? "Loading…" : `${projectDetail?.agent_count ?? 0} agents`}
             </DialogDescription>
           </DialogHeader>
           {projectDetail && (

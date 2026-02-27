@@ -545,6 +545,15 @@ def get_attr(obj, *attrs, default=None):
     return default
 
 
+def _enum_str(val) -> str | None:
+    """Convert a potentially-enum value (e.g. Langfuse v3 ObservationType) to a plain string."""
+    if val is None:
+        return None
+    if hasattr(val, 'value'):
+        return str(val.value)
+    return str(val)
+
+
 def parse_datetime(value) -> datetime | None:
     """Parse datetime from various formats."""
     if value is None:
@@ -574,11 +583,17 @@ def _trace_cache_key(
     to_timestamp: datetime | None,
     name: str | None,
     tags: list[str] | None,
+    session_id: str | None = None,
+    effective_limit: int | None = None,
+    fetch_all: bool = False,
 ) -> str:
     tags_key = ",".join(sorted(tags or []))
     from_key = from_timestamp.isoformat() if from_timestamp else ""
     to_key = to_timestamp.isoformat() if to_timestamp else ""
-    return f"{user_id}|{from_key}|{to_key}|{name or ''}|{tags_key}"
+    return (
+        f"{user_id}|{from_key}|{to_key}|{name or ''}|{tags_key}|"
+        f"{session_id or ''}|{effective_limit or 0}|{int(fetch_all)}"
+    )
 
 
 def _cache_traces(cache_key: str, traces: list[Any]) -> None:
@@ -957,17 +972,27 @@ def _get_trace_metrics(
     trace_id = _get_trace_id(trace)
     now_mono = time.monotonic()
 
+    def _needs_enrichment(data: dict[str, Any]) -> bool:
+        return (
+            int(data.get("total_tokens") or 0) == 0
+            and float(data.get("total_cost") or 0.0) == 0.0
+            and not list(data.get("models") or [])
+        )
+
     # Check request-scoped metrics cache first (within same request)
     if trace_id in _REQUEST_METRICS_CACHE:
-        return dict(_REQUEST_METRICS_CACHE[trace_id])
+        request_cached = dict(_REQUEST_METRICS_CACHE[trace_id])
+        if not (allow_observation_fallback and trace_id and _needs_enrichment(request_cached)):
+            return request_cached
 
     # Check process-level TTL cache
     if trace_id:
         cached = _TRACE_METRICS_CACHE.get(trace_id)
         if cached and (now_mono - float(cached.get("ts", 0))) <= _TRACE_METRICS_CACHE_TTL_SECONDS:
             result = dict(cached.get("metrics", {}))
-            _REQUEST_METRICS_CACHE[trace_id] = result
-            return result
+            if not (allow_observation_fallback and _needs_enrichment(result)):
+                _REQUEST_METRICS_CACHE[trace_id] = result
+                return result
 
     (
         total_tokens,
@@ -1091,7 +1116,16 @@ def fetch_traces_from_langfuse(
     effective_limit = 5000 if fetch_all else limit
     # Langfuse API has a max limit of 100 per request
     page_size = min(100, effective_limit)
-    cache_key = _trace_cache_key(user_id, from_timestamp, to_timestamp, name, tags)
+    cache_key = _trace_cache_key(
+        user_id,
+        from_timestamp,
+        to_timestamp,
+        name,
+        tags,
+        session_id=session_id,
+        effective_limit=effective_limit,
+        fetch_all=fetch_all,
+    )
     now_mono = time.monotonic()
     cached_entry = _TRACE_FETCH_CACHE.get(cache_key)
     stale_traces: list[Any] = []
@@ -1099,7 +1133,7 @@ def fetch_traces_from_langfuse(
         cached_age = now_mono - float(cached_entry.get("ts", 0))
         cached_traces = cached_entry.get("traces", []) or []
         if cached_age <= _TRACE_CACHE_TTL_SECONDS and cached_traces:
-            return list(cached_traces)[:limit]
+            return list(cached_traces)[:effective_limit]
         if cached_age <= _TRACE_CACHE_STALE_SECONDS and cached_traces:
             stale_traces = list(cached_traces)
 
@@ -1479,8 +1513,14 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
         except Exception as e:
             logger.debug(f"client.client.observations.list failed for trace {trace_id}: {e}")
 
-    # Cache even empty results to prevent hammering Langfuse for the same missing trace.
-    final_observations = _cache_and_return_observations(trace_id_str, observations)
+    # Only persist NON-EMPTY results in the 60s cache.
+    # Empty results must NOT be cached persistently — if Langfuse returned nothing this request
+    # (API hiccup, indexing lag, etc.) the next request should try fresh.
+    # The request-scoped cache still deduplicates within the same API call.
+    if observations:
+        final_observations = _cache_and_return_observations(trace_id_str, observations)
+    else:
+        final_observations = observations
     _REQUEST_OBSERVATIONS_CACHE[trace_id_str] = list(final_observations)
     return final_observations
 
@@ -1611,8 +1651,14 @@ def parse_observation(obs: Any) -> ObservationResponse:
     latency_ms = calculate_latency_ms(start_time, end_time)
     ttft_ms = calculate_latency_ms(start_time, completion_start) if completion_start else None
 
+    metadata = _normalize_metadata(get_attr(obs, 'metadata', 'meta', default={}) or {})
+
     # Extract usage data
+    # Langfuse v3: `usage` is deprecated; actual counts live in `usage_details`
+    # (Dict[str, int] e.g. {"input": 100, "output": 50, "total": 150}).
+    # Always read `usage` first for back-compat, then fall back to `usage_details`.
     usage = get_attr(obs, 'usage', default={})
+    usage_details = get_attr(obs, 'usage_details', 'usageDetails', default={}) or {}
     if isinstance(usage, dict):
         input_tokens = usage.get('input') or usage.get('inputTokens') or usage.get('prompt_tokens') or 0
         output_tokens = usage.get('output') or usage.get('outputTokens') or usage.get('completion_tokens') or 0
@@ -1626,8 +1672,50 @@ def parse_observation(obs: Any) -> ObservationResponse:
         output_tokens = get_attr(obs, 'output_tokens', 'outputTokens', 'completionTokens', default=0)
         total_tokens = input_tokens + output_tokens
 
-    # Extract cost data - Langfuse SDK returns snake_case attributes
-    # Try all variants: snake_case (SDK), camelCase (API), and calculated versions
+    # Langfuse v3 primary token source: usage_details dict wins when usage is empty/zero
+    if not (input_tokens or output_tokens or total_tokens) and usage_details:
+        if isinstance(usage_details, dict):
+            input_tokens = int(usage_details.get('input', 0) or 0)
+            output_tokens = int(usage_details.get('output', 0) or 0)
+            total_tokens = int(usage_details.get('total', 0) or (input_tokens + output_tokens))
+        elif hasattr(usage_details, 'input'):
+            input_tokens = int(getattr(usage_details, 'input', 0) or 0)
+            output_tokens = int(getattr(usage_details, 'output', 0) or 0)
+            total_tokens = int(getattr(usage_details, 'total', 0) or (input_tokens + output_tokens))
+
+    # Agentcore fallback: custom usage metadata emitted by components (e.g. NeMo block path)
+    usage_from_metadata = metadata.get('agentcore_usage')
+    if isinstance(usage_from_metadata, str):
+        usage_from_metadata = _normalize_metadata(usage_from_metadata)
+    if not isinstance(usage_from_metadata, dict):
+        usage_from_metadata = {}
+
+    if not (input_tokens or output_tokens or total_tokens) and usage_from_metadata:
+        input_tokens = int(
+            usage_from_metadata.get('input_tokens')
+            or usage_from_metadata.get('inputTokens')
+            or usage_from_metadata.get('prompt_tokens')
+            or usage_from_metadata.get('input')
+            or 0
+        )
+        output_tokens = int(
+            usage_from_metadata.get('output_tokens')
+            or usage_from_metadata.get('outputTokens')
+            or usage_from_metadata.get('completion_tokens')
+            or usage_from_metadata.get('output')
+            or 0
+        )
+        total_tokens = int(
+            usage_from_metadata.get('total_tokens')
+            or usage_from_metadata.get('totalTokens')
+            or usage_from_metadata.get('total')
+            or (input_tokens + output_tokens)
+        )
+
+    # Extract cost data
+    # Langfuse v3: `cost_details` (Dict[str, float]) is the primary source;
+    # `calculated_*_cost` fields are deprecated but kept as fallback.
+    cost_details = get_attr(obs, 'cost_details', 'costDetails', default={}) or {}
     input_cost = float(get_attr(obs,
         'calculated_input_cost', 'calculatedInputCost',
         'input_cost', 'inputCost', default=0) or 0)
@@ -1639,13 +1727,29 @@ def parse_observation(obs: Any) -> ObservationResponse:
         'total_cost', 'totalCost', default=0) or 0)
     if not total_cost and (input_cost or output_cost):
         total_cost = input_cost + output_cost
+    # Langfuse v3 primary cost source: cost_details wins when calculated fields are 0
+    if not (input_cost or output_cost or total_cost) and cost_details:
+        if isinstance(cost_details, dict):
+            input_cost = float(cost_details.get('input', 0) or 0)
+            output_cost = float(cost_details.get('output', 0) or 0)
+            total_cost = float(cost_details.get('total', 0) or 0)
+            if not total_cost and (input_cost or output_cost):
+                total_cost = input_cost + output_cost
+
+    model = get_attr(obs, 'model')
+    if not model and usage_from_metadata:
+        model = (
+            usage_from_metadata.get('model')
+            or usage_from_metadata.get('model_name')
+            or usage_from_metadata.get('generation_model')
+        )
 
     return ObservationResponse(
         id=str(obs_id),
         trace_id=str(trace_id),
         name=get_attr(obs, 'name'),
-        type=get_attr(obs, 'type'),
-        model=get_attr(obs, 'model'),
+        type=_enum_str(get_attr(obs, 'type')),
+        model=model,
         start_time=start_time,
         end_time=end_time,
         completion_start_time=completion_start,
@@ -1659,8 +1763,8 @@ def parse_observation(obs: Any) -> ObservationResponse:
         total_cost=total_cost,
         input=get_attr(obs, 'input'),
         output=get_attr(obs, 'output'),
-        metadata=get_attr(obs, 'metadata'),
-        level=get_attr(obs, 'level'),
+        metadata=metadata,
+        level=_enum_str(get_attr(obs, 'level')),
         status_message=get_attr(obs, 'status_message', 'statusMessage'),
         parent_observation_id=get_attr(obs, 'parent_observation_id', 'parentObservationId'),
     )
@@ -2038,12 +2142,23 @@ async def get_trace_detail(
         trace = None
 
         # Primary: client.fetch_trace(trace_id)
+        # Try both UUID formats: with and without hyphens (Langfuse SDKs differ on this).
         if hasattr(client, 'fetch_trace'):
-            try:
-                response = client.fetch_trace(trace_id)
-                trace = response.data if hasattr(response, 'data') else response
-            except Exception as e:
-                logger.debug(f"fetch_trace failed: {e}")
+            _tid_str = str(trace_id)
+            _tid_variants: list[str] = [_tid_str]
+            if '-' not in _tid_str and len(_tid_str) == 32:
+                _tid_variants.append(f"{_tid_str[:8]}-{_tid_str[8:12]}-{_tid_str[12:16]}-{_tid_str[16:20]}-{_tid_str[20:]}")
+            elif '-' in _tid_str:
+                _tid_variants.append(_tid_str.replace('-', ''))
+            for _tid_v in _tid_variants:
+                try:
+                    response = client.fetch_trace(_tid_v)
+                    _t = response.data if hasattr(response, 'data') else response
+                    if _t:
+                        trace = _t
+                        break
+                except Exception as e:
+                    logger.debug(f"fetch_trace({_tid_v!r}) failed: {e}")
 
         # Fallback for v3: client.api.trace.get(trace_id)
         if not trace and is_v3_client(client) and hasattr(client, 'api') and hasattr(client.api, 'trace'):
@@ -2059,17 +2174,24 @@ async def get_trace_detail(
             except Exception as e:
                 logger.debug(f"v3 traces.get failed: {e}")
 
-        # Last resort: scan recent traces and match by id variants.
+        # Last resort: scan the in-process trace cache (no new API calls).
+        # The trace is almost always cached from the session/agent list that the user
+        # navigated from. Avoids the previous 300-trace API fetch (3 pages * ~3s = 9s).
         if not trace:
-            recent_traces = fetch_traces_from_langfuse(
-                client,
-                str(current_user.id),
-                limit=300,
-            )
-            for candidate in recent_traces:
-                candidate_id = str(get_attr(candidate, "id", "trace_id", "traceId", default="") or "")
-                if candidate_id == str(trace_id):
-                    trace = candidate
+            _user_id_str = str(current_user.id)
+            _norm_req_id = str(trace_id).replace('-', '').lower()
+            for _ck, _ce in list(_TRACE_FETCH_CACHE.items()):
+                if not _ck.startswith(f"{_user_id_str}|"):
+                    continue
+                for _candidate in (_ce.get("traces", []) or []):
+                    _cid = str(get_attr(_candidate, "id", "trace_id", "traceId", default="") or "")
+                    if _cid.replace('-', '').lower() == _norm_req_id:
+                        _cand_uids = _extract_trace_user_ids(_candidate)
+                        if not _cand_uids or _user_id_str in _cand_uids:
+                            trace = _candidate
+                            logger.debug(f"Found trace {trace_id} in process cache (no API call)")
+                            break
+                if trace:
                     break
 
         if not trace:
@@ -2094,29 +2216,59 @@ async def get_trace_detail(
                 resolved_trace_id,
             )
 
-        # OPTIMIZATION: Parallelize observation and score fetching
+        # Fast path: the full trace object returned by fetch_trace() sometimes embeds
+        # observations. Only use them if they carry meaningful data — in Langfuse v3 the
+        # embedded objects may be lightweight summaries with usage=0 and name=None.
+        # We validate by parsing the embedded obs and checking that at least one has a
+        # non-zero token count or a real name before trusting the fast path.
         import asyncio
-        obs_task = asyncio.create_task(asyncio.to_thread(
-            lambda: fetch_observations_for_trace(client, resolved_trace_id)
-        ))
-        scores_task = asyncio.create_task(asyncio.to_thread(
-            lambda: fetch_scores_for_trace(client, resolved_trace_id, str(current_user.id), limit=200)
-        ))
+        _embedded_obs = get_attr(trace, "observations", default=None)
+        _use_embedded = False
+        if _embedded_obs and isinstance(_embedded_obs, (list, tuple)) and len(_embedded_obs) > 0:
+            _parsed_preview = [parse_observation(o) for o in _embedded_obs]
+            _has_tokens = any(p.total_tokens > 0 for p in _parsed_preview)
+            _has_names = any(p.name for p in _parsed_preview)
+            _use_embedded = _has_tokens or _has_names
+            if not _use_embedded:
+                logger.debug(
+                    f"Trace {resolved_trace_id}: embedded obs have no names/tokens — "
+                    "skipping fast path, fetching observations properly"
+                )
+        if _use_embedded:
+            raw_observations: list = list(_embedded_obs)
+            logger.debug(f"Trace {resolved_trace_id}: using {len(raw_observations)} embedded observations (no extra API call)")
+            # Seed process cache so subsequent requests for same trace are instant
+            _cache_and_return_observations(resolved_trace_id, raw_observations)
+            fetched_scores_future = asyncio.create_task(asyncio.to_thread(
+                lambda: fetch_scores_for_trace(client, resolved_trace_id, str(current_user.id), limit=200)
+            ))
+            fetched_scores = await fetched_scores_future
+            if isinstance(fetched_scores, Exception):
+                logger.warning(f"Failed to fetch scores: {fetched_scores}")
+                fetched_scores = []
+        else:
+            # No embedded observations — fetch observations and scores in parallel
+            obs_task = asyncio.create_task(asyncio.to_thread(
+                lambda: fetch_observations_for_trace(client, resolved_trace_id)
+            ))
+            scores_task = asyncio.create_task(asyncio.to_thread(
+                lambda: fetch_scores_for_trace(client, resolved_trace_id, str(current_user.id), limit=200)
+            ))
 
-        # Wait for both in parallel
-        raw_observations, fetched_scores = await asyncio.gather(obs_task, scores_task, return_exceptions=True)
+            # Wait for both in parallel
+            raw_observations, fetched_scores = await asyncio.gather(obs_task, scores_task, return_exceptions=True)
 
-        # Handle exceptions from parallel tasks
-        if isinstance(raw_observations, Exception):
-            logger.warning(f"Failed to fetch observations: {raw_observations}")
-            raw_observations = []
-        if isinstance(fetched_scores, Exception):
-            logger.warning(f"Failed to fetch scores: {fetched_scores}")
-            fetched_scores = []
+            # Handle exceptions from parallel tasks
+            if isinstance(raw_observations, Exception):
+                logger.warning(f"Failed to fetch observations: {raw_observations}")
+                raw_observations = []
+            if isinstance(fetched_scores, Exception):
+                logger.warning(f"Failed to fetch scores: {fetched_scores}")
+                fetched_scores = []
 
-        # Fallback for alternative trace ID if nothing found
-        if not raw_observations and resolved_trace_id != requested_trace_id:
-            raw_observations = fetch_observations_for_trace(client, requested_trace_id)
+            # Fallback for alternative trace ID if nothing found
+            if not raw_observations and resolved_trace_id != requested_trace_id:
+                raw_observations = fetch_observations_for_trace(client, requested_trace_id)
 
         observations = [parse_observation(obs) for obs in (raw_observations or [])]
 
@@ -2201,8 +2353,8 @@ async def get_trace_detail(
             output=get_attr(trace, 'output'),
             metadata=get_attr(trace, 'metadata'),
             tags=get_attr(trace, 'tags', default=[]) or [],
-            level=get_attr(trace, 'level'),
-            status=get_attr(trace, 'status'),
+            level=_enum_str(get_attr(trace, 'level')),
+            status=_enum_str(get_attr(trace, 'status')),
         )
 
     except HTTPException:
@@ -2260,28 +2412,13 @@ async def get_user_sessions(
                 fetched_trace_count=cached.get("fetched_trace_count", 0),
             )
         
-        # === STALE CACHE: Return immediately + trigger background refresh ===
+        # === STALE CACHE: fetch fresh synchronously ===
+        # We currently don't have a dedicated sessions background fetch task,
+        # so returning stale data here can hide newly created traces.
         if cache_meta["is_stale"] and cache_key in _SESSIONS_CACHE:
-            logger.debug(f"Sessions cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s, triggering refresh")
-            cached = _SESSIONS_CACHE[cache_key]
-            
-            # Trigger background refresh
-            await _trigger_background_refresh(
-                background_tasks,
-                cache_key,
-                {
-                    "user_id": user_id,
-                    "cache_key": cache_key,
-                    "from_date": from_date,
-                    "to_date": to_date,
-                    "search": search,
-                    "fetch_all": fetch_all,
-                }
-            )
-            
-            return SessionsListResponse(
-                **cached["data"],
-                fetched_trace_count=cached.get("fetched_trace_count", 0),
+            logger.debug(
+                f"Sessions cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s; "
+                "fetching fresh synchronously"
             )
 
     # === EXPIRED/MISSING CACHE: Fetch fresh data ===
@@ -2482,37 +2619,58 @@ async def get_session_detail(
         models_used: dict[str, dict] = {}
         timestamps = []
 
+        # Small fallback budget: only call observations if trace-level data is completely absent
+        fallback_budget: dict[str, int] = {"remaining": min(3, len(session_traces))}
+
         for trace in session_traces:
             trace_id = _get_trace_id(trace)
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
             if timestamp:
                 timestamps.append(timestamp)
 
-            # Fetch observations
-            try:
-                observations = fetch_observations_for_trace(client, str(trace_id))
-                parsed_obs = [parse_observation(obs) for obs in observations]
-            except:
-                parsed_obs = []
+            # Fast path: use trace-level metrics (already cached from session-list computation).
+            # This avoids N sequential observation API calls (previously 10+ s per session click).
+            trace_metrics = _get_trace_metrics(
+                client, trace,
+                allow_observation_fallback=True,
+                fallback_budget=fallback_budget,
+            )
+            t_tokens = int(trace_metrics["total_tokens"])
+            t_input = int(trace_metrics["input_tokens"])
+            t_output = int(trace_metrics["output_tokens"])
+            t_cost = float(trace_metrics["total_cost"])
+            t_latency = trace_metrics["latency_ms"]
+            t_models = list(trace_metrics["models"])
+            t_obs_count = int(trace_metrics["observation_count"] or 0)
 
-            total_observations += len(parsed_obs)
+            total_tokens += t_tokens
+            input_tokens += t_input
+            output_tokens += t_output
+            total_cost += t_cost
+            total_observations += t_obs_count
 
-            for obs in parsed_obs:
-                total_tokens += obs.total_tokens
-                input_tokens += obs.input_tokens
-                output_tokens += obs.output_tokens
-                total_cost += obs.total_cost
-                if obs.latency_ms:
-                    latencies.append(obs.latency_ms)
+            if t_latency:
+                latencies.append(t_latency)
 
-                if obs.model:
-                    if obs.model not in models_used:
-                        models_used[obs.model] = {"tokens": 0, "cost": 0.0, "calls": 0}
-                    models_used[obs.model]["tokens"] += obs.total_tokens
-                    models_used[obs.model]["cost"] += obs.total_cost
-                    models_used[obs.model]["calls"] += 1
+            for model in t_models:
+                if model not in models_used:
+                    models_used[model] = {"tokens": 0, "cost": 0.0, "calls": 0}
+                models_used[model]["tokens"] += t_tokens
+                models_used[model]["cost"] += t_cost
+                models_used[model]["calls"] += 1
 
-            trace_item = parse_trace_to_list_item(trace, parsed_obs)
+            trace_item = TraceListItem(
+                id=str(trace_id),
+                name=get_attr(trace, 'name'),
+                session_id=get_attr(trace, 'session_id', 'sessionId'),
+                timestamp=timestamp,
+                total_tokens=t_tokens,
+                total_cost=t_cost,
+                latency_ms=t_latency,
+                models_used=t_models,
+                observation_count=t_obs_count,
+                level=get_attr(trace, 'level'),
+            )
             traces.append(trace_item)
 
         # Sort traces by timestamp
@@ -3305,7 +3463,7 @@ async def get_user_agents(
         # Pass 2: Aggregate ALL traces by session, grouping by agent
         agents_data: dict[str, dict] = {}
         processed_traces: set[str] = set()
-        fallback_budget = {"remaining": min(120, len(raw_traces))}
+        fallback_budget = {"remaining": min(10, len(raw_traces) // 10)}
 
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id')
@@ -3334,7 +3492,7 @@ async def get_user_agents(
             trace_metrics = _get_trace_metrics(
                 client,
                 trace,
-                allow_observation_fallback=True,
+                allow_observation_fallback=False,
                 fallback_budget=fallback_budget,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
@@ -3476,21 +3634,16 @@ async def get_agent_detail(
         agents_by_id = {str(agent.id): agent}
         agents_by_name = {agent.name: agent}
 
-        # Parse date filters
-        from_timestamp = None
-        to_timestamp = None
-        if from_date:
-            try:
-                from_timestamp = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid from_date format")
-        if to_date:
-            try:
-                to_timestamp = datetime.strptime(to_date, "%Y-%m-%d").replace(
-                    hour=23, minute=59, second=59, tzinfo=timezone.utc
-                )
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid to_date format")
+        # Parse date filters with timezone correction — MUST use _compute_date_range
+        # (not manual UTC parsing) so the window aligns with what project_detail and
+        # the agents list show. Manual UTC parsing ignores tz_offset and produces a
+        # window up to UTC_offset hours narrower, hiding timezone-boundary traces.
+        from_timestamp, to_timestamp = _compute_date_range(
+            from_date,
+            to_date,
+            tz_offset,
+            default_days=None,
+        )
 
         # Fetch all traces
         raw_traces = fetch_traces_from_langfuse(
@@ -3544,6 +3697,8 @@ async def get_agent_detail(
             "trace_count": 0, "observation_count": 0, "total_tokens": 0, "total_cost": 0.0
         })
         processed_traces: set[str] = set()
+        # Small observation fallback budget so metrics are accurate without hammering Langfuse.
+        _agent_detail_fallback_budget: dict[str, int] = {"remaining": min(10, len(raw_traces) // 5)}
 
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id')
@@ -3566,69 +3721,36 @@ async def get_agent_detail(
 
             processed_traces.add(trace_id)
 
-            # Fetch observations
-            try:
-                observations = fetch_observations_for_trace(client, str(trace_id))
-                parsed_obs = [parse_observation(obs) for obs in observations]
-            except:
-                parsed_obs = []
+            # Fast path: trace-level metrics (cached — zero extra API calls).
+            # Mirrors the fix already applied to session_detail.
+            t_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=True,
+                fallback_budget=_agent_detail_fallback_budget,
+            )
+            trace_tokens = int(t_metrics["total_tokens"])
+            trace_input_tokens = int(t_metrics["input_tokens"])
+            trace_output_tokens = int(t_metrics["output_tokens"])
+            trace_cost = float(t_metrics["total_cost"])
+            trace_latency = t_metrics["latency_ms"]
+            trace_level_models: list[str] = list(t_metrics["models"])
+            trace_obs_count = int(t_metrics.get("observation_count") or 0)
+            trace_error_count = int(t_metrics.get("error_count") or 0)
 
-            total_observations += len(parsed_obs)
-
-            trace_tokens = 0
-            trace_cost = 0.0
-            trace_input_tokens = 0
-            trace_output_tokens = 0
-            trace_level_models: list[str] = []  # models collected from whichever path runs
-
-            if parsed_obs:
-                for obs in parsed_obs:
-                    total_tokens += obs.total_tokens
-                    input_tokens += obs.input_tokens
-                    output_tokens += obs.output_tokens
-                    total_cost += obs.total_cost
-                    trace_tokens += obs.total_tokens
-                    trace_cost += obs.total_cost
-                    trace_input_tokens += obs.input_tokens
-                    trace_output_tokens += obs.output_tokens
-
-                    if obs.latency_ms:
-                        latencies.append(obs.latency_ms)
-
-                    if obs.model:
-                        if obs.model not in models_used:
-                            models_used[obs.model] = {"tokens": 0, "cost": 0.0, "calls": 0}
-                        models_used[obs.model]["tokens"] += obs.total_tokens
-                        models_used[obs.model]["cost"] += obs.total_cost
-                        models_used[obs.model]["calls"] += 1
-                        if obs.model not in trace_level_models:
-                            trace_level_models.append(obs.model)
-            else:
-                # No observations returned — fall back to trace-level metrics so token
-                # counts in the detail view stay consistent with the list view.
-                t_metrics = _get_trace_metrics(
-                    client,
-                    trace,
-                    allow_observation_fallback=False,
-                )
-                trace_tokens = int(t_metrics["total_tokens"])
-                trace_input_tokens = int(t_metrics["input_tokens"])
-                trace_output_tokens = int(t_metrics["output_tokens"])
-                trace_cost = float(t_metrics["total_cost"])
-                total_tokens += trace_tokens
-                input_tokens += trace_input_tokens
-                output_tokens += trace_output_tokens
-                total_cost += trace_cost
-                if t_metrics["latency_ms"] is not None:
-                    latencies.append(t_metrics["latency_ms"])
-                for model_name in t_metrics["models"]:
-                    if model_name not in models_used:
-                        models_used[model_name] = {"tokens": 0, "cost": 0.0, "calls": 0}
-                    models_used[model_name]["tokens"] += trace_tokens
-                    models_used[model_name]["cost"] += trace_cost
-                    models_used[model_name]["calls"] += 1
-                    if model_name not in trace_level_models:
-                        trace_level_models.append(model_name)
+            total_tokens += trace_tokens
+            input_tokens += trace_input_tokens
+            output_tokens += trace_output_tokens
+            total_cost += trace_cost
+            total_observations += trace_obs_count
+            if trace_latency is not None:
+                latencies.append(trace_latency)
+            for model_name in trace_level_models:
+                if model_name not in models_used:
+                    models_used[model_name] = {"tokens": 0, "cost": 0.0, "calls": 0}
+                models_used[model_name]["tokens"] += trace_tokens
+                models_used[model_name]["cost"] += trace_cost
+                models_used[model_name]["calls"] += 1
 
             if timestamp:
                 timestamps.append(timestamp)
@@ -3640,7 +3762,7 @@ async def get_agent_detail(
                     date_str = timestamp.strftime('%Y-%m-%d')
                 if is_agent_trace:
                     daily_data[date_str]["trace_count"] += 1
-                daily_data[date_str]["observation_count"] += len(parsed_obs)
+                daily_data[date_str]["observation_count"] += trace_obs_count
                 daily_data[date_str]["total_tokens"] += trace_tokens
                 daily_data[date_str]["total_cost"] += trace_cost
 
@@ -3664,10 +3786,7 @@ async def get_agent_detail(
                     sessions_data[session_id]["timestamps"].append(timestamp)
                 if trace_level_models:
                     sessions_data[session_id]["models"].update(trace_level_models)
-                if parsed_obs:
-                    sessions_data[session_id]["error_count"] += sum(
-                        1 for o in parsed_obs if (o.level or "").upper() in {"ERROR", "WARNING"}
-                    )
+                sessions_data[session_id]["error_count"] += trace_error_count
 
         # Build sessions list
         sessions = []
@@ -3842,7 +3961,7 @@ async def get_user_projects(
 
         is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
 
-        fallback_budget = {"remaining": min(120, len(raw_traces))}
+        fallback_budget = {"remaining": min(10, len(raw_traces) // 10)}
 
         # Aggregate by project
         projects_data: dict[str, dict] = {}
@@ -3864,7 +3983,7 @@ async def get_user_projects(
             trace_metrics = _get_trace_metrics(
                 client,
                 trace,
-                allow_observation_fallback=True,
+                allow_observation_fallback=False,
                 fallback_budget=fallback_budget,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
@@ -4035,6 +4154,7 @@ async def get_project_detail(
         daily_data: dict[str, dict] = defaultdict(lambda: {
             "trace_count": 0, "observation_count": 0, "total_tokens": 0, "total_cost": 0.0
         })
+        fallback_budget: dict[str, int] = {"remaining": min(10, len(raw_traces) // 10)}
 
         for trace in raw_traces:
             matched_fid, matched_fname = _match_trace_to_agent(trace, agents_by_id, agents_by_name)
@@ -4051,35 +4171,34 @@ async def get_project_detail(
             if timestamp:
                 timestamps.append(timestamp)
 
-            # Fetch observations
-            try:
-                observations = fetch_observations_for_trace(client, str(trace_id))
-                parsed_obs = [parse_observation(obs) for obs in observations]
-            except:
-                parsed_obs = []
+            trace_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=False,
+                fallback_budget=fallback_budget,
+            )
+            trace_tokens = int(trace_metrics["total_tokens"])
+            trace_input_tokens = int(trace_metrics["input_tokens"])
+            trace_output_tokens = int(trace_metrics["output_tokens"])
+            trace_cost = float(trace_metrics["total_cost"])
+            trace_latency = trace_metrics["latency_ms"]
+            trace_obs_count = int(trace_metrics.get("observation_count") or 0)
+            trace_models = list(trace_metrics.get("models") or [])
 
-            total_observations += len(parsed_obs)
+            total_observations += trace_obs_count
+            total_tokens += trace_tokens
+            input_tokens += trace_input_tokens
+            output_tokens += trace_output_tokens
+            total_cost += trace_cost
+            if trace_latency is not None:
+                latencies.append(trace_latency)
 
-            trace_tokens = 0
-            trace_cost = 0.0
-
-            for obs in parsed_obs:
-                total_tokens += obs.total_tokens
-                input_tokens += obs.input_tokens
-                output_tokens += obs.output_tokens
-                total_cost += obs.total_cost
-                trace_tokens += obs.total_tokens
-                trace_cost += obs.total_cost
-
-                if obs.latency_ms:
-                    latencies.append(obs.latency_ms)
-
-                if obs.model:
-                    if obs.model not in models_used:
-                        models_used[obs.model] = {"tokens": 0, "cost": 0.0, "calls": 0}
-                    models_used[obs.model]["tokens"] += obs.total_tokens
-                    models_used[obs.model]["cost"] += obs.total_cost
-                    models_used[obs.model]["calls"] += 1
+            for model_name in trace_models:
+                if model_name not in models_used:
+                    models_used[model_name] = {"tokens": 0, "cost": 0.0, "calls": 0}
+                models_used[model_name]["tokens"] += trace_tokens
+                models_used[model_name]["cost"] += trace_cost
+                models_used[model_name]["calls"] += 1
 
             # Per-agent aggregation
             if matched_fid not in agents_data:
@@ -4098,8 +4217,9 @@ async def get_project_detail(
             agents_data[matched_fid]["trace_count"] += 1
             agents_data[matched_fid]["total_tokens"] += trace_tokens
             agents_data[matched_fid]["total_cost"] += trace_cost
-            agents_data[matched_fid]["models"].update(o.model for o in parsed_obs if o.model)
-            agents_data[matched_fid]["latencies"].extend(o.latency_ms for o in parsed_obs if o.latency_ms)
+            agents_data[matched_fid]["models"].update(trace_models)
+            if trace_latency is not None:
+                agents_data[matched_fid]["latencies"].append(trace_latency)
             if session_id:
                 agents_data[matched_fid]["sessions"].add(session_id)
             if timestamp:
@@ -4111,7 +4231,7 @@ async def get_project_detail(
                 else:
                     date_str = timestamp.strftime('%Y-%m-%d')
                 daily_data[date_str]["trace_count"] += 1
-                daily_data[date_str]["observation_count"] += len(parsed_obs)
+                daily_data[date_str]["observation_count"] += trace_obs_count
                 daily_data[date_str]["total_tokens"] += trace_tokens
                 daily_data[date_str]["total_cost"] += trace_cost
 

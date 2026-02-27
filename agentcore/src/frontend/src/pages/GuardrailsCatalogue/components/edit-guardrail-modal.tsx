@@ -105,6 +105,21 @@ export default function EditGuardrailModal({
 
   useEffect(() => {
     if (!open) return;
+    if (registryModels.length === 0) return;
+
+    // Legacy guardrails may not have modelRegistryId persisted.
+    // Also recover if the stored model id is no longer present in active models.
+    const hasValidSelection =
+      !!modelRegistryId &&
+      registryModels.some((model) => model.id === modelRegistryId);
+
+    if (!hasValidSelection) {
+      setModelRegistryId(registryModels[0].id);
+    }
+  }, [open, registryModels, modelRegistryId]);
+
+  useEffect(() => {
+    if (!open) return;
 
     if (guardrail) {
       setName(guardrail.name ?? "");
@@ -294,12 +309,17 @@ export default function EditGuardrailModal({
                       : "No active models in registry"}
                   </option>
                 ) : (
-                  registryModels.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.display_name} ({option.provider}/
-                      {option.model_name})
+                  <>
+                    <option value="" disabled>
+                      Select a model
                     </option>
-                  ))
+                    {registryModels.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.display_name} ({option.provider}/
+                        {option.model_name})
+                      </option>
+                    ))}
+                  </>
                 )}
               </select>
               {selectedModel && (
