@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ENABLE_DATASTAX_SENSEI } from "@/customization/feature-flags";
+import { ENABLE_SENSEI } from "@/customization/feature-flags";
 import { useGenerateToken } from "@/customization/hooks/use-custom-generate-token";
 import { COPIED_NOTICE_ALERT } from "../../constants/alerts_constants";
 import { createApiKey } from "../../controllers/API";
@@ -83,14 +83,14 @@ export default function SecretKeyModal({
 
   async function handleSubmitForm() {
     if (apiKeyValue) setOpen(false);
-    if (ENABLE_DATASTAX_SENSEI) {
-      handleDataStaxKey();
+    if (ENABLE_SENSEI) {
+      handleKey();
     } else {
       handleOSSKey();
     }
   }
 
-  const handleDataStaxKey = async () => {
+  const handleKey = async () => {
     try {
       const { token } = await generateToken();
       setApiKeyValue(token);
@@ -142,7 +142,7 @@ export default function SecretKeyModal({
             textCopied={textCopied}
             renderKey={renderKey}
           />
-        ) : ENABLE_DATASTAX_SENSEI ? (
+        ) : ENABLE_SENSEI ? (
           <></>
         ) : (
           <FormKeyRender

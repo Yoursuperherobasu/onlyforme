@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import AlertDropdown from "@/alerts/alertDropDown";
-import DataStaxLogo from "@/assets/DataStaxLogo.svg?react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
@@ -9,12 +8,11 @@ import CustomAccountMenu from "@/customization/components/custom-AccountMenu";
 import CustomSenseiCounts from "@/customization/components/custom-sensei-counts";
 import { CustomOrgSelector } from "@/customization/components/custom-org-selector";
 import { CustomProductSelector } from "@/customization/components/custom-product-selector";
-import { ENABLE_DATASTAX_SENSEI } from "@/customization/feature-flags";
+import { ENABLE_SENSEI } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useTheme from "@/customization/hooks/use-custom-theme";
 import useAlertStore from "@/stores/alertStore";
 import AgentMenu from "./components/AgentMenu";
-
 import FullLogo from "@/assets/sensei.svg?react";
 import IconLogo from "@/assets/mothersonLogo.svg?react";
 
@@ -98,19 +96,16 @@ export default function AppHeader(): JSX.Element {
           className="mr-1 flex h-8 w-8 items-center"
           data-testid="icon-ChevronLeft"
         >
-          {ENABLE_DATASTAX_SENSEI ? (
-            <DataStaxLogo className="fill-black dark:fill-[white]" />
-          ) : (
-            <div className="flex items-center px-3 h-12">
-              {sidebarOpen ? (
-                <FullLogo className="h-8" />
-              ) : (
-                <IconLogo className="h-8 w-8" />
-              )}
-            </div>
-          )}
+          <div className="flex items-center px-3 h-12">
+            {sidebarOpen ? (
+              <FullLogo className="h-8" />
+            ) : (
+              <IconLogo className="h-8 w-8" />
+            )}
+          </div>
         </Button>
-        {ENABLE_DATASTAX_SENSEI && (
+        
+        {ENABLE_SENSEI && (
           <>
             <CustomOrgSelector />
             <CustomProductSelector />
