@@ -45,7 +45,6 @@ from agentcore.graph_langgraph.utils import (
 )
 from agentcore.graph_langgraph.vertex_wrapper import LangGraphVertex
 
-# Aliases for backward compatibility
 Graph = LangGraphAdapter
 Vertex = LangGraphVertex
 Edge = LangGraphEdge
@@ -58,11 +57,9 @@ __all__ = [
     "LangGraphEdge",
     "AgentCoreState",
     "RunnableVerticesManager",
-    # Backward compatibility aliases
     "Graph",
     "Vertex",
     "Edge",
-    # Schema types
     "InterfaceComponentTypes",
     "VertexStates",
     "ResultData",

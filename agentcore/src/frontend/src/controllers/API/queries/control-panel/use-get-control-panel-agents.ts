@@ -19,6 +19,7 @@ export interface ControlPanelAgentItem {
   deployed_at?: string | null;
   last_run?: string | null;
   failed_runs: number;
+  input_type: "chat" | "autonomous" | "file_processing";
 }
 
 export interface ControlPanelAgentsResponse {

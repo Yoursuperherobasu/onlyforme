@@ -1036,6 +1036,15 @@ async def publish_agent(
                 f"to PROD for agent {agent_id}"
             )
 
+        # ── Derive agent input type from snapshot nodes ──────────
+        _node_types = {n.get("data", {}).get("type") for n in snapshot.get("nodes", [])}
+        if "ChatInput" in _node_types:
+            snapshot["_input_type"] = "chat"
+        elif _node_types & {"FolderMonitor", "FileTrigger"}:
+            snapshot["_input_type"] = "file_processing"
+        else:
+            snapshot["_input_type"] = "autonomous"
+
         if env == "uat":
             # ─── UAT: always direct deploy ───────────────────────
             next_version = await _get_next_version_number(session, agent_id, AgentDeploymentUAT)
@@ -1078,19 +1087,21 @@ async def publish_agent(
                 f"by user {current_user.id} [dept={resolved_department_id}]"
             )
 
-            # Sync schedule if flow contains a ScheduleTrigger node
+            # Sync FileTrigger nodes → auto-create trigger_config entries
             try:
-                from agentcore.services.deps import get_scheduler_service
-                scheduler = get_scheduler_service()
-                await scheduler.sync_schedule_for_agent(
+                from agentcore.services.deps import get_trigger_service
+                trigger_svc = get_trigger_service()
+                await trigger_svc.sync_folder_monitors_for_agent(
+                    session=session,
                     agent_id=agent_id,
                     environment="uat",
                     version=f"v{next_version}",
+                    deployment_id=new_record.id,
                     flow_data=snapshot,
                     created_by=current_user.id,
                 )
             except Exception as sched_err:
-                logger.warning(f"Schedule sync failed for UAT deploy of {agent_id}: {sched_err}")
+                logger.warning(f"FileTrigger sync failed for UAT deploy of {agent_id}: {sched_err}")
 
             # ─── Sync agent registry after UAT publish ──
             try:
@@ -1166,6 +1177,22 @@ async def publish_agent(
                     await session.commit()
                 except Exception as reg_err:
                     logger.warning(f"Registry sync failed after PROD publish of {agent_id}: {reg_err}")
+
+                # Sync FileTrigger nodes → auto-create trigger_config entries
+                try:
+                    from agentcore.services.deps import get_trigger_service
+                    trigger_svc = get_trigger_service()
+                    await trigger_svc.sync_folder_monitors_for_agent(
+                        session=session,
+                        agent_id=agent_id,
+                        environment="prod",
+                        version=f"v{next_version}",
+                        deployment_id=new_record.id,
+                        flow_data=snapshot,
+                        created_by=current_user.id,
+                    )
+                except Exception as fm_err:
+                    logger.warning(f"FileTrigger sync failed for PROD deploy of {agent_id}: {fm_err}")
 
                 return PublishActionResponse(
                     success=True,

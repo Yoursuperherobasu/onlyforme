@@ -74,17 +74,25 @@ class RunEnvironment(str, Enum):
 async def _resolve_agent_data_for_env(
     agent_id: UUID,
     env: RunEnvironment,
-    version: str,
+    version: str | None = None,
 ) -> tuple[dict, AgentDeploymentProd | None, AgentDeploymentUAT | None]:
     """Return the flow JSON (nodes/edges) for the requested environment & version.
+
     - **dev**  → reads ``agent.data`` directly (current draft). Version is ignored.
-    - **uat**  → reads ``agent_deployment_uat.agent_snapshot`` for the given version.
-    - **prod** → reads ``agent_deployment_prod.agent_snapshot`` for the given version.
+    - **uat**  → reads ``agent_deployment_uat.agent_snapshot``.
+                 If *version* is given (e.g. "v2"), fetches that exact version.
+                 If *version* is None, fetches the latest active PUBLISHED deployment.
+    - **prod** → reads ``agent_deployment_prod.agent_snapshot``.
+                 Same version-or-latest logic as UAT.
+
     Returns:
         tuple: (flow_data_dict, prod_deployment_record_or_None, uat_deployment_record_or_None).
+
     Raises:
         HTTPException 404 if no matching published record is found.
     """
+    from sqlalchemy import desc
+
     async with session_scope() as session:
         if env == RunEnvironment.DEV:
             agent = await session.get(Agent, agent_id)
@@ -99,30 +107,46 @@ async def _resolve_agent_data_for_env(
             stmt = (
                 select(AgentDeploymentUAT)
                 .where(AgentDeploymentUAT.agent_id == agent_id)
-                .where(AgentDeploymentUAT.version_number == int(version.lstrip("v")))
                 .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
             )
+            if version is not None:
+                stmt = stmt.where(AgentDeploymentUAT.version_number == int(version.lstrip("v")))
+            else:
+                # No version specified → pick the latest active published deployment
+                stmt = stmt.where(AgentDeploymentUAT.is_active == True).order_by(  # noqa: E712
+                    desc(AgentDeploymentUAT.version_number)
+                )
             record = (await session.exec(stmt)).first()
             if not record:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No PUBLISHED UAT version '{version}' found for agent {agent_id}",
+                detail = (
+                    f"No PUBLISHED UAT version '{version}' found for agent {agent_id}"
+                    if version
+                    else f"No active PUBLISHED UAT deployment found for agent {agent_id}"
                 )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
             return record.agent_snapshot, None, record
 
         # env == RunEnvironment.PROD
         stmt = (
             select(AgentDeploymentProd)
             .where(AgentDeploymentProd.agent_id == agent_id)
-            .where(AgentDeploymentProd.version_number == int(version.lstrip("v")))
             .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
         )
+        if version is not None:
+            stmt = stmt.where(AgentDeploymentProd.version_number == int(version.lstrip("v")))
+        else:
+            # No version specified → pick the latest active published deployment
+            stmt = stmt.where(AgentDeploymentProd.is_active == True).order_by(  # noqa: E712
+                desc(AgentDeploymentProd.version_number)
+            )
         record = (await session.exec(stmt)).first()
         if not record:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No PUBLISHED PROD version '{version}' found for agent {agent_id}",
+            detail = (
+                f"No PUBLISHED PROD version '{version}' found for agent {agent_id}"
+                if version
+                else f"No active PUBLISHED PROD deployment found for agent {agent_id}"
             )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
         return record.agent_snapshot, record, None
 
 @router.get("/all", dependencies=[Depends(get_current_active_user)])
