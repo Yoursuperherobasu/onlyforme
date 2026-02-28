@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   ModelType,
+  ModelTypeFilter,
   ModelCreateRequest,
   ModelUpdateRequest,
   ModelEnvironment,
@@ -19,7 +20,7 @@ import {
 
 const PROVIDERS = [
   { value: "openai", label: "OpenAI" },
-  { value: "azure", label: "Azure OpenAI" },
+  { value: "azure", label: "Azure" },
   { value: "anthropic", label: "Anthropic" },
   { value: "google", label: "Google" },
   { value: "groq", label: "Groq" },
@@ -38,12 +39,14 @@ interface EditModelModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   model?: ModelType | null;
+  modelType?: ModelTypeFilter;
 }
 
 export default function EditModelModal({
   open,
   onOpenChange,
   model,
+  modelType = "llm",
 }: EditModelModalProps) {
   const isEditMode = !!model;
 
@@ -71,18 +74,12 @@ export default function EditModelModal({
   const [organization, setOrganization] = useState("");
   const [customHeaders, setCustomHeaders] = useState("");
 
-  // Capabilities
-  const [supportsStreaming, setSupportsStreaming] = useState(true);
-  const [supportsToolCalling, setSupportsToolCalling] = useState(false);
-  const [supportsVision, setSupportsVision] = useState(false);
-  const [supportsThinking, setSupportsThinking] = useState(false);
-  const [contextWindow, setContextWindow] = useState<number | "">("");
-
-  // Default params
+  // Default params (LLM)
   const [temperature, setTemperature] = useState<number | "">(0.7);
   const [maxTokens, setMaxTokens] = useState<number | "">("");
-  const [topP, setTopP] = useState<number | "">("");
-  const [thinkingBudget, setThinkingBudget] = useState<number | "">("");
+
+  // Embedding-specific
+  const [dimensions, setDimensions] = useState<number | "">("");
 
   /* ---------------------------------- Populate form on edit ---------------------------------- */
 
@@ -105,18 +102,10 @@ export default function EditModelModal({
       setOrganization(pc.organization ?? "");
       setCustomHeaders(pc.custom_headers ? JSON.stringify(pc.custom_headers, null, 2) : "");
 
-      const caps = model.capabilities ?? {};
-      setSupportsStreaming(caps.supports_streaming ?? true);
-      setSupportsToolCalling(caps.supports_tool_calling ?? false);
-      setSupportsVision(caps.supports_vision ?? false);
-      setSupportsThinking(caps.supports_thinking ?? false);
-      setContextWindow(caps.context_window ?? "");
-
       const dp = model.default_params ?? {};
       setTemperature(dp.temperature ?? 0.7);
       setMaxTokens(dp.max_tokens ?? "");
-      setTopP(dp.top_p ?? "");
-      setThinkingBudget(dp.thinking_budget ?? "");
+      setDimensions(dp.dimensions ?? "");
     } else {
       // Reset for create
       setDisplayName("");
@@ -131,15 +120,9 @@ export default function EditModelModal({
       setAzureApiVersion(DEFAULT_AZURE_API_VERSION);
       setOrganization("");
       setCustomHeaders("");
-      setSupportsStreaming(true);
-      setSupportsToolCalling(false);
-      setSupportsVision(false);
-      setSupportsThinking(false);
-      setContextWindow("");
       setTemperature(0.7);
       setMaxTokens("");
-      setTopP("");
-      setThinkingBudget("");
+      setDimensions("");
     }
   }, [model, open]);
 
@@ -164,21 +147,17 @@ export default function EditModelModal({
     return Object.keys(config).length ? config : undefined;
   };
 
-  const buildCapabilities = () => ({
-    supports_streaming: supportsStreaming,
-    supports_tool_calling: supportsToolCalling,
-    supports_vision: supportsVision,
-    supports_thinking: supportsThinking,
-    ...(contextWindow ? { context_window: Number(contextWindow) } : {}),
-  });
+  const isEmbedding = modelType === "embedding" || model?.model_type === "embedding";
 
   const buildDefaultParams = () => {
     const params: Record<string, any> = {};
-    if (temperature !== "") params.temperature = Number(temperature);
-    if (maxTokens !== "") params.max_tokens = Number(maxTokens);
-    if (topP !== "") params.top_p = Number(topP);
-    if (supportsThinking && thinkingBudget !== "")
-      params.thinking_budget = Number(thinkingBudget);
+    if (!isEmbedding) {
+      if (temperature !== "") params.temperature = Number(temperature);
+      if (maxTokens !== "") params.max_tokens = Number(maxTokens);
+    }
+    if (isEmbedding && dimensions !== "") {
+      params.dimensions = Number(dimensions);
+    }
     return Object.keys(params).length ? params : undefined;
   };
 
@@ -194,10 +173,10 @@ export default function EditModelModal({
           description: description || null,
           provider,
           model_name: modelName,
+          model_type: isEmbedding ? "embedding" : "llm",
           base_url: baseUrl || null,
           environment,
           provider_config: buildProviderConfig() ?? null,
-          capabilities: buildCapabilities(),
           default_params: buildDefaultParams() ?? null,
           is_active: isActive,
         };
@@ -211,17 +190,17 @@ export default function EditModelModal({
           description: description || null,
           provider,
           model_name: modelName,
+          model_type: isEmbedding ? "embedding" : "llm",
           base_url: baseUrl || null,
           api_key: apiKey || null,
           environment,
           provider_config: buildProviderConfig() ?? null,
-          capabilities: buildCapabilities(),
           default_params: buildDefaultParams() ?? null,
           is_active: isActive,
         };
 
         await createMutation.mutateAsync(payload);
-        setSuccessData({ title: `Model "${displayName}" added to ${environment} environment.` });
+        setSuccessData({ title: `${isEmbedding ? "Embedding" : "Model"} "${displayName}" added to ${environment} environment.` });
       }
       onOpenChange(false);
     } catch (err: any) {
@@ -234,13 +213,15 @@ export default function EditModelModal({
 
   const handleTestConnection = async () => {
     try {
-      const result = await testMutation.mutateAsync({
+      const testPayload = {
         provider,
         model_name: modelName,
         base_url: baseUrl || null,
         api_key: apiKey || null,
         provider_config: buildProviderConfig() ?? null,
-      });
+        isEmbedding,
+      };
+      const result = await testMutation.mutateAsync(testPayload);
       if (result.success) {
         setSuccessData({
           title: `Connection successful${result.latency_ms ? ` (${result.latency_ms}ms)` : ""}`,
@@ -283,12 +264,14 @@ export default function EditModelModal({
           <div className="flex items-start justify-between">
             <div>
               <h2 className="text-xl font-semibold">
-                {isEditMode ? "Edit Model" : "Add Model"}
+                {isEditMode
+                  ? isEmbedding ? "Edit Embedding Model" : "Edit Model"
+                  : isEmbedding ? "Add Embedding Model" : "Add Model"}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {isEditMode
-                  ? "Update model configuration and settings"
-                  : "Onboard a new AI model to the registry"}
+                  ? isEmbedding ? "Update embedding model configuration" : "Update model configuration and settings"
+                  : isEmbedding ? "Onboard a new embedding model to the registry" : "Onboard a new AI model to the registry"}
               </p>
             </div>
             <button
@@ -476,126 +459,58 @@ export default function EditModelModal({
             </p>
           </fieldset>
 
-          {/* ========== CAPABILITIES ========== */}
-          <fieldset className="space-y-4">
-            <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Capabilities
-            </legend>
-
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                {
-                  label: "Streaming",
-                  checked: supportsStreaming,
-                  onChange: setSupportsStreaming,
-                },
-                {
-                  label: "Tool Calling",
-                  checked: supportsToolCalling,
-                  onChange: setSupportsToolCalling,
-                },
-                {
-                  label: "Vision",
-                  checked: supportsVision,
-                  onChange: setSupportsVision,
-                },
-                {
-                  label: "Thinking / CoT",
-                  checked: supportsThinking,
-                  onChange: setSupportsThinking,
-                },
-              ].map((cap) => (
-                <label
-                  key={cap.label}
-                  className="flex items-center gap-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={cap.checked}
-                    onChange={(e) => cap.onChange(e.target.checked)}
-                    className="h-4 w-4 rounded border-input"
-                  />
-                  {cap.label}
-                </label>
-              ))}
-            </div>
-
-            <div>
-              <Label>Context Window (tokens)</Label>
-              <Input
-                type="number"
-                placeholder="e.g., 128000"
-                value={contextWindow}
-                onChange={(e) =>
-                  setContextWindow(
-                    e.target.value ? Number(e.target.value) : "",
-                  )
-                }
-              />
-            </div>
-          </fieldset>
-
           {/* ========== DEFAULT PARAMS ========== */}
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Default Parameters
+              {isEmbedding ? "Embedding Parameters" : "Default Parameters"}
             </legend>
 
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Temperature (0-2)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="2"
-                  placeholder="0.7"
-                  value={temperature}
-                  onChange={(e) =>
-                    setTemperature(
-                      e.target.value ? Number(e.target.value) : "",
-                    )
-                  }
-                />
-              </div>
-              <div>
-                <Label>Max Output Tokens</Label>
-                <Input
-                  type="number"
-                  placeholder="4096"
-                  value={maxTokens}
-                  onChange={(e) =>
-                    setMaxTokens(e.target.value ? Number(e.target.value) : "")
-                  }
-                />
-              </div>
-              <div>
-                <Label>Top P (0-1)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="1"
-                  placeholder="1.0"
-                  value={topP}
-                  onChange={(e) =>
-                    setTopP(e.target.value ? Number(e.target.value) : "")
-                  }
-                />
-              </div>
-              {supportsThinking && (
+              {!isEmbedding && (
+                <>
+                  <div>
+                    <Label>Temperature (0-2)</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="2"
+                      placeholder="0.7"
+                      value={temperature}
+                      onChange={(e) =>
+                        setTemperature(
+                          e.target.value ? Number(e.target.value) : "",
+                        )
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Label>Max Output Tokens</Label>
+                    <Input
+                      type="number"
+                      placeholder="4096"
+                      value={maxTokens}
+                      onChange={(e) =>
+                        setMaxTokens(e.target.value ? Number(e.target.value) : "")
+                      }
+                    />
+                  </div>
+                </>
+              )}
+              {isEmbedding && (
                 <div>
-                  <Label>Thinking Budget</Label>
+                  <Label>Dimensions</Label>
                   <Input
                     type="number"
-                    placeholder="10000"
-                    value={thinkingBudget}
+                    placeholder="e.g., 1536"
+                    value={dimensions}
                     onChange={(e) =>
-                      setThinkingBudget(
-                        e.target.value ? Number(e.target.value) : "",
-                      )
+                      setDimensions(e.target.value ? Number(e.target.value) : "")
                     }
                   />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Leave empty to use the model's default dimension.
+                  </p>
                 </div>
               )}
             </div>
@@ -651,7 +566,7 @@ export default function EditModelModal({
               onClick={handleSubmit}
             >
               {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isEditMode ? "Save Changes" : "Add Model"}
+              {isEditMode ? "Save Changes" : isEmbedding ? "Add Embedding" : "Add Model"}
             </Button>
           </div>
         </div>

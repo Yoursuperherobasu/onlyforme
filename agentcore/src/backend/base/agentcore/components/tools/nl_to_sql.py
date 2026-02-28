@@ -172,6 +172,73 @@ class NLtoSQLComponent(Node):
             info="Additional context about the data domain to help the LLM generate better SQL.",
             advanced=True,
         ),
+        TableInput(
+            name="table_relationships",
+            display_name="Table Relationships",
+            info="Define foreign key relationships between tables to help the LLM generate correct JOINs.",
+            table_schema=[
+                {
+                    "name": "source_table",
+                    "display_name": "Source Table",
+                    "type": "str",
+                    "description": "The table containing the foreign key column",
+                },
+                {
+                    "name": "source_column",
+                    "display_name": "Source Column",
+                    "type": "str",
+                    "description": "The FK column in the source table",
+                },
+                {
+                    "name": "target_table",
+                    "display_name": "Target Table",
+                    "type": "str",
+                    "description": "The referenced (parent) table",
+                },
+                {
+                    "name": "target_column",
+                    "display_name": "Target Column",
+                    "type": "str",
+                    "description": "The referenced column (usually the primary key)",
+                },
+            ],
+            value=[],
+            advanced=True,
+        ),
+        TableInput(
+            name="column_descriptions",
+            display_name="Column Descriptions",
+            info="Add business-friendly descriptions for columns to help the LLM understand domain semantics.",
+            table_schema=[
+                {
+                    "name": "table_name",
+                    "display_name": "Table",
+                    "type": "str",
+                    "description": "Table name",
+                },
+                {
+                    "name": "column_name",
+                    "display_name": "Column",
+                    "type": "str",
+                    "description": "Column name",
+                },
+                {
+                    "name": "description",
+                    "display_name": "Description",
+                    "type": "str",
+                    "description": "Business-friendly description of what this column represents",
+                },
+            ],
+            value=[],
+            advanced=True,
+        ),
+        MultilineInput(
+            name="business_rules",
+            display_name="Business Rules",
+            value="",
+            info="Business rules the LLM should follow when generating SQL (e.g., 'status=active means not deleted', 'revenue = amount - discount - refund').",
+            advanced=True,
+        ),
         IntInput(
             name="query_timeout",
             display_name="Query Timeout (seconds)",
@@ -200,7 +267,7 @@ class NLtoSQLComponent(Node):
         super().__init__(**kwargs)
         self._cached_result: dict | None = None
 
-    def _build_sql_generation_prompt(self, schema_ddl: str, user_query: str) -> str:
+    def _build_sql_generation_prompt(self, schema_ddl: str, user_query: str, db_config: dict | None = None) -> str:
         """Build the prompt for SQL generation."""
         few_shot_text = ""
         if self.few_shot_examples:
@@ -215,6 +282,62 @@ class NLtoSQLComponent(Node):
         if self.additional_context and self.additional_context.strip():
             domain_context = f"\n\n**Domain Context:**\n{self.additional_context.strip()}\n"
 
+        # Table relationships: merge auto-discovered FKs from DB Connector + manual entries
+        relationships_text = ""
+        all_relationships = []
+
+        # Auto-discovered FKs from Database Connector
+        if db_config:
+            auto_fks = db_config.get("foreign_keys", [])
+            if auto_fks and isinstance(auto_fks, list):
+                all_relationships.extend(auto_fks)
+
+        # Manual user-defined relationships (supplement / override)
+        if self.table_relationships:
+            all_relationships.extend(self.table_relationships)
+
+        # Deduplicate by (source_table, source_column, target_table, target_column)
+        seen = set()
+        unique_rels = []
+        for rel in all_relationships:
+            if isinstance(rel, dict) and rel.get("source_table") and rel.get("target_table"):
+                key = (rel["source_table"], rel.get("source_column", ""),
+                       rel["target_table"], rel.get("target_column", ""))
+                if key not in seen:
+                    seen.add(key)
+                    unique_rels.append(rel)
+
+        if unique_rels:
+            rels = [
+                f"  {rel['source_table']}.{rel.get('source_column', '?')} -> "
+                f"{rel['target_table']}.{rel.get('target_column', '?')}"
+                for rel in unique_rels
+            ]
+            relationships_text = (
+                "\n\n**Table Relationships (Foreign Keys):**\n"
+                + "\n".join(rels)
+                + "\nUse these relationships for JOIN conditions.\n"
+            )
+
+        # Column descriptions (business glossary)
+        col_desc_text = ""
+        if self.column_descriptions:
+            descs = []
+            for cd in self.column_descriptions:
+                if isinstance(cd, dict) and cd.get("table_name") and cd.get("column_name") and cd.get("description"):
+                    descs.append(f"  {cd['table_name']}.{cd['column_name']}: {cd['description']}")
+            if descs:
+                col_desc_text = (
+                    "\n\n**Column Descriptions (Business Glossary):**\n"
+                    + "\n".join(descs)
+                    + "\n"
+                )
+
+        # Business rules
+        business_rules_text = ""
+        if self.business_rules and self.business_rules.strip():
+            business_rules_text = f"\n\n**Business Rules:**\n{self.business_rules.strip()}\n"
+
         prompt = f"""You are an expert SQL analyst. Given a database schema and a natural language question,
 generate a precise SQL query to answer the question.
 
@@ -222,13 +345,13 @@ generate a precise SQL query to answer the question.
 ```sql
 {schema_ddl}
 ```
-{domain_context}{few_shot_text}
+{relationships_text}{col_desc_text}{domain_context}{business_rules_text}{few_shot_text}
 **User Question:** {user_query}
 
 **Rules:**
 1. Generate ONLY a SELECT query - never use INSERT, UPDATE, DELETE, DROP, or any DDL/DML
 2. Use proper table and column names from the schema exactly as shown
-3. Use appropriate JOINs when data spans multiple tables
+3. Use appropriate JOINs when data spans multiple tables - refer to the Table Relationships above for correct join keys
 4. Add meaningful aliases for calculated columns
 5. Use LIMIT {self.max_rows} to cap results
 6. If the question involves time periods, use appropriate date functions
@@ -305,7 +428,7 @@ generate a precise SQL query to answer the question.
             return self._cached_result
 
         # Step 1: Generate SQL using LLM
-        prompt = self._build_sql_generation_prompt(schema_ddl, user_query)
+        prompt = self._build_sql_generation_prompt(schema_ddl, user_query, db_config)
 
         try:
             import asyncio
