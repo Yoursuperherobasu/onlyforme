@@ -533,7 +533,7 @@ const SideBarFoldersButtonsComponent = ({
               name="Zap"
               className="h-4 w-4"
             />
-            {t("Scheduler")}
+            {t("Agent Scheduler")}
           </SidebarMenuButton>
         </SidebarMenuItem>
 
