@@ -34,11 +34,12 @@ async def list_registry_models(
     current_user: CurrentActiveUser,
     provider: str | None = None,
     environment: str | None = None,
+    model_type: str | None = None,
     active_only: bool = True,
 ):
-    """List all registered models, optionally filtered by provider and/or environment."""
+    """List all registered models, optionally filtered by provider, environment, and/or model type."""
     return await model_registry_service.get_models(
-        session, provider=provider, environment=environment, active_only=active_only
+        session, provider=provider, environment=environment, model_type=model_type, active_only=active_only
     )
 
 
@@ -209,4 +210,98 @@ def _build_test_model(
         return ChatOpenAI(**kwargs)
 
     msg = f"Unsupported provider for test connection: {provider_name}"
+    raise ValueError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Test embedding connection
+# ---------------------------------------------------------------------------
+
+
+@router.post("/test-embedding-connection", response_model=TestConnectionResponse)
+async def test_embedding_connection(
+    body: TestConnectionRequest,
+    current_user: CurrentActiveUser,
+):
+    """Build an embedding provider, embed a test string, and report success/failure + latency."""
+    try:
+        provider_name = body.provider.lower()
+        provider_config: dict = body.provider_config or {}
+        api_key = body.api_key or ""
+        base_url = body.base_url or ""
+
+        embeddings = _build_test_embeddings(
+            provider_name=provider_name,
+            model_name=body.model_name,
+            api_key=api_key,
+            base_url=base_url,
+            provider_config=provider_config,
+        )
+
+        start = time.perf_counter()
+        result = await embeddings.aembed_query("Hello")
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        dim = len(result) if result else 0
+        return TestConnectionResponse(
+            success=True,
+            message=f"Embedding generated: {dim} dimensions",
+            latency_ms=round(latency_ms, 1),
+        )
+    except Exception as e:
+        logger.warning("Test embedding connection failed for %s/%s: %s", body.provider, body.model_name, e)
+        return TestConnectionResponse(success=False, message=str(e))
+
+
+def _build_test_embeddings(
+    *,
+    provider_name: str,
+    model_name: str,
+    api_key: str,
+    base_url: str,
+    provider_config: dict,
+):
+    """Construct a LangChain embeddings model for test-connection purposes."""
+    if provider_name == "openai":
+        from langchain_openai import OpenAIEmbeddings
+
+        kwargs: dict = {"model": model_name, "api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        return OpenAIEmbeddings(**kwargs)
+
+    if provider_name == "azure":
+        from langchain_openai import AzureOpenAIEmbeddings
+
+        return AzureOpenAIEmbeddings(
+            model=model_name,
+            azure_endpoint=base_url or provider_config.get("azure_endpoint", ""),
+            azure_deployment=provider_config.get("azure_deployment", model_name),
+            api_version=provider_config.get("api_version", "2025-10-01-preview"),
+            api_key=api_key,
+        )
+
+    if provider_name == "google":
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+        return GoogleGenerativeAIEmbeddings(
+            model=model_name,
+            google_api_key=api_key,
+        )
+
+    if provider_name in ("openai_compatible", "groq", "anthropic"):
+        from langchain_openai import OpenAIEmbeddings
+
+        kwargs = {
+            "model": model_name,
+            "api_key": api_key or "not-needed",
+        }
+        if base_url:
+            kwargs["base_url"] = base_url
+        custom_headers = provider_config.get("custom_headers", {})
+        if custom_headers:
+            kwargs["default_headers"] = custom_headers
+        return OpenAIEmbeddings(**kwargs)
+
+    msg = f"Unsupported provider for embedding test connection: {provider_name}"
     raise ValueError(msg)
