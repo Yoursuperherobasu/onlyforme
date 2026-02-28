@@ -1,4 +1,4 @@
-import { Edit2, MoreVertical, Plus, Search, Trash2 } from "lucide-react";
+import { Edit2, MoreVertical, Plus, Search, Trash2, ArrowLeft } from "lucide-react";
 import { useContext, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,12 +15,20 @@ import {
   useGetGuardrailsCatalogue,
 } from "@/controllers/API/queries/guardrails";
 import useAlertStore from "@/stores/alertStore";
-import { getProviderIcon } from "@/utils/logo_provider";
+import NvidiaLogo from "@/assets/nvidia_logo.svg?react";
 import EditGuardrailModal from "./components/edit-guardrail-modal";
+import GuardrailFrameworksList from "./components/guardrail-frameworks-list";
 
 interface GuardrailsViewProps {
   guardrails?: GuardrailInfo[];
   setSearch?: (search: string) => void;
+}
+
+interface GuardrailFramework {
+  id: string;
+  name: string;
+  description: string;
+  icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>;
 }
 
 type CategoryType =
@@ -29,6 +37,16 @@ type CategoryType =
   | "jailbreak"
   | "topic-control"
   | "pii-detection";
+
+// Available guardrail frameworks
+const GUARDRAIL_FRAMEWORKS: GuardrailFramework[] = [
+  {
+    id: "nemo-guardrails",
+    name: "NeMo Guardrails",
+    description: "NVIDIA's NeMo Guardrails framework for LLM safety and moderation with configurable policies",
+    icon: NvidiaLogo,
+  },
+];
 
 export default function GuardrailsView({
   guardrails = [],
@@ -39,6 +57,8 @@ export default function GuardrailsView({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedGuardrail, setSelectedGuardrail] =
     useState<GuardrailInfo | null>(null);
+  const [selectedFramework, setSelectedFramework] =
+    useState<GuardrailFramework | null>(null);
 
   const { role, permissions } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
@@ -51,17 +71,6 @@ export default function GuardrailsView({
 
   const { data: dbGuardrails, isLoading, error } = useGetGuardrailsCatalogue();
   const deleteMutation = useDeleteGuardrailCatalogue();
-
-  const getProviderLogo = (provider: string) => {
-    const iconSrc = getProviderIcon(provider);
-    return (
-      <img
-        src={iconSrc}
-        alt={`${provider} icon`}
-        className="h-4 w-4 object-contain"
-      />
-    );
-  };
 
   const displayGuardrails = guardrails?.length
     ? guardrails
@@ -114,6 +123,14 @@ export default function GuardrailsView({
     setIsEditModalOpen(true);
   };
 
+  const handleSelectFramework = (framework: GuardrailFramework) => {
+    setSelectedFramework(framework);
+  };
+
+  const handleBackToFrameworks = () => {
+    setSelectedFramework(null);
+  };
+
   const handleEditGuardrail = (guardrail: GuardrailInfo) => {
     setSelectedGuardrail(guardrail);
     setIsEditModalOpen(true);
@@ -134,211 +151,217 @@ export default function GuardrailsView({
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
-        <div>
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Guardrails Catalogue</h1>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Manage and configure AI safety guardrails
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              placeholder="Search guardrails..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-          </div>
-          {canCreateOrEdit && (
-            <Button onClick={handleCreateGuardrail}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Guardrail
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-auto p-8">
-        {isLoading ? (
-          <div className="flex h-full w-full items-center justify-center">
-            <Loading />
-          </div>
-        ) : (
-          <>
-            {!!error && (
-              <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                Failed to load guardrails from database.
+    <>
+      {!selectedFramework ? (
+        <GuardrailFrameworksList
+          frameworks={GUARDRAIL_FRAMEWORKS}
+          onSelectFramework={handleSelectFramework}
+          isLoading={false}
+        />
+      ) : (
+        <div className="flex h-full w-full flex-col overflow-hidden">
+          <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
+            <div>
+              <div className="mb-2 flex items-center gap-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBackToFrameworks}
+                  className="h-8 w-8 p-0"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <h1 className="text-2xl font-semibold">{selectedFramework.name} Policies</h1>
               </div>
-            )}
-            <div className="overflow-x-auto rounded-lg border border-border bg-card">
-              <table className="w-full">
-                <thead className="bg-muted/50">
-                  <tr className="border-b border-border">
-                    {[
-                      "Guardrail Name",
-                      "Model",
-                      "Provider",
-                      "Category",
-                      "Status",
-                      ...(canManage ? ["Actions"] : []),
-                    ].map((h) => (
-                      <th
-                        key={h}
-                        className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
+              <p className="text-sm text-muted-foreground">
+                Manage and configure guardrail policies for {selectedFramework.name}
+              </p>
+            </div>
 
-                <tbody className="divide-y divide-border">
-                  {filteredGuardrails.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={canManage ? 6 : 5}
-                        className="px-6 py-12 text-center text-muted-foreground"
-                      >
-                        No guardrails found matching your criteria
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredGuardrails.map((guardrail) => (
-                      <tr
-                        key={guardrail.id}
-                        className="group hover:bg-muted/50"
-                      >
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="font-semibold">
-                              {guardrail.name}
-                            </div>
-                            {guardrail.isCustom && (
-                              <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                                Custom
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {guardrail.description}
-                          </div>
-                          {guardrail.runtimeReady === true && (
-                            <div className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                              Runtime ready
-                            </div>
-                          )}
-                          {guardrail.runtimeConfig &&
-                            guardrail.runtimeReady === false && (
-                              <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
-                                Runtime config incomplete
-                              </div>
-                            )}
-                        </td>
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  placeholder="Search guardrails..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+              {canCreateOrEdit && (
+                <Button onClick={handleCreateGuardrail}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Guardrail
+                </Button>
+              )}
+            </div>
+          </div>
 
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium">
-                            {guardrail.modelDisplayName ||
-                              guardrail.modelName ||
-                              "Not linked"}
-                          </div>
-                          {guardrail.modelName &&
-                            guardrail.modelDisplayName && (
-                              <div className="mt-1 text-xs text-muted-foreground">
-                                {guardrail.modelName}
-                              </div>
-                            )}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="flex h-8 w-8 items-center justify-center rounded border">
-                              {getProviderLogo(guardrail.provider)}
-                            </div>
-                            <span className="text-sm">
-                              {guardrail.provider}
-                            </span>
-                          </div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <span
-                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getCategoryBadgeColor(guardrail.category)}`}
+          <div className="flex-1 overflow-auto p-8">
+            {isLoading ? (
+              <div className="flex h-full w-full items-center justify-center">
+                <Loading />
+              </div>
+            ) : (
+              <>
+                {!!error && (
+                  <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    Failed to load guardrails from database.
+                  </div>
+                )}
+                <div className="overflow-x-auto rounded-lg border border-border bg-card">
+                  <table className="w-full">
+                    <thead className="bg-muted/50">
+                      <tr className="border-b border-border">
+                        {[
+                          "Guardrail Name",
+                          "Model",
+                          "Category",
+                          "Status",
+                          ...(canManage ? ["Actions"] : []),
+                        ].map((h) => (
+                          <th
+                            key={h}
+                            className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                           >
-                            {getCategoryLabel(guardrail.category)}
-                          </span>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`h-2 w-2 rounded-full ${guardrail.status === "active" ? "bg-green-500" : "bg-gray-400"}`}
-                            ></span>
-                            <span className="text-sm capitalize">
-                              {guardrail.status}
-                            </span>
-                          </div>
-                        </td>
-
-                        {canManage && (
-                          <td className="px-6 py-4">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <button className="rounded p-1 hover:bg-muted">
-                                  <MoreVertical className="h-4 w-4" />
-                                </button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                {canCreateOrEdit && (
-                                  <DropdownMenuItem
-                                    onClick={() =>
-                                      handleEditGuardrail(guardrail)
-                                    }
-                                  >
-                                    <Edit2 className="mr-2 h-4 w-4" />
-                                    Edit
-                                  </DropdownMenuItem>
-                                )}
-                                {canDelete && (
-                                  <DropdownMenuItem
-                                    onClick={() =>
-                                      handleDeleteGuardrail(guardrail)
-                                    }
-                                    className="text-destructive"
-                                  >
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    Delete
-                                  </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </td>
-                        )}
+                            {h}
+                          </th>
+                        ))}
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
 
-            <div className="mt-6 text-center text-sm text-muted-foreground">
-              Showing {filteredGuardrails.length} of {displayGuardrails.length}{" "}
-              guardrails
-            </div>
-          </>
-        )}
-      </div>
+                    <tbody className="divide-y divide-border">
+                      {filteredGuardrails.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={canManage ? 5 : 4}
+                            className="px-6 py-12 text-center text-muted-foreground"
+                          >
+                            No guardrails found matching your criteria
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredGuardrails.map((guardrail) => (
+                          <tr
+                            key={guardrail.id}
+                            className="group hover:bg-muted/50"
+                          >
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2">
+                                <div className="font-semibold">
+                                  {guardrail.name}
+                                </div>
+                                {guardrail.isCustom && (
+                                  <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                                    Custom
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {guardrail.description}
+                              </div>
+                              {guardrail.runtimeReady === true && (
+                                <div className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                                  Runtime ready
+                                </div>
+                              )}
+                              {guardrail.runtimeConfig &&
+                                guardrail.runtimeReady === false && (
+                                  <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                                    Runtime config incomplete
+                                  </div>
+                                )}
+                            </td>
 
-      <EditGuardrailModal
-        open={isEditModalOpen}
-        onOpenChange={setIsEditModalOpen}
-        guardrail={selectedGuardrail}
-      />
-    </div>
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-medium">
+                                {guardrail.modelDisplayName ||
+                                  guardrail.modelName ||
+                                  "Not linked"}
+                              </div>
+                              {guardrail.modelName &&
+                                guardrail.modelDisplayName && (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {guardrail.modelName}
+                                  </div>
+                                )}
+                            </td>
+
+                            <td className="px-6 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getCategoryBadgeColor(guardrail.category)}`}
+                              >
+                                {getCategoryLabel(guardrail.category)}
+                              </span>
+                            </td>
+
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`h-2 w-2 rounded-full ${guardrail.status === "active" ? "bg-green-500" : "bg-gray-400"}`}
+                                ></span>
+                                <span className="text-sm capitalize">
+                                  {guardrail.status}
+                                </span>
+                              </div>
+                            </td>
+
+                            {canManage && (
+                              <td className="px-6 py-4">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <button className="rounded p-1 hover:bg-muted">
+                                      <MoreVertical className="h-4 w-4" />
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    {canCreateOrEdit && (
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          handleEditGuardrail(guardrail)
+                                        }
+                                      >
+                                        <Edit2 className="mr-2 h-4 w-4" />
+                                        Edit
+                                      </DropdownMenuItem>
+                                    )}
+                                    {canDelete && (
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          handleDeleteGuardrail(guardrail)
+                                        }
+                                        className="text-destructive"
+                                      >
+                                        <Trash2 className="mr-2 h-4 w-4" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </td>
+                            )}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-6 text-center text-sm text-muted-foreground">
+                  Showing {filteredGuardrails.length} of {displayGuardrails.length}{" "}
+                  guardrails
+                </div>
+              </>
+            )}
+          </div>
+
+          <EditGuardrailModal
+            open={isEditModalOpen}
+            onOpenChange={setIsEditModalOpen}
+            guardrail={selectedGuardrail}
+          />
+        </div>
+      )}
+    </>
   );
 }
