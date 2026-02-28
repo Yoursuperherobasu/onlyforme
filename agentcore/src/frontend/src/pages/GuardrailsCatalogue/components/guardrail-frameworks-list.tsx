@@ -29,9 +29,7 @@ export default function GuardrailFrameworksList({
         
         <div>
           <div className="mb-3 flex items-center gap-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/15 ring-1 ring-red-500/30 shadow-md">
-              <Shield className="h-6 w-6 text-red-600 dark:text-red-400" />
-            </div>
+            
             <h1 className="text-3xl font-bold text-foreground">
               Guardrails Catalogue
             </h1>

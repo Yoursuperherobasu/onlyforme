@@ -119,7 +119,7 @@ function envBadge(env: string): JSX.Element {
 
 // ── Main component ────────────────────────────────────────────────────────
 
-export default function AutomationsPage(): JSX.Element {
+export default function SchedulerPage(): JSX.Element {
   const [typeFilter, setTypeFilter] = useState<TriggerTypeFilter>("all");
   const [showModal, setShowModal] = useState(false);
   const [logsTriggerId, setLogsTriggerId] = useState<string | null>(null);
@@ -178,7 +178,7 @@ export default function AutomationsPage(): JSX.Element {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-6 py-4">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">Automations</h1>
+          <h1 className="text-xl font-semibold text-foreground">Agent Scheduler</h1>
           <p className="text-sm text-muted-foreground">
             Schedule and monitor autonomous agent runs for published agents
           </p>
@@ -188,7 +188,7 @@ export default function AutomationsPage(): JSX.Element {
           className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
         >
           <Plus className="h-4 w-4" />
-          Add Automation
+          Add Scheduler
         </button>
       </div>
 
@@ -233,9 +233,9 @@ export default function AutomationsPage(): JSX.Element {
         )}
       </div>
 
-      {/* Add/Edit Automation Modal */}
+      {/* Add/Edit Scheduler Modal */}
       {showModal && (
-        <AddAutomationModal
+        <AddSchedulerModal
           editing={editingTrigger}
           onClose={() => setShowModal(false)}
         />
@@ -256,7 +256,7 @@ export default function AutomationsPage(): JSX.Element {
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-80 rounded-lg bg-background p-6 shadow-xl">
-            <h3 className="mb-2 font-semibold text-foreground">Delete Automation</h3>
+            <h3 className="mb-2 font-semibold text-foreground">Delete Scheduler</h3>
             <p className="mb-4 text-sm text-muted-foreground">
               This will permanently remove the trigger and stop all scheduled runs.
             </p>
@@ -292,9 +292,9 @@ function EmptyState({ onAdd }: { onAdd: () => void }): JSX.Element {
         <Zap className="h-8 w-8 text-muted-foreground" />
       </div>
       <div>
-        <p className="font-medium text-foreground">No automations yet</p>
+        <p className="font-medium text-foreground">No schedulers yet</p>
         <p className="text-sm text-muted-foreground">
-          Add your first automation to start running agents on a schedule or trigger.
+          Add your first scheduler to start running agents on a schedule or trigger.
         </p>
       </div>
       <button
@@ -302,7 +302,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }): JSX.Element {
         className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
       >
         <Plus className="h-4 w-4" />
-        Add Automation
+        Add Scheduler
       </button>
     </div>
   );
@@ -745,7 +745,7 @@ const BLANK_FOLDER = {
   trigger_on: "New Files",
 };
 
-function AddAutomationModal({
+function AddSchedulerModal({
   editing,
   onClose,
 }: {
