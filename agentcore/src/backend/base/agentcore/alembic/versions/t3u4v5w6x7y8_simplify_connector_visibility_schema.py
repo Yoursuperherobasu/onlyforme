@@ -1,7 +1,7 @@
 """simplify connector visibility schema to private/public
 
 Revision ID: t3u4v5w6x7y8
-Revises: s2t3u4v5w6x7
+Revises: v6w7x8y9z0a1
 Create Date: 2026-02-28 13:00:00.000000
 """
 
@@ -14,7 +14,7 @@ from alembic import op
 
 
 revision: str = "t3u4v5w6x7y8"
-down_revision: str | Sequence[str] | None = "s2t3u4v5w6x7"
+down_revision: str | Sequence[str] | None = "v6w7x8y9z0a1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

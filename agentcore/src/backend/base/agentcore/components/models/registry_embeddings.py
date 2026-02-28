@@ -1,33 +1,31 @@
-"""Unified Language Model component that reads models from the model_registry table."""
+"""Unified Embeddings component that reads models from the model_registry table (model_type='embedding')."""
 
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
-
 import os
 import threading
 
 from loguru import logger
-from pydantic.v1 import SecretStr
 
-from agentcore.base.models.model import LCModelNode
-from agentcore.field_typing import LanguageModel
-from agentcore.io import DropdownInput, FloatInput, IntInput
+from agentcore.base.embeddings.model import LCEmbeddingsModel
+from agentcore.field_typing import Embeddings
+from agentcore.io import DropdownInput, IntInput
 
-# Display label → DB key mapping
+# Display label → DB key mapping (same as LLM registry)
 PROVIDER_LABEL_TO_KEY = {
     "OpenAI": "openai",
     "Azure": "azure",
-    "Anthropic": "anthropic",
     "Google": "google",
-    "Groq": "groq",
     "Custom Model": "openai_compatible",
 }
 PROVIDER_KEY_TO_LABEL = {v: k for k, v in PROVIDER_LABEL_TO_KEY.items()}
 PROVIDER_OPTIONS = list(PROVIDER_LABEL_TO_KEY.keys())
+
 _sync_engine = None
 _sync_engine_lock = threading.Lock()
+
+
 def _get_sync_engine():
     """Return a dedicated synchronous SQLAlchemy engine (created once)."""
     global _sync_engine
@@ -43,28 +41,17 @@ def _get_sync_engine():
         from agentcore.services.deps import get_db_service
 
         db_service = get_db_service()
-        # Convert async URL (postgresql+psycopg) to sync-compatible URL
         db_url = db_service.database_url
-        # psycopg (v3) supports both sync and async, so the same URL works
-        # But if it uses an explicitly async driver, fall back to psycopg2
         if "+asyncpg" in db_url:
             db_url = db_url.replace("+asyncpg", "")
 
         _sync_engine = create_engine(db_url, pool_pre_ping=True, pool_size=3)
-        logger.info(f"Created dedicated sync engine for registry component: {db_url.split('@')[-1]}")
+        logger.info(f"Created dedicated sync engine for embedding registry component: {db_url.split('@')[-1]}")
         return _sync_engine
 
 
-# ---------------------------------------------------------------------------
-# Async helper for update_build_config (runs in HTTP request context)
-# ---------------------------------------------------------------------------
-
 def _run_async(coro):
-    """Run an async coroutine from a synchronous context, handling existing event loops.
-
-    NOTE: import locally — components are loaded via exec() from string,
-    so module-level imports may not be in scope.
-    """
+    """Run an async coroutine from a synchronous context."""
     import concurrent.futures as _cf
 
     try:
@@ -76,8 +63,8 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
-def _fetch_models_for_provider(provider: str) -> list[str]:
-    """Fetch active models from the registry filtered by provider.
+def _fetch_embedding_models_for_provider(provider: str) -> list[str]:
+    """Fetch active embedding models from the registry filtered by provider.
 
     Returns a list of strings formatted as 'display_name | model_name | uuid'.
     """
@@ -98,7 +85,7 @@ def _fetch_models_for_provider(provider: str) -> list[str]:
                     select(ModelRegistry)
                     .where(ModelRegistry.is_active.is_(True))
                     .where(ModelRegistry.provider == provider)
-                    .where(ModelRegistry.model_type == "llm")
+                    .where(ModelRegistry.model_type == "embedding")
                     .order_by(ModelRegistry.display_name)
                 )
                 result = await session.execute(stmt)
@@ -107,14 +94,12 @@ def _fetch_models_for_provider(provider: str) -> list[str]:
 
         return _run_async(_query())
     except Exception as e:
-        logger.warning(f"Could not fetch registry models for provider {provider}: {e}")
+        logger.warning(f"Could not fetch registry embeddings for provider {provider}: {e}")
         return []
 
-# ---------------------------------------------------------------------------
-# Synchronous config fetch for build_model() — uses dedicated sync engine
-# ---------------------------------------------------------------------------
+
 def _get_registry_config(model_id: str) -> dict | None:
-    """Fetch model config using a dedicated sync engine (no async involvement)."""
+    """Fetch embedding model config using a dedicated sync engine."""
     from uuid import UUID
 
     from sqlalchemy.orm import Session
@@ -127,7 +112,7 @@ def _get_registry_config(model_id: str) -> dict | None:
         with Session(engine) as session:
             row = session.get(ModelRegistry, UUID(model_id))
             if row is None:
-                logger.warning(f"Model {model_id} not found in DB via sync engine")
+                logger.warning(f"Embedding model {model_id} not found in DB via sync engine")
                 return None
 
             enc_key = os.getenv("MODEL_REGISTRY_ENCRYPTION_KEY", "")
@@ -145,7 +130,6 @@ def _get_registry_config(model_id: str) -> dict | None:
                 "base_url": row.base_url,
                 "environment": row.environment,
                 "provider_config": row.provider_config or {},
-                "capabilities": row.capabilities or {},
                 "default_params": row.default_params or {},
             }
 
@@ -156,29 +140,28 @@ def _get_registry_config(model_id: str) -> dict | None:
 
             return config
     except Exception as e:
-        logger.error(f"Failed to fetch registry config for model {model_id}: {e}", exc_info=True)
-        raise ValueError(f"Failed to load model {model_id} from registry: {e}") from e
+        logger.error(f"Failed to fetch registry config for embedding model {model_id}: {e}", exc_info=True)
+        raise ValueError(f"Failed to load embedding model {model_id} from registry: {e}") from e
 
-class RegistryModelComponent(LCModelNode):
-    """A unified Language Model component that dynamically loads models from the Model Registry.
 
-    Users onboard models via the Model Registry page. This component
-    lets them pick a provider, then select a registered model for that
-    provider in the agent builder.
+class RegistryEmbeddingsComponent(LCEmbeddingsModel):
+    """A unified Embeddings component that dynamically loads models from the Model Registry.
+
+    Users onboard embedding models via the Model Registry page. This component
+    lets them pick a provider, then select a registered embedding model.
     """
 
-    display_name: str = "Large Language Model"
-    description: str = "Select a provider and model from the Model Registry to power your agent."
-    icon = "BrainCircuit"
-    name = "RegistryModelComponent"
+    display_name: str = "Embeddings Model"
+    description: str = "Select a provider and embedding model from the Model Registry."
+    icon = "Binary"
+    name = "RegistryEmbeddingsComponent"
     priority = 0
 
     inputs = [
-        *LCModelNode._base_inputs,
         DropdownInput(
             name="provider",
             display_name="Provider",
-            info="Select the AI provider. Models onboarded for this provider will appear below.",
+            info="Select the AI provider. Embedding models onboarded for this provider will appear below.",
             options=PROVIDER_OPTIONS,
             value="",
             real_time_refresh=True,
@@ -186,23 +169,17 @@ class RegistryModelComponent(LCModelNode):
         DropdownInput(
             name="registry_model",
             display_name="Registry Model",
-            info="Select a model from the Model Registry.",
+            info="Select an embedding model from the Model Registry.",
             options=[],
             value="",
             refresh_button=True,
             real_time_refresh=True,
             combobox=True,
         ),
-        FloatInput(
-            name="temperature",
-            display_name="Temperature",
-            info="Controls randomness (0-2). Leave empty to use model default.",
-            advanced=True,
-        ),
         IntInput(
-            name="max_tokens",
-            display_name="Max Output Tokens",
-            info="Maximum number of tokens to generate. Leave empty for model default.",
+            name="dimensions",
+            display_name="Dimensions",
+            info="Override output embedding dimensions. Leave empty for model default.",
             advanced=True,
         ),
     ]
@@ -210,41 +187,38 @@ class RegistryModelComponent(LCModelNode):
     def update_build_config(self, build_config: dict, field_value: str, field_name: str | None = None):
         """Refresh dropdowns when provider changes or registry_model refresh is clicked."""
         if field_name == "provider":
-            # Provider changed — translate label to DB key and fetch models
             provider_key = PROVIDER_LABEL_TO_KEY.get(field_value, field_value)
             try:
-                options = _fetch_models_for_provider(provider_key)
+                options = _fetch_embedding_models_for_provider(provider_key)
                 build_config["registry_model"]["options"] = options if options else []
                 build_config["registry_model"]["value"] = options[0] if options else ""
             except Exception as e:
-                logger.warning(f"Error fetching models for provider {provider_key}: {e}")
+                logger.warning(f"Error fetching embeddings for provider {provider_key}: {e}")
                 build_config["registry_model"]["options"] = []
                 build_config["registry_model"]["value"] = ""
 
         elif field_name == "registry_model":
-            # Refresh button clicked — re-fetch models for the current provider
             provider_label = build_config.get("provider", {}).get("value", "")
             provider_key = PROVIDER_LABEL_TO_KEY.get(provider_label, provider_label)
             if provider_key:
                 try:
-                    options = _fetch_models_for_provider(provider_key)
+                    options = _fetch_embedding_models_for_provider(provider_key)
                     build_config["registry_model"]["options"] = options if options else []
                     if options and not build_config["registry_model"].get("value"):
                         build_config["registry_model"]["value"] = options[0]
                 except Exception as e:
-                    logger.warning(f"Error refreshing registry models: {e}")
+                    logger.warning(f"Error refreshing registry embeddings: {e}")
                     build_config["registry_model"]["options"] = []
 
         return build_config
 
-    def build_model(self) -> LanguageModel:  # type: ignore[type-var]
-        """Build a LangChain chat model from the selected registry entry."""
+    def build_embeddings(self) -> Embeddings:
+        """Build a LangChain embeddings model from the selected registry entry."""
         selected = self.registry_model
         if not selected:
             msg = "No model selected. Please select a model from the Registry Model dropdown."
             raise ValueError(msg)
 
-        # Parse the selection: "display_name | model_name | uuid"
         parts = [p.strip() for p in selected.split("|")]
         if len(parts) < 3:
             msg = f"Invalid registry model format: {selected}. Please refresh the dropdown."
@@ -252,10 +226,9 @@ class RegistryModelComponent(LCModelNode):
 
         model_id = parts[2]
 
-        # Fetch decrypted config from registry
         config = _get_registry_config(model_id)
         if config is None:
-            msg = f"Model {model_id} not found in registry or has been deleted."
+            msg = f"Embedding model {model_id} not found in registry or has been deleted."
             raise ValueError(msg)
 
         provider = config["provider"].lower()
@@ -265,136 +238,78 @@ class RegistryModelComponent(LCModelNode):
         provider_config = config.get("provider_config", {})
         default_params = config.get("default_params", {})
 
-        # Override with component-level settings if provided (None / "" = use model default)
-        temperature = self.temperature if self.temperature not in (None, "") else default_params.get("temperature")
-        if temperature not in (None, ""):
-            temperature = float(temperature)
-        else:
-            temperature = None
-        max_tokens = self.max_tokens or default_params.get("max_tokens") or None
-        if max_tokens not in (None, ""):
-            max_tokens = int(max_tokens)
-        else:
-            max_tokens = None
-        stream = self.stream
+        dimensions = self.dimensions or default_params.get("dimensions") or None
 
-        return self._build_provider_model(
+        return self._build_provider_embeddings(
             provider=provider,
             model_name=model_name,
             api_key=api_key,
             base_url=base_url,
             provider_config=provider_config,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
+            dimensions=dimensions,
         )
 
-    
-
     @staticmethod
-    def _build_provider_model(
+    def _build_provider_embeddings(
         *,
         provider: str,
         model_name: str,
         api_key: str,
         base_url: str,
         provider_config: dict,
-        temperature: float | None,
-        max_tokens: int | None,
-        stream: bool,
-    ) -> LanguageModel:
-        """Construct a appropriate LangChain model based on the provider."""
+        dimensions: int | None,
+    ) -> Embeddings:
+        """Construct the appropriate LangChain embeddings model based on the provider."""
         if provider == "openai":
-            from langchain_openai import ChatOpenAI
+            from langchain_openai import OpenAIEmbeddings
 
-            kwargs: dict = {
-                "model": model_name,
-                "api_key": api_key,
-                "streaming": stream,
-            }
+            kwargs: dict = {"model": model_name, "api_key": api_key}
             if base_url:
                 kwargs["base_url"] = base_url
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-            if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
-            return ChatOpenAI(**kwargs)
+            if dimensions:
+                kwargs["dimensions"] = dimensions
+            return OpenAIEmbeddings(**kwargs)
 
         if provider == "azure":
-            from langchain_openai import AzureChatOpenAI
-
-            kwargs = {
-                "azure_deployment": provider_config.get("azure_deployment", model_name),
-                "azure_endpoint": base_url or provider_config.get("azure_endpoint", ""),
-                "api_key": api_key,
-                "api_version": provider_config.get("api_version", "2025-10-01-preview"),
-                "streaming": stream,
-            }
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-            if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
-            return AzureChatOpenAI(**kwargs)
-
-        if provider == "anthropic":
-            from langchain_anthropic import ChatAnthropic
+            from langchain_openai import AzureOpenAIEmbeddings
 
             kwargs = {
                 "model": model_name,
+                "azure_endpoint": base_url or provider_config.get("azure_endpoint", ""),
+                "azure_deployment": provider_config.get("azure_deployment", model_name),
+                "api_version": provider_config.get("api_version", "2025-10-01-preview"),
                 "api_key": api_key,
-                "max_tokens": max_tokens or 4096,
-                "streaming": stream,
             }
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-            return ChatAnthropic(**kwargs)
+            if dimensions:
+                kwargs["dimensions"] = dimensions
+            return AzureOpenAIEmbeddings(**kwargs)
 
         if provider == "google":
-            from langchain_google_genai import ChatGoogleGenerativeAI
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
             kwargs = {
                 "model": model_name,
                 "google_api_key": api_key,
             }
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-            if max_tokens is not None:
-                kwargs["max_output_tokens"] = max_tokens
-            return ChatGoogleGenerativeAI(**kwargs)
+            if dimensions:
+                kwargs["output_dimensionality"] = dimensions
+            return GoogleGenerativeAIEmbeddings(**kwargs)
 
-        if provider == "groq":
-            from langchain_groq import ChatGroq
+        if provider in ("openai_compatible", "groq", "anthropic"):
+            from langchain_openai import OpenAIEmbeddings
 
-            kwargs = {
-                "model": model_name,
-                "api_key": SecretStr(api_key).get_secret_value() if api_key else "",
-                "streaming": stream,
-            }
-            if base_url:
-                kwargs["base_url"] = base_url
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-            if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
-            return ChatGroq(**kwargs)
-
-        if provider == "openai_compatible":
-            from langchain_openai import ChatOpenAI
-
-            custom_headers = provider_config.get("custom_headers", {})
             kwargs = {
                 "model": model_name,
                 "api_key": api_key or "not-needed",
-                "base_url": base_url,
-                "streaming": stream,
             }
+            if base_url:
+                kwargs["base_url"] = base_url
+            if dimensions:
+                kwargs["dimensions"] = dimensions
+            custom_headers = provider_config.get("custom_headers", {})
             if custom_headers:
                 kwargs["default_headers"] = custom_headers
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-            if max_tokens is not None:
-                kwargs["max_tokens"] = max_tokens
-            return ChatOpenAI(**kwargs)
+            return OpenAIEmbeddings(**kwargs)
 
-        msg = f"Unsupported provider: {provider}. Supported: openai, azure, anthropic, google, groq, openai_compatible"
+        msg = f"Unsupported embedding provider: {provider}. Supported: openai, azure, google, openai_compatible"
         raise ValueError(msg)
