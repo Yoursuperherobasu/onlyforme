@@ -31,7 +31,7 @@ class GuardrailPayload(BaseModel):
     modelRegistryId: UUID | None = None
     category: str
     status: str = "active"
-    rulesCount: int = 0
+    rulesCount: int | None = None
     isCustom: bool = False
     runtimeConfig: dict[str, Any] | None = None
     org_id: UUID | None = None
@@ -274,7 +274,7 @@ async def create_guardrail_catalogue(
         model_registry_id=model_row.id,
         category=payload.category,
         status=payload.status,
-        rules_count=payload.rulesCount,
+        rules_count=payload.rulesCount or 0,
         is_custom=payload.isCustom,
         runtime_config=normalized_runtime_config,
         org_id=payload.org_id,
@@ -340,7 +340,8 @@ async def update_guardrail_catalogue(
     row.model_registry_id = model_row.id
     row.category = payload.category
     row.status = payload.status
-    row.rules_count = payload.rulesCount
+    if payload.rulesCount is not None:
+        row.rules_count = payload.rulesCount
     row.is_custom = payload.isCustom
     row.runtime_config = normalized_runtime_config
     row.org_id = payload.org_id

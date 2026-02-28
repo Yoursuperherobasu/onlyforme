@@ -21,7 +21,7 @@ export interface GuardrailInfo {
   modelDisplayName?: string | null;
   category: string;
   status: "active" | "inactive";
-  rulesCount: number;
+  rulesCount?: number;
   isCustom: boolean;
   runtimeConfig?: GuardrailRuntimeConfig | null;
   runtimeReady?: boolean;
@@ -35,7 +35,7 @@ export interface GuardrailCreateOrUpdatePayload {
   modelRegistryId: string;
   category: string;
   status: "active" | "inactive";
-  rulesCount: number;
+  rulesCount?: number;
   isCustom: boolean;
   runtimeConfig?: GuardrailRuntimeConfig | null;
   org_id?: string | null;

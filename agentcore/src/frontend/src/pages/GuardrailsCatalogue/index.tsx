@@ -186,7 +186,6 @@ export default function GuardrailsView({
                       "Provider",
                       "Category",
                       "Status",
-                      "Rules",
                       ...(canManage ? ["Actions"] : []),
                     ].map((h) => (
                       <th
@@ -203,7 +202,7 @@ export default function GuardrailsView({
                   {filteredGuardrails.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={canManage ? 7 : 6}
+                        colSpan={canManage ? 6 : 5}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         No guardrails found matching your criteria
@@ -284,12 +283,6 @@ export default function GuardrailsView({
                               {guardrail.status}
                             </span>
                           </div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <span className="text-sm text-muted-foreground">
-                            {guardrail.rulesCount} rules
-                          </span>
                         </td>
 
                         {canManage && (

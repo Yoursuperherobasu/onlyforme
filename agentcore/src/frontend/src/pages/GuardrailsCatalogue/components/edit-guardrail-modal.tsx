@@ -90,7 +90,6 @@ export default function EditGuardrailModal({
   const [modelRegistryId, setModelRegistryId] = useState("");
   const [category, setCategory] = useState("content-safety");
   const [status, setStatus] = useState<"active" | "inactive">("active");
-  const [rulesCount, setRulesCount] = useState<number | "">(0);
   const [isCustom, setIsCustom] = useState(false);
 
   const [configYml, setConfigYml] = useState("");
@@ -117,9 +116,6 @@ export default function EditGuardrailModal({
       setModelRegistryId(guardrail.modelRegistryId ?? "");
       setCategory(guardrail.category ?? "content-safety");
       setStatus((guardrail.status ?? "active") as "active" | "inactive");
-      setRulesCount(
-        typeof guardrail.rulesCount === "number" ? guardrail.rulesCount : 0,
-      );
       setIsCustom(Boolean(guardrail.isCustom));
 
       const runtimeConfig = guardrail.runtimeConfig ?? undefined;
@@ -161,7 +157,6 @@ export default function EditGuardrailModal({
       setModelRegistryId(defaultModelId);
       setCategory("content-safety");
       setStatus("active");
-      setRulesCount(0);
       setIsCustom(false);
       setConfigYml(getConfigTemplate());
       setPromptsYml(getPromptsTemplate());
@@ -233,7 +228,6 @@ export default function EditGuardrailModal({
       modelRegistryId,
       category,
       status,
-      rulesCount: rulesCount === "" ? 0 : Number(rulesCount),
       isCustom,
       runtimeConfig,
       org_id: guardrail?.org_id ?? null,
@@ -339,7 +333,7 @@ export default function EditGuardrailModal({
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-1.5 md:col-span-2">
               <Label htmlFor="guardrail-category">Category *</Label>
               <select
@@ -370,19 +364,6 @@ export default function EditGuardrailModal({
                 <option value="active">active</option>
                 <option value="inactive">inactive</option>
               </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="guardrail-rules-count">Rules Count</Label>
-              <Input
-                id="guardrail-rules-count"
-                type="number"
-                min={0}
-                value={rulesCount}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setRulesCount(value === "" ? "" : Math.max(0, Number(value)));
-                }}
-              />
             </div>
           </div>
 
