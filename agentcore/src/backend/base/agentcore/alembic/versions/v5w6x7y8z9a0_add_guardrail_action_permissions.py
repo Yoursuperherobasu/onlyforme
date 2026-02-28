@@ -1,8 +1,8 @@
-"""add connector permissions to rbac
+"""add guardrail action permissions
 
-Revision ID: s2t3u4v5w6x7
-Revises: r1s2t3u4v5w6
-Create Date: 2026-02-28 12:20:00.000000
+Revision ID: v5w6x7y8z9a0
+Revises: u4v5w6x7y8z9
+Create Date: 2026-02-28 20:30:00.000000
 """
 
 from __future__ import annotations
@@ -14,24 +14,21 @@ import sqlalchemy as sa
 from alembic import op
 
 
-# revision identifiers, used by Alembic.
-revision: str = "s2t3u4v5w6x7"
-down_revision: str | Sequence[str] | None = "n2o3p4q5r6s7"
+revision: str = "v5w6x7y8z9a0"
+down_revision: str | Sequence[str] | None = "u4v5w6x7y8z9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 PERMISSIONS = [
-    ("connectore_page", "Connectors"),
-    ("add_connector", "Connectors"),
+    ("add_guardrails", "Guardrails Catalogue"),
+    ("retire_guardrails", "Guardrails Catalogue"),
 ]
 
 ROLE_GRANTS = {
-    "root": ["connectore_page", "add_connector"],
-    "super_admin": ["connectore_page", "add_connector"],
-    "department_admin": ["connectore_page", "add_connector"],
-    "developer": ["connectore_page", "add_connector"],
-    "business_user": ["connectore_page", "add_connector"],
+    "root": ["add_guardrails", "retire_guardrails"],
+    "super_admin": ["add_guardrails", "retire_guardrails"],
+    "department_admin": ["add_guardrails", "retire_guardrails"],
 }
 
 

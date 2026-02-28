@@ -62,8 +62,8 @@ export default function GuardrailsView({
 
   const { role, permissions } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
-  const canCreateOrEdit = role === "root" || can("add_guardrails");
-  const canDelete = role === "root" || can("retire_guardrails");
+  const canCreateOrEdit = can("add_guardrails");
+  const canDelete = can("retire_guardrails");
   const canManage = canCreateOrEdit || canDelete;
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -77,6 +77,12 @@ export default function GuardrailsView({
     : (dbGuardrails ?? []);
 
   const filteredGuardrails = displayGuardrails.filter((guardrail) => {
+    if (selectedFramework && guardrail.provider && selectedFramework.id === "nemo-guardrails") {
+      const p = String(guardrail.provider).toLowerCase();
+      if (!(p.includes("nemo") || p.includes("nvidia"))) {
+        return false;
+      }
+    }
     const matchesFilter = filter === "all" || guardrail.category === filter;
     const matchesSearch =
       !searchQuery ||

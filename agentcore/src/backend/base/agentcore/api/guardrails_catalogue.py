@@ -7,14 +7,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, tuple_
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.guardrail_catalogue.model import GuardrailCatalogue
 from agentcore.services.database.models.model_registry.model import ModelRegistry
 from agentcore.services.database.models.organization.model import Organization
+from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.guardrails import invalidate_nemo_guardrail_cache, is_nemo_runtime_config_ready
@@ -36,10 +37,40 @@ class GuardrailPayload(BaseModel):
     runtimeConfig: dict[str, Any] | None = None
     org_id: UUID | None = None
     dept_id: UUID | None = None
+    visibility: str = "private"  # private | public
+    public_scope: str | None = None  # organization | department
+    public_dept_ids: list[UUID] | None = None
+    shared_user_emails: list[str] | None = None
 
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "root"
+
+
+async def _require_guardrail_permission(current_user: CurrentActiveUser, permission: str) -> None:
+    user_permissions = await get_permissions_for_role(str(current_user.role))
+    if permission not in user_permissions:
+        raise HTTPException(status_code=403, detail="Missing required permissions")
+
+
+def _normalize_visibility(value: str | None) -> str:
+    normalized = (value or "private").strip().lower()
+    if normalized not in {"private", "public"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported visibility '{value}'")
+    return normalized
+
+
+def _normalize_public_scope(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized not in {"organization", "department"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported public_scope '{value}'")
+    return normalized
+
+
+def _string_ids(values: list[UUID] | None) -> list[str]:
+    return [str(v) for v in (values or [])]
 
 
 async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set[UUID], list[tuple[UUID, UUID]]]:
@@ -64,22 +95,6 @@ async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set
     return org_ids, [(row[0], row[1]) for row in dept_rows]
 
 
-async def _visibility_filters(session: DbSession, current_user: CurrentActiveUser):
-    if _is_root_user(current_user):
-        return []
-
-    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    filters = [and_(GuardrailCatalogue.org_id.is_(None), GuardrailCatalogue.dept_id.is_(None))]
-
-    if org_ids:
-        filters.append(and_(GuardrailCatalogue.org_id.in_(list(org_ids)), GuardrailCatalogue.dept_id.is_(None)))
-
-    if dept_pairs:
-        filters.append(tuple_(GuardrailCatalogue.org_id, GuardrailCatalogue.dept_id).in_(dept_pairs))
-
-    return filters
-
-
 async def _validate_scope_refs(session: DbSession, payload: GuardrailPayload) -> None:
     if payload.dept_id and not payload.org_id:
         raise HTTPException(status_code=400, detail="dept_id requires org_id")
@@ -100,6 +115,150 @@ async def _validate_scope_refs(session: DbSession, payload: GuardrailPayload) ->
         ).first()
         if not dept:
             raise HTTPException(status_code=400, detail="Invalid dept_id for org_id")
+
+
+async def _resolve_user_ids_by_emails(session: DbSession, emails: list[str]) -> list[str]:
+    if not emails:
+        return []
+    normalized = [e.strip().lower() for e in emails if e and e.strip()]
+    if not normalized:
+        return []
+    rows = (
+        await session.exec(select(User.id, User.email).where(User.email.in_(normalized)))
+    ).all()
+    found = {str(r[1]).lower(): str(r[0]) for r in rows}
+    missing = [e for e in normalized if e not in found]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Invalid shared_user_emails: {', '.join(missing)}")
+    return [found[e] for e in normalized]
+
+
+async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, dept_ids: list[UUID]) -> None:
+    if not dept_ids:
+        return
+    rows = (
+        await session.exec(
+            select(Department.id).where(Department.org_id == org_id, Department.id.in_(dept_ids))
+        )
+    ).all()
+    if len({str(r if isinstance(r, UUID) else r[0]) for r in rows}) != len({str(d) for d in dept_ids}):
+        raise HTTPException(status_code=400, detail="One or more public_dept_ids are invalid for org_id")
+
+
+async def _enforce_creation_scope(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    payload: GuardrailPayload,
+) -> tuple[str, str | None, list[str], list[str]]:
+    user_role = normalize_role(str(current_user.role))
+    visibility = _normalize_visibility(getattr(payload, "visibility", None))
+    public_scope = _normalize_public_scope(getattr(payload, "public_scope", None))
+    public_dept_ids = _string_ids(getattr(payload, "public_dept_ids", None))
+    shared_user_ids: list[str] = []
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+
+    if user_role not in {"root", "super_admin", "department_admin", "developer", "business_user"}:
+        raise HTTPException(status_code=403, detail="Your role is not allowed to create guardrails")
+
+    if visibility == "private":
+        payload.public_scope = None
+        payload.public_dept_ids = None
+        if user_role == "department_admin":
+            if not dept_pairs:
+                raise HTTPException(status_code=403, detail="No active department scope found")
+            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+            payload.org_id = current_org_id
+            payload.dept_id = current_dept_id
+            shared_user_ids = await _resolve_user_ids_by_emails(session, getattr(payload, "shared_user_emails", None) or [])
+            if shared_user_ids:
+                allowed_ids = set(
+                    str(v if isinstance(v, UUID) else v[0])
+                    for v in (
+                        await session.exec(
+                            select(UserDepartmentMembership.user_id).where(
+                                UserDepartmentMembership.department_id == current_dept_id,
+                                UserDepartmentMembership.status == "active",
+                            )
+                        )
+                    ).all()
+                )
+                if not set(shared_user_ids).issubset(allowed_ids):
+                    raise HTTPException(status_code=403, detail="shared_user_emails must belong to your current department")
+        else:
+            if user_role in {"developer", "business_user"} and dept_pairs:
+                current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+                payload.org_id = current_org_id
+                payload.dept_id = current_dept_id
+            else:
+                payload.org_id = None
+                payload.dept_id = None
+    else:
+        if public_scope is None:
+            raise HTTPException(status_code=400, detail="public_scope is required when visibility is public")
+        if public_scope == "organization":
+            if not payload.org_id:
+                raise HTTPException(status_code=400, detail="org_id is required for public organization visibility")
+            if user_role != "root" and payload.org_id not in org_ids:
+                raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+            payload.dept_id = None
+            payload.public_dept_ids = None
+            public_dept_ids = []
+        else:
+            if user_role in {"super_admin", "root"}:
+                if not payload.org_id:
+                    raise HTTPException(status_code=400, detail="org_id is required for department visibility")
+                if user_role != "root" and payload.org_id not in org_ids:
+                    raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+                if not public_dept_ids and payload.dept_id:
+                    public_dept_ids = [str(payload.dept_id)]
+                if not public_dept_ids:
+                    raise HTTPException(status_code=400, detail="Select at least one department")
+                await _validate_departments_exist_for_org(session, payload.org_id, [UUID(v) for v in public_dept_ids])
+                payload.dept_id = UUID(public_dept_ids[0]) if len(public_dept_ids) == 1 else None
+            else:
+                if not dept_pairs:
+                    raise HTTPException(status_code=403, detail="No active department scope found")
+                current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+                payload.org_id = current_org_id
+                payload.dept_id = current_dept_id
+                public_dept_ids = [str(current_dept_id)]
+        shared_user_ids = []
+
+    await _validate_scope_refs(session, payload)
+    return visibility, public_scope, public_dept_ids, shared_user_ids
+
+
+def _can_access_guardrail(
+    row: GuardrailCatalogue,
+    current_user: CurrentActiveUser,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(getattr(row, "created_by", "")) == str(current_user.id)
+            and row.org_id is None
+            and row.dept_id is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    if role == "super_admin" and row.org_id and row.org_id in org_ids:
+        return True
+
+    visibility = _normalize_visibility(getattr(row, "visibility", "private"))
+    user_id = str(current_user.id)
+    dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
+
+    if visibility == "private":
+        return str(row.created_by) == user_id or user_id in set(row.shared_user_ids or [])
+    if getattr(row, "public_scope", None) == "organization":
+        return bool(row.org_id and row.org_id in org_ids)
+    if getattr(row, "public_scope", None) == "department":
+        dept_candidates = set(row.public_dept_ids or [])
+        if row.dept_id:
+            dept_candidates.add(str(row.dept_id))
+        return bool(dept_candidates.intersection(dept_id_set))
+    return False
 
 
 def _validate_runtime_config_shape(payload: GuardrailPayload) -> None:
@@ -196,6 +355,10 @@ def _serialize_guardrail(row: GuardrailCatalogue, model_row: ModelRegistry | Non
         "runtimeReady": is_nemo_runtime_config_ready(row.runtime_config, model_registry_ready_id),
         "org_id": str(row.org_id) if row.org_id else None,
         "dept_id": str(row.dept_id) if row.dept_id else None,
+        "visibility": row.visibility,
+        "public_scope": row.public_scope,
+        "public_dept_ids": row.public_dept_ids or [],
+        "shared_user_ids": row.shared_user_ids or [],
     }
     logger.debug(
         f"Serialized guardrail {row.name}: row.model_registry_id={row.model_registry_id}, "
@@ -225,12 +388,12 @@ async def list_guardrails_catalogue(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> list[dict]:
-    filters = await _visibility_filters(session, current_user)
+    await _require_guardrail_permission(current_user, "view_guardrail_page")
     query = select(GuardrailCatalogue).order_by(GuardrailCatalogue.name.asc())
-    if filters:
-        query = query.where(or_(*filters))
 
     rows = (await session.exec(query)).all()
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+    rows = [row for row in rows if _can_access_guardrail(row, current_user, org_ids, dept_pairs)]
     model_ids = {row.model_registry_id for row in rows if row.model_registry_id}
     model_by_id: dict[str, ModelRegistry] = {}
     if model_ids:
@@ -242,6 +405,69 @@ async def list_guardrails_catalogue(
     return [_serialize_guardrail(row, model_by_id.get(str(row.model_registry_id))) for row in rows]
 
 
+@router.get("/visibility-options")
+async def get_guardrail_visibility_options(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict:
+    await _require_guardrail_permission(current_user, "view_guardrail_page")
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+    role = normalize_role(str(current_user.role))
+
+    organizations = []
+    if role == "root":
+        org_rows = (await session.exec(select(Organization.id, Organization.name))).all()
+        organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
+    elif org_ids:
+        org_rows = (
+            await session.exec(select(Organization.id, Organization.name).where(Organization.id.in_(list(org_ids))))
+        ).all()
+        organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
+
+    dept_ids = {dept_id for _, dept_id in dept_pairs}
+    departments = []
+    if role == "root":
+        dept_rows = (await session.exec(select(Department.id, Department.name, Department.org_id))).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+    elif role == "super_admin" and org_ids:
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(Department.org_id.in_(list(org_ids)))
+            )
+        ).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+    elif dept_ids:
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(Department.id.in_(list(dept_ids)))
+            )
+        ).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+
+    private_share_users = []
+    if role == "department_admin" and dept_ids:
+        primary_dept = sorted(dept_ids, key=str)[0]
+        user_rows = (
+            await session.exec(
+                select(User.id, User.email)
+                .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
+                .where(
+                    UserDepartmentMembership.department_id == primary_dept,
+                    UserDepartmentMembership.status == "active",
+                    User.email.is_not(None),
+                )
+            )
+        ).all()
+        private_share_users = [{"id": str(r[0]), "email": r[1]} for r in user_rows if r[1]]
+
+    return {
+        "organizations": organizations,
+        "departments": departments,
+        "private_share_users": private_share_users,
+        "role": role,
+    }
+
+
 @router.post("")
 @router.post("/")
 async def create_guardrail_catalogue(
@@ -249,10 +475,12 @@ async def create_guardrail_catalogue(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    if not _is_root_user(current_user):
-        raise HTTPException(status_code=403, detail="Access denied. Root admin only.")
+    await _require_guardrail_permission(current_user, "view_guardrail_page")
+    await _require_guardrail_permission(current_user, "add_guardrails")
 
-    await _validate_scope_refs(session, payload)
+    visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
+        session, current_user, payload
+    )
     model_row = await _resolve_guardrail_model_registry(session, payload.modelRegistryId)
     _validate_runtime_config_shape(payload)
     normalized_runtime_config = _normalize_runtime_config_payload(payload.runtimeConfig)
@@ -279,6 +507,10 @@ async def create_guardrail_catalogue(
         runtime_config=normalized_runtime_config,
         org_id=payload.org_id,
         dept_id=payload.dept_id,
+        visibility=visibility,
+        public_scope=public_scope,
+        public_dept_ids=public_dept_ids,
+        shared_user_ids=shared_user_ids,
         created_by=current_user.id,
         updated_by=current_user.id,
         created_at=now,
@@ -306,14 +538,26 @@ async def update_guardrail_catalogue(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    if not _is_root_user(current_user):
-        raise HTTPException(status_code=403, detail="Access denied. Root admin only.")
+    await _require_guardrail_permission(current_user, "view_guardrail_page")
+    await _require_guardrail_permission(current_user, "add_guardrails")
 
     row = await session.get(GuardrailCatalogue, guardrail_id)
     if not row:
         raise HTTPException(status_code=404, detail="Guardrail not found")
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+    if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
 
-    await _validate_scope_refs(session, payload)
+    if payload.org_id is None:
+        payload.org_id = row.org_id
+    if payload.public_scope is None:
+        payload.public_scope = row.public_scope
+    if payload.dept_id is None and payload.public_scope != "organization":
+        payload.dept_id = row.dept_id
+
+    visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
+        session, current_user, payload
+    )
     model_row = await _resolve_guardrail_model_registry(session, payload.modelRegistryId)
     _validate_runtime_config_shape(payload)
     normalized_runtime_config = _normalize_runtime_config_payload(payload.runtimeConfig)
@@ -346,6 +590,10 @@ async def update_guardrail_catalogue(
     row.runtime_config = normalized_runtime_config
     row.org_id = payload.org_id
     row.dept_id = payload.dept_id
+    row.visibility = visibility
+    row.public_scope = public_scope
+    row.public_dept_ids = public_dept_ids
+    row.shared_user_ids = shared_user_ids
     row.updated_by = current_user.id
     row.updated_at = now
     if payload.status == "active":
@@ -367,12 +615,15 @@ async def delete_guardrail_catalogue(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    if not _is_root_user(current_user):
-        raise HTTPException(status_code=403, detail="Access denied. Root admin only.")
+    await _require_guardrail_permission(current_user, "view_guardrail_page")
+    await _require_guardrail_permission(current_user, "retire_guardrails")
 
     row = await session.get(GuardrailCatalogue, guardrail_id)
     if not row:
         raise HTTPException(status_code=404, detail="Guardrail not found")
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+    if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
 
     await session.delete(row)
     await session.commit()

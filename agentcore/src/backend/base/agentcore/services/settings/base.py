@@ -329,22 +329,26 @@ class Settings(BaseSettings):
     @field_validator("config_dir", mode="before")
     @classmethod
     def set_agentcore_dir(cls, value):
+        backend_root = Path(__file__).resolve().parents[4]
+        project_root = backend_root.parent.parent
+
         if not value:
             # Default storage root for uploaded knowledge/files inside the backend tree.
-            value = Path(__file__).resolve().parents[4] / "knowledge_base_storage"
+            value = backend_root / "knowledge_base_storage"
             value.mkdir(parents=True, exist_ok=True)
 
         if isinstance(value, str):
             value = Path(value)
 
-        # Make relative CONFIG_DIR stable regardless of process working directory.
+        # For relative values, always anchor to the project root so behavior is
+        # independent of the process working directory.
         if not value.is_absolute():
-            value = Path(__file__).resolve().parents[4] / value
+            value = (project_root / value).resolve()
 
         if not value.exists():
             value.mkdir(parents=True, exist_ok=True)
 
-        return str(value)
+        return str(value.resolve())
 
     @field_validator("database_url", mode="before")
     @classmethod

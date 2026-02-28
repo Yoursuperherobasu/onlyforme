@@ -43,6 +43,8 @@ PERMISSIONS = [
     ("view_observability_page", "Observability"),
     ("view_evaluation_page", "Evaluation"),
     ("view_guardrail_page", "Guardrails Catalogue"),
+    ("add_guardrails", "Guardrails Catalogue"),
+    ("retire_guardrails", "Guardrails Catalogue"),
     ("view_vectordb_page", "VectorDB Catalogue"),
     ("view_mcp_page", "MCP Servers"),
     ("add_new_mcp", "MCP Servers"),

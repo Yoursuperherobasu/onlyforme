@@ -55,6 +55,8 @@ export default function InputFileComponent({
   }
 
   const { mutateAsync, isPending } = usePostUploadFile();
+  const normalizePath = (path: string) =>
+    path.replaceAll("\\", "/").toLowerCase();
   const [isKnowledgeBaseModalOpen, setIsKnowledgeBaseModalOpen] =
     useState(false);
   const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<
@@ -197,27 +199,15 @@ export default function InputFileComponent({
         : [file_path ?? ""]
   ).filter((value) => value !== "");
 
-  const selectedKnowledgeBaseNames = useMemo(() => {
-    if (!files || !knowledgeBases) return [];
-    const kbIds = new Set(
-      files
-        .filter((file) => selectedFiles.includes(file.path))
-        .map((file) => file.knowledge_base_id)
-        .filter((kbId): kbId is string => typeof kbId === "string"),
-    );
-    return knowledgeBases
-      .filter((kb) => kbIds.has(kb.id))
-      .map((kb) => kb.name);
-  }, [files, knowledgeBases, selectedFiles]);
-
   const selectedKnowledgeBaseGroups = useMemo(() => {
     if (!files || !knowledgeBases) return [];
+    const selectedPathSet = new Set(selectedFiles.map(normalizePath));
     const groupedByKb = new Map<
       string,
       { id: string; name: string; files: any[] }
     >();
     files
-      .filter((file) => selectedFiles.includes(file.path))
+      .filter((file) => selectedPathSet.has(normalizePath(file.path)))
       .forEach((file) => {
         if (!file.knowledge_base_id) return;
         const kb = knowledgeBases.find((item) => item.id === file.knowledge_base_id);
@@ -238,31 +228,52 @@ export default function InputFileComponent({
 
   const applyKnowledgeBaseSelection = (kbIds: string[]) => {
     if (!files || !knowledgeBases) return;
-    const scopedFiles = files.filter(
+    const selectedKbs = knowledgeBases.filter((kb) => kbIds.includes(kb.id));
+    const normalizedKbNames = selectedKbs.map((kb) =>
+      normalizePath(kb.name),
+    );
+
+    // Primary mapping via knowledge_base_id, fallback via storage folder segment in file path.
+    const scopedByKbId = files.filter(
       (file) => file.knowledge_base_id && kbIds.includes(file.knowledge_base_id),
     );
-    const filePaths = scopedFiles.map((file) => file.path);
-    const kbNames = knowledgeBases
-      .filter((kb) => kbIds.includes(kb.id))
-      .map((kb) => kb.name);
+    const scopedByPath = files.filter((file) => {
+      const normalizedFilePath = normalizePath(file.path);
+      return normalizedKbNames.some((kbName) =>
+        normalizedFilePath.includes(`/${kbName}/`),
+      );
+    });
 
+    const dedupedByPath = new Map<string, (typeof files)[number]>();
+    [...scopedByKbId, ...scopedByPath].forEach((file) => {
+      dedupedByPath.set(normalizePath(file.path), file);
+    });
+    const scopedFiles = Array.from(dedupedByPath.values());
+    const filePaths = scopedFiles.map((file) => file.path);
     handleOnNewValue({
-      value: isList ? kbNames : (kbNames[0] ?? ""),
+      // Keep value aligned with file_path so backend realtime updates
+      // never receive KB display names as file input values.
+      value: isList ? filePaths : (filePaths[0] ?? ""),
       file_path: isList ? filePaths : (filePaths[0] ?? ""),
     });
   };
 
   useEffect(() => {
     if (files !== undefined && !tempFile) {
-      const validSelectedFiles = files.filter((f) => selectedFiles.includes(f.path));
+      const selectedPathSet = new Set(selectedFiles.map(normalizePath));
+      const validSelectedFiles = files.filter((f) =>
+        selectedPathSet.has(normalizePath(f.path)),
+      );
       if (validSelectedFiles.length === selectedFiles.length) return;
+      if (selectedFiles.length > 0 && validSelectedFiles.length === 0) return;
 
+      const validPaths = validSelectedFiles.map((f) => f.path);
       handleOnNewValue({
-        value: isList ? selectedKnowledgeBaseNames : (selectedKnowledgeBaseNames[0] ?? ""),
-        file_path: isList ? validSelectedFiles.map((f) => f.path) : (validSelectedFiles[0]?.path ?? ""),
+        value: isList ? validPaths : (validPaths[0] ?? ""),
+        file_path: isList ? validPaths : (validPaths[0] ?? ""),
       });
     }
-  }, [files, file_path, selectedFiles, selectedKnowledgeBaseNames, isList]);
+  }, [files, file_path, selectedFiles, isList]);
 
   return (
     <div className="w-full">
@@ -306,13 +317,10 @@ export default function InputFileComponent({
                                   (path) =>
                                     !group.files.some((groupFile) => groupFile.path === path),
                                 );
-                                const remainingKbGroups = selectedKnowledgeBaseGroups.filter(
-                                  (kbGroup) => kbGroup.id !== group.id,
-                                );
                                 handleOnNewValue({
                                   value: isList
-                                    ? remainingKbGroups.map((kbGroup) => kbGroup.name)
-                                    : (remainingKbGroups[0]?.name ?? ""),
+                                    ? remainingFiles
+                                    : (remainingFiles[0] ?? ""),
                                   file_path: isList
                                     ? remainingFiles
                                     : (remainingFiles[0] ?? ""),
@@ -445,9 +453,14 @@ export default function InputFileComponent({
                     <Button
                       disabled={isDisabled}
                       onClick={() => {
+                        const selectedPathSet = new Set(
+                          selectedFiles.map(normalizePath),
+                        );
                         const existingKbIds =
                           files
-                            ?.filter((f) => selectedFiles.includes(f.path))
+                            ?.filter((f) =>
+                              selectedPathSet.has(normalizePath(f.path)),
+                            )
                             .map((f) => f.knowledge_base_id)
                             .filter((kbId): kbId is string => !!kbId) ?? [];
                         setSelectedKnowledgeBaseIds(Array.from(new Set(existingKbIds)));

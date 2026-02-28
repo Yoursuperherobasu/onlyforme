@@ -1,4 +1,4 @@
-import type { ColDef, RowClickedEvent, SelectionChangedEvent } from "ag-grid-community";
+import type { ColDef, SelectionChangedEvent } from "ag-grid-community";
 import type { AgGridReact } from "ag-grid-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useDeleteKnowledgeBase } from "@/controllers/API/queries/knowledge-bases/use-delete-knowledge-base";
+import { useUpdateKBVisibility } from "@/controllers/API/queries/knowledge-bases/use-update-kb-visibility";
 import {
   type KBVisibility,
   type KnowledgeBaseInfo,
@@ -46,7 +47,6 @@ interface KnowledgeBasesTabProps {
   quantitySelected: number;
   setQuantitySelected: (quantity: number) => void;
   isShiftPressed: boolean;
-  onRowClick?: (knowledgeBase: KnowledgeBaseInfo) => void;
 }
 
 type DisplayRow = {
@@ -63,6 +63,9 @@ type DisplayRow = {
   file_count?: number;
   last_activity?: string | null;
   can_delete?: boolean;
+  can_edit?: boolean;
+  org_id?: string | null;
+  dept_id?: string | null;
   // File fields
   path?: string;
   updated_at?: string;
@@ -72,6 +75,9 @@ type DisplayRow = {
   kbName?: string;
 };
 
+type KBVisibilityMode = "private" | "public";
+type KBPublicScope = "department" | "organization";
+
 const KnowledgeBasesTab = ({
   quickFilterText,
   setQuickFilterText,
@@ -80,7 +86,6 @@ const KnowledgeBasesTab = ({
   quantitySelected,
   setQuantitySelected,
   isShiftPressed,
-  onRowClick,
 }: KnowledgeBasesTabProps) => {
   const tableRef = useRef<AgGridReact<any>>(null);
   const { setErrorData, setSuccessData } = useAlertStore((state) => ({
@@ -106,13 +111,22 @@ const KnowledgeBasesTab = ({
     useState<KnowledgeBaseInfo | null>(null);
   const [fileToDelete, setFileToDelete] = useState<DisplayRow | null>(null);
   const [isFileDeleteModalOpen, setIsFileDeleteModalOpen] = useState(false);
+  const [isEditVisibilityModalOpen, setIsEditVisibilityModalOpen] = useState(false);
+  const [knowledgeBaseToEdit, setKnowledgeBaseToEdit] = useState<KnowledgeBaseInfo | null>(null);
 
   // Upload modal state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [knowledgeBaseName, setKnowledgeBaseName] = useState("");
   const [isExistingKB, setIsExistingKB] = useState(false);
-  const [selectedVisibility, setSelectedVisibility] =
-    useState<KBVisibility>("PRIVATE");
+  const [visibilityMode, setVisibilityMode] = useState<KBVisibilityMode>("private");
+  const [publicScope, setPublicScope] = useState<KBPublicScope>("department");
+  const [selectedVisibility, setSelectedVisibility] = useState<KBVisibility>("PRIVATE");
+  const [selectedOrgId, setSelectedOrgId] = useState("");
+  const [selectedDeptId, setSelectedDeptId] = useState("");
+  const [visibilityOptions, setVisibilityOptions] = useState<{
+    organizations: { id: string; name: string }[];
+    departments: { id: string; name: string; org_id: string }[];
+  }>({ organizations: [], departments: [] });
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   const { validateFileSize } = useFileSizeValidator();
   const uploadFile = useUploadFile({ multiple: true });
@@ -124,6 +138,22 @@ const KnowledgeBasesTab = ({
   const { data: knowledgeBases, isLoading, error } = useGetKnowledgeBases();
   const { data: files } = useGetFilesV2();
   const [isDeletingFile, setIsDeletingFile] = useState(false);
+  const updateVisibilityMutation = useUpdateKBVisibility(
+    { kb_id: knowledgeBaseToEdit?.id || "" },
+    {
+      onSuccess: () => {
+        setSuccessData({ title: "Knowledge base visibility updated successfully" });
+        setIsEditVisibilityModalOpen(false);
+        setKnowledgeBaseToEdit(null);
+      },
+      onError: (error: any) => {
+        setErrorData({
+          title: "Failed to update visibility",
+          list: [error?.response?.data?.detail || "Unexpected error"],
+        });
+      },
+    },
+  );
 
   const deleteKnowledgeBaseMutation = useDeleteKnowledgeBase(
     {
@@ -179,6 +209,17 @@ const KnowledgeBasesTab = ({
     setIsFileDeleteModalOpen(true);
   };
 
+  const openEditVisibilityModal = (kb: KnowledgeBaseInfo) => {
+    setKnowledgeBaseToEdit(kb);
+    const kbVisibility = (kb.visibility as KBVisibility) || "PRIVATE";
+    setSelectedVisibility(kbVisibility);
+    setVisibilityMode(kbVisibility === "PRIVATE" ? "private" : "public");
+    setPublicScope(kbVisibility === "ORGANIZATION" ? "organization" : "department");
+    setSelectedOrgId(kb.org_id || "");
+    setSelectedDeptId(kb.dept_id || "");
+    setIsEditVisibilityModalOpen(true);
+  };
+
   const confirmDeleteFile = async () => {
     if (!fileToDelete || isDeletingFile) return;
     setIsDeletingFile(true);
@@ -223,21 +264,85 @@ const KnowledgeBasesTab = ({
     if (!isUploadModalOpen) {
       setPendingUploadFiles([]);
       setKnowledgeBaseName("");
+      setVisibilityMode("private");
+      setPublicScope("department");
       setSelectedVisibility("PRIVATE");
+      setSelectedOrgId("");
+      setSelectedDeptId("");
       setIsExistingKB(false);
     }
   }, [isUploadModalOpen]);
+
+  useEffect(() => {
+    if ((!isUploadModalOpen || isExistingKB) && !isEditVisibilityModalOpen) return;
+    api.get(`${getURL("KNOWLEDGE_BASES")}/visibility-options`).then((res) => {
+      const options = res.data || { organizations: [], departments: [] };
+      setVisibilityOptions(options);
+      setSelectedOrgId((prev) => prev || options.organizations?.[0]?.id || "");
+      setSelectedDeptId((prev) => prev || options.departments?.[0]?.id || "");
+    });
+  }, [isUploadModalOpen, isExistingKB, isEditVisibilityModalOpen]);
+
+  useEffect(() => {
+    setSelectedVisibility(
+      visibilityMode === "private"
+        ? "PRIVATE"
+        : publicScope === "organization"
+          ? "ORGANIZATION"
+          : "DEPARTMENT",
+    );
+  }, [visibilityMode, publicScope]);
+
+  useEffect(() => {
+    if (visibilityMode !== "public") return;
+    if (
+      publicScope === "organization" &&
+      (normalizedRole === "developer" || normalizedRole === "department_admin") &&
+      !selectedOrgId &&
+      visibilityOptions.organizations.length > 0
+    ) {
+      setSelectedOrgId(visibilityOptions.organizations[0].id);
+      return;
+    }
+    if (
+      publicScope === "department" &&
+      normalizedRole !== "super_admin" &&
+      normalizedRole !== "root" &&
+      !selectedDeptId &&
+      visibilityOptions.departments.length > 0
+    ) {
+      const dept = visibilityOptions.departments[0];
+      setSelectedDeptId(dept.id);
+      if (!selectedOrgId) setSelectedOrgId(dept.org_id);
+    }
+  }, [
+    visibilityMode,
+    publicScope,
+    normalizedRole,
+    selectedOrgId,
+    selectedDeptId,
+    visibilityOptions.organizations,
+    visibilityOptions.departments,
+  ]);
 
   const handleUpload = async (
     uploadFiles?: File[],
     kbName?: string,
     visibility?: string,
+    scope?: {
+      public_scope?: "organization" | "department";
+      org_id?: string;
+      dept_id?: string;
+    },
   ) => {
     try {
       const filesIds = await uploadFile({
         files: uploadFiles,
         knowledgeBaseName: kbName,
         visibility,
+        public_scope: scope?.public_scope,
+        org_id: scope?.org_id,
+        dept_id: scope?.dept_id,
       });
       setSuccessData({
         title: `File${filesIds.length > 1 ? "s" : ""} uploaded successfully`,
@@ -253,7 +358,11 @@ const KnowledgeBasesTab = ({
   const handleOpenUploadModal = () => {
     setIsExistingKB(false);
     setKnowledgeBaseName("");
+    setVisibilityMode("private");
+    setPublicScope("department");
     setSelectedVisibility("PRIVATE");
+    setSelectedOrgId("");
+    setSelectedDeptId("");
     setIsUploadModalOpen(true);
   };
 
@@ -293,37 +402,35 @@ const KnowledgeBasesTab = ({
     setSelectedFiles([]);
   };
 
-  const handleRowClick = (event: RowClickedEvent) => {
-    const clickedElement = event.event?.target as HTMLElement;
-    if (
-      clickedElement &&
-      !clickedElement.closest("button") &&
-      event.data?.rowType === "kb" &&
-      onRowClick
-    ) {
-      onRowClick(event.data);
-    }
-  };
-
   // Helper to extract KB name from file path
   const getKBNameFromPath = (path: string) => {
     const normalizedPath = path.replace(/\\/g, "/");
     const segments = normalizedPath.split("/").filter(Boolean);
-    return segments.length >= 3 ? segments[1] : null;
+    // Legacy: <user_id>/<kb_name>/<file>
+    // New:    <user_id>/<kb_id>/<kb_name>/<file>
+    if (segments.length >= 4) return segments[2];
+    if (segments.length >= 3) return segments[1];
+    return null;
   };
 
   // Build display rows: KB rows + expandable file rows
   const displayRows: DisplayRow[] = useMemo(() => {
     if (!knowledgeBases || !Array.isArray(knowledgeBases)) return [];
 
-    const filesByKB = new Map<string, any[]>();
+    const filesByKBId = new Map<string, any[]>();
+    const filesByKBName = new Map<string, any[]>();
     if (files && Array.isArray(files)) {
       files.forEach((file: any) => {
+        if (file.knowledge_base_id) {
+          const existingById = filesByKBId.get(file.knowledge_base_id) ?? [];
+          existingById.push(file);
+          filesByKBId.set(file.knowledge_base_id, existingById);
+        }
         const kbName = getKBNameFromPath(file.path);
         if (kbName) {
-          const existing = filesByKB.get(kbName) ?? [];
-          existing.push(file);
-          filesByKB.set(kbName, existing);
+          const existingByName = filesByKBName.get(kbName) ?? [];
+          existingByName.push(file);
+          filesByKBName.set(kbName, existingByName);
         }
       });
     }
@@ -331,6 +438,7 @@ const KnowledgeBasesTab = ({
     const rows: DisplayRow[] = [];
     knowledgeBases.forEach((kb) => {
       const canDelete = isAdminRole || kb.created_by === userData?.id;
+      const canEdit = isAdminRole || kb.created_by === userData?.id;
       rows.push({
         id: kb.id,
         name: kb.name,
@@ -340,14 +448,17 @@ const KnowledgeBasesTab = ({
         created_by_email: kb.created_by_email,
         department_name: kb.department_name,
         organization_name: kb.organization_name,
+        org_id: kb.org_id,
+        dept_id: kb.dept_id,
         size: kb.size,
         file_count: kb.file_count,
         last_activity: kb.last_activity ?? kb.updated_at ?? null,
         can_delete: canDelete,
+        can_edit: canEdit,
       });
 
       if (expandedKBs[kb.id]) {
-        const kbFiles = filesByKB.get(kb.name) ?? [];
+        const kbFiles = filesByKBId.get(kb.id) ?? filesByKBName.get(kb.name) ?? [];
         kbFiles.forEach((file) => {
           rows.push({
             id: file.id,
@@ -495,6 +606,32 @@ const KnowledgeBasesTab = ({
         },
       },
       {
+        headerName: "Actions",
+        field: "actions",
+        flex: 0.8,
+        sortable: false,
+        filter: false,
+        editable: false,
+        cellClass: baseCellClass,
+        cellRenderer: (params: any) => {
+          if (params.data?.rowType !== "kb" || !params.data?.can_edit) return "";
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                const kb = knowledgeBases?.find((k) => k.id === params.data.id);
+                if (kb) openEditVisibilityModal(kb);
+              }}
+            >
+              Edit Visibility
+            </Button>
+          );
+        },
+      },
+      {
         headerName: "Size",
         field: "size",
         flex: 1,
@@ -612,27 +749,88 @@ const KnowledgeBasesTab = ({
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">Visibility</Label>
               <Select
-                value={selectedVisibility}
-                onValueChange={(value) =>
-                  setSelectedVisibility(value as KBVisibility)
-                }
+                value={visibilityMode}
+                onValueChange={(value) => setVisibilityMode(value as KBVisibilityMode)}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select visibility" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PRIVATE">
-                    Private - Only you
-                  </SelectItem>
-                  <SelectItem value="DEPARTMENT">
-                    Department - Your departments
-                  </SelectItem>
-                  <SelectItem value="ORGANIZATION">
-                    Organization - Everyone in org
-                  </SelectItem>
+                  <SelectItem value="private">Private</SelectItem>
+                  <SelectItem value="public">Public</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+          )}
+
+          {!isExistingKB && visibilityMode === "public" && (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Public To</Label>
+                <Select
+                  value={publicScope}
+                  onValueChange={(value) => setPublicScope(value as KBPublicScope)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select scope" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="department">Department</SelectItem>
+                    <SelectItem value="organization">Organization</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {publicScope === "organization" && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">Organization</Label>
+                  <Select
+                    value={selectedOrgId}
+                    onValueChange={setSelectedOrgId}
+                    disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select organization" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {visibilityOptions.organizations.map((org) => (
+                        <SelectItem key={org.id} value={org.id}>
+                          {org.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {publicScope === "department" && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">Department</Label>
+                  <Select
+                    value={selectedDeptId}
+                    onValueChange={(value) => {
+                      setSelectedDeptId(value);
+                      const dept = visibilityOptions.departments.find((d) => d.id === value);
+                      if (dept) setSelectedOrgId(dept.org_id);
+                    }}
+                    disabled={normalizedRole !== "super_admin" && normalizedRole !== "root"}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select department" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {visibilityOptions.departments
+                        .filter((dept) => !selectedOrgId || dept.org_id === selectedOrgId)
+                        .map((dept) => (
+                          <SelectItem key={dept.id} value={dept.id}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </>
           )}
 
           {/* File selection area */}
@@ -730,7 +928,11 @@ const KnowledgeBasesTab = ({
           label: isExistingKB ? "Upload Files" : "Upload Knowledge Base",
           dataTestId: "upload-files-with-kb-button",
           disabled:
-            pendingUploadFiles.length === 0 || !knowledgeBaseName.trim(),
+            pendingUploadFiles.length === 0 ||
+            !knowledgeBaseName.trim() ||
+            (visibilityMode === "public" &&
+              ((publicScope === "organization" && !selectedOrgId) ||
+                (publicScope === "department" && !selectedDeptId))),
           onClick: async () => {
             const kbName = knowledgeBaseName.trim();
             if (!kbName) {
@@ -739,7 +941,15 @@ const KnowledgeBasesTab = ({
               });
               return;
             }
-            await handleUpload(pendingUploadFiles, kbName, selectedVisibility);
+            const uploadScope =
+              visibilityMode === "public"
+                ? {
+                    public_scope: publicScope,
+                    org_id: publicScope === "organization" ? selectedOrgId : undefined,
+                    dept_id: publicScope === "department" ? selectedDeptId : undefined,
+                  }
+                : undefined;
+            await handleUpload(pendingUploadFiles, kbName, selectedVisibility, uploadScope);
             setIsUploadModalOpen(false);
           },
         }}
@@ -794,7 +1004,6 @@ const KnowledgeBasesTab = ({
             suppressRowClickSelection={!isShiftPressed}
             rowSelection="multiple"
             onSelectionChanged={handleSelectionChange}
-            onRowClicked={handleRowClick}
             columnDefs={columnDefs}
             rowData={displayRows}
             className={cn(
@@ -840,6 +1049,132 @@ const KnowledgeBasesTab = ({
       >
         <></>
       </DeleteConfirmationModal>
+
+      <BaseModal
+        size="small-h-full"
+        open={isEditVisibilityModalOpen}
+        setOpen={setIsEditVisibilityModalOpen}
+      >
+        <BaseModal.Header description="Update visibility scope for this knowledge base.">
+          Edit Visibility
+        </BaseModal.Header>
+        <BaseModal.Content>
+          <div className="flex flex-col gap-4 px-1">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Visibility</Label>
+              <Select
+                value={visibilityMode}
+                onValueChange={(value) => setVisibilityMode(value as KBVisibilityMode)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select visibility" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">Private</SelectItem>
+                  <SelectItem value="public">Public</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {visibilityMode === "public" && (
+              <>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">Public To</Label>
+                  <Select
+                    value={publicScope}
+                    onValueChange={(value) => setPublicScope(value as KBPublicScope)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select scope" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="department">Department</SelectItem>
+                      <SelectItem value="organization">Organization</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {publicScope === "organization" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">Organization</Label>
+                    <Select
+                      value={selectedOrgId}
+                      onValueChange={setSelectedOrgId}
+                      disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select organization" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {visibilityOptions.organizations.map((org) => (
+                          <SelectItem key={org.id} value={org.id}>
+                            {org.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {publicScope === "department" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">Department</Label>
+                    <Select
+                      value={selectedDeptId}
+                      onValueChange={(value) => {
+                        setSelectedDeptId(value);
+                        const dept = visibilityOptions.departments.find((d) => d.id === value);
+                        if (dept) setSelectedOrgId(dept.org_id);
+                      }}
+                      disabled={normalizedRole !== "super_admin" && normalizedRole !== "root"}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {visibilityOptions.departments
+                          .filter((dept) => !selectedOrgId || dept.org_id === selectedOrgId)
+                          .map((dept) => (
+                            <SelectItem key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </BaseModal.Content>
+        <BaseModal.Footer
+          submit={{
+            label: "Save",
+            disabled:
+              updateVisibilityMutation.isPending ||
+              (visibilityMode === "public" &&
+                ((publicScope === "organization" && !selectedOrgId) ||
+                  (publicScope === "department" && !selectedDeptId))),
+            onClick: async () => {
+              if (!knowledgeBaseToEdit) return;
+              await updateVisibilityMutation.mutateAsync({
+                visibility: selectedVisibility,
+                public_scope: visibilityMode === "public" ? publicScope : undefined,
+                org_id:
+                  visibilityMode === "public" && publicScope === "organization"
+                    ? selectedOrgId
+                    : undefined,
+                dept_id:
+                  visibilityMode === "public" && publicScope === "department"
+                    ? selectedDeptId
+                    : undefined,
+              });
+            },
+          }}
+        >
+          <></>
+        </BaseModal.Footer>
+      </BaseModal>
 
       {uploadModal}
     </div>

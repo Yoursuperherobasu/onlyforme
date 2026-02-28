@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,7 +18,10 @@ import {
   usePatchGuardrailCatalogue,
   usePostGuardrailCatalogue,
 } from "@/controllers/API/queries/guardrails";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import { useGetRegistryModels } from "@/controllers/API/queries/models";
+import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
 
 interface EditGuardrailModalProps {
@@ -74,6 +77,7 @@ export default function EditGuardrailModal({
   guardrail,
 }: EditGuardrailModalProps) {
   const isEditMode = !!guardrail;
+  const { role } = useContext(AuthContext);
   const createMutation = usePostGuardrailCatalogue();
   const updateMutation = usePatchGuardrailCatalogue();
 
@@ -96,6 +100,17 @@ export default function EditGuardrailModal({
   const [promptsYml, setPromptsYml] = useState("");
   const [railsCo, setRailsCo] = useState("");
   const [preservedFiles, setPreservedFiles] = useState<Record<string, string>>();
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [publicScope, setPublicScope] = useState<"organization" | "department">("department");
+  const [orgId, setOrgId] = useState("");
+  const [deptId, setDeptId] = useState("");
+  const [publicDeptIds, setPublicDeptIds] = useState<string[]>([]);
+  const [sharedUserEmails, setSharedUserEmails] = useState<string[]>([]);
+  const [visibilityOptions, setVisibilityOptions] = useState<{
+    organizations: { id: string; name: string }[];
+    departments: { id: string; name: string; org_id: string }[];
+    private_share_users: { id: string; email: string }[];
+  }>({ organizations: [], departments: [], private_share_users: [] });
 
   const selectedModel = useMemo(
     () => registryModels.find((model) => model.id === modelRegistryId) ?? null,
@@ -165,7 +180,78 @@ export default function EditGuardrailModal({
     }
   }, [guardrail, open, registryModels, defaultModelId]);
 
+  useEffect(() => {
+    if (!open) return;
+    api.get(`${getURL("GUARDRAILS_CATALOGUE")}/visibility-options`).then((res) => {
+      const options = res.data || {
+        organizations: [],
+        departments: [],
+        private_share_users: [],
+      };
+      setVisibilityOptions(options);
+      if (!isEditMode) {
+        const firstOrg = options.organizations?.[0]?.id || "";
+        const firstDept = options.departments?.[0]?.id || "";
+        setOrgId((prev) => prev || firstOrg);
+        setDeptId((prev) => prev || firstDept);
+      }
+    });
+  }, [open, isEditMode]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (guardrail) {
+      setVisibility((guardrail.visibility as "private" | "public") || "private");
+      setPublicScope((guardrail.public_scope as "organization" | "department") || "department");
+      setOrgId(guardrail.org_id || "");
+      setDeptId(guardrail.dept_id || "");
+      setPublicDeptIds(guardrail.public_dept_ids || []);
+      setSharedUserEmails([]);
+    } else {
+      setVisibility("private");
+      setPublicScope("department");
+      setPublicDeptIds([]);
+      setSharedUserEmails([]);
+    }
+  }, [guardrail, open]);
+
+  useEffect(() => {
+    if (!open || visibility !== "public") return;
+    const canMultiDept = role === "super_admin" || role === "root";
+
+    if (publicScope === "organization") {
+      if ((role === "developer" || role === "department_admin") && !orgId && visibilityOptions.organizations.length > 0) {
+        setOrgId(visibilityOptions.organizations[0].id);
+      }
+      return;
+    }
+
+    if (!canMultiDept && !deptId && visibilityOptions.departments.length > 0) {
+      const firstDept = visibilityOptions.departments[0];
+      setDeptId(firstDept.id);
+      setOrgId((prev) => prev || firstDept.org_id);
+    }
+  }, [
+    open,
+    visibility,
+    publicScope,
+    role,
+    orgId,
+    deptId,
+    visibilityOptions.organizations,
+    visibilityOptions.departments,
+  ]);
+
   const isSaving = createMutation.isPending || updateMutation.isPending;
+  const isVisibilityInvalid =
+    visibility === "public" &&
+    (
+      (publicScope === "organization" && !orgId) ||
+      (publicScope === "department" &&
+        ((role === "super_admin" || role === "root")
+          ? publicDeptIds.length === 0
+          : !deptId))
+    );
 
   const buildRuntimeConfig =
     (): GuardrailCreateOrUpdatePayload["runtimeConfig"] => {
@@ -230,8 +316,13 @@ export default function EditGuardrailModal({
       status,
       isCustom,
       runtimeConfig,
-      org_id: guardrail?.org_id ?? null,
-      dept_id: guardrail?.dept_id ?? null,
+      org_id: orgId || null,
+      dept_id: deptId || null,
+      visibility,
+      public_scope: visibility === "public" ? publicScope : null,
+      public_dept_ids: visibility === "public" && publicScope === "department" ? publicDeptIds : [],
+      shared_user_emails:
+        role === "department_admin" && visibility === "private" ? sharedUserEmails : [],
     };
 
     try {
@@ -332,6 +423,115 @@ export default function EditGuardrailModal({
               onChange={(event) => setDescription(event.target.value)}
             />
           </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Visibility</Label>
+              <select
+                value={visibility}
+                onChange={(event) =>
+                  setVisibility(event.target.value as "private" | "public")
+                }
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="private">private</option>
+                <option value="public">public</option>
+              </select>
+            </div>
+            {visibility === "public" && (
+              <div className="space-y-1.5">
+                <Label>Public Scope</Label>
+                <select
+                  value={publicScope}
+                  onChange={(event) =>
+                    setPublicScope(event.target.value as "organization" | "department")
+                  }
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="organization">organization</option>
+                  <option value="department">department</option>
+                </select>
+              </div>
+            )}
+          </div>
+
+          {visibility === "public" && publicScope === "organization" && (
+            <div className="space-y-1.5">
+              <Label>Organization</Label>
+              <select
+                value={orgId}
+                onChange={(event) => setOrgId(event.target.value)}
+                disabled={role === "developer" || role === "department_admin"}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+              >
+                {visibilityOptions.organizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {visibility === "public" && publicScope === "department" && (
+            <div className="space-y-1.5">
+              <Label>Department{role === "super_admin" || role === "root" ? "s" : ""}</Label>
+              {role === "super_admin" || role === "root" ? (
+                <select
+                  multiple
+                  value={publicDeptIds}
+                  onChange={(event) =>
+                    setPublicDeptIds(
+                      Array.from(event.target.selectedOptions).map((o) => o.value),
+                    )
+                  }
+                  className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {visibilityOptions.departments
+                    .filter((d) => !orgId || d.org_id === orgId)
+                    .map((dept) => (
+                      <option key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <select
+                  value={deptId}
+                  disabled
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                >
+                  {visibilityOptions.departments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
+          {visibility === "private" && role === "department_admin" && (
+            <div className="space-y-1.5">
+              <Label>Additional Users (optional)</Label>
+              <select
+                multiple
+                value={sharedUserEmails}
+                onChange={(event) =>
+                  setSharedUserEmails(
+                    Array.from(event.target.selectedOptions).map((o) => o.value),
+                  )
+                }
+                className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                {visibilityOptions.private_share_users.map((u) => (
+                  <option key={u.id} value={u.email}>
+                    {u.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-1.5 md:col-span-2">
@@ -434,7 +634,7 @@ export default function EditGuardrailModal({
             </Button>
             <Button
               type="submit"
-              disabled={isSaving || registryModels.length === 0}
+              disabled={isSaving || registryModels.length === 0 || isVisibilityInvalid}
             >
               {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isEditMode ? "Save Changes" : "Create Guardrail"}

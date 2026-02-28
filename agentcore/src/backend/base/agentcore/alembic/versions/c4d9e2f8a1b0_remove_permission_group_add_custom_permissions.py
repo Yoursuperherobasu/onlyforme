@@ -236,17 +236,36 @@ def _grant_super_admin_all_permissions(bind) -> None:
         ),
         {"permission_keys": list(PERMISSION_KEYS)},
     ).fetchall()
+    has_created_at = _has_column(bind, "role_permission", "created_at")
+    has_updated_at = _has_column(bind, "role_permission", "updated_at")
+    has_created_by = _has_column(bind, "role_permission", "created_by")
+    has_updated_by = _has_column(bind, "role_permission", "updated_by")
     for row in perm_rows:
         permission_id = str(row[0])
+        insert_cols = ["id", "role_id", "permission_id"]
+        insert_vals = [":id", ":role_id", ":permission_id"]
+        params = {"id": str(uuid4()), "role_id": role_id, "permission_id": permission_id}
+        if has_created_by:
+            insert_cols.append("created_by")
+            insert_vals.append("NULL")
+        if has_created_at:
+            insert_cols.append("created_at")
+            insert_vals.append("CURRENT_TIMESTAMP")
+        if has_updated_by:
+            insert_cols.append("updated_by")
+            insert_vals.append("NULL")
+        if has_updated_at:
+            insert_cols.append("updated_at")
+            insert_vals.append("CURRENT_TIMESTAMP")
         bind.execute(
             sa.text(
-                "INSERT INTO role_permission (id, role_id, permission_id) "
-                "SELECT :id, :role_id, :permission_id "
+                f"INSERT INTO role_permission ({', '.join(insert_cols)}) "
+                f"SELECT {', '.join(insert_vals)} "
                 "WHERE NOT EXISTS ("
                 "    SELECT 1 FROM role_permission WHERE role_id = :role_id AND permission_id = :permission_id"
                 ")"
             ),
-            {"id": str(uuid4()), "role_id": role_id, "permission_id": permission_id},
+            params,
         )
 
 

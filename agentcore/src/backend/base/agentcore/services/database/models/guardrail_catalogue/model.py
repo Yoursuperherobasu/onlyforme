@@ -33,6 +33,13 @@ class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     rules_count: int = Field(default=0, sa_column=Column(Integer, nullable=False))
     is_custom: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     runtime_config: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    visibility: str = Field(
+        default="private",
+        sa_column=Column(String(20), nullable=False, default="private"),
+    )
+    public_scope: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))
+    shared_user_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # NULL org_id + NULL dept_id => global scope
     # org_id + NULL dept_id => organization scope

@@ -5,6 +5,9 @@ interface IPostUploadFile {
   file: File;
   knowledgeBaseName?: string;
   visibility?: string;
+  public_scope?: "organization" | "department";
+  org_id?: string;
+  dept_id?: string;
 }
 
 export const customPostUploadFileV2: useMutationFunctionType<

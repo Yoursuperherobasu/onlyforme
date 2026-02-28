@@ -104,7 +104,7 @@ function ApiInterceptor() {
         const isAuthenticationError =
           error?.response?.status === 403 || error?.response?.status === 401;
 
-        const shouldRetryRefresh = !isAuthenticationError;
+        const shouldRetryRefresh = isAuthenticationError;
 
         if (shouldRetryRefresh) {
           if (
