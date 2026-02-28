@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any, Sequence
 from uuid import UUID
@@ -271,9 +272,10 @@ class LangFuseTracer(BaseTracer):
         span_metadata |= metadata or {}
 
         try:
+            observation_type = "generation" if str(trace_type).lower() == "guardrail" else "span"
             # v3: Create span with input passed directly to start_as_current_observation
             span_context = self._client.start_as_current_observation(
-                as_type="span",
+                as_type=observation_type,
                 name=name,
                 input=serialize(inputs),  # Input passed directly!
                 metadata=span_metadata,
@@ -316,8 +318,39 @@ class LangFuseTracer(BaseTracer):
             # v3: Update span with output before exiting
             if hasattr(span, 'update'):
                 update_payload: dict[str, Any] = {"output": serialize(output)}
+
+                usage_payload: dict[str, Any] | None = None
+                model_name: str | None = None
+                if isinstance(output_metadata, dict):
+                    usage_candidate = output_metadata.get("agentcore_usage")
+                    if isinstance(usage_candidate, str):
+                        try:
+                            usage_candidate = json.loads(usage_candidate)
+                        except Exception:
+                            usage_candidate = None
+                    if isinstance(usage_candidate, dict):
+                        input_tokens = int(usage_candidate.get("input_tokens") or usage_candidate.get("input") or 0)
+                        output_tokens = int(usage_candidate.get("output_tokens") or usage_candidate.get("output") or 0)
+                        total_tokens = int(usage_candidate.get("total_tokens") or usage_candidate.get("total") or 0)
+                        if total_tokens == 0 and (input_tokens or output_tokens):
+                            total_tokens = input_tokens + output_tokens
+                        if input_tokens or output_tokens or total_tokens:
+                            usage_payload = {
+                                "input": input_tokens,
+                                "output": output_tokens,
+                                "total": total_tokens,
+                            }
+                        model_name = usage_candidate.get("model")
+
                 if output_metadata:
                     update_payload["metadata"] = serialize(output_metadata)
+                if usage_payload:
+                    # Langfuse v3 style
+                    update_payload["usage_details"] = usage_payload
+                    # Backward compatibility for some SDK paths
+                    update_payload["usage"] = usage_payload
+                if model_name:
+                    update_payload["model"] = str(model_name)
                 span.update(**update_payload)
 
             # Exit the span context

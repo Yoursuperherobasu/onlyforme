@@ -64,6 +64,17 @@ def _clear_request_caches() -> None:
     _REQUEST_METRICS_CACHE.clear()
 
 
+def _make_fallback_budget(total_traces: int, cap: int = 200) -> dict[str, int]:
+    """Create a bounded observation-fallback budget for missing trace-level metrics.
+
+    A higher budget improves token consistency across list endpoints when Langfuse
+    traces are missing token/cost/model fields and require observation enrichment.
+    """
+    if total_traces <= 0:
+        return {"remaining": 0}
+    return {"remaining": min(cap, total_traces)}
+
+
 # =============================================================================
 # Stale-While-Revalidate (SWR) Configuration & Infrastructure
 # =============================================================================
@@ -559,10 +570,17 @@ def parse_datetime(value) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
+        if value.tzinfo is None:
+            # Langfuse may return naive datetimes that are effectively UTC.
+            return value.replace(tzinfo=timezone.utc)
         return value
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                # Treat timezone-naive payloads as UTC to avoid local-time drift in UI.
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
         except:
             return None
     return None
@@ -703,6 +721,7 @@ async def _fetch_metrics_background(
     to_timestamp: datetime,
     search: str | None = None,
     models: str | None = None,
+    include_model_breakdown: bool = False,
     fetch_all: bool = False,
 ) -> None:
     """
@@ -728,12 +747,17 @@ async def _fetch_metrics_background(
             name=search,
             fetch_all=fetch_all,
         )
+
+        # Do not overwrite an existing non-empty cache with an empty transient fetch.
+        if not raw_traces and cache_key in _TRACE_METRICS_CACHE:
+            logger.debug(f"Background fetch produced empty traces for {cache_key}; keeping existing cache")
+            return
         
         # Build metrics from traces
         metrics_dict = _build_metrics_from_traces(
             raw_traces,
             models,
-            include_model_breakdown=False,  # Keep fast path in background
+            include_model_breakdown=include_model_breakdown,
         )
         
         # Update cache with fresh data
@@ -812,7 +836,9 @@ def _build_metrics_from_traces(
     
     # Initialize accumulators
     total_traces = len(raw_traces)
-    fallback_budget = {"remaining": min(30, total_traces // 2)}
+    # Keep fallback bounded, but large enough to avoid zero-token dashboards
+    # when trace-level usage is sparse (common in some Langfuse SDK paths).
+    fallback_budget = _make_fallback_budget(total_traces)
     total_observations = 0
     total_tokens = 0
     input_tokens = 0
@@ -1187,9 +1213,6 @@ def fetch_traces_from_langfuse(
 
                 all_traces.extend(page_traces)
 
-                if len(page_traces) < page_size:
-                    break
-
                 page += 1
 
             trace_data = all_traces
@@ -1233,7 +1256,8 @@ def fetch_traces_from_langfuse(
                 for variant in filter_variants:
                     all_traces = []
                     page = 1
-                    while len(all_traces) < effective_limit:
+                    max_scan_pages = max(1, (effective_limit + page_size - 1) // page_size)
+                    while page <= max_scan_pages and len(all_traces) < effective_limit:
                         list_kwargs = {"limit": page_size, "page": page}
                         list_kwargs.update(variant)
                         if from_timestamp:
@@ -1261,8 +1285,6 @@ def fetch_traces_from_langfuse(
                         if not page_traces:
                             break
                         all_traces.extend(page_traces)
-                        if len(page_traces) < page_size:
-                            break
                         page += 1
 
                     if all_traces:
@@ -1323,9 +1345,6 @@ def fetch_traces_from_langfuse(
 
                 all_traces.extend(page_traces)
 
-                if len(page_traces) < page_size:
-                    break
-
                 page += 1
 
             logger.debug(f"Fallback got {len(all_traces)} total traces, filtering by user_id={user_id}")
@@ -1377,14 +1396,20 @@ def fetch_traces_from_langfuse(
     # apply the date window client-side.
     if not trace_data and (from_timestamp or to_timestamp):
         try:
+            # Use a broader unfiltered fetch on fallback to avoid false-empty
+            # windows (notably for narrow ranges like "today") when server-side
+            # date filtering is flaky.
+            fallback_limit = max(effective_limit, 1000)
             unfiltered = fetch_traces_from_langfuse(
                 client,
                 user_id=user_id,
-                limit=limit,
+                limit=fallback_limit,
                 from_timestamp=None,
                 to_timestamp=None,
                 name=name,
                 tags=tags,
+                session_id=session_id,
+                fetch_all=True,
             )
             if unfiltered:
                 filtered: list[Any] = []
@@ -1404,6 +1429,44 @@ def fetch_traces_from_langfuse(
     if stale_traces:
         logger.debug("Using stale trace cache for user_id={} due empty/failed fresh fetch", user_id)
         return stale_traces[:effective_limit]
+
+    # Cross-range fallback: if a date-filtered fetch is empty, try the most recent
+    # non-empty trace cache for this user and filter by the current window.
+    if not trace_data and (from_timestamp or to_timestamp):
+        newest_user_cache: tuple[float, list[Any]] | None = None
+        user_key_prefix = f"{user_id}|"
+        for key, entry in _TRACE_FETCH_CACHE.items():
+            if not key.startswith(user_key_prefix):
+                continue
+            entry_ts = float(entry.get("ts", 0))
+            entry_traces = entry.get("traces", []) or []
+            if not entry_traces:
+                continue
+            age = now_mono - entry_ts
+            if age > _TRACE_CACHE_STALE_SECONDS:
+                continue
+            if newest_user_cache is None or entry_ts > newest_user_cache[0]:
+                newest_user_cache = (entry_ts, entry_traces)
+
+        if newest_user_cache is not None:
+            _, fallback_traces = newest_user_cache
+            filtered: list[Any] = []
+            for trace_obj in fallback_traces:
+                ts = parse_datetime(get_attr(trace_obj, "timestamp"))
+                if from_timestamp and ts and ts < from_timestamp:
+                    continue
+                if to_timestamp and ts and ts > to_timestamp:
+                    continue
+                filtered.append(trace_obj)
+                if len(filtered) >= effective_limit:
+                    break
+            if filtered:
+                logger.debug(
+                    "Using cross-range stale traces for user_id={} after empty filtered fetch (count={})",
+                    user_id,
+                    len(filtered),
+                )
+                return filtered
 
     logger.debug(f"All methods failed to fetch traces for user_id={user_id}")
     return trace_data
@@ -2083,15 +2146,33 @@ async def get_user_traces(
         if session_id:
             raw_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
 
-        # Parse traces WITHOUT fetching observations (use trace-level metrics)
-        # This eliminates the N+1 query problem - observations are fetched only in detail view
+        # Parse traces with trace metrics helper; only falls back to observations for
+        # missing metrics, avoiding persistent zero-token list rows.
         traces = []
+        fallback_budget = {"remaining": min(30, max(5, len(raw_traces) // 4))}
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id', 'trace_id', 'traceId')
             if not trace_id:
                 continue
-            # Use trace-level metrics, don't fetch observations for list view
-            trace_item = parse_trace_to_list_item(trace, observations=None)
+
+            trace_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=True,
+                fallback_budget=fallback_budget,
+            )
+            trace_item = TraceListItem(
+                id=str(trace_id),
+                name=get_attr(trace, 'name'),
+                session_id=get_attr(trace, 'session_id', 'sessionId'),
+                timestamp=parse_datetime(get_attr(trace, 'timestamp')),
+                total_tokens=int(trace_metrics["total_tokens"]),
+                total_cost=float(trace_metrics["total_cost"]),
+                latency_ms=trace_metrics["latency_ms"],
+                models_used=list(trace_metrics["models"]),
+                observation_count=int(trace_metrics["observation_count"] or 0),
+                level=get_attr(trace, 'level'),
+            )
             traces.append(trace_item)
 
         # Sort by timestamp descending
@@ -2453,7 +2534,7 @@ async def get_user_sessions(
         # cache when already computed (e.g. by the /metrics endpoint), and falls back to
         # observations for traces missing trace-level token/cost fields (Langfuse v3).
         sessions_data: dict[str, dict] = {}
-        fallback_budget = {"remaining": min(50, len(raw_traces))}
+        fallback_budget = _make_fallback_budget(len(raw_traces))
 
         for trace in raw_traces:
             session_id = get_attr(trace, 'session_id', 'sessionId')
@@ -2533,13 +2614,18 @@ async def get_user_sessions(
             "truncated": is_truncated,
         }
 
-        # Cache the result
-        cache_key = f"sessions:{user_id}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
-        if cache_key not in _SESSIONS_CACHE:
-            _SESSIONS_CACHE[cache_key] = {}
-        _SESSIONS_CACHE[cache_key]["data"] = response_data
-        _SESSIONS_CACHE[cache_key]["fetched_trace_count"] = len(raw_traces)
-        _update_cache_metadata(cache_key, response_data)
+        # Cache the result, but avoid caching empty date-filter windows to reduce
+        # sticky false-empty UI states from intermittent upstream filtering issues.
+        should_cache_response = not (
+            total_count == 0 and (from_date or to_date)
+        )
+        if should_cache_response:
+            cache_key = f"sessions:{user_id}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
+            if cache_key not in _SESSIONS_CACHE:
+                _SESSIONS_CACHE[cache_key] = {}
+            _SESSIONS_CACHE[cache_key]["data"] = response_data
+            _SESSIONS_CACHE[cache_key]["fetched_trace_count"] = len(raw_traces)
+            _update_cache_metadata(cache_key, response_data)
 
         return SessionsListResponse(
             sessions=sessions,
@@ -2561,6 +2647,7 @@ async def get_session_detail(
     current_user: Annotated[User, Depends(get_current_active_user)],
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
+    tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
 ) -> SessionDetailResponse:
     """
     Get detailed session information including all traces and per-model breakdown.
@@ -2574,35 +2661,27 @@ async def get_session_detail(
     try:
         user_id = str(current_user.id)
 
-        # Parse optional date filters
-        now = datetime.now(timezone.utc)
-        if to_date:
-            try:
-                to_timestamp = datetime.strptime(to_date, "%Y-%m-%d").replace(
-                    hour=23, minute=59, second=59, tzinfo=timezone.utc
-                )
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
-        else:
-            to_timestamp = None
-
-        if from_date:
-            try:
-                from_timestamp = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
-        else:
-            from_timestamp = None
-
-        # Fetch traces directly filtered by session_id
-        raw_traces = fetch_traces_from_langfuse(
-            client, user_id, limit=100,
-            session_id=session_id,
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
+        # Parse optional date filters with timezone-aware helper (must match list endpoints)
+        from_timestamp, to_timestamp = _compute_date_range(
+            from_date,
+            to_date,
+            tz_offset,
+            default_days=None,
         )
 
-        # Filter to this session (defensive in case session_id filter not supported by SDK)
+        # Fetch traces by date window and filter by session_id client-side.
+        # Relying on SDK/server-side session_id filtering can under-return traces
+        # (often only root traces), which causes mismatch with session/agent tabs.
+        raw_traces = fetch_traces_from_langfuse(
+            client,
+            user_id,
+            limit=500,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            fetch_all=False,
+        )
+
+        # Filter to the requested session using the same semantics as list endpoints.
         session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
 
         if not session_traces:
@@ -2786,6 +2865,7 @@ async def get_user_metrics(
                 "to_timestamp": to_timestamp,
                 "search": search,
                 "models": models,
+                "include_model_breakdown": include_model_breakdown,
                 "fetch_all": fetch_all,
             },
             task_fn=_fetch_metrics_background,
@@ -2797,6 +2877,40 @@ async def get_user_metrics(
             cache_is_fresh=False,
         )
     
+    # === EXPIRED CACHE: Return cached immediately + trigger background refresh ===
+    if cache_meta["is_expired"] and cache_key in _TRACE_METRICS_CACHE:
+        logger.debug(f"Metrics cache HIT (expired) for {cache_key}, serving cached and refreshing in background")
+        cached = _TRACE_METRICS_CACHE[cache_key]
+
+        from_timestamp, to_timestamp = _compute_date_range(
+            from_date,
+            to_date,
+            tz_offset,
+            default_days=days,
+        )
+
+        await _trigger_background_refresh(
+            background_tasks,
+            cache_key,
+            {
+                "user_id": user_id,
+                "cache_key": cache_key,
+                "from_timestamp": from_timestamp,
+                "to_timestamp": to_timestamp,
+                "search": search,
+                "models": models,
+                "include_model_breakdown": include_model_breakdown,
+                "fetch_all": fetch_all,
+            },
+            task_fn=_fetch_metrics_background,
+        )
+
+        return MetricsResponse(
+            **cached["metrics"],
+            cache_age_seconds=cache_meta["age_seconds"],
+            cache_is_fresh=False,
+        )
+
     # === EXPIRED/MISSING CACHE: Fetch fresh data (blocks briefly) ===
     logger.debug(f"Metrics cache MISS for {cache_key}, fetching fresh data")
     
@@ -2920,7 +3034,7 @@ def _fetch_metrics_sync(
         # Aggregate metrics
         total_traces = len(raw_traces)
         # Allocate fallback budget more conservatively to only fill critical data gaps
-        fallback_budget = {"remaining": min(30, total_traces // 2)}  # Reduced from 120
+        fallback_budget = _make_fallback_budget(total_traces)
         total_observations = 0
         total_tokens = 0
         input_tokens = 0
@@ -3079,7 +3193,8 @@ def _fetch_metrics_sync(
                     total_tokens=data["total_tokens"],
                     total_cost=data["total_cost"],
                 ))
-        by_date = by_date[-days:]  # Keep only last N days
+        if not (from_date or to_date):
+            by_date = by_date[-days:]  # Keep only last N days for default window
 
         # Build top agents (aggregated by trace name)
         top_agents = [
@@ -3110,8 +3225,10 @@ def _fetch_metrics_sync(
             "truncated": is_truncated,
             "fetched_trace_count": len(raw_traces),
         }
-        _TRACE_METRICS_CACHE[cache_key] = {"metrics": metrics_dict}
-        _update_cache_metadata(cache_key, metrics_dict)
+        # Avoid caching empty totals from transient Langfuse fetch failures.
+        if total_traces > 0:
+            _TRACE_METRICS_CACHE[cache_key] = {"metrics": metrics_dict, "ts": time.monotonic()}
+            _update_cache_metadata(cache_key, metrics_dict)
 
         return MetricsResponse(
             total_traces=total_traces,
@@ -3270,29 +3387,50 @@ def _match_trace_to_agent(trace, agents_by_id: dict, agents_by_name: dict) -> tu
     metadata = _normalize_metadata(get_attr(trace, 'metadata', default={}) or {})
     tags = get_attr(trace, 'tags', default=[]) or []
 
-    # Skip vertex-level traces
-    if _is_vertex_trace(trace_name):
-        return None, None
+    agents_by_name_lower = {
+        str(name).strip().lower(): agent
+        for name, agent in agents_by_name.items()
+        if name
+    }
 
-    # Method 1: Check metadata for agent_id (most reliable)
-    agent_id_from_meta = metadata.get('agent_id')
-    if agent_id_from_meta and agent_id_from_meta in agents_by_id:
-        agent = agents_by_id[agent_id_from_meta]
+    # Method 1: Check metadata for agent_id (most reliable, even for vertex traces)
+    agent_id_from_meta = metadata.get('agent_id') or metadata.get('agentId')
+    agent_id_from_meta_str = str(agent_id_from_meta).strip() if agent_id_from_meta else None
+    if agent_id_from_meta_str and agent_id_from_meta_str in agents_by_id:
+        agent = agents_by_id[agent_id_from_meta_str]
         return str(agent.id), agent.name
 
     # Method 2: Check tags for agent_id
     for tag in tags:
         if isinstance(tag, str) and tag.startswith('agent_id:'):
-            fid = tag.split(':', 1)[1]
+            fid = str(tag.split(':', 1)[1]).strip()
             if fid in agents_by_id:
                 agent = agents_by_id[fid]
                 return str(agent.id), agent.name
 
-    # Method 3: Match by trace name to agent name
+    # Method 3: Use agent_name from metadata as a hint (also for vertex traces)
+    agent_name_from_meta = metadata.get('agent_name') or metadata.get('agentName')
+    if agent_name_from_meta:
+        agent = agents_by_name.get(agent_name_from_meta)
+        if agent:
+            return str(agent.id), agent.name
+        agent = agents_by_name_lower.get(str(agent_name_from_meta).strip().lower())
+        if agent:
+            return str(agent.id), agent.name
+
+    # Skip vertex-level traces for name-based fallback only
+    if _is_vertex_trace(trace_name):
+        return None, None
+
+    # Method 4: Match by trace name to agent name
     if trace_name:
         # Exact match
         if trace_name in agents_by_name:
             agent = agents_by_name[trace_name]
+            return str(agent.id), agent.name
+        trace_name_lower = str(trace_name).strip().lower()
+        if trace_name_lower in agents_by_name_lower:
+            agent = agents_by_name_lower[trace_name_lower]
             return str(agent.id), agent.name
         # Match "AgentName - UUID" format
         if ' - ' in trace_name:
@@ -3300,12 +3438,10 @@ def _match_trace_to_agent(trace, agents_by_id: dict, agents_by_name: dict) -> tu
             if name_part in agents_by_name:
                 agent = agents_by_name[name_part]
                 return str(agent.id), agent.name
-
-    # Method 4: Use agent_name from metadata as a hint
-    agent_name_from_meta = metadata.get('agent_name')
-    if agent_name_from_meta and agent_name_from_meta in agents_by_name:
-        agent = agents_by_name[agent_name_from_meta]
-        return str(agent.id), agent.name
+            name_part_lower = str(name_part).strip().lower()
+            if name_part_lower in agents_by_name_lower:
+                agent = agents_by_name_lower[name_part_lower]
+                return str(agent.id), agent.name
 
     return None, None
 
@@ -3323,7 +3459,7 @@ def _user_agents_stmt(user_id):
 async def get_user_agents(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    background_tasks: BackgroundTasks,
+    _background_tasks: BackgroundTasks,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
@@ -3360,27 +3496,13 @@ async def get_user_agents(
                 fetched_trace_count=cached.get("fetched_trace_count", 0),
             )
         
-        # === STALE CACHE: Return immediately + trigger background refresh ===
+        # === STALE CACHE: fetch fresh synchronously ===
+        # Background refresh task is not configured for agents cache.
+        # Returning stale values here can keep token counts at zero for too long.
         if cache_meta["is_stale"] and cache_key in _AGENTS_CACHE:
-            logger.debug(f"Agents cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s, triggering refresh")
-            cached = _AGENTS_CACHE[cache_key]
-            
-            # Trigger background refresh
-            await _trigger_background_refresh(
-                background_tasks,
-                cache_key,
-                {
-                    "user_id": user_id,
-                    "cache_key": cache_key,
-                    "from_date": from_date,
-                    "to_date": to_date,
-                    "fetch_all": fetch_all,
-                }
-            )
-            
-            return AgentListResponse(
-                **cached["data"],
-                fetched_trace_count=cached.get("fetched_trace_count", 0),
+            logger.debug(
+                f"Agents cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s; "
+                "fetching fresh synchronously"
             )
 
     # === EXPIRED/MISSING CACHE: Fetch fresh data ===
@@ -3463,7 +3585,7 @@ async def get_user_agents(
         # Pass 2: Aggregate ALL traces by session, grouping by agent
         agents_data: dict[str, dict] = {}
         processed_traces: set[str] = set()
-        fallback_budget = {"remaining": min(10, len(raw_traces) // 10)}
+        fallback_budget = _make_fallback_budget(len(raw_traces))
 
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id')
@@ -3492,7 +3614,7 @@ async def get_user_agents(
             trace_metrics = _get_trace_metrics(
                 client,
                 trace,
-                allow_observation_fallback=False,
+                allow_observation_fallback=True,
                 fallback_budget=fallback_budget,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
@@ -3570,13 +3692,18 @@ async def get_user_agents(
             "truncated": is_truncated,
         }
 
-        # Cache the result
-        cache_key = f"agents:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
-        if cache_key not in _AGENTS_CACHE:
-            _AGENTS_CACHE[cache_key] = {}
-        _AGENTS_CACHE[cache_key]["data"] = response_data
-        _AGENTS_CACHE[cache_key]["fetched_trace_count"] = len(raw_traces)
-        _update_cache_metadata(cache_key, response_data)
+        # Cache the result, but avoid caching empty date-filter windows to reduce
+        # sticky false-empty UI states from intermittent upstream filtering issues.
+        should_cache_response = not (
+            total_count == 0 and (from_date or to_date)
+        )
+        if should_cache_response:
+            cache_key = f"agents:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+            if cache_key not in _AGENTS_CACHE:
+                _AGENTS_CACHE[cache_key] = {}
+            _AGENTS_CACHE[cache_key]["data"] = response_data
+            _AGENTS_CACHE[cache_key]["fetched_trace_count"] = len(raw_traces)
+            _update_cache_metadata(cache_key, response_data)
 
         return AgentListResponse(
             agents=agents,
@@ -3853,7 +3980,7 @@ async def get_agent_detail(
 async def get_user_projects(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    background_tasks: BackgroundTasks,
+    _background_tasks: BackgroundTasks,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
@@ -3888,27 +4015,13 @@ async def get_user_projects(
                 fetched_trace_count=cached.get("fetched_trace_count", 0),
             )
         
-        # === STALE CACHE: Return immediately + trigger background refresh ===
+        # === STALE CACHE: fetch fresh synchronously ===
+        # Background refresh task is not configured for projects cache.
+        # Returning stale values here can keep token counts at zero for too long.
         if cache_meta["is_stale"] and cache_key in _PROJECTS_CACHE:
-            logger.debug(f"Projects cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s, triggering refresh")
-            cached = _PROJECTS_CACHE[cache_key]
-            
-            # Trigger background refresh
-            await _trigger_background_refresh(
-                background_tasks,
-                cache_key,
-                {
-                    "user_id": user_id,
-                    "cache_key": cache_key,
-                    "from_date": from_date,
-                    "to_date": to_date,
-                    "fetch_all": fetch_all,
-                }
-            )
-            
-            return ProjectListResponse(
-                **cached["data"],
-                fetched_trace_count=cached.get("fetched_trace_count", 0),
+            logger.debug(
+                f"Projects cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s; "
+                "fetching fresh synchronously"
             )
 
     # === EXPIRED/MISSING CACHE: Fetch fresh data ===
@@ -3961,33 +4074,28 @@ async def get_user_projects(
 
         is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
 
-        fallback_budget = {"remaining": min(10, len(raw_traces) // 10)}
+        fallback_budget = _make_fallback_budget(len(raw_traces))
 
-        # Aggregate by project
+        # Two-pass aggregation to match agent/session semantics:
+        # 1) Identify project sessions via agent-level traces
+        # 2) Include ALL traces in those sessions (including vertex/component traces)
+        session_to_project: dict[str, str] = {}
         projects_data: dict[str, dict] = {}
+        processed_traces: set[str] = set()
 
+        # Pass 1: discover project sessions and count project trace_count from agent-level traces
         for trace in raw_traces:
-            # Match trace to agent
             matched_fid, _ = _match_trace_to_agent(trace, agents_by_id, agents_by_name)
             if not matched_fid:
                 continue
 
-            # Get folder for this agent
             folder_id = agent_to_folder.get(matched_fid)
             if not folder_id:
                 continue
 
-            timestamp = parse_datetime(get_attr(trace, 'timestamp'))
             session_id = get_attr(trace, 'session_id', 'sessionId')
-
-            trace_metrics = _get_trace_metrics(
-                client,
-                trace,
-                allow_observation_fallback=False,
-                fallback_budget=fallback_budget,
-            )
-            trace_tokens = int(trace_metrics["total_tokens"])
-            trace_cost = float(trace_metrics["total_cost"])
+            if session_id:
+                session_to_project[session_id] = folder_id
 
             if folder_id not in projects_data:
                 folder = folders_by_id.get(folder_id)
@@ -4004,6 +4112,29 @@ async def get_user_projects(
 
             projects_data[folder_id]["agents"].add(matched_fid)
             projects_data[folder_id]["trace_count"] += 1
+
+        # Pass 2: aggregate tokens/cost from all traces that belong to discovered project sessions
+        for trace in raw_traces:
+            trace_id = get_attr(trace, 'id')
+            if trace_id in processed_traces:
+                continue
+            processed_traces.add(trace_id)
+
+            session_id = get_attr(trace, 'session_id', 'sessionId')
+            folder_id = session_to_project.get(session_id) if session_id else None
+            if not folder_id:
+                continue
+
+            timestamp = parse_datetime(get_attr(trace, 'timestamp'))
+            trace_metrics = _get_trace_metrics(
+                client,
+                trace,
+                allow_observation_fallback=True,
+                fallback_budget=fallback_budget,
+            )
+            trace_tokens = int(trace_metrics["total_tokens"])
+            trace_cost = float(trace_metrics["total_cost"])
+
             projects_data[folder_id]["total_tokens"] += trace_tokens
             projects_data[folder_id]["total_cost"] += trace_cost
             if session_id:
@@ -4037,13 +4168,18 @@ async def get_user_projects(
             "truncated": is_truncated,
         }
 
-        # Cache the result
-        cache_key = f"projects:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
-        if cache_key not in _PROJECTS_CACHE:
-            _PROJECTS_CACHE[cache_key] = {}
-        _PROJECTS_CACHE[cache_key]["data"] = response_data
-        _PROJECTS_CACHE[cache_key]["fetched_trace_count"] = len(raw_traces)
-        _update_cache_metadata(cache_key, response_data)
+        # Cache the result, but avoid caching empty date-filter windows to reduce
+        # sticky false-empty UI states from intermittent upstream filtering issues.
+        should_cache_response = not (
+            total_count == 0 and (from_date or to_date)
+        )
+        if should_cache_response:
+            cache_key = f"projects:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+            if cache_key not in _PROJECTS_CACHE:
+                _PROJECTS_CACHE[cache_key] = {}
+            _PROJECTS_CACHE[cache_key]["data"] = response_data
+            _PROJECTS_CACHE[cache_key]["fetched_trace_count"] = len(raw_traces)
+            _update_cache_metadata(cache_key, response_data)
 
         return ProjectListResponse(
             projects=projects,
@@ -4154,7 +4290,7 @@ async def get_project_detail(
         daily_data: dict[str, dict] = defaultdict(lambda: {
             "trace_count": 0, "observation_count": 0, "total_tokens": 0, "total_cost": 0.0
         })
-        fallback_budget: dict[str, int] = {"remaining": min(10, len(raw_traces) // 10)}
+        fallback_budget: dict[str, int] = {"remaining": min(80, max(10, len(raw_traces) // 4))}
 
         for trace in raw_traces:
             matched_fid, matched_fname = _match_trace_to_agent(trace, agents_by_id, agents_by_name)
@@ -4174,7 +4310,7 @@ async def get_project_detail(
             trace_metrics = _get_trace_metrics(
                 client,
                 trace,
-                allow_observation_fallback=False,
+                allow_observation_fallback=True,
                 fallback_budget=fallback_budget,
             )
             trace_tokens = int(trace_metrics["total_tokens"])

@@ -79,7 +79,7 @@ export default function EditGuardrailModal({
 
   const { data: registryModels = [], isLoading: isModelsLoading } =
     useGetRegistryModels({
-      active_only: true,
+      active_only: false,
     });
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -103,20 +103,10 @@ export default function EditGuardrailModal({
     [registryModels, modelRegistryId],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    if (registryModels.length === 0) return;
-
-    // Legacy guardrails may not have modelRegistryId persisted.
-    // Also recover if the stored model id is no longer present in active models.
-    const hasValidSelection =
-      !!modelRegistryId &&
-      registryModels.some((model) => model.id === modelRegistryId);
-
-    if (!hasValidSelection) {
-      setModelRegistryId(registryModels[0].id);
-    }
-  }, [open, registryModels, modelRegistryId]);
+  const defaultModelId = useMemo(() => {
+    const activeModel = registryModels.find((model) => model.is_active);
+    return (activeModel ?? registryModels[0])?.id ?? "";
+  }, [registryModels]);
 
   useEffect(() => {
     if (!open) return;
@@ -164,18 +154,21 @@ export default function EditGuardrailModal({
       return;
     }
 
-    setName("");
-    setDescription("");
-    setModelRegistryId(registryModels[0]?.id ?? "");
-    setCategory("content-safety");
-    setStatus("active");
-    setRulesCount(0);
-    setIsCustom(false);
-    setConfigYml(getConfigTemplate());
-    setPromptsYml(getPromptsTemplate());
-    setRailsCo("");
-    setPreservedFiles(undefined);
-  }, [guardrail, open, registryModels]);
+    // For new guardrails, default to first active model
+    if (registryModels.length > 0) {
+      setName("");
+      setDescription("");
+      setModelRegistryId(defaultModelId);
+      setCategory("content-safety");
+      setStatus("active");
+      setRulesCount(0);
+      setIsCustom(false);
+      setConfigYml(getConfigTemplate());
+      setPromptsYml(getPromptsTemplate());
+      setRailsCo("");
+      setPreservedFiles(undefined);
+    }
+  }, [guardrail, open, registryModels, defaultModelId]);
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
@@ -306,7 +299,7 @@ export default function EditGuardrailModal({
                   <option value="">
                     {isModelsLoading
                       ? "Loading models..."
-                      : "No active models in registry"}
+                      : "No models in registry"}
                   </option>
                 ) : (
                   <>
@@ -316,7 +309,7 @@ export default function EditGuardrailModal({
                     {registryModels.map((option) => (
                       <option key={option.id} value={option.id}>
                         {option.display_name} ({option.provider}/
-                        {option.model_name})
+                        {option.model_name}){option.is_active ? "" : " [inactive]"}
                       </option>
                     ))}
                   </>

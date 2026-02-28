@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -17,6 +18,8 @@ from agentcore.services.database.models.organization.model import Organization
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.guardrails import invalidate_nemo_guardrail_cache, is_nemo_runtime_config_ready
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/guardrails-catalogue", tags=["Guardrails Catalogue"])
 
@@ -175,9 +178,9 @@ def _serialize_guardrail(row: GuardrailCatalogue, model_row: ModelRegistry | Non
         model_name = model_row.model_name
         model_display_name = model_row.display_name
 
-    model_registry_ready_id = row.model_registry_id if model_row else None
+    model_registry_ready_id = row.model_registry_id
 
-    return {
+    serialized = {
         "id": str(row.id),
         "name": row.name,
         "description": row.description or "",
@@ -194,6 +197,11 @@ def _serialize_guardrail(row: GuardrailCatalogue, model_row: ModelRegistry | Non
         "org_id": str(row.org_id) if row.org_id else None,
         "dept_id": str(row.dept_id) if row.dept_id else None,
     }
+    logger.debug(
+        f"Serialized guardrail {row.name}: row.model_registry_id={row.model_registry_id}, "
+        f"modelRegistryId={serialized['modelRegistryId']}, model_row={'present' if model_row else 'missing'}"
+    )
+    return serialized
 
 
 async def _resolve_guardrail_model_registry(
@@ -224,14 +232,14 @@ async def list_guardrails_catalogue(
 
     rows = (await session.exec(query)).all()
     model_ids = {row.model_registry_id for row in rows if row.model_registry_id}
-    model_by_id: dict[UUID, ModelRegistry] = {}
+    model_by_id: dict[str, ModelRegistry] = {}
     if model_ids:
         model_rows = (
             await session.exec(select(ModelRegistry).where(ModelRegistry.id.in_(list(model_ids))))
         ).all()
-        model_by_id = {model.id: model for model in model_rows}
+        model_by_id = {str(model.id): model for model in model_rows}
 
-    return [_serialize_guardrail(row, model_by_id.get(row.model_registry_id)) for row in rows]
+    return [_serialize_guardrail(row, model_by_id.get(str(row.model_registry_id))) for row in rows]
 
 
 @router.post("")
@@ -278,9 +286,15 @@ async def create_guardrail_catalogue(
         published_by=current_user.id if payload.status == "active" else None,
         published_at=now if payload.status == "active" else None,
     )
+    logger.info(
+        f"Creating guardrail '{payload.name}': model_registry_id={model_row.id}, modelRegistryId from payload={payload.modelRegistryId}"
+    )
     session.add(row)
     await session.commit()
     await session.refresh(row)
+    logger.info(
+        f"Created guardrail '{row.name}' (id={row.id}): persisted model_registry_id={row.model_registry_id}"
+    )
     invalidate_nemo_guardrail_cache(row.id)
     return _serialize_guardrail(row, model_row)
 
@@ -315,6 +329,11 @@ async def update_guardrail_catalogue(
         )
     now = datetime.now(timezone.utc)
 
+    logger.info(
+        f"Updating guardrail '{row.name}' (id={guardrail_id}): old model_registry_id={row.model_registry_id}, "
+        f"new model_registry_id={model_row.id}, modelRegistryId from payload={payload.modelRegistryId}"
+    )
+
     row.name = payload.name
     row.description = payload.description
     row.provider = model_row.provider
@@ -334,6 +353,9 @@ async def update_guardrail_catalogue(
 
     await session.commit()
     await session.refresh(row)
+    logger.info(
+        f"Updated guardrail '{row.name}' (id={row.id}): persisted model_registry_id={row.model_registry_id}"
+    )
     invalidate_nemo_guardrail_cache(row.id)
     return _serialize_guardrail(row, model_row)
 

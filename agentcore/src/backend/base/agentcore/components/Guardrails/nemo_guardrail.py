@@ -81,6 +81,7 @@ class NemoGuardrailComponent(Node):
     description = "Apply NeMo Guardrails to validate and filter text using a configured guardrail profile."
     icon = "Shield"
     name = "NemoGuardrails"
+    trace_type = "guardrail"
 
     inputs = [
         MessageTextInput(

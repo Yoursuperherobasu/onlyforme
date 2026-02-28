@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -431,6 +431,7 @@ async function fetchSessionDetail(sessionId: string, params: FetchMetricsParams 
   const searchParams = new URLSearchParams();
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   const query = searchParams.toString();
   const response = await api.get<SessionDetailResponse>(`/api/observability/sessions/${encodeURIComponent(sessionId)}${query ? `?${query}` : ''}`);
   return response.data;
@@ -787,6 +788,7 @@ function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
 // =============================================================================
 
 export default function ObservabilityPage(): JSX.Element {
+  const queryClient = useQueryClient();
   // State
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
@@ -810,6 +812,43 @@ export default function ObservabilityPage(): JSX.Element {
   const [sessionSearch, setSessionSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
   const [usageSearch, setUsageSearch] = useState("");
+  const [isFilterApplying, setIsFilterApplying] = useState(false);
+  const filterApplyStartedAtRef = useRef<number | null>(null);
+  const filterApplyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const filterFollowupRefetchTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const emptyListsRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const filterApplyBaselineUpdatedAtRef = useRef<{ metrics: number; sessions: number; agents: number; projects: number } | null>(null);
+
+  const markFiltersApplying = useCallback(() => {
+    filterApplyStartedAtRef.current = Date.now();
+    filterApplyBaselineUpdatedAtRef.current = null;
+    setIsFilterApplying(true);
+    if (filterApplyTimeoutRef.current) {
+      clearTimeout(filterApplyTimeoutRef.current);
+    }
+    // Safety timeout so indicator does not get stuck if network state is ambiguous
+    filterApplyTimeoutRef.current = setTimeout(() => {
+      setIsFilterApplying(false);
+      filterApplyStartedAtRef.current = null;
+      filterApplyTimeoutRef.current = null;
+    }, 30000);
+
+    if (filterFollowupRefetchTimeoutsRef.current.length > 0) {
+      filterFollowupRefetchTimeoutsRef.current.forEach(clearTimeout);
+      filterFollowupRefetchTimeoutsRef.current = [];
+    }
+
+    // Trigger follow-up refetches so backend SWR-updated aggregates are picked up quickly.
+    [1200, 3200].forEach((delay) => {
+      const timeoutId = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["observability-metrics"] });
+        queryClient.invalidateQueries({ queryKey: ["observability-sessions"] });
+        queryClient.invalidateQueries({ queryKey: ["observability-agents"] });
+        queryClient.invalidateQueries({ queryKey: ["observability-projects"] });
+      }, delay);
+      filterFollowupRefetchTimeoutsRef.current.push(timeoutId);
+    });
+  }, [queryClient]);
 
   // Compute date params from filter
   const dateParams = useMemo(() => ({
@@ -819,20 +858,22 @@ export default function ObservabilityPage(): JSX.Element {
   }), [filters.dateRange, fetchAllMode]);
 
   const handleDateRangeChange = useCallback((value: DateRangePreset) => {
+    markFiltersApplying();
     setFetchAllMode(false);
     setFilters(prev => ({ ...prev, dateRange: value }));
-  }, []);
+  }, [markFiltersApplying]);
 
   // Queries
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ["langfuse-status"],
     queryFn: fetchStatus,
     refetchInterval: 60000,
+    refetchOnWindowFocus: false,
   });
 
   const includeModelBreakdown = activeTab === "models";
 
-  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
+  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching, dataUpdatedAt: metricsUpdatedAt } = useQuery({
     queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(","), fetchAllMode, includeModelBreakdown],
     queryFn: () => fetchMetrics({
       ...dateParams,
@@ -844,36 +885,39 @@ export default function ObservabilityPage(): JSX.Element {
     refetchInterval: activeTab === "overview" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
 
-  const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching } = useQuery({
+  const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching, refetch: refetchSessions, dataUpdatedAt: sessionsUpdatedAt } = useQuery({
     queryKey: ["observability-sessions", filters.dateRange, fetchAllMode],
     queryFn: () => fetchSessions(dateParams),
-    enabled: !!status?.connected && activeTab === "sessions",
+    enabled: !!status?.connected,
     refetchInterval: activeTab === "sessions" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
 
-  const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching } = useQuery({
-    queryKey: ["observability-agents", filters.dateRange, filters.search, fetchAllMode],
+  const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching, refetch: refetchAgents, dataUpdatedAt: agentsUpdatedAt } = useQuery({
+    queryKey: ["observability-agents", filters.dateRange, fetchAllMode],
     queryFn: () => fetchAgents({
       ...dateParams,
-      search: filters.search || undefined,
     }),
-    enabled: !!status?.connected && activeTab === "agents",
+    enabled: !!status?.connected,
     refetchInterval: activeTab === "agents" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
 
-  const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching } = useQuery({
+  const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching, refetch: refetchProjects, dataUpdatedAt: projectsUpdatedAt } = useQuery({
     queryKey: ["observability-projects", filters.dateRange, fetchAllMode],
     queryFn: () => fetchProjects(dateParams),
-    enabled: !!status?.connected && activeTab === "projects",
+    enabled: !!status?.connected,
     refetchInterval: activeTab === "projects" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
 
   const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching } = useQuery({
@@ -881,6 +925,8 @@ export default function ObservabilityPage(): JSX.Element {
     queryFn: () => fetchSessionDetail(selectedSession!, dateParams),
     enabled: !!selectedSession,
     staleTime: 30000,
+    placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
 
   const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError } = useQuery({
@@ -889,6 +935,8 @@ export default function ObservabilityPage(): JSX.Element {
     enabled: !!selectedTrace,
     staleTime: 5000,
     retry: false,
+    placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
 
   const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching } = useQuery({
@@ -897,15 +945,146 @@ export default function ObservabilityPage(): JSX.Element {
     enabled: !!selectedAgent,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
 
-  const { data: projectDetail, isLoading: projectDetailLoading } = useQuery({
+  const { data: projectDetail, isLoading: projectDetailLoading, isFetching: projectDetailFetching } = useQuery({
     queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode],
     queryFn: () => fetchProjectDetail(selectedProject!, dateParams),
     enabled: !!selectedProject,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
+    refetchOnWindowFocus: false,
   });
+
+  const isAnyPrimaryQueryLoading =
+    metricsLoading ||
+    metricsFetching ||
+    agentsLoading ||
+    agentsFetching ||
+    sessionsLoading ||
+    sessionsFetching ||
+    projectsLoading ||
+    projectsFetching ||
+    sessionDetailLoading ||
+    sessionDetailFetching ||
+    agentDetailLoading ||
+    agentDetailFetching ||
+    projectDetailLoading ||
+    projectDetailFetching;
+
+  useEffect(() => {
+    if (!isFilterApplying) return;
+    if (!filterApplyBaselineUpdatedAtRef.current) {
+      filterApplyBaselineUpdatedAtRef.current = {
+        metrics: metricsUpdatedAt,
+        sessions: sessionsUpdatedAt,
+        agents: agentsUpdatedAt,
+        projects: projectsUpdatedAt,
+      };
+    }
+  }, [
+    isFilterApplying,
+    metricsUpdatedAt,
+    sessionsUpdatedAt,
+    agentsUpdatedAt,
+    projectsUpdatedAt,
+  ]);
+
+  useEffect(() => {
+    if (!isFilterApplying) return;
+
+    const baseline = filterApplyBaselineUpdatedAtRef.current;
+    if (!baseline) return;
+    const allCoreQueriesUpdated =
+      metricsUpdatedAt > baseline.metrics &&
+      sessionsUpdatedAt > baseline.sessions &&
+      agentsUpdatedAt > baseline.agents &&
+      projectsUpdatedAt > baseline.projects;
+
+    if (!allCoreQueriesUpdated) return;
+    if (isAnyPrimaryQueryLoading) return;
+
+    const startedAt = filterApplyStartedAtRef.current ?? Date.now();
+    const elapsed = Date.now() - startedAt;
+    const minVisibleMs = 1200;
+    const remaining = Math.max(0, minVisibleMs - elapsed);
+
+    const timer = setTimeout(() => {
+      setIsFilterApplying(false);
+      filterApplyStartedAtRef.current = null;
+      filterApplyBaselineUpdatedAtRef.current = null;
+      if (filterApplyTimeoutRef.current) {
+        clearTimeout(filterApplyTimeoutRef.current);
+        filterApplyTimeoutRef.current = null;
+      }
+    }, remaining);
+
+    return () => clearTimeout(timer);
+  }, [
+    isFilterApplying,
+    isAnyPrimaryQueryLoading,
+    metricsUpdatedAt,
+    sessionsUpdatedAt,
+    agentsUpdatedAt,
+    projectsUpdatedAt,
+  ]);
+
+  useEffect(() => {
+    const hasOverviewTraces = (metrics?.total_traces ?? 0) > 0;
+    if (!hasOverviewTraces) return;
+
+    const agentsEmpty = (agentsData?.agents?.length ?? 0) === 0;
+    const projectsEmpty = (projectsData?.projects?.length ?? 0) === 0;
+    const sessionsEmpty = (sessionsData?.sessions?.length ?? 0) === 0;
+    const shouldRecover = agentsEmpty || projectsEmpty || sessionsEmpty;
+
+    if (!shouldRecover) return;
+    if (agentsFetching || projectsFetching || sessionsFetching) return;
+
+    if (emptyListsRecoveryTimeoutRef.current) {
+      clearTimeout(emptyListsRecoveryTimeoutRef.current);
+    }
+
+    emptyListsRecoveryTimeoutRef.current = setTimeout(() => {
+      if (agentsEmpty) void refetchAgents();
+      if (projectsEmpty) void refetchProjects();
+      if (sessionsEmpty) void refetchSessions();
+      emptyListsRecoveryTimeoutRef.current = null;
+    }, 900);
+
+    return () => {
+      if (emptyListsRecoveryTimeoutRef.current) {
+        clearTimeout(emptyListsRecoveryTimeoutRef.current);
+        emptyListsRecoveryTimeoutRef.current = null;
+      }
+    };
+  }, [
+    metrics?.total_traces,
+    agentsData?.agents?.length,
+    projectsData?.projects?.length,
+    sessionsData?.sessions?.length,
+    agentsFetching,
+    projectsFetching,
+    sessionsFetching,
+    refetchAgents,
+    refetchProjects,
+    refetchSessions,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (filterApplyTimeoutRef.current) {
+        clearTimeout(filterApplyTimeoutRef.current);
+      }
+      if (filterFollowupRefetchTimeoutsRef.current.length > 0) {
+        filterFollowupRefetchTimeoutsRef.current.forEach(clearTimeout);
+      }
+      if (emptyListsRecoveryTimeoutRef.current) {
+        clearTimeout(emptyListsRecoveryTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Get available models from metrics for filter dropdown
   const availableModels = useMemo(() => {
@@ -964,10 +1143,22 @@ export default function ObservabilityPage(): JSX.Element {
     );
   }, [metrics?.by_date, usageSearch]);
 
+  const hasAnyAgentRows = (agentsData?.agents?.length ?? 0) > 0;
+  const hasAnyProjectRows = (projectsData?.projects?.length ?? 0) > 0;
+  const hasAnySessionRows = (sessionsData?.sessions?.length ?? 0) > 0;
+
+  const agentsTabLoading =
+    agentsLoading && !agentsData;
+  const projectsTabLoading =
+    projectsLoading && !projectsData;
+  const sessionsTabLoading =
+    sessionsLoading && !sessionsData;
+
   // Handle search submit
   const handleSearch = useCallback(() => {
+    markFiltersApplying();
     setFilters(prev => ({ ...prev, search: searchInput }));
-  }, [searchInput]);
+  }, [searchInput, markFiltersApplying]);
 
   // Loading state
   if (statusLoading) {
@@ -1069,6 +1260,7 @@ export default function ObservabilityPage(): JSX.Element {
               <Select
                 value={filters.models.length === 1 ? filters.models[0] : filters.models.length > 1 ? "multiple" : "all"}
                 onValueChange={(value) => {
+                  markFiltersApplying();
                   if (value === "all") {
                     setFilters(prev => ({ ...prev, models: [] }));
                   } else if (value !== "multiple") {
@@ -1097,6 +1289,7 @@ export default function ObservabilityPage(): JSX.Element {
               size="sm"
               variant="ghost"
               onClick={() => {
+                markFiltersApplying();
                 setFilters({ dateRange: "7d", search: "", models: [] });
                 setSearchInput("");
                 setFetchAllMode(false);
@@ -1110,8 +1303,7 @@ export default function ObservabilityPage(): JSX.Element {
           )}
 
           {/* Global refreshing indicator — shows a subtle spinner whenever any query is background-fetching */}
-          {(metricsFetching || agentsFetching || sessionsFetching || projectsFetching) &&
-           !(metricsLoading || agentsLoading || sessionsLoading || projectsLoading) && (
+          {(isAnyPrimaryQueryLoading || isFilterApplying) && (
             <div className="flex items-center gap-1.5 ml-auto">
               <div className="h-3.5 w-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: THEME.primary, borderTopColor: 'transparent' }} />
               <span className="text-xs" style={{ color: THEME.textSecondary }}>Updating…</span>
@@ -1551,10 +1743,10 @@ export default function ObservabilityPage(): JSX.Element {
               <TruncationBanner
                 fetchedCount={agentsData.fetched_trace_count ?? 0}
                 onLoadAll={() => setFetchAllMode(true)}
-                isLoading={agentsLoading}
+                isLoading={agentsLoading || agentsFetching}
               />
             )}
-            {agentsLoading ? (
+            {agentsTabLoading ? (
               <Skeleton className="h-64" />
             ) : (
               <Card className="border-0 shadow-sm">
@@ -1655,10 +1847,10 @@ export default function ObservabilityPage(): JSX.Element {
               <TruncationBanner
                 fetchedCount={projectsData.fetched_trace_count ?? 0}
                 onLoadAll={() => setFetchAllMode(true)}
-                isLoading={projectsLoading}
+                isLoading={projectsLoading || projectsFetching}
               />
             )}
-            {projectsLoading ? (
+            {projectsTabLoading ? (
               <Skeleton className="h-64" />
             ) : (
               <Card className="border-0 shadow-sm">
@@ -1747,10 +1939,10 @@ export default function ObservabilityPage(): JSX.Element {
               <TruncationBanner
                 fetchedCount={sessionsData.fetched_trace_count ?? 0}
                 onLoadAll={() => setFetchAllMode(true)}
-                isLoading={sessionsLoading}
+                isLoading={sessionsLoading || sessionsFetching}
               />
             )}
-            {sessionsLoading ? (
+            {sessionsTabLoading ? (
               <Skeleton className="h-64" />
             ) : (
               <Card className="border-0 shadow-sm">
