@@ -51,6 +51,7 @@ class BaseTracer(ABC):
         trace_id: str,
         trace_name: str,
         outputs: dict[str, Any] | None = None,
+        output_metadata: dict[str, Any] | None = None,
         error: Exception | None = None,
         logs: Sequence[Log | dict] = (),
     ) -> None:

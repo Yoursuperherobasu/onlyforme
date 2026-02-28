@@ -57,3 +57,4 @@ traceloop-sdk>=0.43.1,<1.0.0
 opencv-python>=4.11; sys_platform != 'darwin' or platform_machine != 'x86_64'
 toml>=0.10.2
 azure-storage-blob>=12.20.0,<13.0.0
+nemoguardrails>=0.20.0,<1.0.0
