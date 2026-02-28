@@ -58,6 +58,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "edit_platform_configs",
         "view_admin_page",
         "view_access_control_page",
+        "connectore_page",
+        "add_connector",
     ],
     "super_admin": [
         "view_dashboard",
@@ -89,6 +91,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "view_knowledge_base",
         "add_new_knowledge",
         "view_admin_page",
+        "connectore_page",
+        "add_connector",
     ],
     "department_admin": [
         "view_dashboard",
@@ -120,6 +124,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "view_knowledge_base",
         "add_new_knowledge",
         "view_admin_page",
+        "connectore_page",
+        "add_connector",
     ],
     "developer": [
         "view_dashboard",
@@ -142,6 +148,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "request_new_mcp",
         "view_knowledge_base",
         "add_new_knowledge",
+        "connectore_page",
+        "add_connector",
     ],
     "business_user": [
         "view_dashboard",
@@ -164,6 +172,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "request_new_mcp",
         "view_knowledge_base",
         "add_new_knowledge",
+        "connectore_page",
+        "add_connector",
     ],
     "consumer": [
         "view_published_agents",

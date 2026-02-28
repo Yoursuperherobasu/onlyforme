@@ -42,6 +42,9 @@ PERMISSION_ALIASES = {
     "view_guardrails_page": ["view_guardrail_page"],
     "view_vector_db_page": ["view_vectordb_page"],
     "view_observability_dashboard": ["view_observability_page"],
+    "connectore_page": ["view_connectors_page", "connector_page"],
+    "view_connectors_page": ["connectore_page", "connector_page"],
+    "connector_page": ["connectore_page", "view_connectors_page"],
 }
 
 
@@ -99,6 +102,8 @@ ACTIONS = {
     "VIEW_WORKAGENTS_PAGE": "view_workflows_page",
     "VIEW_PLAYGROUND_PAGE": "view_playground_page",
     "VIEW_AGENT_EDITOR": "view_agent_editor",
+    "CONNECTORE_PAGE": "connectore_page",
+    "ADD_CONNECTOR": "add_connector",
 }
 
 ROLE_PERMISSIONS: Dict[str, List[str]] = {
@@ -136,6 +141,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
         ACTIONS["VIEW_PLAYGROUND_PAGE"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "super_admin": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -171,6 +178,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
         ACTIONS["VIEW_PLAYGROUND_PAGE"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "department_admin": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -192,6 +201,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_SETTINGS_SHORTCUTS_TAB"],
         ACTIONS["VIEW_SETTINGS_MESSAGES_TAB"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "developer": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -203,6 +214,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_AGENT_CATALOGUE_PAGE"],
         ACTIONS["VIEW_AGENT_EDITOR"],
         ACTIONS["EDIT_AGENTS"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "business_user": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -210,6 +223,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_COMPONENTS_PAGE"],
         ACTIONS["VIEW_ASSETS_FILES_TAB"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "consumer": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -220,7 +235,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v7"  # bump when permissions change
+PERMISSION_VERSION = "v8"  # bump when permissions change
 
 
 class PermissionCacheService:

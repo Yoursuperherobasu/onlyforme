@@ -54,6 +54,8 @@ PERMISSIONS = [
     ("edit_platform_configs", "Platform Configurations"),
     ("view_admin_page", "Admin Page"),
     ("view_access_control_page", "Access Control"),
+    ("connectore_page", "Connectors"),
+    ("add_connector", "Connectors"),
 ]
 
 LEGACY_KEYS_TO_REMOVE = [
