@@ -1,6 +1,6 @@
 """create mcp_registry table
 
-Revision ID: s2t3u4v5w6x7
+Revision ID: v6w7x8y9z0a1
 Revises: r1s2t3u4v5w6
 Create Date: 2026-02-28 00:00:01.000000
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "s2t3u4v5w6x7"
+revision: str = "v6w7x8y9z0a1"
 down_revision: str | Sequence[str] | None = "r1s2t3u4v5w6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

@@ -1,7 +1,7 @@
 """add connector permissions to rbac
 
-Revision ID: s2t3u4v5w6x7
-Revises: r1s2t3u4v5w6
+Revision ID: u5v6w7x8y9z0
+Revises: n2o3p4q5r6s7
 Create Date: 2026-02-28 12:20:00.000000
 """
 
@@ -15,7 +15,7 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = "s2t3u4v5w6x7"
+revision: str = "u5v6w7x8y9z0"
 down_revision: str | Sequence[str] | None = "n2o3p4q5r6s7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
