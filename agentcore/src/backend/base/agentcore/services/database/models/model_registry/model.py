@@ -7,7 +7,7 @@ from enum import Enum
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, computed_field
-from sqlalchemy import JSON, Column, Text
+from sqlalchemy import JSON, Column, DateTime, String, Text, text
 from sqlmodel import Field, SQLModel
 
 
@@ -21,6 +21,22 @@ class ModelEnvironment(str, Enum):
     TEST = "test"
     UAT = "uat"
     PROD = "prod"
+
+
+class ModelVisibilityScope(str, Enum):
+    """Visibility scope for model consumption."""
+
+    PRIVATE = "private"
+    DEPARTMENT = "department"
+    ORGANIZATION = "organization"
+
+
+class ModelApprovalStatus(str, Enum):
+    """Approval lifecycle for model records."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +59,26 @@ class ModelRegistry(SQLModel, table=True):
 
     # Environment tag: test (default), uat, prod
     environment: str = Field(default=ModelEnvironment.TEST.value, index=True)
+    source_model_id: UUID | None = Field(default=None, foreign_key="model_registry.id", nullable=True, index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
+    dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    created_by_id: UUID | None = Field(default=None, foreign_key="user.id", nullable=True, index=True)
+    visibility_scope: str = Field(
+        default=ModelVisibilityScope.PRIVATE.value,
+        sa_column=Column(String(20), nullable=False, server_default=text("'private'")),
+    )
+    approval_status: str = Field(
+        default=ModelApprovalStatus.APPROVED.value,
+        sa_column=Column(String(20), nullable=False, server_default=text("'approved'")),
+    )
+    requested_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True, index=True)
+    request_to: UUID | None = Field(default=None, foreign_key="user.id", nullable=True, index=True)
+    requested_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    reviewed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    reviewed_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True, index=True)
+    review_comments: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    review_attachments: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # Provider-specific connection fields (azure_deployment, api_version, organization, custom_headers, etc.)
     provider_config: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -74,11 +110,24 @@ class ModelRegistryCreate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # plain-text; encrypted before storage
     environment: str = ModelEnvironment.TEST.value  # defaults to test
+    visibility_scope: str = ModelVisibilityScope.PRIVATE.value
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    public_dept_ids: list[UUID] | None = None
     provider_config: dict | None = None
     capabilities: dict | None = None
     default_params: dict | None = None
     is_active: bool = True
     created_by: str | None = None
+    created_by_id: UUID | None = None
+    approval_status: str = ModelApprovalStatus.APPROVED.value
+    requested_by: UUID | None = None
+    request_to: UUID | None = None
+    requested_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = None
+    review_comments: str | None = None
+    review_attachments: dict | None = None
 
 
 class ModelRegistryUpdate(BaseModel):
@@ -92,10 +141,22 @@ class ModelRegistryUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # plain-text; re-encrypted if provided
     environment: str | None = None
+    visibility_scope: str | None = None
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    public_dept_ids: list[UUID] | None = None
     provider_config: dict | None = None
     capabilities: dict | None = None
     default_params: dict | None = None
     is_active: bool | None = None
+    approval_status: str | None = None
+    requested_by: UUID | None = None
+    request_to: UUID | None = None
+    requested_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = None
+    review_comments: str | None = None
+    review_attachments: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +174,19 @@ class ModelRegistryRead(BaseModel):
     model_type: str = "llm"
     base_url: str | None = None
     environment: str = ModelEnvironment.TEST.value
+    source_model_id: UUID | None = None
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    public_dept_ids: list[str] | None = None
+    visibility_scope: str = ModelVisibilityScope.PRIVATE.value
+    approval_status: str = ModelApprovalStatus.APPROVED.value
+    requested_by: UUID | None = None
+    request_to: UUID | None = None
+    requested_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = None
+    review_comments: str | None = None
+    review_attachments: dict | None = None
     provider_config: dict | None = None
     capabilities: dict | None = None
     default_params: dict | None = None

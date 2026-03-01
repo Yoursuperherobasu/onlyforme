@@ -8,33 +8,44 @@ interface ActionModalProps {
   open: boolean;
   setOpen: (open: boolean) => void;
   action: "approve" | "reject";
+  entityType?: "agent" | "model" | "mcp";
   agentTitle: string;
-  onSubmit: (data: { comments: string; attachments: File[] }) => void;
+  onSubmit: (data: { comments: string; attachments: File[] }) => Promise<void> | void;
+  isLoading?: boolean;
 }
 
 export default function ActionModal({
   open,
   setOpen,
   action,
+  entityType,
   agentTitle,
   onSubmit,
+  isLoading = false,
 }: ActionModalProps) {
   const [comments, setComments] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validation: Either comments or attachments must be provided
-    if (!comments.trim() && attachments.length === 0) {
+    const effectiveComments =
+      action === "reject" && !comments.trim() && attachments.length === 0
+        ? "Rejected by approver"
+        : comments;
+
+    if (!effectiveComments.trim() && attachments.length === 0) {
       setError("Please provide either comments or attachments");
       return;
     }
 
-    onSubmit({ comments, attachments });
-    handleClose();
+    try {
+      await onSubmit({ comments: effectiveComments, attachments });
+      handleClose();
+    } catch (submitErr: any) {
+      setError(submitErr?.message || "Failed to submit approval action");
+    }
   };
 
   const handleClose = () => {
@@ -231,6 +242,8 @@ export default function ActionModal({
   if (!open) return null;
 
   const isApprove = action === "approve";
+  const entityLabel =
+    entityType === "model" ? "Model" : entityType === "mcp" ? "MCP" : "Agent";
 
   return (
     <>
@@ -246,7 +259,7 @@ export default function ActionModal({
         <div className="mb-6 flex items-start justify-between">
           <div>
             <h2 className="text-xl font-semibold text-card-foreground">
-              {isApprove ? "Approve Agent" : "Reject Agent"}
+              {isApprove ? `Approve ${entityLabel}` : `Reject ${entityLabel}`}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">{agentTitle}</p>
           </div>
@@ -383,7 +396,7 @@ export default function ActionModal({
             <p className="text-xs text-muted-foreground">
               {isApprove
                 ? "Either comments or attachments are required"
-                : "Either comments or attachments are required for rejection"}
+                : "Comments are optional for rejection (default reason will be used)"}
             </p>
           </div>
 
@@ -401,8 +414,13 @@ export default function ActionModal({
               type="submit"
               variant={isApprove ? "default" : "destructive"}
               className="flex-1"
+              disabled={isLoading}
             >
-              {isApprove ? "Approve" : "Reject"}
+              {isLoading
+                ? "Processing..."
+                : isApprove
+                  ? "Approve"
+                  : "Reject"}
             </Button>
           </div>
         </form>
