@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import useDragStart from "@/components/core/cardComponent/hooks/use-on-drag-start";
@@ -20,8 +20,9 @@ import type { AgentType } from "@/types/agent";
 import { downloadAgent } from "@/utils/reactFlowUtils";
 import { swatchColors } from "@/utils/styleUtils";
 import { cn, getNumberFromString } from "@/utils/utils";
-import { useGetApprovalDetails } from "@/controllers/API/queries/approvals";
+import { useGetPublishStatus } from "@/controllers/API/queries/agents/use-get-publish-status";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
+import { AuthContext } from "@/contexts/authContext";
 import useDescriptionModal from "../../hooks/use-description-modal";
 import { timeElapsed } from "../../utils/time-elapse";
 import DropdownComponent from "../dropdown";
@@ -49,21 +50,28 @@ const ListComponent = ({
   const { folderId } = useParams();
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
+  const { userData } = useContext(AuthContext);
+  const currentUserId = String(userData?.id ?? "");
   const isComponent = agentData.is_component ?? false;
-  const approvalLookupId =
-    (agentData as any)?.approval_id ||
-    (agentData as any)?.latest_approval_id ||
-    "";
-  const { data: approvalDetails } = useGetApprovalDetails(
-    { agent_id: approvalLookupId },
-    {
-      enabled: !!approvalLookupId,
-      refetchInterval: (query) => (query.state.data ? 30000 : false),
-    },
+  const { data: publishStatus } = useGetPublishStatus(
+    { agent_id: agentData.id },
+    { enabled: !isComponent, refetchInterval: 30000 },
   );
-  const approvalStatus = approvalDetails?.status;
-  const workflowLocked = !isComponent && approvalStatus === "pending";
+  const workflowLocked = !isComponent && Boolean(publishStatus?.has_pending_approval);
   const effectiveDisabled = disabled || workflowLocked;
+  const latestDecision = (publishStatus?.latest_review_decision || "").toUpperCase();
+  const latestProdStatus = (publishStatus?.latest_prod_status || "").toUpperCase();
+  const requesterId = String(
+    publishStatus?.pending_requested_by || publishStatus?.latest_prod_published_by || "",
+  );
+  const showRequesterBadge = !isComponent && !!requesterId && requesterId === currentUserId;
+  const badgeLabel = workflowLocked
+    ? "Awaiting Approval"
+    : latestProdStatus === "PUBLISHED"
+      ? "Approved"
+      : latestDecision === "REJECTED"
+        ? "Rejected"
+        : "";
 
   const editAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}`;
 
@@ -188,29 +196,31 @@ const ListComponent = ({
                   Edited {timeElapsed(agentData.updated_at)} ago
                 </span>
               </div>
-              {!isComponent && approvalStatus && (
+              {showRequesterBadge && !!badgeLabel && (
                 <ShadTooltip
                   content={
-                    approvalDetails?.adminComments
-                      ? `Admin comments: ${approvalDetails.adminComments}`
-                      : approvalDetails?.adminAttachments?.length
-                        ? `Admin attached ${approvalDetails.adminAttachments.length} file(s)`
-                        : ""
+                    workflowLocked
+                      ? "PROD request is awaiting approval."
+                      : latestDecision === "REJECTED"
+                        ? "Your PROD publish request was rejected."
+                        : latestProdStatus === "PUBLISHED"
+                          ? "Your PROD publish request is approved."
+                          : ""
                   }
                 >
                   <span
                     className={cn(
                       "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                      approvalStatus === "pending" && "bg-yellow-100 text-yellow-800",
-                      approvalStatus === "approved" && "bg-green-100 text-green-800",
-                      approvalStatus === "rejected" && "bg-red-100 text-red-800",
+                      workflowLocked && "bg-yellow-100 text-yellow-800",
+                      !workflowLocked &&
+                        latestProdStatus === "PUBLISHED" &&
+                        "bg-green-100 text-green-800",
+                      !workflowLocked &&
+                        latestDecision === "REJECTED" &&
+                        "bg-red-100 text-red-800",
                     )}
                   >
-                    {approvalStatus === "pending"
-                      ? "Awaiting Approval"
-                      : approvalStatus === "approved"
-                        ? `Approved ${approvalDetails?.version ?? ""}`
-                        : "Rejected"}
+                    {badgeLabel}
                   </span>
                 </ShadTooltip>
               )}
