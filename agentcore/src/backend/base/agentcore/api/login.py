@@ -36,6 +36,11 @@ class AzureSSOResponse(Token):
 router = APIRouter(tags=["Login"])
 
 
+def _normalize_login_identity(value: str | None) -> str:
+    identity = (value or "").strip()
+    return identity.lower() if "@" in identity else identity
+
+
 @router.post("/login", response_model=AzureSSOResponse)
 async def login_to_get_access_token(
     response: Response,
@@ -129,7 +134,7 @@ async def azure_sso_login(
 
     email = payload.get("preferred_username") or payload.get("email")
     entra_object_id = payload.get("oid")
-    normalized_email = str(email).strip().lower() if email else ""
+    normalized_email = _normalize_login_identity(email) if email else ""
     root_email = str(auth_settings.PLATFORM_ROOT_EMAIL).strip().lower() if auth_settings.PLATFORM_ROOT_EMAIL else ""
 
     if not email:
@@ -138,7 +143,7 @@ async def azure_sso_login(
             detail="Email not found in Azure token",
         )
 
-    existing_user = await get_user_by_username(db, email)
+    existing_user = await get_user_by_username(db, normalized_email)
 
     # -----------------------------
     # Find or Create User
@@ -163,8 +168,8 @@ async def azure_sso_login(
     if not user:
         random_password = secrets.token_urlsafe(32)
         user = User(
-            username=email,
-            email=email,
+            username=normalized_email,
+            email=normalized_email,
             display_name=payload.get("name"),
             entra_object_id=entra_object_id,
             password=get_password_hash(random_password),
@@ -178,7 +183,7 @@ async def azure_sso_login(
             await db.refresh(user)
         except IntegrityError:
             await db.rollback()
-            existing_user = await get_user_by_username(db, email)
+            existing_user = await get_user_by_username(db, normalized_email)
             if not existing_user:
                 raise HTTPException(status_code=500, detail="Unable to provision SSO user.")
             user = existing_user

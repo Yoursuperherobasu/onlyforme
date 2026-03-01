@@ -3,7 +3,8 @@ import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import distinct, func
+from sqlalchemy import and_, distinct, exists, func
+from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.sql.expression import SelectOfScalar
@@ -35,6 +36,13 @@ def _strip_or_none(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _normalize_identity(value: str | None) -> str | None:
+    stripped = _strip_or_none(value)
+    if not stripped:
+        return None
+    return stripped.lower() if "@" in stripped else stripped
 
 
 async def _assignable_roles_for_creator(session: DbSession, creator_role: str) -> list[str]:
@@ -246,11 +254,11 @@ async def add_user(
 ) -> User:
     """Add a new user to the database and stitch org/dept memberships by creator role."""
     try:
-        username = _strip_or_none(user.username)
+        username = _normalize_identity(user.username)
         if not username:
             raise HTTPException(status_code=400, detail="Username cannot be empty.")
 
-        email = _strip_or_none(user.email)
+        email = _normalize_identity(user.email)
         display_name = _strip_or_none(user.display_name)
         department_name = _strip_or_none(user.department_name)
         organization_name = _strip_or_none(user.organization_name)
@@ -258,6 +266,8 @@ async def add_user(
         country = _strip_or_none(user.country)
 
         existing_user = await get_user_by_username(session, username)
+        if not existing_user and email:
+            existing_user = await get_user_by_username(session, email)
         is_reusing_consumer = bool(
             existing_user and normalize_role(getattr(existing_user, "role", "consumer")) == "consumer"
         )
@@ -562,6 +572,20 @@ async def read_all_users(
     query: SelectOfScalar = select(User).where(User.id.in_(list(visible_user_ids)))
     if normalize_role(current_admin.role) != "root":
         query = query.where(User.role != "root")
+    else:
+        duplicate = aliased(User)
+        current_identity = func.lower(func.coalesce(User.email, User.username))
+        duplicate_identity = func.lower(func.coalesce(duplicate.email, duplicate.username))
+        has_non_consumer_duplicate = exists(
+            select(1).where(
+                duplicate.id != User.id,
+                duplicate_identity == current_identity,
+                func.lower(duplicate.role) != "consumer",
+            )
+        )
+        query = query.where(
+            ~and_(func.lower(User.role) == "consumer", has_non_consumer_duplicate)
+        )
     if role:
         query = query.where(User.role == normalize_role(role))
     if q:
@@ -572,6 +596,20 @@ async def read_all_users(
     count_query = select(func.count()).select_from(User).where(User.id.in_(list(visible_user_ids)))
     if normalize_role(current_admin.role) != "root":
         count_query = count_query.where(User.role != "root")
+    else:
+        duplicate = aliased(User)
+        current_identity = func.lower(func.coalesce(User.email, User.username))
+        duplicate_identity = func.lower(func.coalesce(duplicate.email, duplicate.username))
+        has_non_consumer_duplicate = exists(
+            select(1).where(
+                duplicate.id != User.id,
+                duplicate_identity == current_identity,
+                func.lower(duplicate.role) != "consumer",
+            )
+        )
+        count_query = count_query.where(
+            ~and_(func.lower(User.role) == "consumer", has_non_consumer_duplicate)
+        )
     if role:
         count_query = count_query.where(User.role == normalize_role(role))
     if q:
