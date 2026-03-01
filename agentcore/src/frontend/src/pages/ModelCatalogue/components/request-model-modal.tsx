@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,7 +29,9 @@ export default function RequestModelModal({
   const [provider, setProvider] = useState("openai");
   const [modelName, setModelName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [justification, setJustification] = useState("");
+  const [chargeCode, setChargeCode] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [reason, setReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -38,7 +41,9 @@ export default function RequestModelModal({
     setProvider("openai");
     setModelName("");
     setBaseUrl("");
-    setJustification("");
+    setChargeCode("");
+    setProjectName("");
+    setReason("");
   };
 
   const handleClose = () => {
@@ -48,6 +53,9 @@ export default function RequestModelModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!chargeCode.trim() || !projectName.trim() || !reason.trim()) {
+      return;
+    }
     setIsSubmitting(true);
     await new Promise((resolve) => setTimeout(resolve, 500));
     setSuccessData({
@@ -60,16 +68,8 @@ export default function RequestModelModal({
   if (!open) return null;
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm"
-        onClick={handleClose}
-      />
-
-      <div
-        className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl max-h-[90vh] -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-card shadow-lg flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0">
         <div className="flex-shrink-0 border-b p-6">
           <div className="flex items-start justify-between">
             <div>
@@ -78,12 +78,6 @@ export default function RequestModelModal({
                 Share model details for admin review and onboarding
               </p>
             </div>
-            <button
-              onClick={handleClose}
-              className="rounded-sm opacity-70 transition-opacity hover:opacity-100"
-            >
-              <X className="h-5 w-5" />
-            </button>
           </div>
         </div>
 
@@ -146,14 +140,35 @@ export default function RequestModelModal({
               Request Details
             </legend>
 
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Charge Code *</Label>
+                <Input
+                  required
+                  placeholder="e.g., CC-1042"
+                  value={chargeCode}
+                  onChange={(e) => setChargeCode(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Project Name *</Label>
+                <Input
+                  required
+                  placeholder="e.g., Customer Support Revamp"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                />
+              </div>
+            </div>
+
             <div>
-              <Label>Business Justification *</Label>
+              <Label>Reason *</Label>
               <Textarea
                 required
                 rows={4}
                 placeholder="Tell admins why this model is needed and expected use-case."
-                value={justification}
-                onChange={(e) => setJustification(e.target.value)}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
               />
             </div>
           </fieldset>
@@ -171,7 +186,7 @@ export default function RequestModelModal({
             </Button>
           </div>
         </div>
-      </div>
-    </>
+      </DialogContent>
+    </Dialog>
   );
 }

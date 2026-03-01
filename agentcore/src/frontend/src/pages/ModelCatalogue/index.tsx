@@ -8,7 +8,7 @@ import {
   CheckCircle,
   XCircle,
 } from "lucide-react";
-import { useContext, useEffect, useState } from "react";
+import { useContext, useState } from "react";
 import type { ModelType, ModelEnvironment, ModelTypeFilter } from "@/types/models/models";
 import {
   DropdownMenu,
@@ -16,6 +16,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import EditModelModal from "./components/edit-model-modal";
 import RequestModelModal from "./components/request-model-modal";
@@ -29,7 +36,7 @@ import {
   useDeleteRegistryModel,
 } from "@/controllers/API/queries/models";
 
-type ProviderFilter = "all" | "openai" | "azure" | "anthropic" | "google" | "groq" | "openai_compatible";
+type ProviderFilter = "all" | string;
 type EnvFilter = "all" | ModelEnvironment;
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -44,7 +51,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 const ENV_LABELS: Record<string, string> = {
   all: "All Envs",
-  test: "Test",
+  test: "DEV",
   uat: "UAT",
   prod: "Prod",
 };
@@ -93,6 +100,13 @@ export default function ModelCatalogue(): JSX.Element {
   const deleteMutation = useDeleteRegistryModel();
 
   const displayModels = models ?? [];
+  const defaultProviders = (Object.keys(PROVIDER_LABELS) as ProviderFilter[]).filter(
+    (p) => p !== "all",
+  );
+  const dataProviders = Array.from(new Set(displayModels.map((m) => m.provider))).filter(
+    (p) => !defaultProviders.includes(p),
+  );
+  const availableProviders: ProviderFilter[] = ["all", ...defaultProviders, ...dataProviders.sort()];
 
   /* ---------------------------------- Filtering ---------------------------------- */
 
@@ -197,54 +211,82 @@ export default function ModelCatalogue(): JSX.Element {
       </div>
 
       {/* Filters */}
-      <div className="flex-shrink-0 flex items-center gap-6 border-b px-8 py-4">
-        {/* Model type filter */}
-        <div className="flex gap-2">
-          {(["llm", "embedding"] as ModelTypeFilter[]).map((type) => (
+      <div className="flex-shrink-0 border-b px-8 py-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              {t("Model Type")}
+            </p>
+            <div className="flex gap-2">
+              {(["llm", "embedding"] as ModelTypeFilter[]).map((type) => (
+                <Button
+                  key={type}
+                  size="sm"
+                  variant={modelTypeFilter === type ? "default" : "outline"}
+                  className="flex-1"
+                  onClick={() => setModelTypeFilter(type)}
+                >
+                  {t(MODEL_TYPE_LABELS[type])}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              {t("Provider")}
+            </p>
+            <Select
+              value={providerFilter}
+              onValueChange={(value) => setProviderFilter(value)}
+            >
+              <SelectTrigger className="w-full bg-card">
+                <SelectValue placeholder={t("All")} />
+              </SelectTrigger>
+              <SelectContent>
+                {availableProviders.map((provider) => (
+                  <SelectItem key={provider} value={provider}>
+                    {t(getProviderName(provider))}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              {t("Environment")}
+            </p>
+            <Select
+              value={envFilter}
+              onValueChange={(value) => setEnvFilter(value as EnvFilter)}
+            >
+              <SelectTrigger className="w-full bg-card">
+                <SelectValue placeholder={t("All Envs")} />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(ENV_LABELS) as EnvFilter[]).map((env) => (
+                  <SelectItem key={env} value={env}>
+                    {t(ENV_LABELS[env])}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-end">
             <Button
-              key={type}
-              size="sm"
-              variant={modelTypeFilter === type ? "default" : "outline"}
+              variant="outline"
+              className="w-full"
               onClick={() => {
-                setModelTypeFilter(type);
                 setProviderFilter("all");
+                setEnvFilter("all");
+                setSearchQuery("");
               }}
             >
-              {t(MODEL_TYPE_LABELS[type])}
+              {t("Reset Filters")}
             </Button>
-          ))}
-        </div>
-
-        <div className="h-6 w-px bg-border" />
-
-        {/* Provider filter */}
-        <div className="flex gap-2">
-          {(Object.keys(PROVIDER_LABELS) as ProviderFilter[]).map((type) => (
-            <Button
-              key={type}
-              size="sm"
-              variant={providerFilter === type ? "default" : "outline"}
-              onClick={() => setProviderFilter(type)}
-            >
-              {t(PROVIDER_LABELS[type])}
-            </Button>
-          ))}
-        </div>
-
-        <div className="h-6 w-px bg-border" />
-
-        {/* Environment filter */}
-        <div className="flex gap-2">
-          {(Object.keys(ENV_LABELS) as EnvFilter[]).map((env) => (
-            <Button
-              key={env}
-              size="sm"
-              variant={envFilter === env ? "default" : "outline"}
-              onClick={() => setEnvFilter(env)}
-            >
-              {t(ENV_LABELS[env])}
-            </Button>
-          ))}
+          </div>
         </div>
       </div>
 

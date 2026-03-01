@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { X, Loader2, Zap } from "lucide-react";
+import { Loader2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,7 +31,7 @@ const PROVIDERS = [
 const DEFAULT_AZURE_API_VERSION = "2025-10-01-preview";
 
 const ENVIRONMENTS: { value: ModelEnvironment; label: string }[] = [
-  { value: "test", label: "Test" },
+  { value: "test", label: "DEV" },
   { value: "uat", label: "UAT" },
   { value: "prod", label: "Production" },
 ];
@@ -247,18 +248,8 @@ export default function EditModelModal({
   /* ---------------------------------- JSX ---------------------------------- */
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm"
-        onClick={handleClose}
-      />
-
-      {/* Modal */}
-      <div
-        className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl max-h-[90vh] -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-card shadow-lg flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0">
         {/* Header */}
         <div className="flex-shrink-0 border-b p-6">
           <div className="flex items-start justify-between">
@@ -274,12 +265,6 @@ export default function EditModelModal({
                   : isEmbedding ? "Onboard a new embedding model to the registry" : "Onboard a new AI model to the registry"}
               </p>
             </div>
-            <button
-              onClick={handleClose}
-              className="rounded-sm opacity-70 transition-opacity hover:opacity-100"
-            >
-              <X className="h-5 w-5" />
-            </button>
           </div>
         </div>
 
@@ -445,7 +430,7 @@ export default function EditModelModal({
                   onClick={() => setEnvironment(env.value)}
                   className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
                     environment === env.value
-                      ? "border-primary bg-primary text-primary-foreground"
+                      ? "border-[var(--button-primary)] bg-[var(--button-primary)] text-[var(--button-primary-foreground)]"
                       : "border-input bg-background hover:bg-muted"
                   }`}
                 >
@@ -454,7 +439,7 @@ export default function EditModelModal({
               ))}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Models default to <strong>Test</strong>. Promote to UAT or
+              Models default to <strong>DEV</strong>. Promote to UAT or
               Production when ready.
             </p>
           </fieldset>
@@ -570,7 +555,7 @@ export default function EditModelModal({
             </Button>
           </div>
         </div>
-      </div>
-    </>
+      </DialogContent>
+    </Dialog>
   );
 }
