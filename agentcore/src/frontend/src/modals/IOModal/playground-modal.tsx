@@ -7,10 +7,10 @@ import { useGetSessionsFromAgentQuery } from "@/controllers/API/queries/messages
 import { ENABLE_PUBLISH } from "@/customization/feature-flags";
 import { track } from "@/customization/utils/analytics";
 import { customOpenNewTab } from "@/customization/utils/custom-open-new-tab";
-import { SenseiButtonRedirectTarget } from "@/customization/utils/urls";
+import { AgentCoreButtonRedirectTarget } from "@/customization/utils/urls";
 import { useUtilityStore } from "@/stores/utilityStore";
 import { swatchColors } from "@/utils/styleUtils";
-import SenseiLogoColor from "../../assets/motherson_name.svg";
+import AgentCoreLogoColor from "../../assets/motherson_name.svg";
 import IconComponent from "../../components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import useAlertStore from "../../stores/alertStore";
@@ -228,29 +228,24 @@ export default function IOModal({
     [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent, setDisplayLoadingMessage],
   );
 
-  // ─── Effects (UNCHANGED) ──────────────────────────────────────────
+  // ─── Effects ─────────────────────────────────────────────────────
   useEffect(() => {
     if (playgroundPage && messages.length > 0) {
       window.sessionStorage.setItem(currentAgentId, JSON.stringify(messages));
     }
-    if (newChatOnPlayground && !sessionsLoading) {
-      const handleRefetchAndSetSession = async () => {
-        try {
-          const result = await refetchSessions();
-          if (result.data?.sessions && result.data.sessions.length > 0) {
-            setvisibleSession(
-              result.data.sessions[result.data.sessions.length - 1],
-            );
-          }
-        } catch (error) {
-          console.error("Error refetching sessions:", error);
-        }
-      };
-
-      handleRefetchAndSetSession();
+    if (newChatOnPlayground && !sessionsLoading && !isBuilding) {
+      // Refetch sessions to update the sidebar list
+      refetchSessions();
+      // Set visible session to the current sessionId (generated when
+      // "New Chat" was clicked) instead of picking the last session from
+      // the DB, which may not be the newly created session due to
+      // unordered results or timing issues during the build.
+      if (sessionId && sessionId !== currentAgentId) {
+        setvisibleSession(sessionId);
+      }
       setNewChatOnPlayground(false);
     }
-  }, [messages, playgroundPage]);
+  }, [messages, playgroundPage, isBuilding]);
 
   useEffect(() => {
     if (!visibleSession) {
@@ -280,9 +275,9 @@ export default function IOModal({
 
   const showPublishOptions = playgroundPage && ENABLE_PUBLISH;
 
-  const SenseiButtonClick = () => {
-    track("SenseiButtonClick");
-    customOpenNewTab(SenseiButtonRedirectTarget());
+  const AgentCoreButtonClick = () => {
+    track("AgentCoreButtonClick");
+    customOpenNewTab(AgentCoreButtonRedirectTarget());
   };
 
   const swatchIndex =
@@ -381,12 +376,12 @@ export default function IOModal({
           </div>
 
           <Button
-            onClick={SenseiButtonClick}
+            onClick={AgentCoreButtonClick}
             variant="primary"
             className="w-full !rounded-lg"
           >
-            <SenseiLogoColor />
-            <span className="ml-1 text-sm">Built with Sensei</span>
+            <AgentCoreLogoColor />
+            <span className="ml-1 text-sm">Built with AgentCore</span>
           </Button>
         </div>
       )}

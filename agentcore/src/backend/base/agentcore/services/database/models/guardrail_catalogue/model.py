@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlmodel import Field, SQLModel
 
 
@@ -14,10 +27,19 @@ class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     name: str = Field(sa_column=Column(String(255), nullable=False))
     description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     provider: str = Field(sa_column=Column(String(100), nullable=False, index=True))
+    model_registry_id: UUID | None = Field(default=None, foreign_key="model_registry.id", nullable=True, index=True)
     category: str = Field(sa_column=Column(String(50), nullable=False, index=True))
     status: str = Field(default="active", sa_column=Column(String(50), nullable=False, index=True))
     rules_count: int = Field(default=0, sa_column=Column(Integer, nullable=False))
     is_custom: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+    runtime_config: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    visibility: str = Field(
+        default="private",
+        sa_column=Column(String(20), nullable=False, default="private"),
+    )
+    public_scope: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))
+    shared_user_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # NULL org_id + NULL dept_id => global scope
     # org_id + NULL dept_id => organization scope

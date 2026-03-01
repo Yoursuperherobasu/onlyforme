@@ -17,6 +17,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import os
 import secrets
 import time
 from uuid import UUID
@@ -389,7 +390,10 @@ async def publish_agent_to_teams(
         # Use per-agent bot credentials if provided, otherwise fall back to global
         bot_app_id = request.bot_app_id or teams_service.settings.teams_bot_app_id
         bot_app_secret = request.bot_app_secret  # None if using global
-        base_url = teams_service.settings.teams_bot_endpoint_base or "https://localhost:7860"
+        base_url = teams_service.settings.teams_bot_endpoint_base or os.getenv(
+            "LOCALHOST_TEAMS_BOT_BASE_URL",
+            "https://localhost:7860",
+        )
 
         display_name = request.display_name or agent.name
         short_description = request.short_description or agent.description or f"AgentCore: {agent.name}"
@@ -617,7 +621,10 @@ async def sync_teams_app(
         from agentcore.services.teams.manifest import create_teams_app_package, generate_icons, generate_manifest
 
         teams_service = get_teams_service()
-        base_url = teams_service.settings.teams_bot_endpoint_base or "https://localhost:7860"
+        base_url = teams_service.settings.teams_bot_endpoint_base or os.getenv(
+            "LOCALHOST_TEAMS_BOT_BASE_URL",
+            "https://localhost:7860",
+        )
 
         parts = teams_app.manifest_version.split(".")
         parts[-1] = str(int(parts[-1]) + 1)

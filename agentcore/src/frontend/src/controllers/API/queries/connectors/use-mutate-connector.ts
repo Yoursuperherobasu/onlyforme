@@ -6,15 +6,22 @@ export interface CreateConnectorPayload {
   name: string;
   description?: string;
   provider: string;
-  host: string;
-  port: number;
-  database_name: string;
-  schema_name?: string;
-  username: string;
-  password: string;
+  // DB provider fields (optional for non-DB providers)
+  host?: string | null;
+  port?: number | null;
+  database_name?: string | null;
+  schema_name?: string | null;
+  username?: string | null;
+  password?: string | null;
   ssl_enabled?: boolean;
+  // Non-DB provider config (Azure Blob, SharePoint)
+  provider_config?: Record<string, any> | null;
   org_id?: string | null;
   dept_id?: string | null;
+  visibility?: "private" | "public";
+  public_scope?: "organization" | "department" | null;
+  public_dept_ids?: string[] | null;
+  shared_user_emails?: string[] | null;
 }
 
 export interface UpdateConnectorPayload extends Partial<CreateConnectorPayload> {}
@@ -70,14 +77,33 @@ export const useDeleteConnector = () => {
 export const useTestConnectorConnection = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async (
+      params:
+        | string
+        | { id: string; payload?: Record<string, any> },
+    ) => {
+      const id = typeof params === "string" ? params : params.id;
+      const payload = typeof params === "string" ? undefined : params.payload;
       const res = await api.post(
         `${getURL("CONNECTOR_CATALOGUE")}/${id}/test-connection`,
+        payload,
       );
       return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["useGetConnectorCatalogue"] });
+    },
+  });
+};
+
+export const useTestConnectorDraftConnection = () => {
+  return useMutation({
+    mutationFn: async (payload: UpdateConnectorPayload) => {
+      const res = await api.post(
+        `${getURL("CONNECTOR_CATALOGUE")}/test-connection`,
+        payload,
+      );
+      return res.data;
     },
   });
 };

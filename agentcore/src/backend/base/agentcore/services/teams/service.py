@@ -65,8 +65,10 @@ class TeamsService(Service):
         """Get the OAuth redirect URI for Graph API."""
         if self.settings.teams_graph_redirect_uri:
             return self.settings.teams_graph_redirect_uri
-        port = os.getenv("BACKEND_PORT", "7860")
-        return f"http://localhost:{port}/api/teams/oauth/callback"
+        return os.getenv(
+            "LOCALHOST_TEAMS_GRAPH_REDIRECT_URI",
+            f"http://{os.getenv('LOCALHOST_HOST', 'localhost')}:{os.getenv('BACKEND_PORT', '7860')}/api/teams/oauth/callback",
+        )
 
     def get_adapter(
         self,

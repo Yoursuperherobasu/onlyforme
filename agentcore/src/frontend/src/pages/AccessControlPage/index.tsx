@@ -106,8 +106,23 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Actions", keys: ["edit_platform_configs"] },
     ],
   },
+  { page: "Packages", sections: [{ name: "Page Access", keys: ["view_packages_page"] }] },
+  {
+    page: "Help & Support",
+    sections: [
+      { name: "Page Access", keys: ["view_help_support_page"] },
+      { name: "Actions", keys: ["add_faq"] },
+    ],
+  },
   { page: "Admin Page", sections: [{ name: "Page Access", keys: ["view_admin_page"] }] },
   { page: "Access Control", sections: [{ name: "Page Access", keys: ["view_access_control_page"] }] },
+  {
+    page: "Connectors",
+    sections: [
+      { name: "Page Access", keys: ["connectore_page"] },
+      { name: "Actions", keys: ["add_connector"] },
+    ],
+  },
 ];
 
 const EXCEL_PERMISSION_KEYS = new Set(
@@ -133,6 +148,8 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_knowledge_base_management: ["view_knowledge_base"],
   approve_reject_page: ["prod_publish_approval_required"],
   view_approval_page: ["view_agent", "view_model", "view_mcp"],
+  view_connectors_page: ["connectore_page"],
+  connector_page: ["connectore_page"],
 };
 
 const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {

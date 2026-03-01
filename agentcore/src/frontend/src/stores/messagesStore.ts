@@ -76,7 +76,7 @@ export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
       }
       return;
     }
-    if (message.sender === "Machine") {
+    if (message.sender === "Machine" || message.category === "error") {
       set(() => ({ displayLoadingMessage: false }));
     }
     // Add message and sort by timestamp to ensure correct order

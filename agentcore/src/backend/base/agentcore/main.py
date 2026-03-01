@@ -36,15 +36,16 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from agentcore.api import health_check_router, log_router, router
 from agentcore.api.openai_compat_router import router as openai_router
-from agentcore.api.mcp_projects import init_mcp_servers
 from agentcore.interface.components import get_and_cache_all_types_dict
 from agentcore.interface.utils import setup_llm_caching
 from agentcore.logging.logger import configure
 from agentcore.middleware import ContentSizeLimitMiddleware
 from agentcore.services.deps import (
     get_queue_service,
+    get_scheduler_service,
     get_settings_service,
     get_telemetry_service,
+    get_trigger_service,
 )
 from agentcore.services.utils import initialize_services, teardown_services
 
@@ -117,6 +118,12 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug(f"Services initialized in {asyncio.get_event_loop().time() - start_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
+            logger.debug("Syncing packages to database")
+            from agentcore.services.packages import sync_packages_to_db
+            await sync_packages_to_db()
+            logger.debug(f"Packages synced in {asyncio.get_event_loop().time() - current_time:.2f}s")
+
+            current_time = asyncio.get_event_loop().time()
             logger.debug("Setting up LLM caching")
             setup_llm_caching()
             logger.debug(f"LLM caching setup in {asyncio.get_event_loop().time() - current_time:.2f}s")
@@ -138,9 +145,18 @@ def get_lifespan(*, fix_migration=True, version=None):
             logger.debug(f"Agents loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
-            logger.debug("Loading mcp servers for projects")
-            await init_mcp_servers()
-            logger.debug(f"mcp servers loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
+            logger.debug("Starting scheduler and trigger services")
+            try:
+                scheduler_service = get_scheduler_service()
+                scheduler_service.start()
+                await scheduler_service.load_active_schedules()
+
+                trigger_service = get_trigger_service()
+                trigger_service.start()
+                await trigger_service.load_active_monitors()
+                logger.debug(f"Trigger services started in {asyncio.get_event_loop().time() - current_time:.2f}s")
+            except Exception as e:
+                logger.warning(f"Failed to start trigger services: {e}")
 
             total_time = asyncio.get_event_loop().time() - start_time
             logger.debug(f"Total initialization time: {total_time:.2f}s")
@@ -157,6 +173,15 @@ def get_lifespan(*, fix_migration=True, version=None):
             try:
                 # Stopping Server
                 logger.debug("Stopping server gracefully...")
+
+                # Shut down MCP sessions first (STDIO subprocesses block if left to GC)
+                try:
+                    from agentcore.base.mcp.util import cleanup_all_mcp_sessions
+                    await asyncio.wait_for(cleanup_all_mcp_sessions(), timeout=5)
+                except asyncio.TimeoutError:
+                    logger.warning("MCP session cleanup timed out.")
+                except Exception as e:  # noqa: BLE001
+                    logger.debug(f"MCP session cleanup error: {e}")
 
                 # Cleaning Up Services
                 try:
@@ -206,8 +231,11 @@ def create_app():
         ContentSizeLimitMiddleware,
     )
 
-    origins = ["http://localhost:3000"]
-    # origins = os.getenv("CORS_ALLOWED_ORIGINS".split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else [["http://localhost:3000","http://localhost:8767"]])
+    cors_allowed_origins = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        os.getenv("CORS_ALLOW_ORIGIN", os.getenv("LOCALHOST_FRONTEND_ORIGIN", "http://localhost:3000")),
+    )
+    origins = [origin.strip() for origin in re.split(r"[;,]", cors_allowed_origins) if origin.strip()]
 
     app.add_middleware(
         CORSMiddleware,
@@ -312,11 +340,6 @@ def create_app():
     app.add_middleware(BoundaryCheckMiddleware)
 
     settings = get_settings_service().settings
-
-    if settings.mcp_server_enabled:
-        from agentcore.api import mcp_router
-
-        router.include_router(mcp_router)
 
     app.include_router(router)
     app.include_router(health_check_router)

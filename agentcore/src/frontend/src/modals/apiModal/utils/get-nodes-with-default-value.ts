@@ -1,6 +1,6 @@
 import { cloneDeep } from "lodash";
 import type { AllNodeType } from "@/types/agent";
-import { SENSEI_SUPPORTED_TYPES } from "../../../constants/constants";
+import { AGENTCORE_SUPPORTED_TYPES } from "../../../constants/constants";
 
 export const getNodesWithDefaultValue = (
   nodes: AllNodeType[],
@@ -18,7 +18,7 @@ export const getNodesWithDefaultValue = (
         (templateField) =>
           templateField.charAt(0) !== "_" &&
           node!.data!.node!.template[templateField]?.show &&
-          SENSEI_SUPPORTED_TYPES.has(
+          AGENTCORE_SUPPORTED_TYPES.has(
             node!.data!.node!.template[templateField].type,
           ) &&
           templateField !== "code",

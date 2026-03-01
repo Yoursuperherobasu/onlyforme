@@ -13,13 +13,12 @@ from pydantic.v1 import SecretStr
 
 from agentcore.base.models.model import LCModelNode
 from agentcore.field_typing import LanguageModel
-from agentcore.field_typing.range_spec import RangeSpec
-from agentcore.io import DropdownInput, IntInput, SliderInput
+from agentcore.io import DropdownInput, FloatInput, IntInput
 
 # Display label → DB key mapping
 PROVIDER_LABEL_TO_KEY = {
     "OpenAI": "openai",
-    "Azure OpenAI": "azure",
+    "Azure": "azure",
     "Anthropic": "anthropic",
     "Google": "google",
     "Groq": "groq",
@@ -61,10 +60,16 @@ def _get_sync_engine():
 # ---------------------------------------------------------------------------
 
 def _run_async(coro):
-    """Run an async coroutine from a synchronous context, handling existing event loops."""
+    """Run an async coroutine from a synchronous context, handling existing event loops.
+
+    NOTE: import locally — components are loaded via exec() from string,
+    so module-level imports may not be in scope.
+    """
+    import concurrent.futures as _cf
+
     try:
         asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with _cf.ThreadPoolExecutor() as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=30)
     except RuntimeError:
@@ -93,6 +98,7 @@ def _fetch_models_for_provider(provider: str) -> list[str]:
                     select(ModelRegistry)
                     .where(ModelRegistry.is_active.is_(True))
                     .where(ModelRegistry.provider == provider)
+                    .where(ModelRegistry.model_type == "llm")
                     .order_by(ModelRegistry.display_name)
                 )
                 result = await session.execute(stmt)
@@ -187,12 +193,10 @@ class RegistryModelComponent(LCModelNode):
             real_time_refresh=True,
             combobox=True,
         ),
-        SliderInput(
+        FloatInput(
             name="temperature",
             display_name="Temperature",
-            value=0.7,
-            info="Controls randomness. Lower = more deterministic, higher = more creative.",
-            range_spec=RangeSpec(min=0, max=2, step=0.01),
+            info="Controls randomness (0-2). Leave empty to use model default.",
             advanced=True,
         ),
         IntInput(
@@ -261,9 +265,17 @@ class RegistryModelComponent(LCModelNode):
         provider_config = config.get("provider_config", {})
         default_params = config.get("default_params", {})
 
-        # Override with component-level settings if provided
-        temperature = self.temperature if self.temperature is not None else default_params.get("temperature", 0.7)
+        # Override with component-level settings if provided (None / "" = use model default)
+        temperature = self.temperature if self.temperature not in (None, "") else default_params.get("temperature")
+        if temperature not in (None, ""):
+            temperature = float(temperature)
+        else:
+            temperature = None
         max_tokens = self.max_tokens or default_params.get("max_tokens") or None
+        if max_tokens not in (None, ""):
+            max_tokens = int(max_tokens)
+        else:
+            max_tokens = None
         stream = self.stream
 
         return self._build_provider_model(
@@ -287,58 +299,68 @@ class RegistryModelComponent(LCModelNode):
         api_key: str,
         base_url: str,
         provider_config: dict,
-        temperature: float,
+        temperature: float | None,
         max_tokens: int | None,
         stream: bool,
     ) -> LanguageModel:
-        """Construct the appropriate LangChain model based on the provider."""
+        """Construct a appropriate LangChain model based on the provider."""
         if provider == "openai":
             from langchain_openai import ChatOpenAI
 
             kwargs: dict = {
                 "model": model_name,
                 "api_key": api_key,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
                 "streaming": stream,
             }
             if base_url:
                 kwargs["base_url"] = base_url
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
             return ChatOpenAI(**kwargs)
 
         if provider == "azure":
             from langchain_openai import AzureChatOpenAI
 
-            return AzureChatOpenAI(
-                azure_deployment=provider_config.get("azure_deployment", model_name),
-                azure_endpoint=base_url or provider_config.get("azure_endpoint", ""),
-                api_key=api_key,
-                api_version=provider_config.get("api_version", "2025-10-01-preview"),
-                temperature=temperature,
-                max_tokens=max_tokens,
-                streaming=stream,
-            )
+            kwargs = {
+                "azure_deployment": provider_config.get("azure_deployment", model_name),
+                "azure_endpoint": base_url or provider_config.get("azure_endpoint", ""),
+                "api_key": api_key,
+                "api_version": provider_config.get("api_version", "2025-10-01-preview"),
+                "streaming": stream,
+            }
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            return AzureChatOpenAI(**kwargs)
 
         if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
 
-            return ChatAnthropic(
-                model=model_name,
-                api_key=api_key,
-                temperature=temperature,
-                max_tokens=max_tokens or 4096,
-                streaming=stream,
-            )
+            kwargs = {
+                "model": model_name,
+                "api_key": api_key,
+                "max_tokens": max_tokens or 4096,
+                "streaming": stream,
+            }
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            return ChatAnthropic(**kwargs)
 
         if provider == "google":
             from langchain_google_genai import ChatGoogleGenerativeAI
 
-            return ChatGoogleGenerativeAI(
-                model=model_name,
-                google_api_key=api_key,
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
+            kwargs = {
+                "model": model_name,
+                "google_api_key": api_key,
+            }
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                kwargs["max_output_tokens"] = max_tokens
+            return ChatGoogleGenerativeAI(**kwargs)
 
         if provider == "groq":
             from langchain_groq import ChatGroq
@@ -346,12 +368,14 @@ class RegistryModelComponent(LCModelNode):
             kwargs = {
                 "model": model_name,
                 "api_key": SecretStr(api_key).get_secret_value() if api_key else "",
-                "temperature": temperature,
-                "max_tokens": max_tokens,
                 "streaming": stream,
             }
             if base_url:
                 kwargs["base_url"] = base_url
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
             return ChatGroq(**kwargs)
 
         if provider == "openai_compatible":
@@ -362,12 +386,14 @@ class RegistryModelComponent(LCModelNode):
                 "model": model_name,
                 "api_key": api_key or "not-needed",
                 "base_url": base_url,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
                 "streaming": stream,
             }
             if custom_headers:
                 kwargs["default_headers"] = custom_headers
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
             return ChatOpenAI(**kwargs)
 
         msg = f"Unsupported provider: {provider}. Supported: openai, azure, anthropic, google, groq, openai_compatible"

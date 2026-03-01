@@ -25,9 +25,7 @@ def _get_version_info():
     """
     package_options = [
         ("agentcore", "Agentcore"),
-        ("agentcore-base", "Agentcore Base"),
         ("agentcore-nightly", "Agentcore Nightly"),
-        ("agentcore-base-nightly", "Agentcore Base Nightly"),
     ]
     __version__ = None
     for pkg_name, display_name in package_options:

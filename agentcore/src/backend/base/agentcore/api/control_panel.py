@@ -119,6 +119,7 @@ class ControlPanelAgentItem(BaseModel):
     deployed_at: datetime | None = None
     last_run: datetime | None = None      # placeholder – no model field yet
     failed_runs: int = 0                   # placeholder – no model field yet
+    input_type: str = "autonomous"         # "chat" | "autonomous" | "file_processing" — from snapshot._input_type
 
 
 class ControlPanelAgentsResponse(BaseModel):
@@ -373,6 +374,10 @@ async def list_control_panel_agents(
             )).one()
             failed_runs = failed_count or 0
 
+            # Read _input_type from the snapshot (set at publish time)
+            snap = dep.agent_snapshot or {}
+            _input_type = snap.get("_input_type", "autonomous")
+
             items.append(
                 ControlPanelAgentItem(
                     deploy_id=dep.id,
@@ -390,6 +395,7 @@ async def list_control_panel_agents(
                     deployed_at=dep.deployed_at,
                     last_run=last_run,
                     failed_runs=failed_runs,
+                    input_type=_input_type,
                 )
             )
 

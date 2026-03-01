@@ -199,3 +199,4 @@ src/frontend/temp
 
 
 member_servers.json
+src/backend/knowledge_base_storage/

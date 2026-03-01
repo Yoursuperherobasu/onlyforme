@@ -39,6 +39,7 @@ import GlobalVariablesPage from "./pages/SettingsPage/pages/GlobalVariablesPage"
 import HelpSupportPage from "./pages/SettingsPage/pages/HelpSupportPage";
 import MCPServersPage from "./pages/McpServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
+import PackagesPage from "./pages/SettingsPage/pages/PackagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
@@ -57,6 +58,7 @@ import EvaluationPage from "./pages/EvaluationPage";
 import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
 import ConnectorsCatalogueView from "./pages/ConnectorsCatalogue";
+import SchedulerPage from "./pages/SchedulerPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const AccessControlPage = lazy(() => import("./pages/AccessControlPage"));
@@ -160,6 +162,10 @@ const router = createBrowserRouter(
                     }
                   />
                   <Route
+                    path="scheduler"
+                    element={<SchedulerPage />}
+                  />
+                  <Route
                     path="mcp-servers"
                     element={
 
@@ -182,6 +188,10 @@ const router = createBrowserRouter(
                         <TimeoutSettings />
                       </ProtectedAccessControlRoute>
                     }
+                  />
+                  <Route
+                    path="packages"
+                    element={<PackagesPage />}
                   />
                   
                   <Route

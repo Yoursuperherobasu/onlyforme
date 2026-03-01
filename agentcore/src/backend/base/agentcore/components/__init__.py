@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         models,
         processing,
         tools,
+        triggers,
         vectorstores,
     )
 
@@ -43,6 +44,7 @@ _dynamic_imports = {
     "Guardrails": "agentcore.components.Guardrails",
     "HumanInTheLoop": "agentcore.components.HumanInTheLoop",
     "graph_rag": "agentcore.components.graph_rag",
+    "triggers": "agentcore.components.triggers",
 }
 
 __all__: list[str] = [
@@ -60,6 +62,7 @@ __all__: list[str] = [
     "models",
     "processing",
     "tools",
+    "triggers",
     "vectorstores",
     "graph_rag",
 ]

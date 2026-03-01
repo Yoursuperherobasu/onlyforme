@@ -19,9 +19,6 @@ from loguru import logger
 from mcp import ClientSession
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
-from sqlmodel import select
-
-from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_settings_service
 
 HTTP_ERROR_STATUS_CODE = httpx_codes.BAD_REQUEST  # HTTP status code for client errors
@@ -39,6 +36,10 @@ MAX_SESSIONS_PER_SERVER = (
 )  # Maximum number of sessions per server to prevent resource exhaustion
 SESSION_IDLE_TIMEOUT = settings.mcp_session_idle_timeout  # 5 minutes idle timeout for sessions
 SESSION_CLEANUP_INTERVAL = settings.mcp_session_cleanup_interval  # Cleanup interval in seconds
+SESSION_CLEANUP_TIMEOUT = 3  # Max seconds to wait when cleaning up a single session on shutdown
+
+# Global registry of all MCPSessionManager instances for teardown
+_all_session_managers: set["MCPSessionManager"] = set()
 # RFC 7230 compliant header name pattern: token = 1*tchar
 # tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
 #         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
@@ -191,6 +192,44 @@ def sanitize_mcp_name(name: str, max_length: int = 46) -> str:
     return name
 
 
+def _extract_tool_result(result) -> str:
+    """Extract readable text from an MCP CallToolResult.
+
+    Concatenates all TextContent blocks.  For ImageContent, includes a
+    markdown image tag so the chat UI can render it.  Falls back to the
+    raw repr for unknown content types.
+    """
+    if result is None:
+        return ""
+    # If it's already a plain string, return as-is
+    if isinstance(result, str):
+        return result
+
+    parts: list[str] = []
+    content_list = getattr(result, "content", None)
+    if content_list:
+        for block in content_list:
+            block_type = getattr(block, "type", None)
+            if block_type == "text":
+                parts.append(getattr(block, "text", ""))
+            elif block_type == "image":
+                mime = getattr(block, "mimeType", "image/png")
+                data = getattr(block, "data", "")
+                parts.append(f"![chart](data:{mime};base64,{data})")
+            else:
+                # resource / embedded_resource / unknown
+                text = getattr(block, "text", None) or str(block)
+                parts.append(text)
+
+    # Also include structuredContent if present
+    structured = getattr(result, "structuredContent", None)
+    if structured:
+        import json as _json
+        parts.append(_json.dumps(structured, ensure_ascii=False))
+
+    return "\n".join(parts) if parts else str(result)
+
+
 def create_tool_coroutine(tool_name: str, arg_schema: type[BaseModel], client) -> Callable[..., Awaitable]:
     async def tool_coroutine(*args, **kwargs):
         # Get field names from the model (preserving order)
@@ -212,7 +251,8 @@ def create_tool_coroutine(tool_name: str, arg_schema: type[BaseModel], client) -
             raise ValueError(msg) from e
 
         try:
-            return await client.run_tool(tool_name, arguments=validated.model_dump())
+            result = await client.run_tool(tool_name, arguments=validated.model_dump(exclude_none=True))
+            return _extract_tool_result(result)
         except Exception as e:
             logger.error(f"Tool '{tool_name}' execution failed: {e}")
             # Re-raise with more context
@@ -240,7 +280,8 @@ def create_tool_func(tool_name: str, arg_schema: type[BaseModel], client) -> Cal
 
         try:
             loop = asyncio.get_event_loop()
-            return loop.run_until_complete(client.run_tool(tool_name, arguments=validated.model_dump()))
+            result = loop.run_until_complete(client.run_tool(tool_name, arguments=validated.model_dump(exclude_none=True)))
+            return _extract_tool_result(result)
         except Exception as e:
             logger.error(f"Tool '{tool_name}' execution failed: {e}")
             # Re-raise with more context
@@ -263,21 +304,6 @@ def get_unique_name(base_name, max_length, existing_names):
             return candidate
         i += 1
 
-
-async def get_agent_snake_case(agent_name: str, user_id: str, session, is_action: bool | None = None) -> Agent | None:
-    uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
-    stmt = select(Agent).where(Agent.user_id == uuid_user_id)
-    agents = (await session.exec(stmt)).all()
-
-    for agent in agents:
-        if is_action and agent.action_name:
-            this_agent_name = sanitize_mcp_name(agent.action_name)
-        else:
-            this_agent_name = sanitize_mcp_name(agent.name)
-
-        if this_agent_name == agent_name:
-            return agent
-    return None
 
 
 def create_input_schema_from_json_schema(schema: dict[str, Any]) -> type[BaseModel]:
@@ -488,6 +514,8 @@ class MCPSessionManager:
         self._session_refcount: dict[tuple[str, str], int] = {}
         self._cleanup_task = None
         self._start_cleanup_task()
+        # Register for global teardown
+        _all_session_managers.add(self)
 
     def _start_cleanup_task(self):
         """Start the periodic cleanup task."""
@@ -710,8 +738,9 @@ class MCPSessionManager:
         task.add_done_callback(self._background_tasks.discard)
 
         # Wait for session to be ready
+        init_timeout = get_settings_service().settings.mcp_server_timeout
         try:
-            session = await asyncio.wait_for(session_future, timeout=10.0)
+            session = await asyncio.wait_for(session_future, timeout=float(init_timeout))
         except asyncio.TimeoutError as timeout_err:
             # Clean up the failed task
             if not task.done():
@@ -769,8 +798,9 @@ class MCPSessionManager:
         task.add_done_callback(self._background_tasks.discard)
 
         # Wait for session to be ready
+        init_timeout = get_settings_service().settings.mcp_server_timeout
         try:
-            session = await asyncio.wait_for(session_future, timeout=10.0)
+            session = await asyncio.wait_for(session_future, timeout=float(init_timeout))
         except asyncio.TimeoutError as timeout_err:
             # Clean up the failed task
             if not task.done():
@@ -803,48 +833,20 @@ class MCPSessionManager:
             return
 
         session_info = sessions[session_id]
+        timeout = SESSION_CLEANUP_TIMEOUT
         try:
-            # First try to properly close the session if it exists
-            if "session" in session_info:
-                session = session_info["session"]
-
-                # Try async close first (aclose method)
-                if hasattr(session, "aclose"):
-                    try:
-                        await session.aclose()
-                        logger.debug("Successfully closed session %s using aclose()", session_id)
-                    except Exception as e:  # noqa: BLE001
-                        logger.debug("Error closing session %s with aclose(): %s", session_id, e)
-
-                # If no aclose, try regular close method
-                elif hasattr(session, "close"):
-                    try:
-                        # Check if close() is awaitable using inspection
-                        if inspect.iscoroutinefunction(session.close):
-                            # It's an async method
-                            await session.close()
-                            logger.debug("Successfully closed session %s using async close()", session_id)
-                        else:
-                            # Try calling it and check if result is awaitable
-                            close_result = session.close()
-                            if inspect.isawaitable(close_result):
-                                await close_result
-                                logger.debug("Successfully closed session %s using awaitable close()", session_id)
-                            else:
-                                # It's a synchronous close
-                                logger.debug("Successfully closed session %s using sync close()", session_id)
-                    except Exception as e:  # noqa: BLE001
-                        logger.debug("Error closing session %s with close(): %s", session_id, e)
-
-            # Cancel the background task which will properly close the session
+            # Cancel the background task FIRST — this triggers CancelledError inside
+            # the context managers (stdio_client / sse_client) which close the
+            # underlying transport quickly.  Trying session.close() first can hang
+            # because the transport is still alive and waiting.
             if "task" in session_info:
                 task = session_info["task"]
                 if not task.done():
                     task.cancel()
                     try:
-                        await task
-                    except asyncio.CancelledError:
-                        logger.info(f"Cancelled task for session {session_id}")
+                        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        logger.debug("Task for session %s cancelled/timed out", session_id)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Error cleaning up session {session_id}: {e}")
         finally:
@@ -859,36 +861,33 @@ class MCPSessionManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._cleanup_task
 
-        # Clean up all sessions
+        # Cancel ALL background tasks at once (don't wait one-by-one)
+        tasks_to_cancel = []
         for server_key in list(self.sessions_by_server.keys()):
             server_data = self.sessions_by_server[server_key]
-            # Handle both old and new session structure
-            if isinstance(server_data, dict) and "sessions" in server_data:
-                sessions = server_data["sessions"]
-            else:
-                # Handle old structure where sessions were stored directly
-                sessions = server_data
+            sessions = server_data.get("sessions", server_data) if isinstance(server_data, dict) and "sessions" in server_data else server_data
+            for session_id, session_info in list(sessions.items()):
+                if "task" in session_info:
+                    task = session_info["task"]
+                    if not task.done():
+                        task.cancel()
+                        tasks_to_cancel.append(task)
 
-            for session_id in list(sessions.keys()):
-                await self._cleanup_session_by_id(server_key, session_id)
-
-        # Clear the sessions_by_server structure completely
-        self.sessions_by_server.clear()
-
-        # Clear compatibility maps
-        self._context_to_session.clear()
-        self._session_refcount.clear()
-
-        # Clear all background tasks
         for task in list(self._background_tasks):
             if not task.done():
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                tasks_to_cancel.append(task)
 
-        # Give a bit more time for subprocess transports to clean up
-        # This helps prevent the BaseSubprocessTransport.__del__ warnings
-        await asyncio.sleep(0.5)
+        # Wait for all cancelled tasks concurrently with a hard timeout
+        if tasks_to_cancel:
+            await asyncio.wait(tasks_to_cancel, timeout=SESSION_CLEANUP_TIMEOUT)
+
+        # Clear everything
+        self.sessions_by_server.clear()
+        self._context_to_session.clear()
+        self._session_refcount.clear()
+        self._background_tasks.clear()
+        _all_session_managers.discard(self)
 
     async def _cleanup_session(self, context_id: str):
         """Backward-compat cleanup by context_id.
@@ -914,6 +913,24 @@ class MCPSessionManager:
 
         # Remove the mapping for this context
         self._context_to_session.pop(context_id, None)
+
+
+async def cleanup_all_mcp_sessions() -> None:
+    """Shut down every MCPSessionManager that was ever created.
+
+    Called from the application teardown path so that STDIO subprocesses
+    are terminated quickly instead of blocking the restart.
+    """
+    managers = list(_all_session_managers)
+    if not managers:
+        return
+    logger.debug(f"Cleaning up {len(managers)} MCP session manager(s)...")
+    await asyncio.gather(
+        *(m.cleanup_all() for m in managers),
+        return_exceptions=True,
+    )
+    _all_session_managers.clear()
+    logger.debug("MCP session cleanup complete")
 
 
 class MCPStdioClient:

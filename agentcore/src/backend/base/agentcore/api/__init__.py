@@ -6,8 +6,6 @@ from agentcore.api.agent import router as agents_router
 from agentcore.api.health_check_router import health_check_router
 from agentcore.api.log_router import log_router
 from agentcore.api.login import router as login_router
-from agentcore.api.mcp_server import router as mcp_router
-from agentcore.api.mcp_projects import router as mcp_projects_router
 from agentcore.api.monitor import router as monitor_router
 from agentcore.api.observability import router as observability_router
 from agentcore.api.evaluation import router as evaluation_router
@@ -26,7 +24,9 @@ from agentcore.api.files_user import router as files_router_v2
 from agentcore.api.mcp_config import router as mcp_router_v2
 from agentcore.api.help_support import router as help_support_router
 from agentcore.api.a2a import router as a2a_router
+from agentcore.api.packages import router as packages_router
 from agentcore.api.teams import router as teams_router
+from agentcore.api.triggers import router as triggers_router
 
 __all__ = [
     "api_key_router",
@@ -38,8 +38,6 @@ __all__ = [
     "health_check_router",
     "log_router",
     "login_router",
-    "mcp_projects_router",
-    "mcp_router",
     "mcp_router_v2",
     "monitor_router",
     "observability_router",
@@ -57,5 +55,7 @@ __all__ = [
     "variables_router",
     "help_support_router",
     "a2a_router",
+    "packages_router",
     "teams_router",
+    "triggers_router",
 ]

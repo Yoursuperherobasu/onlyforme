@@ -11,8 +11,8 @@ const KnowledgeBaseEmptyState = ({
       <div className="flex flex-col items-center gap-2">
         <h3 className="text-2xl font-semibold">Welcome to Knowledge Bases!</h3>
         <p className="text-lg text-secondary-foreground">
-          Create reusable knowledge bases that your agents can search and
-          reference.
+          Upload files to create reusable knowledge bases that your agents can
+          search and reference.
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -26,7 +26,7 @@ const KnowledgeBaseEmptyState = ({
             className="h-4 w-4"
           />
           <span className="whitespace-nowrap font-semibold">
-            New Knowledge Base template
+            Upload Knowledge Base
           </span>
         </Button>
       </div>

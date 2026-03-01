@@ -9,18 +9,23 @@ export interface ConnectorInfo {
   name: string;
   description: string;
   provider: string;
-  host: string;
-  port: number;
-  database_name: string;
-  schema_name: string;
-  username: string;
+  host: string | null;
+  port: number | null;
+  database_name: string | null;
+  schema_name: string | null;
+  username: string | null;
   ssl_enabled: boolean;
+  provider_config?: Record<string, any> | null;
   status: "connected" | "disconnected" | "error";
   tables_metadata: any[] | null;
   last_tested_at: string | null;
   isCustom: boolean;
   org_id?: string | null;
   dept_id?: string | null;
+  visibility?: "private" | "public";
+  public_scope?: "organization" | "department" | null;
+  public_dept_ids?: string[];
+  shared_user_ids?: string[];
 }
 
 export const useGetConnectorCatalogue: useQueryFunctionType<

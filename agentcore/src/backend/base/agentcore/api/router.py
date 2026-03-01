@@ -8,9 +8,7 @@ from agentcore.api.files_agent import router as files_router
 from agentcore.api.files_user import router as files_router_user
 from agentcore.api.agent import router as agents_router
 from agentcore.api.login import router as login_router
-from agentcore.api.mcp_server import router as mcp_router
 from agentcore.api.registry import router as registry_router
-from agentcore.api.mcp_projects import router as mcp_projects_router
 from agentcore.api.mcp_config import router as mcp_router_config
 from agentcore.api.monitor import router as monitor_router
 from agentcore.api.observability import router as observability_router
@@ -38,7 +36,10 @@ from agentcore.api.guardrails_catalogue import router as guardrails_catalogue_ro
 from agentcore.api.help_support import router as help_support_router
 from agentcore.api.connector_catalogue import router as connector_catalogue_router
 from agentcore.api.a2a import router as a2a_router
+from agentcore.api.packages import router as packages_router
 from agentcore.api.teams import router as teams_router
+from agentcore.api.triggers import router as triggers_router
+from agentcore.api.mcp_registry import router as mcp_registry_router
 
 router = APIRouter(
     prefix="/api",
@@ -60,8 +61,6 @@ router.include_router(publish_router)
 router.include_router(registry_router)
 router.include_router(starter_projects_router)
 router.include_router(store_router)
-router.include_router(mcp_router)
-router.include_router(mcp_projects_router)
 router.include_router(observability_router)
 router.include_router(evaluation_router)
 router.include_router(files_router_user)
@@ -81,4 +80,7 @@ router.include_router(guardrails_catalogue_router)
 router.include_router(help_support_router)
 router.include_router(connector_catalogue_router)
 router.include_router(a2a_router)
+router.include_router(packages_router)
 router.include_router(teams_router)
+router.include_router(triggers_router)
+router.include_router(mcp_registry_router)

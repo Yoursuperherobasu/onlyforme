@@ -15,14 +15,24 @@ class ConnectorCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
 
     name: str = Field(sa_column=Column(String(255), nullable=False))
     description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    provider: str = Field(sa_column=Column(String(50), nullable=False, index=True))  # postgresql, oracle, sqlserver, mysql
-    host: str = Field(sa_column=Column(String(255), nullable=False))
-    port: int = Field(sa_column=Column(Integer, nullable=False))
-    database_name: str = Field(sa_column=Column(String(255), nullable=False))
-    schema_name: str = Field(default="public", sa_column=Column(String(255), nullable=False))
-    username: str = Field(sa_column=Column(String(255), nullable=False))
-    password_encrypted: str = Field(sa_column=Column(Text, nullable=False))
+    provider: str = Field(sa_column=Column(String(50), nullable=False, index=True))  # postgresql, oracle, sqlserver, mysql, azure_blob, sharepoint
+    # DB-only fields — nullable so Azure Blob / SharePoint connectors can omit them
+    host: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
+    port: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    database_name: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
+    schema_name: str | None = Field(default="public", sa_column=Column(String(255), nullable=True))
+    username: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
+    password_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     ssl_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+    # Provider-specific config for non-DB connectors (Azure Blob, SharePoint, etc.)
+    provider_config: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    visibility: str = Field(
+        default="private",
+        sa_column=Column(String(20), nullable=False, default="private"),
+    )
+    public_scope: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))  # organization | department
+    shared_user_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     status: str = Field(sa_column=Column(String(50), nullable=False, default="disconnected"))  # connected, disconnected, error
     tables_metadata: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))  # cached schema info

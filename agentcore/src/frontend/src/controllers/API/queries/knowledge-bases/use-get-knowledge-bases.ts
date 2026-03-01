@@ -1,8 +1,11 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { useQueryFunctionType } from "@/types/api";
+import useAuthStore from "@/stores/authStore";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
+
+export type KBVisibility = "PRIVATE" | "DEPARTMENT" | "ORGANIZATION";
 
 export interface KnowledgeBaseInfo {
   id: string;
@@ -17,6 +20,14 @@ export interface KnowledgeBaseInfo {
   chunks: number;
   avg_chunk_size: number;
   file_count?: number;
+  visibility?: KBVisibility;
+  created_by?: string;
+  updated_at?: string | null;
+  last_activity?: string | null;
+  is_own_kb?: boolean;
+  created_by_email?: string | null;
+  department_name?: string | null;
+  organization_name?: string | null;
 }
 
 export const useGetKnowledgeBases: useQueryFunctionType<
@@ -24,6 +35,7 @@ export const useGetKnowledgeBases: useQueryFunctionType<
   KnowledgeBaseInfo[]
 > = (options?) => {
   const { query } = UseRequestProcessor();
+  const userId = useAuthStore((state) => state.userData?.id);
 
   const getKnowledgeBasesFn = async (): Promise<KnowledgeBaseInfo[]> => {
     const res = await api.get(`${getURL("KNOWLEDGE_BASES")}/`);
@@ -31,7 +43,7 @@ export const useGetKnowledgeBases: useQueryFunctionType<
   };
 
   const queryResult: UseQueryResult<KnowledgeBaseInfo[], any> = query(
-    ["useGetKnowledgeBases"],
+    ["useGetKnowledgeBases", userId ?? "anonymous"],
     getKnowledgeBasesFn,
     {
       refetchOnWindowFocus: false,

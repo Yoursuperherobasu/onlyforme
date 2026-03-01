@@ -4,7 +4,6 @@ import {
   Plug,
   Unplug,
   AlertCircle,
-  MoreVertical,
   Pencil,
   Trash2,
   Zap,
@@ -16,10 +15,13 @@ import {
   Database,
   CheckCircle2,
   XCircle,
+  Cloud,
 } from "lucide-react";
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import Loading from "@/components/ui/loading";
 import { AuthContext } from "@/contexts/authContext";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import {
   useGetConnectorCatalogue,
   type ConnectorInfo,
@@ -29,16 +31,26 @@ import {
   useUpdateConnector,
   useDeleteConnector,
   useTestConnectorConnection,
+  useTestConnectorDraftConnection,
   useDisconnectConnector,
 } from "@/controllers/API/queries/connectors/use-mutate-connector";
 
-type ProviderFilter = "all" | "postgresql" | "oracle" | "sqlserver" | "mysql";
+type ProviderFilter =
+  | "all"
+  | "postgresql"
+  | "oracle"
+  | "sqlserver"
+  | "mysql"
+  | "azure_blob"
+  | "sharepoint";
 
 const PROVIDER_LABELS: Record<string, string> = {
   postgresql: "PostgreSQL",
   oracle: "Oracle",
   sqlserver: "SQL Server",
   mysql: "MySQL",
+  azure_blob: "Azure Blob Storage",
+  sharepoint: "SharePoint",
 };
 
 const PROVIDER_PORTS: Record<string, number> = {
@@ -48,12 +60,49 @@ const PROVIDER_PORTS: Record<string, number> = {
   mysql: 3306,
 };
 
-const PROVIDER_ICONS: Record<string, typeof Database> = {
-  postgresql: Database,
-  oracle: Database,
-  sqlserver: Database,
-  mysql: Database,
+const DB_PROVIDERS = new Set(["postgresql", "oracle", "sqlserver", "mysql"]);
+const STORAGE_PROVIDERS = new Set(["azure_blob", "sharepoint"]);
+const DEFAULT_CONNECTOR_HOST =
+  process.env.DEFAULT_CONNECTOR_HOST ||
+  process.env.HOST_IP ||
+  window.location.hostname;
+
+function isDbProvider(provider: string): boolean {
+  return DB_PROVIDERS.has(provider);
+}
+
+const BLANK_FORM = {
+  name: "",
+  description: "",
+  provider: "postgresql",
+  // DB fields
+  host: DEFAULT_CONNECTOR_HOST,
+  port: 5432,
+  database_name: "",
+  schema_name: "public",
+  username: "",
+  password: "",
+  ssl_enabled: false,
+  // Azure Blob fields
+  azure_connection_string: "",
+  azure_container_name: "",
+  azure_blob_prefix: "",
+  // SharePoint fields
+  sharepoint_site_url: "",
+  sharepoint_library: "Shared Documents",
+  sharepoint_folder: "",
+  sharepoint_client_id: "",
+  sharepoint_client_secret: "",
+  sharepoint_tenant_id: "",
+  visibility: "private",
+  public_scope: "department",
+  org_id: "",
+  dept_id: "",
+  public_dept_ids: [] as string[],
+  shared_user_emails: [] as string[],
 };
+
+type FormState = typeof BLANK_FORM;
 
 export default function ConnectorsCatalogueView(): JSX.Element {
   const [filter, setFilter] = useState<ProviderFilter>("all");
@@ -67,43 +116,72 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     message: string;
   } | null>(null);
 
-  const { role } = useContext(AuthContext);
-  const isRoot = role === "root";
+  const { role, permissions } = useContext(AuthContext);
+  const canViewConnectorPage =
+    permissions?.includes("connectore_page") ||
+    permissions?.includes("view_connectors_page") ||
+    permissions?.includes("connector_page");
+  const canAddConnector = permissions?.includes("add_connector");
+  const canSeeVisibilityColumn = role === "department_admin" || role === "super_admin";
+
+  const [visibilityOptions, setVisibilityOptions] = useState<{
+    organizations: { id: string; name: string }[];
+    departments: { id: string; name: string; org_id: string }[];
+    private_share_users: { id: string; email: string }[];
+  }>({ organizations: [], departments: [], private_share_users: [] });
 
   const { data: connectors, isLoading, error } = useGetConnectorCatalogue();
   const createMutation = useCreateConnector();
   const updateMutation = useUpdateConnector();
   const deleteMutation = useDeleteConnector();
   const testMutation = useTestConnectorConnection();
+  const testDraftMutation = useTestConnectorDraftConnection();
   const disconnectMutation = useDisconnectConnector();
 
-  // Form state
-  const [form, setForm] = useState({
-    name: "",
-    description: "",
-    provider: "postgresql",
-    host: "localhost",
-    port: 5432,
-    database_name: "",
-    schema_name: "public",
-    username: "",
-    password: "",
-    ssl_enabled: false,
-  });
+  const [form, setForm] = useState<FormState>({ ...BLANK_FORM });
+
+  useEffect(() => {
+    if (!canViewConnectorPage) return;
+    api.get(`${getURL("CONNECTOR_CATALOGUE")}/visibility-options`).then((res) => {
+      setVisibilityOptions(res.data || { organizations: [], departments: [], private_share_users: [] });
+      const firstOrg = res.data?.organizations?.[0]?.id || "";
+      const firstDept = res.data?.departments?.[0]?.id || "";
+      setForm((prev) => ({ ...prev, org_id: prev.org_id || firstOrg, dept_id: prev.dept_id || firstDept }));
+    });
+  }, [canViewConnectorPage]);
+
+  const departmentsForSelectedOrg = useMemo(
+    () =>
+      visibilityOptions.departments.filter(
+        (d) => !form.org_id || d.org_id === form.org_id,
+      ),
+    [visibilityOptions.departments, form.org_id],
+  );
+
+  useEffect(() => {
+    if (form.visibility !== "public") return;
+    const isOrgLockedRole = role === "developer" || role === "department_admin";
+    if (form.public_scope === "organization" && isOrgLockedRole && !form.org_id && visibilityOptions.organizations.length > 0) {
+      setForm((prev) => ({ ...prev, org_id: visibilityOptions.organizations[0].id }));
+      return;
+    }
+    const canMultiDept = role === "super_admin" || role === "root";
+    if (form.public_scope === "department" && !canMultiDept && !form.dept_id && visibilityOptions.departments.length > 0) {
+      const firstDept = visibilityOptions.departments[0];
+      setForm((prev) => ({ ...prev, dept_id: firstDept.id, org_id: prev.org_id || firstDept.org_id }));
+    }
+  }, [
+    form.visibility,
+    form.public_scope,
+    form.org_id,
+    form.dept_id,
+    role,
+    visibilityOptions.organizations,
+    visibilityOptions.departments,
+  ]);
 
   const resetForm = () => {
-    setForm({
-      name: "",
-      description: "",
-      provider: "postgresql",
-      host: "localhost",
-      port: 5432,
-      database_name: "",
-      schema_name: "public",
-      username: "",
-      password: "",
-      ssl_enabled: false,
-    });
+    setForm({ ...BLANK_FORM });
     setTestResult(null);
     setShowPassword(false);
   };
@@ -115,17 +193,36 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   };
 
   const openEditModal = (connector: ConnectorInfo) => {
+    const cfg = connector.provider_config ?? {};
     setForm({
       name: connector.name,
       description: connector.description || "",
       provider: connector.provider,
-      host: connector.host,
-      port: connector.port,
-      database_name: connector.database_name,
-      schema_name: connector.schema_name,
-      username: connector.username,
+      // DB fields
+      host: connector.host ?? DEFAULT_CONNECTOR_HOST,
+      port: connector.port ?? PROVIDER_PORTS[connector.provider] ?? 5432,
+      database_name: connector.database_name ?? "",
+      schema_name: connector.schema_name ?? "public",
+      username: connector.username ?? "",
       password: "",
       ssl_enabled: connector.ssl_enabled,
+      // Azure Blob (connection_string is masked; user must re-enter to update)
+      azure_connection_string: "",
+      azure_container_name: cfg.container_name ?? "",
+      azure_blob_prefix: cfg.blob_prefix ?? "",
+      // SharePoint (client_secret is masked; user must re-enter to update)
+      sharepoint_site_url: cfg.site_url ?? "",
+      sharepoint_library: cfg.library ?? "Shared Documents",
+      sharepoint_folder: cfg.folder ?? "",
+      sharepoint_client_id: cfg.client_id ?? "",
+      sharepoint_client_secret: "",
+      sharepoint_tenant_id: cfg.tenant_id ?? "",
+      visibility: connector.visibility ?? "private",
+      public_scope: connector.public_scope ?? "department",
+      org_id: connector.org_id ?? "",
+      dept_id: connector.dept_id ?? "",
+      public_dept_ids: connector.public_dept_ids || [],
+      shared_user_emails: [],
     });
     setEditingConnector(connector);
     setTestResult(null);
@@ -136,22 +233,139 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     setForm((prev) => ({
       ...prev,
       provider,
-      port: PROVIDER_PORTS[provider] || prev.port,
-      schema_name: provider === "postgresql" ? "public" : provider === "oracle" ? "" : "dbo",
+      port: PROVIDER_PORTS[provider] ?? prev.port,
+      schema_name:
+        provider === "postgresql"
+          ? "public"
+          : provider === "oracle"
+          ? ""
+          : provider === "sqlserver"
+          ? "dbo"
+          : prev.schema_name,
     }));
+  };
+
+  const buildPayload = () => {
+    const scopePayload = {
+      visibility: form.visibility as "private" | "public",
+      public_scope: form.visibility === "public" ? form.public_scope : null,
+      org_id:
+        form.org_id ||
+        ((role === "developer" || role === "department_admin") && form.visibility === "public" && form.public_scope === "organization"
+          ? visibilityOptions.organizations[0]?.id
+          : undefined),
+      dept_id:
+        form.dept_id ||
+        ((form.visibility === "public" && form.public_scope === "department" && role !== "super_admin" && role !== "root")
+          ? visibilityOptions.departments[0]?.id
+          : undefined),
+      public_dept_ids:
+        form.visibility === "public" && form.public_scope === "department"
+          ? form.public_dept_ids
+          : [],
+      shared_user_emails:
+        role === "department_admin" && form.visibility === "private"
+          ? form.shared_user_emails
+          : [],
+    };
+
+    if (form.provider === "azure_blob") {
+      const provider_config: Record<string, string> = {
+        container_name: form.azure_container_name,
+      };
+      if (form.azure_connection_string) {
+        provider_config.connection_string = form.azure_connection_string;
+      }
+      if (form.azure_blob_prefix) {
+        provider_config.blob_prefix = form.azure_blob_prefix;
+      }
+      return {
+        name: form.name,
+        description: form.description || undefined,
+        provider: form.provider,
+        provider_config,
+        ...scopePayload,
+      };
+    }
+
+    if (form.provider === "sharepoint") {
+      const provider_config: Record<string, string> = {
+        site_url: form.sharepoint_site_url,
+        library: form.sharepoint_library,
+        client_id: form.sharepoint_client_id,
+      };
+      if (form.sharepoint_tenant_id) {
+        provider_config.tenant_id = form.sharepoint_tenant_id;
+      }
+      if (form.sharepoint_client_secret) {
+        provider_config.client_secret = form.sharepoint_client_secret;
+      }
+      if (form.sharepoint_folder) {
+        provider_config.folder = form.sharepoint_folder;
+      }
+      return {
+        name: form.name,
+        description: form.description || undefined,
+        provider: form.provider,
+        provider_config,
+        ...scopePayload,
+      };
+    }
+
+    // DB provider
+    const payload: any = {
+      name: form.name,
+      description: form.description || undefined,
+      provider: form.provider,
+      host: form.host,
+      port: form.port,
+      database_name: form.database_name,
+      schema_name: form.schema_name,
+      username: form.username,
+      ssl_enabled: form.ssl_enabled,
+    };
+    if (form.password) payload.password = form.password;
+    return { ...payload, ...scopePayload };
+  };
+
+  const isSaveDisabled = () => {
+    if (!form.name) return true;
+    if (form.visibility === "public") {
+      if (!form.public_scope) return true;
+      if (form.public_scope === "organization") {
+        const effectiveOrgId =
+          form.org_id || ((role === "developer" || role === "department_admin") ? visibilityOptions.organizations[0]?.id : "");
+        if (!effectiveOrgId) return true;
+      }
+      if (form.public_scope === "department") {
+        const canMultiDept = role === "super_admin" || role === "root";
+        if (canMultiDept && form.public_dept_ids.length === 0) return true;
+        const effectiveDeptId = form.dept_id || (!canMultiDept ? visibilityOptions.departments[0]?.id : "");
+        if (!canMultiDept && !effectiveDeptId) return true;
+      }
+    }
+    if (form.provider === "azure_blob") {
+      // On create, connection_string is required; on edit, container_name is always required
+      if (!form.azure_container_name) return true;
+      if (!editingConnector && !form.azure_connection_string) return true;
+    } else if (form.provider === "sharepoint") {
+      if (!form.sharepoint_site_url || !form.sharepoint_client_id) return true;
+      if (!editingConnector && !form.sharepoint_client_secret) return true;
+    } else {
+      // DB provider
+      if (!form.host || !form.database_name || !form.username) return true;
+      if (!editingConnector && !form.password) return true;
+    }
+    return createMutation.isPending || updateMutation.isPending;
   };
 
   const handleSave = async () => {
     try {
+      const payload = buildPayload();
       if (editingConnector) {
-        const payload: any = { ...form };
-        if (!payload.password) delete payload.password;
-        await updateMutation.mutateAsync({
-          id: editingConnector.id,
-          payload,
-        });
+        await updateMutation.mutateAsync({ id: editingConnector.id, payload });
       } else {
-        await createMutation.mutateAsync(form);
+        await createMutation.mutateAsync(payload as any);
       }
       setShowModal(false);
       resetForm();
@@ -178,6 +392,60 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     }
   };
 
+  const handleModalTestConnection = async () => {
+    try {
+      let payload: any;
+      if (editingConnector) {
+        payload = buildPayload();
+        const result = await testMutation.mutateAsync({
+          id: editingConnector.id,
+          payload,
+        });
+        setTestResult(result);
+        return;
+      }
+
+      if (form.provider === "azure_blob") {
+        payload = {
+          provider: form.provider,
+          provider_config: {
+            connection_string: form.azure_connection_string,
+            container_name: form.azure_container_name,
+            ...(form.azure_blob_prefix ? { blob_prefix: form.azure_blob_prefix } : {}),
+          },
+        };
+      } else if (form.provider === "sharepoint") {
+        payload = {
+          provider: form.provider,
+          provider_config: {
+            site_url: form.sharepoint_site_url,
+            library: form.sharepoint_library,
+            client_id: form.sharepoint_client_id,
+            client_secret: form.sharepoint_client_secret,
+            ...(form.sharepoint_tenant_id ? { tenant_id: form.sharepoint_tenant_id } : {}),
+            ...(form.sharepoint_folder ? { folder: form.sharepoint_folder } : {}),
+          },
+        };
+      } else {
+        payload = {
+          provider: form.provider,
+          host: form.host,
+          port: form.port,
+          database_name: form.database_name,
+          schema_name: form.schema_name,
+          username: form.username,
+          password: form.password,
+          ssl_enabled: form.ssl_enabled,
+        };
+      }
+
+      const result = await testDraftMutation.mutateAsync(payload);
+      setTestResult(result);
+    } catch (err: any) {
+      setTestResult({ success: false, message: err?.response?.data?.detail || "Test request failed" });
+    }
+  };
+
   const handleToggleConnection = async (connector: ConnectorInfo) => {
     try {
       if (connector.status === "connected") {
@@ -199,7 +467,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.provider.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.database_name?.toLowerCase().includes(searchQuery.toLowerCase());
+      c.database_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.provider_config?.container_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.provider_config?.site_url?.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesFilter && matchesSearch;
   });
 
@@ -230,11 +500,57 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       oracle: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
       sqlserver: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
       mysql: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+      azure_blob: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400",
+      sharepoint: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
     };
     return styles[provider] || "bg-gray-100 text-gray-700";
   };
 
+  const getConnectorTarget = (c: ConnectorInfo): string => {
+    if (c.provider === "azure_blob") {
+      return c.provider_config?.container_name ?? "—";
+    }
+    if (c.provider === "sharepoint") {
+      return c.provider_config?.site_url ?? "—";
+    }
+    return c.host ? `${c.host}:${c.port}` : "—";
+  };
+
+  const getConnectorDb = (c: ConnectorInfo): string => {
+    if (STORAGE_PROVIDERS.has(c.provider)) return "—";
+    return c.database_name ?? "—";
+  };
+
+  const getConnectorSchema = (c: ConnectorInfo): string => {
+    if (STORAGE_PROVIDERS.has(c.provider)) return "—";
+    return c.schema_name ?? "—";
+  };
+
+  const getConnectorVisibilityLabel = (c: ConnectorInfo): string => {
+    if (c.visibility === "private") return "Private";
+    if (c.public_scope === "organization") {
+      const org = visibilityOptions.organizations.find((o) => o.id === c.org_id);
+      return `Organization: ${org?.name || c.org_id || "Unknown"}`;
+    }
+    if (c.public_scope === "department") {
+      const deptId = c.dept_id || c.public_dept_ids?.[0];
+      const dept = visibilityOptions.departments.find((d) => d.id === deptId);
+      return `Department: ${dept?.name || deptId || "Unknown"}`;
+    }
+    return "Private";
+  };
+
+  const FILTER_TABS: ProviderFilter[] = ["all", "postgresql", "oracle", "sqlserver", "mysql", "azure_blob", "sharepoint"];
+
   /* ---- JSX ---- */
+  if (!canViewConnectorPage) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+        You do not have permission to access the Connectors page.
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
@@ -244,7 +560,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             <h1 className="text-2xl font-semibold">Connectors</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Configure and manage database connections for Talk-to-Data agents
+            Configure and manage connections for agents (databases, Azure Blob, SharePoint)
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -257,10 +573,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
-          {isRoot && (
+          {canAddConnector && (
             <button
               onClick={openAddModal}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg  px-4 py-2.5 text-sm font-medium !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
             >
               <Plus className="h-4 w-4" />
               Add Connector
@@ -270,22 +586,20 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       </div>
 
       {/* Provider filter tabs */}
-      <div className="flex gap-2 border-b px-8 py-3">
-        {(["all", "postgresql", "oracle", "sqlserver", "mysql"] as ProviderFilter[]).map(
-          (f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
-                filter === f
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              {f === "all" ? "All" : PROVIDER_LABELS[f] || f}
-            </button>
-          ),
-        )}
+      <div className="flex flex-wrap gap-2 border-b px-8 py-3">
+        {FILTER_TABS.map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+              filter === f
+                ? "!bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+          >
+            {f === "all" ? "All" : PROVIDER_LABELS[f] || f}
+          </button>
+        ))}
       </div>
 
       {/* Table */}
@@ -308,12 +622,13 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     {[
                       "Connector Name",
                       "Provider",
-                      "Host",
+                      "Host / Container / Site",
                       "Database",
                       "Schema",
+                      ...(canSeeVisibilityColumn ? ["Visibility"] : []),
                       "Status",
                       "Tables",
-                      ...(isRoot ? ["Actions"] : []),
+                      ...(canAddConnector ? ["Actions"] : []),
                     ].map((h) => (
                       <th
                         key={h}
@@ -328,13 +643,13 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   {filteredConnectors.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={isRoot ? 8 : 7}
+                        colSpan={7 + (canSeeVisibilityColumn ? 1 : 0) + (canAddConnector ? 1 : 0)}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         <div className="flex flex-col items-center gap-3">
                           <Cable className="h-10 w-10 text-muted-foreground/50" />
                           <p>No connectors found</p>
-                          {isRoot && (
+                          {canAddConnector && (
                             <button
                               onClick={openAddModal}
                               className="text-primary hover:underline text-sm"
@@ -358,24 +673,34 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                         </td>
                         <td className="px-6 py-4">
                           <span
-                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getProviderBadge(c.provider)}`}
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${getProviderBadge(c.provider)}`}
                           >
+                            {STORAGE_PROVIDERS.has(c.provider) ? (
+                              <Cloud className="h-3 w-3" />
+                            ) : (
+                              <Database className="h-3 w-3" />
+                            )}
                             {PROVIDER_LABELS[c.provider] || c.provider}
                           </span>
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-sm font-mono">
-                            {c.host}:{c.port}
+                            {getConnectorTarget(c)}
                           </span>
                         </td>
                         <td className="px-6 py-4">
-                          <span className="text-sm">{c.database_name}</span>
+                          <span className="text-sm">{getConnectorDb(c)}</span>
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-sm text-muted-foreground">
-                            {c.schema_name}
+                            {getConnectorSchema(c)}
                           </span>
                         </td>
+                        {canSeeVisibilityColumn && (
+                          <td className="px-6 py-4">
+                            <span className="text-sm">{getConnectorVisibilityLabel(c)}</span>
+                          </td>
+                        )}
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
                             {getStatusIcon(c.status)}
@@ -388,10 +713,12 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-sm font-medium">
-                            {c.tables_metadata?.length ?? "—"}
+                            {STORAGE_PROVIDERS.has(c.provider)
+                              ? "—"
+                              : (c.tables_metadata?.length ?? "—")}
                           </span>
                         </td>
-                        {isRoot && (
+                        {canAddConnector && (
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-1">
                               <button
@@ -404,7 +731,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                 }`}
                                 title={c.status === "connected" ? "Disconnect" : "Connect"}
                               >
-                                {(testMutation.isPending || disconnectMutation.isPending) ? (
+                                {testMutation.isPending || disconnectMutation.isPending ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : c.status === "connected" ? (
                                   <Unplug className="h-4 w-4" />
@@ -484,146 +811,403 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
               {/* Description */}
               <div>
-                <label className="mb-1.5 block text-sm font-medium">
-                  Description
-                </label>
+                <label className="mb-1.5 block text-sm font-medium">Description</label>
                 <input
                   value={form.description}
-                  onChange={(e) =>
-                    setForm({ ...form, description: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                   placeholder="Optional description"
                 />
               </div>
 
-              {/* Provider */}
               <div>
-                <label className="mb-1.5 block text-sm font-medium">
-                  Provider
-                </label>
+                <label className="mb-1.5 block text-sm font-medium">Visibility</label>
                 <select
-                  value={form.provider}
-                  onChange={(e) => handleProviderChange(e.target.value)}
+                  value={form.visibility}
+                  onChange={(e) => setForm({ ...form, visibility: e.target.value as "private" | "public" })}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                 >
-                  <option value="postgresql">PostgreSQL</option>
-                  <option value="oracle">Oracle</option>
-                  <option value="sqlserver">SQL Server</option>
-                  <option value="mysql">MySQL</option>
+                  <option value="private">Private</option>
+                  <option value="public">Public</option>
                 </select>
               </div>
 
-              {/* Host + Port */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium">Host</label>
-                  <input
-                    value={form.host}
-                    onChange={(e) => setForm({ ...form, host: e.target.value })}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder="localhost"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">Port</label>
-                  <input
-                    type="number"
-                    value={form.port}
-                    onChange={(e) =>
-                      setForm({ ...form, port: parseInt(e.target.value) || 0 })
-                    }
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                </div>
-              </div>
-
-              {/* Database + Schema */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">
-                    Database Name
-                  </label>
-                  <input
-                    value={form.database_name}
-                    onChange={(e) =>
-                      setForm({ ...form, database_name: e.target.value })
-                    }
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder="my_database"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">
-                    Schema
-                  </label>
-                  <input
-                    value={form.schema_name}
-                    onChange={(e) =>
-                      setForm({ ...form, schema_name: e.target.value })
-                    }
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder="public"
-                  />
-                </div>
-              </div>
-
-              {/* Username + Password */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">
-                    Username
-                  </label>
-                  <input
-                    value={form.username}
-                    onChange={(e) =>
-                      setForm({ ...form, username: e.target.value })
-                    }
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder="db_user"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={form.password}
-                      onChange={(e) =>
-                        setForm({ ...form, password: e.target.value })
-                      }
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                      placeholder={editingConnector ? "(unchanged)" : "password"}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              {form.visibility === "public" && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">Public To</label>
+                    <select
+                      value={form.public_scope}
+                      onChange={(e) => setForm({ ...form, public_scope: e.target.value as "organization" | "department" })}
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                     >
-                      {showPassword ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </button>
+                      <option value="organization">Organization</option>
+                      <option value="department">Department</option>
+                    </select>
                   </div>
+
+                  {form.public_scope === "organization" && (
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                      <select
+                        value={form.org_id}
+                        onChange={(e) => setForm({ ...form, org_id: e.target.value })}
+                        disabled={role === "developer" || role === "department_admin"}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-80"
+                      >
+                        {visibilityOptions.organizations.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {form.public_scope === "department" && (
+                    <div>
+                      {(role === "super_admin" || role === "root") && (
+                        <div className="mb-3">
+                          <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                          <select
+                            value={form.org_id}
+                            onChange={(e) => setForm({ ...form, org_id: e.target.value, public_dept_ids: [] })}
+                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            {visibilityOptions.organizations.map((org) => (
+                              <option key={org.id} value={org.id}>
+                                {org.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <label className="mb-1.5 block text-sm font-medium">Department{role === "super_admin" || role === "root" ? "s" : ""}</label>
+                      {role === "super_admin" || role === "root" ? (
+                        <select
+                          multiple
+                          value={form.public_dept_ids}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              public_dept_ids: Array.from(e.target.selectedOptions).map((o) => o.value),
+                            })
+                          }
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          {departmentsForSelectedOrg.map((dept) => (
+                            <option key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          value={form.dept_id}
+                          disabled
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm opacity-80"
+                        >
+                          {visibilityOptions.departments.map((dept) => (
+                            <option key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {form.visibility === "private" && role === "department_admin" && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">
+                    Additional Users (optional, same department)
+                  </label>
+                  <select
+                    multiple
+                    value={form.shared_user_emails}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        shared_user_emails: Array.from(e.target.selectedOptions).map((o) => o.value),
+                      })
+                    }
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    {visibilityOptions.private_share_users.map((u) => (
+                      <option key={u.id} value={u.email}>
+                        {u.email}
+                      </option>
+                    ))}
+                  </select>
                 </div>
+              )}
+
+              {/* Provider */}
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Provider</label>
+                <select
+                  value={form.provider}
+                  onChange={(e) => handleProviderChange(e.target.value)}
+                  disabled={!!editingConnector}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                >
+                  <optgroup label="Databases">
+                    <option value="postgresql">PostgreSQL</option>
+                    <option value="oracle">Oracle</option>
+                    <option value="sqlserver">SQL Server</option>
+                    <option value="mysql">MySQL</option>
+                  </optgroup>
+                  <optgroup label="Cloud Storage">
+                    <option value="azure_blob">Azure Blob Storage</option>
+                    <option value="sharepoint">SharePoint</option>
+                  </optgroup>
+                </select>
               </div>
 
-              {/* SSL */}
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.ssl_enabled}
-                  onChange={(e) =>
-                    setForm({ ...form, ssl_enabled: e.target.checked })
-                  }
-                  className="rounded border-border"
-                />
-                Enable SSL/TLS
-              </label>
+              {/* ── DB provider fields ── */}
+              {isDbProvider(form.provider) && (
+                <>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="mb-1.5 block text-sm font-medium">Host</label>
+                      <input
+                        value={form.host}
+                        onChange={(e) => setForm({ ...form, host: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder={DEFAULT_CONNECTOR_HOST}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Port</label>
+                      <input
+                        type="number"
+                        value={form.port}
+                        onChange={(e) =>
+                          setForm({ ...form, port: parseInt(e.target.value) || 0 })
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Database Name</label>
+                      <input
+                        value={form.database_name}
+                        onChange={(e) => setForm({ ...form, database_name: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="my_database"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Schema</label>
+                      <input
+                        value={form.schema_name}
+                        onChange={(e) => setForm({ ...form, schema_name: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="public"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Username</label>
+                      <input
+                        value={form.username}
+                        onChange={(e) => setForm({ ...form, username: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="db_user"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Password</label>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={form.password}
+                          onChange={(e) => setForm({ ...form, password: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                          placeholder={editingConnector ? "(unchanged)" : "password"}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.ssl_enabled}
+                      onChange={(e) => setForm({ ...form, ssl_enabled: e.target.checked })}
+                      className="rounded border-border"
+                    />
+                    Enable SSL/TLS
+                  </label>
+                </>
+              )}
+
+              {/* ── Azure Blob fields ── */}
+              {form.provider === "azure_blob" && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">
+                      Connection String{" "}
+                      {editingConnector && (
+                        <span className="text-xs text-muted-foreground">(leave blank to keep current)</span>
+                      )}
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={form.azure_connection_string}
+                        onChange={(e) =>
+                          setForm({ ...form, azure_connection_string: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="DefaultEndpointsProtocol=https;AccountName=..."
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Container Name</label>
+                      <input
+                        value={form.azure_container_name}
+                        onChange={(e) =>
+                          setForm({ ...form, azure_container_name: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="my-container"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">
+                        Blob Prefix{" "}
+                        <span className="text-xs text-muted-foreground">(optional)</span>
+                      </label>
+                      <input
+                        value={form.azure_blob_prefix}
+                        onChange={(e) =>
+                          setForm({ ...form, azure_blob_prefix: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="folder/subfolder/"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── SharePoint fields ── */}
+              {form.provider === "sharepoint" && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">SharePoint Site URL</label>
+                    <input
+                      value={form.sharepoint_site_url}
+                      onChange={(e) =>
+                        setForm({ ...form, sharepoint_site_url: e.target.value })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="https://contoso.sharepoint.com/sites/MySite"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Document Library</label>
+                      <input
+                        value={form.sharepoint_library}
+                        onChange={(e) =>
+                          setForm({ ...form, sharepoint_library: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="Shared Documents"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">
+                        Folder Path{" "}
+                        <span className="text-xs text-muted-foreground">(optional)</span>
+                      </label>
+                      <input
+                        value={form.sharepoint_folder}
+                        onChange={(e) =>
+                          setForm({ ...form, sharepoint_folder: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="Reports/2024"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Client ID</label>
+                      <input
+                        value={form.sharepoint_client_id}
+                        onChange={(e) =>
+                          setForm({ ...form, sharepoint_client_id: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">
+                        Client Secret{" "}
+                        {editingConnector && (
+                          <span className="text-xs text-muted-foreground">(leave blank to keep current)</span>
+                        )}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={form.sharepoint_client_secret}
+                          onChange={(e) =>
+                            setForm({ ...form, sharepoint_client_secret: e.target.value })
+                          }
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                          placeholder={editingConnector ? "(unchanged)" : "client-secret"}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">Tenant ID</label>
+                    <input
+                      value={form.sharepoint_tenant_id}
+                      onChange={(e) =>
+                        setForm({ ...form, sharepoint_tenant_id: e.target.value })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    />
+                  </div>
+                </>
+              )}
 
               {/* Test Result */}
               {testResult && (
@@ -647,6 +1231,16 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             {/* Modal Actions */}
             <div className="mt-6 flex justify-end gap-3 border-t pt-4">
               <button
+                onClick={handleModalTestConnection}
+                disabled={testDraftMutation.isPending || testMutation.isPending || updateMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                {(testDraftMutation.isPending || testMutation.isPending) && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Test Connection
+              </button>
+              <button
                 onClick={() => {
                   setShowModal(false);
                   resetForm();
@@ -657,13 +1251,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               </button>
               <button
                 onClick={handleSave}
-                disabled={
-                  !form.name || !form.host || !form.database_name || !form.username ||
-                  (!editingConnector && !form.password) ||
-                  createMutation.isPending ||
-                  updateMutation.isPending
-                }
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                disabled={isSaveDisabled()}
+                className="inline-flex items-center gap-2 rounded-lg  px-4 py-2 text-sm font-medium !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground "
               >
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -681,8 +1270,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
           <div className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-xl">
             <h3 className="mb-2 text-lg font-semibold">Delete Connector</h3>
             <p className="mb-6 text-sm text-muted-foreground">
-              Are you sure you want to delete this connector? This action cannot be
-              undone.
+              Are you sure you want to delete this connector? This action cannot be undone.
             </p>
             <div className="flex justify-end gap-3">
               <button

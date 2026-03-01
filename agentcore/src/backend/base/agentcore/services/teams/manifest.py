@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import zipfile
 from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
@@ -21,7 +22,7 @@ def generate_manifest(
     display_name: str,
     short_description: str | None = None,
     long_description: str | None = None,
-    base_url: str = "https://localhost:7860",
+    base_url: str = os.getenv("LOCALHOST_TEAMS_BOT_BASE_URL", "https://localhost:7860"),
     version: str = "1.0.0",
 ) -> dict:
     """Generate a Teams app manifest.json for a given agent.

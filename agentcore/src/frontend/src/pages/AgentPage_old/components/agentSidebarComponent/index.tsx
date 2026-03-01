@@ -39,7 +39,7 @@ import type { APIClassType } from "../../../../types/api";
 import isWrappedWithClass from "../PageComponent/utils/is-wrapped-with-class";
 import { CategoryGroup } from "./components/categoryGroup";
 import NoResultsMessage from "./components/emptySearchComponent";
-import McpSidebarGroup from "./components/McpSidebarGroup";
+import McpSidebarGroup from "./components/McpSidebarPanel";
 import MemoizedSidebarGroup from "./components/sidebarBundles";
 import SidebarMenuButtons from "./components/sidebarFooterButtons";
 import { SidebarHeaderComponent } from "./components/sidebarHeader";

@@ -27,6 +27,7 @@ export const useLogout: useMutationFunctionType<undefined, void> = (
   const mutation = mutate(["useLogout"], logoutUser, {
     onSuccess: () => {
       logout();
+      queryClient.clear();
 
       useAgentStore.getState().resetAgentState();
       useAgentsManagerStore.getState().resetStore();

@@ -29,9 +29,17 @@ const useUploadFile = ({
   const uploadFile = async ({
     files,
     knowledgeBaseName,
+    visibility,
+    public_scope,
+    org_id,
+    dept_id,
   }: {
     files?: File[];
     knowledgeBaseName?: string;
+    visibility?: string;
+    public_scope?: "organization" | "department";
+    org_id?: string;
+    dept_id?: string;
   }): Promise<string[]> => {
     try {
       const filesToUpload = await getFilesToUpload({ files });
@@ -56,6 +64,10 @@ const useUploadFile = ({
         const res = await uploadFileMutation({
           file,
           knowledgeBaseName,
+          visibility,
+          public_scope,
+          org_id,
+          dept_id,
         });
         filesIds.push(res.path);
       }

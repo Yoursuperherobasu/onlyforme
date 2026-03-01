@@ -6,12 +6,16 @@ import type {
 } from "@/types/models/models";
 
 export const useTestModelConnection = () => {
-  return useMutation<TestConnectionResponse, Error, TestConnectionRequest>({
-    mutationFn: async (data) => {
-      const response = await api.post(
-        "api/models/registry/test-connection",
-        data,
-      );
+  return useMutation<
+    TestConnectionResponse,
+    Error,
+    TestConnectionRequest & { isEmbedding?: boolean }
+  >({
+    mutationFn: async ({ isEmbedding, ...data }) => {
+      const endpoint = isEmbedding
+        ? "api/models/registry/test-embedding-connection"
+        : "api/models/registry/test-connection";
+      const response = await api.post(endpoint, data);
       return response.data;
     },
   });

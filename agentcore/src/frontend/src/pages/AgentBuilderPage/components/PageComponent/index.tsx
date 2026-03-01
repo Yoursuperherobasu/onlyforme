@@ -200,7 +200,7 @@ export default function Page({
     { agent_id: currentAgentId },
     {
       enabled: !!currentAgentId && !view,
-      refetchInterval: 30000,
+      refetchInterval: (query) => (query.state.data ? 30000 : false),
     },
   );
 
