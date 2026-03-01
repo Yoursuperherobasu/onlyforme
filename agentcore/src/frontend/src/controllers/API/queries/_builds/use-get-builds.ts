@@ -18,6 +18,8 @@ export const useGetBuildsQuery: useQueryFunctionType<
 > = (params) => {
   const { query } = UseRequestProcessor();
   const { id: routeAgentId } = useParams();
+  const resolvedAgentId =
+    !params.agentId || params.agentId === "" ? routeAgentId : params.agentId;
 
   const setAgentPool = useAgentStore((state) => state.setAgentPool);
   const currentAgent = useAgentStore((state) => state.currentAgent);
@@ -25,8 +27,7 @@ export const useGetBuildsQuery: useQueryFunctionType<
   const responseFn = async () => {
     const config = {};
     config["params"] = {
-      agent_id:
-        !params.agentId || params.agentId === "" ? routeAgentId : params.agentId,
+      agent_id: resolvedAgentId,
     };
 
     const response = await api.get<any>(`${getURL("BUILDS")}`, config);
@@ -40,11 +41,12 @@ export const useGetBuildsQuery: useQueryFunctionType<
   };
 
   const queryResult = query(
-    ["useGetBuildsQuery", { key: params.agentId }],
+    ["useGetBuildsQuery", { key: resolvedAgentId }],
     responseFn,
     {
       placeholderData: keepPreviousData,
       refetchOnWindowFocus: false,
+      enabled: !!resolvedAgentId,
       retry: 0,
       retryDelay: 0,
     },
