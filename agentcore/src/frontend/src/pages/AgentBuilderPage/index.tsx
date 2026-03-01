@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useBlocker, useParams, useSearchParams } from "react-router-dom";
 import SideBarFoldersButtonsComponent from "@/components/core/folderSidebarComponent/components/sideBarFolderButtons";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { customStringify } from "@/utils/reactFlowUtils";
 import useAgentStore from "../../stores/agentStore";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useTranslation } from "react-i18next";
+import { AuthContext } from "@/contexts/authContext";
 import {
   AgentSearchProvider,
   AgentSidebarComponent,
@@ -45,7 +46,21 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const [searchParams] = useSearchParams();
   const navigate = useCustomNavigate();
   const saveAgent = useSaveAgent();
-  const isReadOnlyMode = view || searchParams.get("readonly") === "1";
+  const { userData, role } = useContext(AuthContext);
+  const currentUserId = String(userData?.id ?? "");
+  const normalizedRole = String(role ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
+    normalizedRole,
+  );
+  const requestedReadOnlyMode = view || searchParams.get("readonly") === "1";
+  const forceReadOnlyByOwnership =
+    !!folderId &&
+    isAdminRole &&
+    !!currentAgent &&
+    (!!currentAgent.user_id ? String(currentAgent.user_id) !== currentUserId : true);
+  const isReadOnlyMode = requestedReadOnlyMode || forceReadOnlyByOwnership;
 
   const changesNotSaved =
     !isReadOnlyMode &&
@@ -111,7 +126,11 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const getAgentToAddToCanvas = async (agentId: string) => {
     try {
       const agent = await getAgent({ id: agentId });
-      if (!isReadOnlyMode) {
+      const shouldForceReadOnlyForFetchedAgent =
+        !!folderId &&
+        isAdminRole &&
+        (!!agent?.user_id ? String(agent.user_id) !== currentUserId : true);
+      if (!requestedReadOnlyMode && !shouldForceReadOnlyForFetchedAgent) {
         await api.post(`${getURL("AGENTS")}/${agentId}/session/acquire`);
       }
       setCurrentAgent(agent);

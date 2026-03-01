@@ -52,7 +52,9 @@ const ListComponent = ({
   const [openExportModal, setOpenExportModal] = useState(false);
   const { userData, role } = useContext(AuthContext);
   const currentUserId = String(userData?.id ?? "");
-  const normalizedRole = String(role ?? "").toLowerCase();
+  const normalizedRole = String(role ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, "_");
   const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
     normalizedRole,
   );
@@ -81,7 +83,9 @@ const ListComponent = ({
   const readOnlyAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}?readonly=1`;
   const isAgentOwnedByCurrentUser = agentData.user_id
     ? String(agentData.user_id) === currentUserId
-    : true;
+     : true;
+  const shouldForceReadOnly = folderId && isAdminRole && !isAgentOwnedByCurrentUser;
+  const canModifyAgent = !shouldForceReadOnly;
 
   const handleClick = async () => {
     if (effectiveDisabled) return; // Prevent click when disabled
@@ -91,7 +95,7 @@ const ListComponent = ({
     } else {
       if (!isComponent) {
         // In project sections, admins should open agents in read-only mode.
-        if (folderId && isAdminRole && !isAgentOwnedByCurrentUser) {
+        if (shouldForceReadOnly) {
           navigate(readOnlyAgentLink);
           return;
         }
@@ -270,6 +274,7 @@ const ListComponent = ({
                 handleEdit={() => {
                   setOpenSettings(true);
                 }}
+                canModifyAgent={canModifyAgent}
               />
             </DropdownMenuContent>
           </DropdownMenu>
@@ -299,3 +304,6 @@ const ListComponent = ({
 };
 
 export default ListComponent;
+
+
+
