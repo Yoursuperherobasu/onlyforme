@@ -57,8 +57,10 @@ def _normalize_public_scope(value: str | None) -> str | None:
 
 
 def _normalize_deployment_env(value: str | None) -> str:
-    normalized = (value or "PROD").strip().upper()
-    if normalized not in {"UAT", "PROD"}:
+    normalized = (value or "DEV").strip().upper()
+    if normalized == "TEST":
+        normalized = "DEV"
+    if normalized not in {"DEV", "UAT", "PROD"}:
         raise HTTPException(status_code=400, detail=f"Unsupported deployment_env '{value}'")
     return normalized
 
@@ -310,6 +312,26 @@ async def _resolve_request_approver(
     return dept.admin_user_id
 
 
+async def _resolve_super_admin_approver(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> UUID:
+    stmt = select(User).where(User.role == "super_admin", User.id != current_user.id).order_by(User.create_at.asc())
+    row = (await session.exec(stmt)).first()
+    if not row:
+        raise HTTPException(status_code=400, detail="No Super Admin approver available")
+    return row.id
+
+
+def _requires_super_admin_mcp_approval(*, deployment_env: str, visibility: str, public_scope: str | None) -> bool:
+    normalized_env = _normalize_deployment_env(deployment_env)
+    normalized_visibility = _normalize_visibility(visibility)
+    normalized_public_scope = _normalize_public_scope(public_scope)
+    return normalized_env == "PROD" or (
+        normalized_visibility == "public" and normalized_public_scope == "organization"
+    )
+
+
 @router.get("/", response_model=list[McpRegistryRead])
 async def list_mcp_servers(
     session: DbSession,
@@ -404,6 +426,7 @@ async def create_mcp_server(
     await _ensure_mcp_name_available(session, body.server_name)
     body.deployment_env = _normalize_deployment_env(getattr(body, "deployment_env", None))
     now = datetime.now(timezone.utc)
+    user_role = normalize_role(str(current_user.role))
     body.visibility = visibility
     body.public_scope = public_scope
     body.public_dept_ids = [UUID(v) for v in public_dept_ids] if public_dept_ids else None
@@ -411,12 +434,46 @@ async def create_mcp_server(
     body.created_by = current_user.username
     body.created_by_id = current_user.id
     body.requested_by = current_user.id
-    body.request_to = None
     body.requested_at = now
-    body.reviewed_at = now
-    body.reviewed_by = current_user.id
-    body.approval_status = "approved"
-    return await mcp_registry_service.create_server(session, body)
+    requires_super_admin = _requires_super_admin_mcp_approval(
+        deployment_env=body.deployment_env,
+        visibility=visibility,
+        public_scope=public_scope,
+    )
+    auto_approve = user_role in {"root", "super_admin"} or (
+        user_role == "department_admin" and not requires_super_admin
+    )
+
+    if auto_approve:
+        body.request_to = None
+        body.reviewed_at = now
+        body.reviewed_by = current_user.id
+        body.approval_status = "approved"
+        body.is_active = True
+        body.status = "connected"
+        return await mcp_registry_service.create_server(session, body)
+
+    approver_id = await _resolve_super_admin_approver(session, current_user)
+    body.request_to = approver_id
+    body.reviewed_at = None
+    body.reviewed_by = None
+    body.approval_status = "pending"
+    body.is_active = False
+    body.status = "pending_approval"
+    created = await mcp_registry_service.create_server(session, body)
+
+    approval = McpApprovalRequest(
+        mcp_id=UUID(str(created.id)),
+        org_id=body.org_id,
+        dept_id=body.dept_id,
+        requested_by=current_user.id,
+        request_to=approver_id,
+        requested_at=now,
+        deployment_env=body.deployment_env,
+    )
+    session.add(approval)
+    await session.commit()
+    return created
 
 
 @router.post("/request", response_model=McpRegistryRead, status_code=201)
@@ -447,8 +504,10 @@ async def request_mcp_server(
     body.requested_by = current_user.id
     body.requested_at = now
 
-    # Same hierarchy as agents: UAT direct, PROD through approval queue.
-    if deployment_env == "UAT":
+    # Mirror model workflow:
+    # - DEV + private => auto-approved
+    # - otherwise request approval based on env/scope
+    if deployment_env == "DEV" and visibility == "private":
         body.request_to = None
         body.reviewed_at = now
         body.reviewed_by = current_user.id
@@ -457,7 +516,14 @@ async def request_mcp_server(
         body.status = "connected"
         return await mcp_registry_service.create_server(session, body)
 
-    approver_id = await _resolve_request_approver(session, current_user, body.org_id, body.dept_id)
+    if _requires_super_admin_mcp_approval(
+        deployment_env=deployment_env,
+        visibility=visibility,
+        public_scope=public_scope,
+    ):
+        approver_id = await _resolve_super_admin_approver(session, current_user)
+    else:
+        approver_id = await _resolve_request_approver(session, current_user, body.org_id, body.dept_id)
     body.request_to = approver_id
     body.reviewed_at = None
     body.reviewed_by = None

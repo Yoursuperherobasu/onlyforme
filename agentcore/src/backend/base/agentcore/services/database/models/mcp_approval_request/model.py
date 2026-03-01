@@ -24,9 +24,9 @@ class McpApprovalRequestBase(SQLModel):
     justification: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     file_path: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     deployment_env: str = Field(
-        default="PROD",
-        sa_column=Column(String(10), nullable=False, server_default=text("'PROD'")),
-        description="Environment discriminator: UAT or PROD",
+        default="DEV",
+        sa_column=Column(String(10), nullable=False, server_default=text("'DEV'")),
+        description="Environment discriminator: DEV, UAT, or PROD",
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -58,7 +58,7 @@ class McpApprovalRequestCreate(SQLModel):
     request_to: UUID
     org_id: UUID | None = None
     dept_id: UUID | None = None
-    deployment_env: str = "PROD"
+    deployment_env: str = "DEV"
 
 
 class McpApprovalRequestRead(BaseModel):

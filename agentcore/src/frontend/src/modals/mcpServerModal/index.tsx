@@ -64,8 +64,12 @@ export default function AddMcpServerModal({
   const [type, setType] = useState(
     initialData ? (initialData.mode === "stdio" ? "STDIO" : "SSE") : "SSE",
   );
-  const [deploymentEnv, setDeploymentEnv] = useState<"uat" | "prod">(
-    String(initialData?.deployment_env || "PROD").toLowerCase() === "uat" ? "uat" : "prod",
+  const [deploymentEnv, setDeploymentEnv] = useState<"dev" | "uat" | "prod">(
+    (() => {
+      const normalized = String(initialData?.deployment_env || "DEV").toLowerCase();
+      if (normalized === "uat" || normalized === "prod" || normalized === "dev") return normalized;
+      return "dev";
+    })(),
   );
   const [error, setError] = useState<string | null>(null);
   const addMutation = useAddMCPServer();
@@ -302,7 +306,7 @@ export default function AddMcpServerModal({
     setSseHeaders([]);
     setSseDescription("");
     setJsonInput("");
-    setDeploymentEnv("prod");
+    setDeploymentEnv("dev");
     setVisibility("private");
     setPublicScope("department");
     setOrgId("");
@@ -327,7 +331,10 @@ export default function AddMcpServerModal({
     setSseEnv([]);
     setSseHeaders([]);
     setSseDescription(initialData?.description || "");
-    setDeploymentEnv(String(initialData?.deployment_env || "PROD").toLowerCase() === "uat" ? "uat" : "prod");
+    {
+      const normalized = String(initialData?.deployment_env || "DEV").toLowerCase();
+      setDeploymentEnv(normalized === "uat" || normalized === "prod" || normalized === "dev" ? (normalized as "dev" | "uat" | "prod") : "dev");
+    }
     setVisibility((initialData?.visibility as "private" | "public") || "private");
     setPublicScope((initialData?.public_scope as "organization" | "department") || "department");
     setOrgId(initialData?.org_id || "");
@@ -400,11 +407,12 @@ export default function AddMcpServerModal({
               </div>
               <div className="flex flex-col gap-2">
                 <Label className="!text-mmd">Environment</Label>
-                <Select value={deploymentEnv} onValueChange={(value) => setDeploymentEnv(value as "uat" | "prod")} disabled={isPending}>
+                <Select value={deploymentEnv} onValueChange={(value) => setDeploymentEnv(value as "dev" | "uat" | "prod")} disabled={isPending}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select environment..." />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="dev">DEV</SelectItem>
                     <SelectItem value="uat">UAT</SelectItem>
                     <SelectItem value="prod">PROD</SelectItem>
                   </SelectContent>
@@ -592,4 +600,3 @@ export default function AddMcpServerModal({
     </BaseModal>
   );
 }
-

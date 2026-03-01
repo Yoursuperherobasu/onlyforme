@@ -6,6 +6,9 @@ import {
 import useAlertStore from "@/stores/alertStore";
 import type { ApprovalAgent } from "@/controllers/API/queries/approvals";
 
+const entityLabel = (entityType?: string) =>
+  entityType === "model" ? "Model" : entityType === "mcp" ? "MCP request" : "Agent";
+
 /**
  * Custom hook to handle approval and rejection actions
  * Combines API mutations and user feedback notifications
@@ -29,7 +32,6 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
-        const entityLabel = agent.entityType === "mcp" ? "MCP request" : "Agent";
         await new Promise((resolve, reject) => {
           approveAgentMutation.mutate(
             {
@@ -71,7 +73,6 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
-        const entityLabel = agent.entityType === "mcp" ? "MCP request" : "Agent";
         await new Promise((resolve, reject) => {
           rejectAgentMutation.mutate(
             {
@@ -110,5 +111,3 @@ export const useApprovalActions = () => {
       rejectAgentMutation.isPending,
   };
 };
-  const entityLabel = (entityType?: string) =>
-    entityType === "model" ? "Model" : entityType === "mcp" ? "MCP" : "Agent";

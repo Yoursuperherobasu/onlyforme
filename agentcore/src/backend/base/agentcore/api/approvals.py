@@ -92,7 +92,9 @@ def _normalize_mcp_mode(value: str) -> str:
 
 def _normalize_mcp_deployment_env(value: str) -> str:
     normalized = str(value).strip().upper()
-    if normalized not in {"UAT", "PROD"}:
+    if normalized == "TEST":
+        normalized = "DEV"
+    if normalized not in {"DEV", "UAT", "PROD"}:
         raise HTTPException(status_code=400, detail=f"Unsupported deployment_env '{value}'")
     return normalized
 
@@ -474,7 +476,7 @@ async def get_approvals(
                 else (requester.username if requester else "Unknown")
             )
             submitted_at = req.requested_at
-            deployment_env = (req.deployment_env or "PROD").upper()
+            deployment_env = (req.deployment_env or "DEV").upper()
             payload.append(
                 ApprovalAgent(
                     id=str(req.id),
@@ -1197,7 +1199,7 @@ async def get_agent_details(
                 if submitted_at.tzinfo is None
                 else submitted_at.isoformat()
             ),
-            version=f"{(mcp_req.deployment_env or 'PROD').upper()} / {(row.mode or 'mcp').upper()}",
+            version=f"{(mcp_req.deployment_env or 'DEV').upper()} / {(row.mode or 'mcp').upper()}",
             recentChanges="New MCP server request",
             adminComments=mcp_req.justification,
             adminAttachments=(mcp_req.file_path.get("files", []) if isinstance(mcp_req.file_path, dict) else []),
@@ -1408,7 +1410,7 @@ async def get_agent_preview(
         return ApprovalPreviewResponse(
             id=str(mcp_req.id),
             title=row.server_name,
-            version=f"{(mcp_req.deployment_env or 'PROD').upper()} / {(row.mode or 'mcp').upper()}",
+            version=f"{(mcp_req.deployment_env or 'DEV').upper()} / {(row.mode or 'mcp').upper()}",
             snapshot={
                 "server_name": row.server_name,
                 "description": row.description,
@@ -1585,5 +1587,3 @@ async def reset_agent_status(
         "agentId": str(req.agent_id),
         "newStatus": "pending",
     }
-
-

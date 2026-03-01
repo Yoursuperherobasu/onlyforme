@@ -11,7 +11,6 @@ interface AgentCardProps {
   title: string;
   status: "pending" | "approved" | "rejected";
   description: string;
-  entityType?: "agent" | "model" | "mcp";
   submittedBy: {
     name: string;
     avatar?: string;
@@ -41,7 +40,6 @@ export function AgentCard({
   title,
   status,
   description,
-  entityType,
   submittedBy,
   project,
   submitted,
