@@ -37,6 +37,7 @@ class ModelRegistry(SQLModel, table=True):
     description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     provider: str = Field(nullable=False, index=True)
     model_name: str = Field(nullable=False)
+    model_type: str = Field(default="llm", index=True)  # "llm" or "embedding"
     base_url: str | None = Field(default=None)
     api_key_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
 
@@ -69,6 +70,7 @@ class ModelRegistryCreate(BaseModel):
     description: str | None = None
     provider: str
     model_name: str
+    model_type: str = "llm"  # "llm" or "embedding"
     base_url: str | None = None
     api_key: str | None = None  # plain-text; encrypted before storage
     environment: str = ModelEnvironment.TEST.value  # defaults to test
@@ -86,6 +88,7 @@ class ModelRegistryUpdate(BaseModel):
     description: str | None = None
     provider: str | None = None
     model_name: str | None = None
+    model_type: str | None = None  # "llm" or "embedding"
     base_url: str | None = None
     api_key: str | None = None  # plain-text; re-encrypted if provided
     environment: str | None = None
@@ -107,6 +110,7 @@ class ModelRegistryRead(BaseModel):
     description: str | None = None
     provider: str
     model_name: str
+    model_type: str = "llm"
     base_url: str | None = None
     environment: str = ModelEnvironment.TEST.value
     provider_config: dict | None = None

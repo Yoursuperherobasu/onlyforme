@@ -8,6 +8,8 @@ export type ModelProvider =
 
 export type ModelEnvironment = "test" | "uat" | "prod";
 
+export type ModelTypeFilter = "llm" | "embedding";
+
 export interface ModelCapabilities {
   supports_streaming?: boolean;
   supports_thinking?: boolean;
@@ -22,6 +24,7 @@ export interface ModelType {
   description?: string | null;
   provider: ModelProvider;
   model_name: string;
+  model_type: ModelTypeFilter;
   base_url?: string | null;
   environment: ModelEnvironment;
   has_api_key: boolean;
@@ -39,6 +42,7 @@ export interface ModelCreateRequest {
   description?: string | null;
   provider: string;
   model_name: string;
+  model_type?: ModelTypeFilter;
   base_url?: string | null;
   api_key?: string | null;
   environment?: ModelEnvironment;
@@ -53,6 +57,7 @@ export interface ModelUpdateRequest {
   description?: string | null;
   provider?: string;
   model_name?: string;
+  model_type?: ModelTypeFilter;
   base_url?: string | null;
   api_key?: string | null;
   environment?: ModelEnvironment;

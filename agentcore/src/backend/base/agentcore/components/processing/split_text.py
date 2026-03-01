@@ -1,140 +1,209 @@
-from langchain_text_splitters import CharacterTextSplitter
-
+import hashlib
 from agentcore.custom.custom_node.node import Node
-from agentcore.io import DropdownInput, HandleInput, IntInput, MessageTextInput, Output
+from agentcore.io import DropdownInput, HandleInput, IntInput, Output, StrInput
 from agentcore.schema.data import Data
-from agentcore.schema.dataframe import DataFrame
-from agentcore.schema.message import Message
-from agentcore.utils.util import unescape_string
 
 
 class SplitText(Node):
-    display_name: str = "Split Text"
-    description: str = "Split text into chunks based on specified criteria."
-    icon = "scissors-line-dashed"
-    name = "SplitText"
+    display_name: str = "Text Splitter"
+    description: str = (
+        "Split extracted documents into chunks for vector storage. "
+        "Preserves all source metadata. Deterministic chunk IDs for idempotent ingestion."
+    )
+    name = "TextSplitter" 
+    icon = "Scissors"
 
     inputs = [
         HandleInput(
-            name="data_inputs",
-            display_name="Input",
-            info="The data with texts to split in chunks.",
-            input_types=["Data", "DataFrame", "Message"],
-            required=True,
+            name="documents",
+            display_name="Documents",
+            input_types=["Data", "Message"],
+            info="Input documents from Gemini OCR Extractor, Text Input, or any Data/Message source.",
+            is_list=True,
         ),
-        IntInput(
-            name="chunk_overlap",
-            display_name="Chunk Overlap",
-            info="Number of characters to overlap between chunks.",
-            value=200,
+        StrInput(
+            name="kb_id",
+            display_name="Knowledge Base ID",
+            info="Identifier for this knowledge base. Used in chunk IDs so re-ingestion is idempotent.",
+            value="default",
+        ),
+        DropdownInput(
+            name="chunking_strategy",
+            display_name="Chunking Strategy",
+            options=["Recursive", "Sliding Window"],
+            value="Recursive",
+            info=(
+                "Recursive: splits on natural boundaries (paragraphs, sentences). Best for general docs. "
+                "Sliding Window: fixed-size overlapping windows. Best for uniform chunk sizes."
+            ),
         ),
         IntInput(
             name="chunk_size",
             display_name="Chunk Size",
-            info=(
-                "The maximum length of each chunk. Text is first split by separator, "
-                "then chunks are merged up to this size. "
-                "Individual splits larger than this won't be further divided."
-            ),
+            info="Maximum characters per chunk.",
             value=1000,
         ),
-        MessageTextInput(
-            name="separator",
-            display_name="Separator",
-            info=(
-                "The character to split on. Use \\n for newline. "
-                "Examples: \\n\\n for paragraphs, \\n for lines, . for sentences"
-            ),
-            value="\n",
-        ),
-        MessageTextInput(
-            name="text_key",
-            display_name="Text Key",
-            info="The key to use for the text column.",
-            value="text",
-            advanced=True,
-        ),
-        DropdownInput(
-            name="keep_separator",
-            display_name="Keep Separator",
-            info="Whether to keep the separator in the output chunks and where to place it.",
-            options=["False", "True", "Start", "End"],
-            value="False",
-            advanced=True,
+        IntInput(
+            name="chunk_overlap",
+            display_name="Chunk Overlap",
+            info="Characters of overlap between consecutive chunks.",
+            value=200,
         ),
     ]
 
     outputs = [
-        Output(display_name="Chunks", name="dataframe", method="split_text"),
+        Output(
+            display_name="Chunks",
+            name="chunks",
+            method="split_documents",
+        ),
     ]
 
-    def _docs_to_data(self, docs) -> list[Data]:
-        return [Data(text=doc.page_content, data=doc.metadata) for doc in docs]
+    def split_documents(self) -> list[Data]:
+        """Split input documents into chunks. Returns list[Data].
+        This method is bound to the 'chunks' Output port.
+        """
+        if not self.documents:
+            self.status = "No documents to split."
+            return []
 
-    def _fix_separator(self, separator: str) -> str:
-        """Fix common separator issues and convert to proper format."""
-        if separator == "/n":
-            return "\n"
-        if separator == "/t":
-            return "\t"
-        return separator
-
-    def split_text_base(self):
-        separator = self._fix_separator(self.separator)
-        separator = unescape_string(separator)
-
-        if isinstance(self.data_inputs, DataFrame):
-            if not len(self.data_inputs):
-                msg = "DataFrame is empty"
-                raise TypeError(msg)
-
-            self.data_inputs.text_key = self.text_key
-            try:
-                documents = self.data_inputs.to_lc_documents()
-            except Exception as e:
-                msg = f"Error converting DataFrame to documents: {e}"
-                raise TypeError(msg) from e
-        elif isinstance(self.data_inputs, Message):
-            self.data_inputs = [self.data_inputs.to_data()]
-            return self.split_text_base()
+        if self.chunking_strategy == "Recursive":
+            chunks = self._recursive_chunk()
         else:
-            if not self.data_inputs:
-                msg = "No data inputs provided"
-                raise TypeError(msg)
+            chunks = self._sliding_window_chunk()
 
-            documents = []
-            if isinstance(self.data_inputs, Data):
-                self.data_inputs.text_key = self.text_key
-                documents = [self.data_inputs.to_lc_document()]
-            else:
-                try:
-                    documents = [input_.to_lc_document() for input_ in self.data_inputs if isinstance(input_, Data)]
-                    if not documents:
-                        msg = f"No valid Data inputs found in {type(self.data_inputs)}"
-                        raise TypeError(msg)
-                except AttributeError as e:
-                    msg = f"Invalid input type in collection: {e}"
-                    raise TypeError(msg) from e
-        try:
-            # Convert string 'False'/'True' to boolean
-            keep_sep = self.keep_separator
-            if isinstance(keep_sep, str):
-                if keep_sep.lower() == "false":
-                    keep_sep = False
-                elif keep_sep.lower() == "true":
-                    keep_sep = True
-                # 'start' and 'end' are kept as strings
+        self.status = f"{len(chunks)} chunks from {len(self.documents)} document(s)"
+        return chunks
 
-            splitter = CharacterTextSplitter(
-                chunk_overlap=self.chunk_overlap,
-                chunk_size=self.chunk_size,
-                separator=separator,
-                keep_separator=keep_sep,
-            )
-            return splitter.split_documents(documents)
-        except Exception as e:
-            msg = f"Error splitting text: {e}"
-            raise TypeError(msg) from e
 
-    def split_text(self) -> DataFrame:
-        return DataFrame(self._docs_to_data(self.split_text_base()))
+    @staticmethod
+    def _to_data(doc) -> Data | None:
+        """Convert a Message or Data input to Data."""
+        if isinstance(doc, Data):
+            return doc
+        text = None
+        if hasattr(doc, "text"):
+            text = doc.text
+        elif hasattr(doc, "content"):
+            text = doc.content
+        elif isinstance(doc, str):
+            text = doc
+        if text:
+            return Data(text=str(text), data={"source_file": "", "extraction_method": "message"})
+        return None
+
+    def _recursive_chunk(self) -> list[Data]:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+        splitter = RecursiveCharacterTextSplitter(
+            separators=["\n\n", "\n", ". ", " ", ""],
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            length_function=len,
+            is_separator_regex=False,
+        )
+
+        all_chunks: list[Data] = []
+
+        docs = self.documents if isinstance(self.documents, list) else [self.documents]
+
+        for raw_doc in docs:
+            doc = self._to_data(raw_doc)
+            if doc is None:
+                continue
+            text = doc.text.strip() if doc.text else ""
+            if not text:
+                continue
+
+            source_meta = doc.data if doc.data else {}
+            splits = splitter.split_text(text)
+
+            for idx, chunk_text in enumerate(splits):
+                chunk_text = chunk_text.strip()
+                if not chunk_text:
+                    continue
+
+                chunk_id = self._make_id(
+                    self.kb_id, source_meta.get("source_file", ""), idx, chunk_text
+                )
+
+                all_chunks.append(Data(
+                    text=chunk_text,
+                    data={
+                        # ── Inherited from source document ─────
+                        "source_file": source_meta.get("source_file", ""),
+                        "file_path": source_meta.get("file_path", ""),
+                        "page_number": source_meta.get("page_number", 1),
+                        "total_pages": source_meta.get("total_pages", 1),
+                        "file_type": source_meta.get("file_type", ""),
+                        "extraction_method": source_meta.get("extraction_method", ""),
+                        "sheet_name": source_meta.get("sheet_name", ""),
+                        # ── Chunk-level metadata ───────────────
+                        "chunk_id": chunk_id,
+                        "kb_id": self.kb_id,
+                        "chunk_index": idx,
+                        "chunk_size": len(chunk_text),
+                        "total_chunks_in_doc": len(splits),
+                        "chunking_strategy": "recursive",
+                    },
+                ))
+
+        return all_chunks
+
+    def _sliding_window_chunk(self) -> list[Data]:
+        all_chunks: list[Data] = []
+        step = max(self.chunk_size - self.chunk_overlap, 1)
+
+        docs = self.documents if isinstance(self.documents, list) else [self.documents]
+
+        for raw_doc in docs:
+            doc = self._to_data(raw_doc)
+            if doc is None:
+                continue
+            text = doc.text.strip() if doc.text else ""
+            if not text:
+                continue
+
+            source_meta = doc.data if doc.data else {}
+            pos = 0
+            chunk_num = 0
+
+            while pos < len(text):
+                chunk_text = text[pos: pos + self.chunk_size].strip()
+                if not chunk_text:
+                    pos += step
+                    continue
+
+                chunk_id = self._make_id(
+                    self.kb_id, source_meta.get("source_file", ""), chunk_num, chunk_text
+                )
+
+                all_chunks.append(Data(
+                    text=chunk_text,
+                    data={
+                        "source_file": source_meta.get("source_file", ""),
+                        "file_path": source_meta.get("file_path", ""),
+                        "page_number": source_meta.get("page_number", 1),
+                        "file_type": source_meta.get("file_type", ""),
+                        "extraction_method": source_meta.get("extraction_method", ""),
+                        "sheet_name": source_meta.get("sheet_name", ""),
+                        "chunk_id": chunk_id,
+                        "kb_id": self.kb_id,
+                        "chunk_index": chunk_num,
+                        "chunk_size": len(chunk_text),
+                        "chunking_strategy": "sliding_window",
+                    },
+                ))
+                chunk_num += 1
+                pos += step
+
+        return all_chunks
+
+    @staticmethod
+    def _make_id(kb_id: str, source: str, index: int, content: str) -> str:
+        """
+        Deterministic ID based on kb + source + position + content.
+        Re-ingesting the same file produces the same IDs → idempotent upserts.
+        """
+        raw = f"{kb_id}::{source}::{index}::{content[:100]}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:24]

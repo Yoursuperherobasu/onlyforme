@@ -22,6 +22,10 @@ export interface ConnectorInfo {
   isCustom: boolean;
   org_id?: string | null;
   dept_id?: string | null;
+  visibility?: "private" | "public";
+  public_scope?: "organization" | "department" | null;
+  public_dept_ids?: string[];
+  shared_user_ids?: string[];
 }
 
 export const useGetConnectorCatalogue: useQueryFunctionType<

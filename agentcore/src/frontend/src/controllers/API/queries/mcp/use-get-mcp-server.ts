@@ -1,33 +1,14 @@
-import type { useMutationFunctionType } from "@/types/api";
-import type { MCPServerType } from "@/types/mcp";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
-import { getURL } from "../../helpers/constants";
-import { UseRequestProcessor } from "../../services/request-processor";
+import type { McpRegistryType } from "@/types/mcp";
 
-type getMCPServerResponse = MCPServerType;
-
-interface IGetMCPServer {
-  name: string;
-}
-
-export const useGetMCPServer: useMutationFunctionType<
-  undefined,
-  IGetMCPServer,
-  getMCPServerResponse
-> = (options) => {
-  const { mutate } = UseRequestProcessor();
-
-  const responseFn = async (params: IGetMCPServer) => {
-    const { data } = await api.get<Omit<getMCPServerResponse, "name">>(
-      `${getURL("MCP_SERVERS", undefined, true)}/${params.name}`,
-    );
-
-    return { ...data, name: params.name };
-  };
-
-  const queryResult = mutate(["useGetMCPServer"], responseFn, {
-    ...options,
+export const useGetMCPServer = (serverId: string | undefined) => {
+  return useQuery<McpRegistryType>({
+    queryKey: ["mcp-registry", serverId],
+    queryFn: async () => {
+      const response = await api.get(`api/mcp/registry/${serverId}`);
+      return response.data;
+    },
+    enabled: !!serverId,
   });
-
-  return queryResult;
 };

@@ -85,25 +85,20 @@ const useSaveAgent = () => {
                 onSuccess: (updatedAgent) => {
                   const agents = useAgentsManagerStore.getState().agents;
                   setSaveLoading(false);
-                  if (agents) {
-                    // updates agent in state
-                    setAgents(
-                      agents.map((agent) => {
-                        if (agent.id === updatedAgent.id) {
-                          return updatedAgent;
-                        }
-                        return agent;
-                      }),
-                    );
-                    setCurrentAgent(updatedAgent);
-                    resolve();
-                  } else {
-                    setErrorData({
-                      title: "Failed to save agent",
-                      list: ["Agents variable undefined"],
-                    });
-                    reject(new Error("Agents variable undefined"));
-                  }
+                  const agentList = Array.isArray(agents) ? agents : [];
+                  const hasExisting = agentList.some(
+                    (existingAgent) => existingAgent.id === updatedAgent.id,
+                  );
+                  const nextAgents = hasExisting
+                    ? agentList.map((existingAgent) =>
+                        existingAgent.id === updatedAgent.id
+                          ? updatedAgent
+                          : existingAgent,
+                      )
+                    : [updatedAgent, ...agentList];
+                  setAgents(nextAgents);
+                  setCurrentAgent(updatedAgent);
+                  resolve();
                 },
                 onError: (e) => {
                   setErrorData({

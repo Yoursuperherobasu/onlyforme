@@ -83,7 +83,13 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
   },
   { page: "Observability", sections: [{ name: "Page Access", keys: ["view_observability_page"] }] },
   { page: "Evaluation", sections: [{ name: "Page Access", keys: ["view_evaluation_page"] }] },
-  { page: "Guardrails Catalogue", sections: [{ name: "Page Access", keys: ["view_guardrail_page"] }] },
+  {
+    page: "Guardrails Catalogue",
+    sections: [
+      { name: "Page Access", keys: ["view_guardrail_page"] },
+      { name: "Actions", keys: ["add_guardrails", "retire_guardrails"] },
+    ],
+  },
   { page: "VectorDB Catalogue", sections: [{ name: "Page Access", keys: ["view_vectordb_page"] }] },
   {
     page: "MCP Servers",
@@ -116,6 +122,13 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
   },
   { page: "Admin Page", sections: [{ name: "Page Access", keys: ["view_admin_page"] }] },
   { page: "Access Control", sections: [{ name: "Page Access", keys: ["view_access_control_page"] }] },
+  {
+    page: "Connectors",
+    sections: [
+      { name: "Page Access", keys: ["connectore_page"] },
+      { name: "Actions", keys: ["add_connector"] },
+    ],
+  },
 ];
 
 const EXCEL_PERMISSION_KEYS = new Set(
@@ -129,6 +142,8 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_traces: ["view_observability_page"],
   view_evaluation: ["view_evaluation_page"],
   view_guardrails: ["view_guardrail_page"],
+  add_guardrail: ["add_guardrails"],
+  retire_guardrail: ["retire_guardrails"],
   view_vector_db: ["view_vectordb_page"],
   view_vectorDb_page: ["view_vectordb_page"],
   view_vector_db_page: ["view_vectordb_page"],
@@ -141,6 +156,8 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_knowledge_base_management: ["view_knowledge_base"],
   approve_reject_page: ["prod_publish_approval_required"],
   view_approval_page: ["view_agent", "view_model", "view_mcp"],
+  view_connectors_page: ["connectore_page"],
+  connector_page: ["connectore_page"],
 };
 
 const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {

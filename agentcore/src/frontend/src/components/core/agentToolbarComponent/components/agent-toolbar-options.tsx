@@ -3,6 +3,7 @@ import useAgentStore from "@/stores/agentStore";
 import PublishDropdown from "./deploy-dropdown";
 import PlaygroundButton from "./playground-button";
 import PublishButton from "./publish-button";
+import PublishStatusBadge from "./publish-status-badge";
 import TeamsButton from "./teams/teams-button";
 
 type AgentToolbarOptionsProps = {
@@ -31,6 +32,7 @@ const AgentToolbarOptions = ({
         
       </div>
       <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
+        <PublishStatusBadge />
         <PublishButton hasIO={hasIO} />
       </div>
       <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">

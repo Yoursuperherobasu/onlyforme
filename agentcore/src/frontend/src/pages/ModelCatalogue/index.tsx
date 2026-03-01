@@ -9,7 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useContext, useEffect, useState } from "react";
-import type { ModelType, ModelEnvironment } from "@/types/models/models";
+import type { ModelType, ModelEnvironment, ModelTypeFilter } from "@/types/models/models";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,8 +55,14 @@ const ENV_BADGE_CLASSES: Record<string, string> = {
   prod: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
 };
 
+const MODEL_TYPE_LABELS: Record<string, string> = {
+  llm: "LLMs",
+  embedding: "Embeddings",
+};
+
 export default function ModelCatalogue(): JSX.Element {
   const { t } = useTranslation();
+  const [modelTypeFilter, setModelTypeFilter] = useState<ModelTypeFilter>("llm");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -91,6 +97,7 @@ export default function ModelCatalogue(): JSX.Element {
   /* ---------------------------------- Filtering ---------------------------------- */
 
   const filteredModels = displayModels.filter((model) => {
+    const matchesType = model.model_type === modelTypeFilter;
     const matchesProvider =
       providerFilter === "all" || model.provider === providerFilter;
     const matchesEnv =
@@ -101,7 +108,7 @@ export default function ModelCatalogue(): JSX.Element {
       model.model_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       model.description?.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return matchesProvider && matchesEnv && matchesSearch;
+    return matchesType && matchesProvider && matchesEnv && matchesSearch;
   });
 
   /* ---------------------------------- Helpers ---------------------------------- */
@@ -131,20 +138,6 @@ export default function ModelCatalogue(): JSX.Element {
       setErrorData({ title: t("Failed to delete model.") });
     }
     setDeleteConfirmModel(null);
-  };
-
-  /* ---------------------------------- Capabilities badges ---------------------------------- */
-
-  const capabilityBadges = (model: ModelType) => {
-    const caps = model.capabilities;
-    if (!caps) return null;
-    const badges: string[] = [];
-    if (caps.supports_streaming) badges.push("Streaming");
-    if (caps.supports_tool_calling) badges.push("Tools");
-    if (caps.supports_vision) badges.push("Vision");
-    if (caps.supports_thinking) badges.push("Thinking");
-    if (caps.context_window) badges.push(`${(caps.context_window / 1000).toFixed(0)}K ctx`);
-    return badges;
   };
 
   /* ---------------------------------- JSX ---------------------------------- */
@@ -190,7 +183,7 @@ export default function ModelCatalogue(): JSX.Element {
                   disabled={!canAddModel}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  {t("Add Model")}
+                  {modelTypeFilter === "embedding" ? t("Add Embedding") : t("Add Model")}
                 </Button>
               </span>
             </ShadTooltip>
@@ -205,6 +198,25 @@ export default function ModelCatalogue(): JSX.Element {
 
       {/* Filters */}
       <div className="flex-shrink-0 flex items-center gap-6 border-b px-8 py-4">
+        {/* Model type filter */}
+        <div className="flex gap-2">
+          {(["llm", "embedding"] as ModelTypeFilter[]).map((type) => (
+            <Button
+              key={type}
+              size="sm"
+              variant={modelTypeFilter === type ? "default" : "outline"}
+              onClick={() => {
+                setModelTypeFilter(type);
+                setProviderFilter("all");
+              }}
+            >
+              {t(MODEL_TYPE_LABELS[type])}
+            </Button>
+          ))}
+        </div>
+
+        <div className="h-6 w-px bg-border" />
+
         {/* Provider filter */}
         <div className="flex gap-2">
           {(Object.keys(PROVIDER_LABELS) as ProviderFilter[]).map((type) => (
@@ -257,7 +269,7 @@ export default function ModelCatalogue(): JSX.Element {
                       "Provider",
                       "Model ID",
                       "Environment",
-                      "Capabilities",
+                      "Type",
                       "Status",
                       "Actions",
                     ].map((h) => (
@@ -326,18 +338,17 @@ export default function ModelCatalogue(): JSX.Element {
                           </span>
                         </td>
 
-                        {/* Capabilities */}
+                        {/* Type */}
                         <td className="px-6 py-4">
-                          <div className="flex flex-wrap gap-1">
-                            {capabilityBadges(model)?.map((badge) => (
-                              <span
-                                key={badge}
-                                className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium"
-                              >
-                              {t(badge)}
-                              </span>
-                            ))}
-                          </div>
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                              model.model_type === "embedding"
+                                ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+                                : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                            }`}
+                          >
+                            {model.model_type === "embedding" ? t("Embedding") : t("LLM")}
+                          </span>
                         </td>
 
                         {/* Status */}
@@ -407,6 +418,7 @@ export default function ModelCatalogue(): JSX.Element {
         open={isEditModalOpen}
         onOpenChange={setIsEditModalOpen}
         model={selectedModel}
+        modelType={modelTypeFilter}
       />
       <RequestModelModal
         open={isRequestModalOpen}

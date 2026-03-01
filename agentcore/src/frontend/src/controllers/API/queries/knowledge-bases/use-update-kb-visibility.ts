@@ -11,6 +11,9 @@ interface UpdateKBVisibilityParams {
 
 interface UpdateKBVisibilityPayload {
   visibility: KBVisibility;
+  public_scope?: "organization" | "department";
+  org_id?: string;
+  dept_id?: string;
 }
 
 export const useUpdateKBVisibility: useMutationFunctionType<

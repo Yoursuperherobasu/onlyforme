@@ -24,6 +24,7 @@ from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
+from .mcp_approval_request import McpApprovalRequest
 from .orch_conversation import OrchConversationTable
 from .orch_transaction import OrchTransactionTable
 from .timeout_settings import TimeoutSettings
@@ -31,6 +32,8 @@ from .guardrail_catalogue import GuardrailCatalogue
 from .help_support import HelpSupportQuestion
 from .package import Package
 from .teams_app import TeamsApp
+from .evaluator.model import Evaluator
+from .vertex_builds import VertexBuildTable
 
 __all__ = [
     "Agent",
@@ -40,6 +43,7 @@ __all__ = [
     "AgentDeploymentUAT",
     "AgentRegistry",
     "ApprovalRequest",
+    "McpApprovalRequest",
     "ConversationProdTable",
     "ConversationTable",
     "ConversationProdTable",
@@ -48,6 +52,7 @@ __all__ = [
     "Project",
     "Permission",
     "ApprovalRequest",
+    "McpApprovalRequest",
     "ModelRegistry",
     "AgentBundle",
     "AgentDeploymentProd",
@@ -74,4 +79,6 @@ __all__ = [
     "OrchTransactionTable",
     "Package",
     "User",
+    "Evaluator",
+    "VertexBuildTable",
 ]

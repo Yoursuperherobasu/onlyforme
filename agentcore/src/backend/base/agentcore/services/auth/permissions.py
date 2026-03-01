@@ -30,6 +30,11 @@ PERMISSION_ALIASES = {
     "view_traces": ["view_observability_page"],
     "view_evaluation": ["view_evaluation_page"],
     "view_guardrails": ["view_guardrail_page"],
+    "add_guardrails": ["add_guardrail"],
+    "add_guardrail": ["add_guardrails"],
+    "retire_guardrails": ["delete_guardrails", "retire_guardrail"],
+    "delete_guardrails": ["retire_guardrails", "retire_guardrail"],
+    "retire_guardrail": ["retire_guardrails", "delete_guardrails"],
     "view_vector_db": ["view_vectordb_page"],
     "view_vectorDb_page": ["view_vectordb_page"],
     "view_mcp_page": ["view_mcp"],
@@ -42,6 +47,9 @@ PERMISSION_ALIASES = {
     "view_guardrails_page": ["view_guardrail_page"],
     "view_vector_db_page": ["view_vectordb_page"],
     "view_observability_dashboard": ["view_observability_page"],
+    "connectore_page": ["view_connectors_page", "connector_page"],
+    "view_connectors_page": ["connectore_page", "connector_page"],
+    "connector_page": ["connectore_page", "view_connectors_page"],
 }
 
 
@@ -88,6 +96,8 @@ ACTIONS = {
     "VIEW_AGENT_CATALOGUE_PAGE": "view_agent_catalogue_page",
     "VIEW_ORCHESTRATOR_PAGE": "view_orchastration_page",
     "VIEW_GUARDRAILS_PAGE": "view_guardrail_page",
+    "ADD_GUARDRAILS": "add_guardrails",
+    "RETIRE_GUARDRAILS": "retire_guardrails",
     "VIEW_VECTOR_DB_PAGE": "view_vectordb_page",
     "VIEW_REVIEW_AGENT_TAB": "view_agent",
     "VIEW_REVIEW_MODEL_TAB": "view_model",
@@ -99,6 +109,8 @@ ACTIONS = {
     "VIEW_WORKAGENTS_PAGE": "view_workflows_page",
     "VIEW_PLAYGROUND_PAGE": "view_playground_page",
     "VIEW_AGENT_EDITOR": "view_agent_editor",
+    "CONNECTORE_PAGE": "connectore_page",
+    "ADD_CONNECTOR": "add_connector",
 }
 
 ROLE_PERMISSIONS: Dict[str, List[str]] = {
@@ -125,6 +137,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_AGENT_CATALOGUE_PAGE"],
         ACTIONS["VIEW_ORCHESTRATOR_PAGE"],
         ACTIONS["VIEW_GUARDRAILS_PAGE"],
+        ACTIONS["ADD_GUARDRAILS"],
+        ACTIONS["RETIRE_GUARDRAILS"],
         ACTIONS["VIEW_VECTOR_DB_PAGE"],
         ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
         ACTIONS["VIEW_EVALUATION_PAGE"],
@@ -136,6 +150,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
         ACTIONS["VIEW_PLAYGROUND_PAGE"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "super_admin": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -160,6 +176,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_AGENT_CATALOGUE_PAGE"],
         ACTIONS["VIEW_ORCHESTRATOR_PAGE"],
         ACTIONS["VIEW_GUARDRAILS_PAGE"],
+        ACTIONS["ADD_GUARDRAILS"],
+        ACTIONS["RETIRE_GUARDRAILS"],
         ACTIONS["VIEW_VECTOR_DB_PAGE"],
         ACTIONS["VIEW_OBSERVABILITY_DASHBOARD"],
         ACTIONS["VIEW_EVALUATION_PAGE"],
@@ -171,6 +189,11 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_WORKAGENTS_PAGE"],
         ACTIONS["VIEW_PLAYGROUND_PAGE"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["VIEW_GUARDRAILS_PAGE"],
+        ACTIONS["ADD_GUARDRAILS"],
+        ACTIONS["RETIRE_GUARDRAILS"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "department_admin": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -192,6 +215,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_SETTINGS_SHORTCUTS_TAB"],
         ACTIONS["VIEW_SETTINGS_MESSAGES_TAB"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "developer": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -203,6 +228,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_AGENT_CATALOGUE_PAGE"],
         ACTIONS["VIEW_AGENT_EDITOR"],
         ACTIONS["EDIT_AGENTS"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "business_user": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -210,6 +237,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_COMPONENTS_PAGE"],
         ACTIONS["VIEW_ASSETS_FILES_TAB"],
         ACTIONS["VIEW_AGENT_EDITOR"],
+        ACTIONS["CONNECTORE_PAGE"],
+        ACTIONS["ADD_CONNECTOR"],
     ],
     "consumer": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -220,7 +249,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v7"  # bump when permissions change
+PERMISSION_VERSION = "v8"  # bump when permissions change
 
 
 class PermissionCacheService:

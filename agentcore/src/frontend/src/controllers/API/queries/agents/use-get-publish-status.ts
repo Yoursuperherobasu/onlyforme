@@ -7,18 +7,29 @@ import { UseRequestProcessor } from "../../services/request-processor";
 export interface IPublishRecord {
   id: string;
   agent_id: string;
-  platform: string;
-  platform_url: string;
-  external_id: string;
-  published_at: string;
+  version_number: string;
+  agent_name: string;
+  agent_description: string | null;
+  publish_description: string | null;
   published_by: string;
-  status: "ACTIVE" | "UNPUBLISHED" | "ERROR" | "PENDING";
-  metadata: {
-    model_name?: string;
-    pipe_function_deployed?: boolean;
-  } | null;
-  last_sync_at: string | null;
+  published_at: string;
+  is_active: boolean;
+  status: string;
+  visibility: string;
   error_message: string | null;
+  environment: "uat" | "prod";
+  promoted_from_uat_id: string | null;
+}
+
+export interface IAgentPublishStatus {
+  agent_id: string;
+  uat: IPublishRecord | null;
+  prod: IPublishRecord | null;
+  has_pending_approval: boolean;
+  pending_requested_by: string | null;
+  latest_prod_status: string | null;
+  latest_review_decision: string | null;
+  latest_prod_published_by: string | null;
 }
 
 export interface IGetPublishStatusParams {
@@ -27,22 +38,22 @@ export interface IGetPublishStatusParams {
 
 export const useGetPublishStatus: useQueryFunctionType<
   IGetPublishStatusParams,
-  IPublishRecord[]
+  IAgentPublishStatus | null
 > = (params, options?) => {
   const { query } = UseRequestProcessor();
 
-  const getPublishStatusFn = async (): Promise<IPublishRecord[]> => {
+  const getPublishStatusFn = async (): Promise<IAgentPublishStatus | null> => {
     if (!params?.agent_id) {
-      return [];
+      return null;
     }
 
-    const response = await api.get<IPublishRecord[]>(
-      `${getURL("PUBLISH")}/status/${params.agent_id}`,
+    const response = await api.get<IAgentPublishStatus>(
+      `${getURL("PUBLISH")}/${params.agent_id}/status`,
     );
     return response.data;
   };
 
-  const queryResult: UseQueryResult<IPublishRecord[]> = query(
+  const queryResult: UseQueryResult<IAgentPublishStatus | null> = query(
     ["useGetPublishStatus", params?.agent_id],
     getPublishStatusFn,
     {

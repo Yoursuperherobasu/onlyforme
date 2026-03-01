@@ -24,7 +24,10 @@ from agentcore.services.database.models.approval_request.model import (
     ApprovalDecisionEnum,
     ApprovalRequest,
 )
+from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.folder.model import Folder
+from agentcore.services.database.models.mcp_registry.model import McpRegistry
+from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.registry_service import sync_agent_registry
 
@@ -36,6 +39,7 @@ class SubmittedBy(BaseModel):
 
 class ApprovalAgent(BaseModel):
     id: str
+    entityType: str = "agent"  # agent | mcp
     title: str
     status: str  # pending, approved, rejected
     description: str
@@ -73,6 +77,17 @@ def _to_status_label(decision: ApprovalDecisionEnum | None) -> str:
     if decision == ApprovalDecisionEnum.APPROVED:
         return "approved"
     return "rejected"
+
+
+def _to_status_label_any(value: ApprovalDecisionEnum | str | None) -> str:
+    if value is None:
+        return "pending"
+    normalized = str(value).strip().upper()
+    if normalized == ApprovalDecisionEnum.APPROVED.value:
+        return "approved"
+    if normalized == ApprovalDecisionEnum.REJECTED.value:
+        return "rejected"
+    return "pending"
 
 
 def _humanize_age(ts: datetime) -> str:
@@ -165,6 +180,67 @@ async def _get_approval_for_view(
     return req
 
 
+async def _get_mcp_approval_for_action(
+    *,
+    session: DbSession,
+    approval_or_mcp_id: str,
+    current_user: CurrentActiveUser,
+) -> McpApprovalRequest:
+    target_uuid: UUID | None = None
+    try:
+        target_uuid = UUID(approval_or_mcp_id)
+    except Exception:
+        target_uuid = None
+    if not target_uuid:
+        raise HTTPException(status_code=404, detail="MCP approval request not found")
+
+    req = await session.get(McpApprovalRequest, target_uuid)
+    if not req:
+        stmt = (
+            select(McpApprovalRequest)
+            .where(McpApprovalRequest.mcp_id == target_uuid, McpApprovalRequest.decision == None)  # noqa: E711
+            .order_by(McpApprovalRequest.requested_at.desc())
+        )
+        if not _is_global_approver(current_user):
+            stmt = stmt.where(McpApprovalRequest.request_to == current_user.id)
+        req = (await session.exec(stmt)).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="MCP approval request not found")
+    if not _is_global_approver(current_user) and req.request_to != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
+    return req
+
+
+async def _get_mcp_approval_for_view(
+    *,
+    session: DbSession,
+    approval_or_mcp_id: str,
+    current_user: CurrentActiveUser,
+) -> McpApprovalRequest:
+    target_uuid: UUID | None = None
+    try:
+        target_uuid = UUID(approval_or_mcp_id)
+    except Exception:
+        target_uuid = None
+    if not target_uuid:
+        raise HTTPException(status_code=404, detail="MCP approval request not found")
+    req = await session.get(McpApprovalRequest, target_uuid)
+    if not req:
+        stmt = select(McpApprovalRequest).where(McpApprovalRequest.mcp_id == target_uuid).order_by(
+            McpApprovalRequest.requested_at.desc()
+        )
+        if not _is_global_approver(current_user):
+            stmt = stmt.where(
+                (McpApprovalRequest.request_to == current_user.id) | (McpApprovalRequest.requested_by == current_user.id)
+            )
+        req = (await session.exec(stmt)).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="MCP approval request not found")
+    if _is_global_approver(current_user) or req.request_to == current_user.id or req.requested_by == current_user.id:
+        return req
+    raise HTTPException(status_code=403, detail="Not allowed to view this approval")
+
+
 async def _collect_attachment_metadata(
     *,
     files: list[UploadFile] | None,
@@ -221,6 +297,7 @@ async def get_approvals(
             payload.append(
                 ApprovalAgent(
                     id=str(req.id),
+                    entityType="agent",
                     title=title,
                     status=_to_status_label(req.decision),
                     description=description,
@@ -235,6 +312,47 @@ async def get_approvals(
                     recentChanges="",  # intentionally blank for now
                 )
             )
+
+        mcp_stmt = select(McpApprovalRequest).order_by(McpApprovalRequest.requested_at.desc())
+        if not _is_global_approver(current_user):
+            mcp_stmt = mcp_stmt.where(McpApprovalRequest.request_to == current_user.id)
+        mcp_rows = (await session.exec(mcp_stmt)).all()
+        for req in mcp_rows:
+            row = await session.get(McpRegistry, req.mcp_id)
+            if not row:
+                continue
+            requester = await session.get(User, req.requested_by)
+            dept_name = ""
+            if req.dept_id:
+                dept = await session.get(Department, req.dept_id)
+                if dept:
+                    dept_name = getattr(dept, "name", "") or ""
+            submitter_name = (
+                requester.display_name
+                if requester and requester.display_name
+                else (requester.username if requester else "Unknown")
+            )
+            submitted_at = req.requested_at
+            deployment_env = (req.deployment_env or "PROD").upper()
+            payload.append(
+                ApprovalAgent(
+                    id=str(req.id),
+                    entityType="mcp",
+                    title=row.server_name,
+                    status=_to_status_label_any(req.decision),
+                    description=row.description or "",
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    project=dept_name,
+                    submitted=(
+                        submitted_at.replace(tzinfo=timezone.utc).isoformat()
+                        if submitted_at.tzinfo is None
+                        else submitted_at.isoformat()
+                    ),
+                    version=f"{deployment_env} / {(row.mode or 'mcp').upper()}",
+                    recentChanges=f"New MCP server {deployment_env} request",
+                )
+            )
+        payload.sort(key=lambda item: item.submitted, reverse=True)
         return payload
     except HTTPException:
         raise
@@ -257,11 +375,67 @@ async def approve_agent(
 ) -> ApprovalResponse:
     """Approve a pending deployment request."""
     now = datetime.now(timezone.utc)
-    req = await _get_approval_for_action(
-        session=session,
-        approval_or_agent_id=agent_id,
-        current_user=current_user,
-    )
+    req: ApprovalRequest | None = None
+    mcp_req: McpApprovalRequest | None = None
+    try:
+        req = await _get_approval_for_action(
+            session=session,
+            approval_or_agent_id=agent_id,
+            current_user=current_user,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        mcp_req = await _get_mcp_approval_for_action(
+            session=session,
+            approval_or_mcp_id=agent_id,
+            current_user=current_user,
+        )
+
+    if mcp_req is not None:
+        if mcp_req.decision is not None:
+            raise HTTPException(status_code=400, detail="MCP approval request already finalized")
+        mcp_row = await session.get(McpRegistry, mcp_req.mcp_id)
+        if not mcp_row:
+            raise HTTPException(status_code=404, detail="Linked MCP server not found")
+        uploaded_files = await _collect_attachment_metadata(files=attachments, now=now)
+        if not comments.strip() and not uploaded_files:
+            raise HTTPException(
+                status_code=400,
+                detail="Either comments or attachments are required for approval",
+            )
+        mcp_req.decision = ApprovalDecisionEnum.APPROVED
+        mcp_req.justification = comments.strip() if comments else None
+        existing = mcp_req.file_path if isinstance(mcp_req.file_path, dict) else {}
+        existing_files = existing.get("files", [])
+        if uploaded_files:
+            existing["files"] = [*existing_files, *uploaded_files]
+            mcp_req.file_path = existing
+        mcp_req.reviewed_at = now
+        mcp_req.updated_at = now
+
+        mcp_row.approval_status = "approved"
+        mcp_row.review_comments = mcp_req.justification
+        mcp_row.review_attachments = mcp_req.file_path
+        mcp_row.reviewed_at = now
+        mcp_row.reviewed_by = current_user.id
+        mcp_row.is_active = True
+        mcp_row.status = "connected"
+        mcp_row.updated_at = now
+        session.add(mcp_req)
+        session.add(mcp_row)
+        await session.commit()
+        approver_name = getattr(current_user, "username", None)
+        return ApprovalResponse(
+            success=True,
+            message="MCP request approved successfully",
+            agentId=str(mcp_req.id),
+            newStatus="approved",
+            timestamp=now.isoformat(),
+            approvedBy=approver_name,
+        )
+
+    assert req is not None
     if req.decision is not None:
         raise HTTPException(status_code=400, detail="Approval request already finalized")
 
@@ -351,11 +525,69 @@ async def reject_agent(
 ) -> ApprovalResponse:
     """Reject a pending deployment request."""
     now = datetime.now(timezone.utc)
-    req = await _get_approval_for_action(
-        session=session,
-        approval_or_agent_id=agent_id,
-        current_user=current_user,
-    )
+    req: ApprovalRequest | None = None
+    mcp_req: McpApprovalRequest | None = None
+    try:
+        req = await _get_approval_for_action(
+            session=session,
+            approval_or_agent_id=agent_id,
+            current_user=current_user,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        mcp_req = await _get_mcp_approval_for_action(
+            session=session,
+            approval_or_mcp_id=agent_id,
+            current_user=current_user,
+        )
+
+    if mcp_req is not None:
+        if mcp_req.decision is not None:
+            raise HTTPException(status_code=400, detail="MCP approval request already finalized")
+        mcp_row = await session.get(McpRegistry, mcp_req.mcp_id)
+        if not mcp_row:
+            raise HTTPException(status_code=404, detail="Linked MCP server not found")
+        uploaded_files = await _collect_attachment_metadata(files=attachments, now=now)
+        if not comments.strip() and not uploaded_files:
+            raise HTTPException(
+                status_code=400,
+                detail="Either comments or attachments are required for rejection",
+            )
+        rejection_reason = reason or "Not approved"
+        justification = comments.strip()
+        mcp_req.decision = ApprovalDecisionEnum.REJECTED
+        mcp_req.justification = f"{rejection_reason}: {justification}" if justification else rejection_reason
+        existing = mcp_req.file_path if isinstance(mcp_req.file_path, dict) else {}
+        existing_files = existing.get("files", [])
+        if uploaded_files:
+            existing["files"] = [*existing_files, *uploaded_files]
+            mcp_req.file_path = existing
+        mcp_req.reviewed_at = now
+        mcp_req.updated_at = now
+
+        mcp_row.approval_status = "rejected"
+        mcp_row.review_comments = mcp_req.justification
+        mcp_row.review_attachments = mcp_req.file_path
+        mcp_row.reviewed_at = now
+        mcp_row.reviewed_by = current_user.id
+        mcp_row.is_active = False
+        mcp_row.status = "rejected"
+        mcp_row.updated_at = now
+        session.add(mcp_req)
+        session.add(mcp_row)
+        await session.commit()
+        approver_name = getattr(current_user, "username", None)
+        return ApprovalResponse(
+            success=True,
+            message="MCP request rejected",
+            agentId=str(mcp_req.id),
+            newStatus="rejected",
+            timestamp=now.isoformat(),
+            approvedBy=approver_name,
+        )
+
+    assert req is not None
     if req.decision is not None:
         raise HTTPException(status_code=400, detail="Approval request already finalized")
 
@@ -410,11 +642,22 @@ async def upload_attachments(
     attachments: list[UploadFile] = File(...),
 ):
     """Attach metadata of uploaded files to approval request."""
-    req = await _get_approval_for_action(
-        session=session,
-        approval_or_agent_id=agent_id,
-        current_user=current_user,
-    )
+    req: ApprovalRequest | None = None
+    mcp_req: McpApprovalRequest | None = None
+    try:
+        req = await _get_approval_for_action(
+            session=session,
+            approval_or_agent_id=agent_id,
+            current_user=current_user,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        mcp_req = await _get_mcp_approval_for_action(
+            session=session,
+            approval_or_mcp_id=agent_id,
+            current_user=current_user,
+        )
     uploaded_files: list[dict] = []
     now = datetime.now(timezone.utc)
     for file in attachments:
@@ -427,18 +670,33 @@ async def upload_attachments(
             }
         )
 
-    existing = req.file_path if isinstance(req.file_path, dict) else {}
-    existing_files = existing.get("files", [])
-    existing["files"] = [*existing_files, *uploaded_files]
-    req.file_path = existing
-    req.updated_at = now
-    session.add(req)
+    if mcp_req is not None:
+        mcp_row = await session.get(McpRegistry, mcp_req.mcp_id)
+        if not mcp_row:
+            raise HTTPException(status_code=404, detail="Linked MCP server not found")
+        existing = mcp_req.file_path if isinstance(mcp_req.file_path, dict) else {}
+        existing_files = existing.get("files", [])
+        existing["files"] = [*existing_files, *uploaded_files]
+        mcp_req.file_path = existing
+        mcp_req.updated_at = now
+        mcp_row.review_attachments = existing
+        mcp_row.updated_at = now
+        session.add(mcp_req)
+        session.add(mcp_row)
+    else:
+        assert req is not None
+        existing = req.file_path if isinstance(req.file_path, dict) else {}
+        existing_files = existing.get("files", [])
+        existing["files"] = [*existing_files, *uploaded_files]
+        req.file_path = existing
+        req.updated_at = now
+        session.add(req)
     await session.commit()
 
     return {
         "success": True,
         "message": "Attachments uploaded successfully",
-        "agentId": str(req.agent_id),
+        "agentId": str(mcp_req.id if mcp_req is not None else req.agent_id),
         "uploadedFiles": uploaded_files,
     }
 
@@ -450,11 +708,54 @@ async def get_agent_details(
     session: DbSession,
     current_user: CurrentActiveUser,
 ) -> ApprovalAgent:
-    req = await _get_approval_for_view(
-        session=session,
-        approval_or_agent_id=agent_id,
-        current_user=current_user,
-    )
+    req: ApprovalRequest | None = None
+    mcp_req: McpApprovalRequest | None = None
+    try:
+        req = await _get_approval_for_view(
+            session=session,
+            approval_or_agent_id=agent_id,
+            current_user=current_user,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        mcp_req = await _get_mcp_approval_for_view(
+            session=session,
+            approval_or_mcp_id=agent_id,
+            current_user=current_user,
+        )
+    if mcp_req is not None:
+        row = await session.get(McpRegistry, mcp_req.mcp_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Linked MCP server not found")
+        requester = await session.get(User, mcp_req.requested_by)
+        submitted_at = mcp_req.requested_at
+        return ApprovalAgent(
+            id=str(mcp_req.id),
+            entityType="mcp",
+            title=row.server_name,
+            status=_to_status_label_any(mcp_req.decision),
+            description=row.description or "",
+            submittedBy=SubmittedBy(
+                name=(
+                    requester.display_name
+                    if requester and requester.display_name
+                    else (requester.username if requester else "Unknown")
+                ),
+                avatar=None,
+            ),
+            project="",
+            submitted=(
+                submitted_at.replace(tzinfo=timezone.utc).isoformat()
+                if submitted_at.tzinfo is None
+                else submitted_at.isoformat()
+            ),
+            version=f"{(mcp_req.deployment_env or 'PROD').upper()} / {(row.mode or 'mcp').upper()}",
+            recentChanges="New MCP server request",
+            adminComments=mcp_req.justification,
+            adminAttachments=(mcp_req.file_path.get("files", []) if isinstance(mcp_req.file_path, dict) else []),
+        )
+    assert req is not None
     deployment = await session.get(AgentDeploymentProd, req.deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Linked deployment not found")
@@ -468,6 +769,7 @@ async def get_agent_details(
 
     return ApprovalAgent(
         id=str(req.id),
+        entityType="agent",
         title=deployment.agent_name or (agent.name if agent else "Untitled Agent"),
         status=_to_status_label(req.decision),
         description=deployment.agent_description or req.publish_description or "",
@@ -495,11 +797,46 @@ async def get_agent_preview(
     session: DbSession,
     current_user: CurrentActiveUser,
 ) -> ApprovalPreviewResponse:
-    req = await _get_approval_for_view(
-        session=session,
-        approval_or_agent_id=agent_id,
-        current_user=current_user,
-    )
+    req: ApprovalRequest | None = None
+    mcp_req: McpApprovalRequest | None = None
+    try:
+        req = await _get_approval_for_view(
+            session=session,
+            approval_or_agent_id=agent_id,
+            current_user=current_user,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        mcp_req = await _get_mcp_approval_for_view(
+            session=session,
+            approval_or_mcp_id=agent_id,
+            current_user=current_user,
+        )
+    if mcp_req is not None:
+        row = await session.get(McpRegistry, mcp_req.mcp_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Linked MCP server not found")
+        return ApprovalPreviewResponse(
+            id=str(mcp_req.id),
+            title=row.server_name,
+            version=f"{(mcp_req.deployment_env or 'PROD').upper()} / {(row.mode or 'mcp').upper()}",
+            snapshot={
+                "server_name": row.server_name,
+                "description": row.description,
+                "mode": row.mode,
+                "deployment_env": mcp_req.deployment_env,
+                "url": row.url,
+                "command": row.command,
+                "args": row.args,
+                "visibility": row.visibility,
+                "public_scope": row.public_scope,
+                "org_id": str(row.org_id) if row.org_id else None,
+                "dept_id": str(row.dept_id) if row.dept_id else None,
+                "approval_status": row.approval_status,
+            },
+        )
+    assert req is not None
     deployment = await session.get(AgentDeploymentProd, req.deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Linked deployment not found")
@@ -526,11 +863,46 @@ async def reset_agent_status(
     current_user: CurrentActiveUser,
 ):
     """Reset status back to pending (kept for testing/demo utility)."""
-    req = await _get_approval_for_action(
-        session=session,
-        approval_or_agent_id=agent_id,
-        current_user=current_user,
-    )
+    req: ApprovalRequest | None = None
+    mcp_req: McpApprovalRequest | None = None
+    try:
+        req = await _get_approval_for_action(
+            session=session,
+            approval_or_agent_id=agent_id,
+            current_user=current_user,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        mcp_req = await _get_mcp_approval_for_action(
+            session=session,
+            approval_or_mcp_id=agent_id,
+            current_user=current_user,
+        )
+    if mcp_req is not None:
+        now = datetime.now(timezone.utc)
+        mcp_row = await session.get(McpRegistry, mcp_req.mcp_id)
+        if not mcp_row:
+            raise HTTPException(status_code=404, detail="Linked MCP server not found")
+        mcp_req.decision = None
+        mcp_req.reviewed_at = None
+        mcp_req.updated_at = now
+        mcp_row.approval_status = "pending"
+        mcp_row.reviewed_at = None
+        mcp_row.reviewed_by = None
+        mcp_row.is_active = False
+        mcp_row.status = "pending_approval"
+        mcp_row.updated_at = now
+        session.add(mcp_req)
+        session.add(mcp_row)
+        await session.commit()
+        return {
+            "success": True,
+            "message": "MCP status reset to pending",
+            "agentId": str(mcp_req.id),
+            "newStatus": "pending",
+        }
+    assert req is not None
     deployment = await session.get(AgentDeploymentProd, req.deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Linked deployment not found")
