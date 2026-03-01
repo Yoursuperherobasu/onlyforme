@@ -11,6 +11,7 @@ interface AgentCardProps {
   title: string;
   status: "pending" | "approved" | "rejected";
   description: string;
+  entityType?: "agent" | "model" | "mcp";
   submittedBy: {
     name: string;
     avatar?: string;
@@ -25,11 +26,22 @@ interface AgentCardProps {
   onViewMcpConfig?: () => void;
 }
 
+const ENTITY_BADGE_CLASSES: Record<string, string> = {
+  model: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  mcp: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+};
+
+const ENTITY_LABELS: Record<string, string> = {
+  model: "Model",
+  mcp: "MCP",
+};
+
 export function AgentCard({
   entityType = "agent",
   title,
   status,
   description,
+  entityType,
   submittedBy,
   project,
   submitted,
@@ -71,6 +83,15 @@ export function AgentCard({
         <div className="flex-1">
           <div className="mb-2 flex items-center gap-3">
             <h3 className="text-lg font-semibold">{title}</h3>
+            {entityType && entityType !== "agent" && (
+              <span
+                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  ENTITY_BADGE_CLASSES[entityType] ?? ""
+                }`}
+              >
+                {t(ENTITY_LABELS[entityType] ?? entityType)}
+              </span>
+            )}
             <span
               className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColors[status]}`}
             >
@@ -95,7 +116,7 @@ export function AgentCard({
         </div>
         <div>
           <div className="text-xs text-muted-foreground">{t("Version")}</div>
-          <div className="font-medium">{version}</div>
+          <div className="font-medium">{version || "-"}</div>
         </div>
         <div>
           <div className="text-xs text-muted-foreground">{t("Submitted")}</div>
@@ -103,13 +124,15 @@ export function AgentCard({
         </div>
       </div>
 
-      {/* Recent Changes */}
-      <div className="mb-4 rounded-md bg-muted/50 p-3">
-        <div className="mb-1 text-xs font-medium text-muted-foreground">
-          {t("Recent Changes")}
+      {/* Recent Changes - hidden for models */}
+      {entityType !== "model" && (
+        <div className="mb-4 rounded-md bg-muted/50 p-3">
+          <div className="mb-1 text-xs font-medium text-muted-foreground">
+            {t("Recent Changes")}
+          </div>
+          <div className="text-sm font-medium">{recentChanges}</div>
         </div>
-        <div className="text-sm">{recentChanges}</div>
-      </div>
+      )}
 
       {/* Actions */}
       {/* Actions */}

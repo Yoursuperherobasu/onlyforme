@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+from uuid import UUID
 
 from loguru import logger
 
@@ -63,7 +64,7 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
-def _fetch_embedding_models_for_provider(provider: str) -> list[str]:
+def _fetch_embedding_models_for_provider(provider: str, user_id: str | None = None) -> list[str]:
     """Fetch active embedding models from the registry filtered by provider.
 
     Returns a list of strings formatted as 'display_name | model_name | uuid'.
@@ -79,17 +80,79 @@ def _fetch_embedding_models_for_provider(provider: str) -> list[str]:
             from sqlalchemy import select
 
             from agentcore.services.database.models.model_registry.model import ModelRegistry
+            from agentcore.services.database.models.user.model import User
+            from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+            from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 
             async with db_service.with_session() as session:
+                uid = _current_user_id(user_id)
+                normalized_role = ""
+                username = ""
+                org_ids: set[UUID] = set()
+                dept_ids: set[UUID] = set()
+                if uid is not None:
+                    user_row = await session.get(User, uid)
+                    normalized_role = str(getattr(user_row, "role", "") or "").strip().lower()
+                    username = str(getattr(user_row, "username", "") or "")
+                    org_rows = (
+                        await session.execute(
+                            select(UserOrganizationMembership.org_id).where(
+                                UserOrganizationMembership.user_id == uid,
+                                UserOrganizationMembership.status.in_(["accepted", "active"]),
+                            )
+                        )
+                    ).scalars().all()
+                    dept_rows = (
+                        await session.execute(
+                            select(UserDepartmentMembership.department_id).where(
+                                UserDepartmentMembership.user_id == uid,
+                                UserDepartmentMembership.status == "active",
+                            )
+                        )
+                    ).scalars().all()
+                    org_ids = {r for r in org_rows if r is not None}
+                    dept_ids = {r for r in dept_rows if r is not None}
                 stmt = (
                     select(ModelRegistry)
                     .where(ModelRegistry.is_active.is_(True))
+                    .where(ModelRegistry.approval_status == "approved")
                     .where(ModelRegistry.provider == provider)
                     .where(ModelRegistry.model_type == "embedding")
                     .order_by(ModelRegistry.display_name)
                 )
                 result = await session.execute(stmt)
                 rows = result.scalars().all()
+                if uid is not None and normalized_role != "root":
+                    uid_str = str(uid)
+                    filtered: list[ModelRegistry] = []
+                    for row in rows:
+                        visibility = str(getattr(row, "visibility_scope", "private") or "private").lower()
+                        public_dept_ids = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+                        if normalized_role == "super_admin" and row.org_id and row.org_id in org_ids:
+                            filtered.append(row)
+                            continue
+                        if normalized_role == "department_admin" and row.dept_id and row.dept_id in dept_ids:
+                            filtered.append(row)
+                            continue
+                        if normalized_role == "department_admin" and public_dept_ids.intersection({str(v) for v in dept_ids}):
+                            filtered.append(row)
+                            continue
+                        if visibility == "private":
+                            if (
+                                str(getattr(row, "created_by_id", "") or "") == uid_str
+                                or str(getattr(row, "requested_by", "") or "") == uid_str
+                                or str(getattr(row, "created_by", "") or "") == username
+                            ):
+                                filtered.append(row)
+                        elif visibility == "department":
+                            if row.dept_id and row.dept_id in dept_ids:
+                                filtered.append(row)
+                            elif public_dept_ids.intersection({str(v) for v in dept_ids}):
+                                filtered.append(row)
+                        elif visibility == "organization":
+                            if row.org_id and row.org_id in org_ids:
+                                filtered.append(row)
+                    rows = filtered
                 return [f"{r.display_name} | {r.model_name} | {r.id}" for r in rows]
 
         return _run_async(_query())
@@ -98,13 +161,26 @@ def _fetch_embedding_models_for_provider(provider: str) -> list[str]:
         return []
 
 
-def _get_registry_config(model_id: str) -> dict | None:
+def _current_user_id(user_id: str | None = None) -> UUID | None:
+    raw = user_id or os.getenv("AGENTCORE_USER_ID") or os.getenv("USER_ID")
+    if not raw:
+        return None
+    try:
+        return UUID(str(raw))
+    except Exception:
+        return None
+
+
+def _get_registry_config(model_id: str, user_id: str | None = None) -> dict | None:
     """Fetch embedding model config using a dedicated sync engine."""
     from uuid import UUID
 
     from sqlalchemy.orm import Session
 
     from agentcore.services.database.models.model_registry.model import ModelRegistry
+    from agentcore.services.database.models.user.model import User
+    from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+    from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
     from agentcore.utils.crypto import decrypt_api_key
 
     try:
@@ -114,6 +190,57 @@ def _get_registry_config(model_id: str) -> dict | None:
             if row is None:
                 logger.warning(f"Embedding model {model_id} not found in DB via sync engine")
                 return None
+            uid = _current_user_id(user_id)
+            if uid is not None:
+                user_row = session.get(User, uid)
+                normalized_role = str(getattr(user_row, "role", "") or "").strip().lower()
+                if normalized_role != "root":
+                    username = str(getattr(user_row, "username", "") or "")
+                    org_ids = {
+                        r[0]
+                        for r in session.query(UserOrganizationMembership.org_id)
+                        .filter(
+                            UserOrganizationMembership.user_id == uid,
+                            UserOrganizationMembership.status.in_(["accepted", "active"]),
+                        )
+                        .all()
+                        if r and r[0] is not None
+                    }
+                    dept_ids = {
+                        r[0]
+                        for r in session.query(UserDepartmentMembership.department_id)
+                        .filter(
+                            UserDepartmentMembership.user_id == uid,
+                            UserDepartmentMembership.status == "active",
+                        )
+                        .all()
+                        if r and r[0] is not None
+                    }
+                    visibility = str(getattr(row, "visibility_scope", "private") or "private").lower()
+                    public_dept_ids = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+                    uid_str = str(uid)
+                    allowed = False
+                    if normalized_role == "super_admin" and row.org_id and row.org_id in org_ids:
+                        allowed = True
+                    elif normalized_role == "department_admin" and row.dept_id and row.dept_id in dept_ids:
+                        allowed = True
+                    elif normalized_role == "department_admin" and public_dept_ids.intersection({str(v) for v in dept_ids}):
+                        allowed = True
+                    elif visibility == "private":
+                        allowed = (
+                            str(getattr(row, "created_by_id", "") or "") == uid_str
+                            or str(getattr(row, "requested_by", "") or "") == uid_str
+                            or str(getattr(row, "created_by", "") or "") == username
+                        )
+                    elif visibility == "department":
+                        allowed = bool(
+                            (row.dept_id and row.dept_id in dept_ids)
+                            or public_dept_ids.intersection({str(v) for v in dept_ids})
+                        )
+                    elif visibility == "organization":
+                        allowed = bool(row.org_id and row.org_id in org_ids)
+                    if not allowed:
+                        raise ValueError("Access denied to selected embedding model due to RBAC scope")
 
             enc_key = os.getenv("MODEL_REGISTRY_ENCRYPTION_KEY", "")
             if not enc_key:
@@ -186,10 +313,15 @@ class RegistryEmbeddingsComponent(LCEmbeddingsModel):
 
     def update_build_config(self, build_config: dict, field_value: str, field_name: str | None = None):
         """Refresh dropdowns when provider changes or registry_model refresh is clicked."""
+        current_user_id = str(
+            getattr(self, "user_id", None)
+            or getattr(getattr(self, "graph", None), "user_id", None)
+            or ""
+        ).strip() or None
         if field_name == "provider":
             provider_key = PROVIDER_LABEL_TO_KEY.get(field_value, field_value)
             try:
-                options = _fetch_embedding_models_for_provider(provider_key)
+                options = _fetch_embedding_models_for_provider(provider_key, user_id=current_user_id)
                 build_config["registry_model"]["options"] = options if options else []
                 build_config["registry_model"]["value"] = options[0] if options else ""
             except Exception as e:
@@ -202,7 +334,7 @@ class RegistryEmbeddingsComponent(LCEmbeddingsModel):
             provider_key = PROVIDER_LABEL_TO_KEY.get(provider_label, provider_label)
             if provider_key:
                 try:
-                    options = _fetch_embedding_models_for_provider(provider_key)
+                    options = _fetch_embedding_models_for_provider(provider_key, user_id=current_user_id)
                     build_config["registry_model"]["options"] = options if options else []
                     if options and not build_config["registry_model"].get("value"):
                         build_config["registry_model"]["value"] = options[0]
@@ -226,7 +358,12 @@ class RegistryEmbeddingsComponent(LCEmbeddingsModel):
 
         model_id = parts[2]
 
-        config = _get_registry_config(model_id)
+        current_user_id = str(
+            getattr(self, "user_id", None)
+            or getattr(getattr(self, "graph", None), "user_id", None)
+            or ""
+        ).strip() or None
+        config = _get_registry_config(model_id, user_id=current_user_id)
         if config is None:
             msg = f"Embedding model {model_id} not found in registry or has been deleted."
             raise ValueError(msg)

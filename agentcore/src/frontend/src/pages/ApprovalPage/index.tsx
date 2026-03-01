@@ -118,8 +118,6 @@ export default function ApprovalPage() {
       await handleReject(selectedAgent, data.comments, data.attachments);
     }
 
-    // Close modal after action completes
-    closeModal();
   };
 
   return (
@@ -131,7 +129,7 @@ export default function ApprovalPage() {
             <h1 className="text-2xl font-semibold">{t("Review & Approval")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("Review and approve AI agents before deployment")}
+            {t("Review and approve model, MCP, and AI agent requests")}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -220,6 +218,7 @@ export default function ApprovalPage() {
         open={isOpen}
         setOpen={closeModal}
         action={action}
+        entityType={selectedAgent?.entityType}
         agentTitle={selectedAgent?.title || ""}
         onSubmit={handleSubmitAction}
       />
