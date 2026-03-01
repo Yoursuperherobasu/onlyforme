@@ -32,7 +32,7 @@ import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
 import type { McpRegistryType, McpProbeResponse } from "@/types/mcp";
-import RequestMcpServerModal from "./components/request-mcp-server-modal";
+
 import { useTranslation } from "react-i18next";
 
 export default function MCPServersPage() {
@@ -428,7 +428,7 @@ export default function MCPServersPage() {
 
       {/* Modals */}
       <AddMcpServerModal open={addOpen} setOpen={setAddOpen} />
-      <RequestMcpServerModal open={requestOpen} setOpen={setRequestOpen} />
+      <AddMcpServerModal open={requestOpen} setOpen={setRequestOpen} requestMode />
       {editOpen && editServer && (
         <AddMcpServerModal
           open={editOpen}
@@ -449,3 +449,4 @@ export default function MCPServersPage() {
     </div>
   );
 }
+

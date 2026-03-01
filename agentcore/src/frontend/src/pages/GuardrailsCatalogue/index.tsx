@@ -45,7 +45,7 @@ const GUARDRAIL_FRAMEWORKS: GuardrailFramework[] = [
     name: "NeMo Guardrails",
     description: "NVIDIA's NeMo Guardrails framework for LLM safety and moderation with configurable policies",
     icon: NvidiaLogo,
-  },
+  }
 ];
 
 export default function GuardrailsView({
@@ -60,7 +60,7 @@ export default function GuardrailsView({
   const [selectedFramework, setSelectedFramework] =
     useState<GuardrailFramework | null>(null);
 
-  const { role, permissions } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
   const canCreateOrEdit = can("add_guardrails");
   const canDelete = can("retire_guardrails");
@@ -69,7 +69,15 @@ export default function GuardrailsView({
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
-  const { data: dbGuardrails, isLoading, error } = useGetGuardrailsCatalogue();
+  const selectedFrameworkId =
+    selectedFramework?.id === "nemo-guardrails"
+      ? "nemo"
+      : selectedFramework?.id === "arize-guardrails"
+        ? "arize"
+        : undefined;
+  const { data: dbGuardrails, isLoading, error } = useGetGuardrailsCatalogue(
+    { framework: selectedFrameworkId },
+  );
   const deleteMutation = useDeleteGuardrailCatalogue();
 
   const displayGuardrails = guardrails?.length
@@ -77,12 +85,8 @@ export default function GuardrailsView({
     : (dbGuardrails ?? []);
 
   const filteredGuardrails = displayGuardrails.filter((guardrail) => {
-    if (selectedFramework && guardrail.provider && selectedFramework.id === "nemo-guardrails") {
-      const p = String(guardrail.provider).toLowerCase();
-      if (!(p.includes("nemo") || p.includes("nvidia"))) {
-        return false;
-      }
-    }
+    // Guardrail provider reflects the backing model provider (e.g. openai/azure),
+    // not the guardrail framework. Do not filter by provider in framework view.
     const matchesFilter = filter === "all" || guardrail.category === filter;
     const matchesSearch =
       !searchQuery ||
@@ -365,6 +369,7 @@ export default function GuardrailsView({
             open={isEditModalOpen}
             onOpenChange={setIsEditModalOpen}
             guardrail={selectedGuardrail}
+            frameworkId={selectedFrameworkId}
           />
         </div>
       )}

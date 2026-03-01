@@ -22,9 +22,6 @@ const APPROVAL_TABS: Array<{ id: ApprovalTabType; label: string; permission: str
   { id: "mcp", label: "MCP", permission: "view_mcp" },
 ];
 
-// Hardcoded mapping for now; API/DB-backed mapping can replace this later.
-const APPROVAL_ENTITY_TYPE_BY_ID: Record<string, ApprovalTabType> = {};
-
 export default function ApprovalPage() {
   const { t } = useTranslation();
   /* ================= STATE ================= */
@@ -55,7 +52,7 @@ export default function ApprovalPage() {
 
   /* ================= FILTERING & CALCULATIONS ================= */
   const filteredAgents = agents.filter((agent) => {
-    const entityType = APPROVAL_ENTITY_TYPE_BY_ID[agent.id] || "agent";
+    const entityType = (agent.entityType || "agent") as ApprovalTabType;
     const matchesTab = entityType === activeTab;
     const matchesFilter = filter === "all" ? true : agent.status === filter;
     const matchesSearch =

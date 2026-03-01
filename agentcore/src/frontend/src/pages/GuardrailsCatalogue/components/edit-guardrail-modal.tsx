@@ -28,6 +28,7 @@ interface EditGuardrailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   guardrail?: GuardrailInfo | null;
+  frameworkId?: "nemo" | "arize";
 }
 
 const CATEGORY_OPTIONS = [
@@ -75,6 +76,7 @@ export default function EditGuardrailModal({
   open,
   onOpenChange,
   guardrail,
+  frameworkId = "nemo",
 }: EditGuardrailModalProps) {
   const isEditMode = !!guardrail;
   const { role } = useContext(AuthContext);
@@ -311,6 +313,7 @@ export default function EditGuardrailModal({
     const payload: GuardrailCreateOrUpdatePayload = {
       name: name.trim(),
       description: description.trim() || null,
+      framework: (guardrail?.framework as "nemo" | "arize" | undefined) || frameworkId,
       modelRegistryId,
       category,
       status,
