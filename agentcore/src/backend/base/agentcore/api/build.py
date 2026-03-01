@@ -29,6 +29,65 @@ from agentcore.services.job_queue.service import JobQueueNotFoundError, JobQueue
 from agentcore.services.telemetry.schema import PlaygroundPayload
 
 
+async def _ensure_hitl_record(
+    *,
+    thread_id: str,
+    agent_id: str,
+    session_id: str,
+    user_id: str,
+    interrupt_data: dict,
+) -> None:
+    """Ensure an HITLRequest record exists for this interrupted thread.
+
+    If _persist_hitl_request() in nodes.py already created the record,
+    this is a no-op.  Otherwise it creates a new PENDING record so the
+    HITL Approvals page can find it.
+    """
+    try:
+        from agentcore.services.database.models.hitl_request.model import (
+            HITLRequest,
+            HITLStatus,
+        )
+        from sqlmodel import col
+
+        async with session_scope() as db:
+            # Check if a PENDING record already exists for this thread
+            existing = (
+                await db.exec(
+                    select(HITLRequest)
+                    .where(HITLRequest.thread_id == thread_id)
+                    .where(HITLRequest.status == HITLStatus.PENDING)
+                    .order_by(col(HITLRequest.requested_at).desc())
+                    .limit(1)
+                )
+            ).first()
+
+            if existing:
+                logger.debug(
+                    f"[HITL] HITLRequest already exists for thread_id={thread_id!r} "
+                    f"(id={existing.id})"
+                )
+                return
+
+            # Create a new PENDING record
+            hitl_req = HITLRequest(
+                thread_id=thread_id,
+                agent_id=uuid.UUID(agent_id),
+                session_id=session_id,
+                user_id=uuid.UUID(user_id) if user_id else None,
+                interrupt_data=interrupt_data,
+                status=HITLStatus.PENDING,
+            )
+            db.add(hitl_req)
+            await db.commit()
+            logger.info(
+                f"[HITL] Fallback: created HITLRequest for thread_id={thread_id!r} "
+                f"(id={hitl_req.id})"
+            )
+    except Exception as err:
+        logger.error(f"[HITL] Could not ensure HITLRequest record: {err}")
+
+
 async def start_agent_build(
     *,
     agent_id: uuid.UUID,
@@ -322,6 +381,10 @@ async def generate_agent_events(
 
         run_inputs = inputs.model_dump() if inputs else {}
 
+        # Store event_manager on adapter so node_function can access it
+        # via vertex.graph._event_manager (must NOT be in state — not serializable)
+        graph._event_manager = event_manager
+
         initial_state = {
             "vertices_results": {},
             "artifacts": {},
@@ -333,29 +396,65 @@ async def generate_agent_events(
             "agent_name": agent_name or "",
             "session_id": getattr(inputs, "session", str(agent_id)) if inputs else str(agent_id),
             "user_id": str(current_user.id),
-            "event_manager": event_manager,
             "input_data": run_inputs,
             "files": files,
             "fallback_to_env_vars": False,
             "stop_component_id": stop_component_id,
             "start_component_id": start_component_id,
-            "vertex_objects": graph.vertex_map,
             "predecessor_map": dict(graph.predecessor_map),
             "successor_map": dict(graph.successor_map),
             "in_degree_map": dict(graph.in_degree_map),
-            "cycle_vertices": graph.cycle_vertices,
+            "cycle_vertices": list(graph.cycle_vertices),
             "is_cyclic": graph.is_cyclic,
             "current_layer": 0,
             "vertices_layers": graph.vertices_layers if hasattr(graph, "vertices_layers") else [],
             "input_vertex_ids": list(graph._is_input_vertices),
         }
 
-        async for _state_update in graph.compiled_app.astream(initial_state):
+        _thread_id = initial_state.get("session_id") or str(agent_id)
+        _lg_config = {"configurable": {"thread_id": _thread_id}}
+        async for _state_update in graph.compiled_app.astream(initial_state, config=_lg_config):
             pass  # end_vertex events already emitted by node_function
+
+        # After astream() returns normally: check if the graph was interrupted.
+        # When interrupt() fires, Pregel saves the checkpoint to MemorySaver and
+        # terminates astream() without raising.  At this point the checkpoint IS
+        # saved, so we can serialize it and attach it to the HITLRequest row so
+        # the resume endpoint can restore it even after a server restart.
+        try:
+            _graph_state = await graph.compiled_app.aget_state(_lg_config)
+            if _graph_state.next:
+                # Extract interrupt data from the graph state
+                _interrupt_data = {}
+                if _graph_state.tasks and _graph_state.tasks[0].interrupts:
+                    _interrupt_data = _graph_state.tasks[0].interrupts[0].value or {}
+
+                # Fallback: ensure HITLRequest record exists in DB.
+                # _persist_hitl_request() in nodes.py may have failed silently
+                # (e.g., DB session issue during LangGraph execution).  This
+                # fallback guarantees the HITL Approvals page can find the record.
+                await _ensure_hitl_record(
+                    thread_id=_thread_id,
+                    agent_id=str(agent_id),
+                    session_id=_thread_id,
+                    user_id=str(current_user.id),
+                    interrupt_data=_interrupt_data,
+                )
+
+                from agentcore.graph_langgraph.nodes import save_hitl_checkpoint_after_interrupt
+                await save_hitl_checkpoint_after_interrupt(_thread_id)
+        except Exception as _chk_err:
+            logger.warning(f"[HITL] Could not save checkpoint after interrupt: {_chk_err}")
 
     except asyncio.CancelledError:
         background_tasks.add_task(graph.end_all_traces_in_context())
         raise
+    # NOTE: GraphInterrupt is NOT caught here.
+    # When interrupt() is called inside a LangGraph node, LangGraph catches the
+    # GraphInterrupt internally (saves checkpoint, marks graph interrupted) and
+    # astream() terminates *normally*.  All HITL work (frontend events + DB
+    # persistence) is done inside the except GraphInterrupt block in nodes.py,
+    # which is the only reliable execution point for interrupt handling.
     except Exception as e:
         logger.error(f"Error in LangGraph execution: {e}")
         error_message = ErrorMessage(

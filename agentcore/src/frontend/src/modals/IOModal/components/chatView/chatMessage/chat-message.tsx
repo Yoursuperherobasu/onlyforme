@@ -1,5 +1,6 @@
 import Convert from "ansi-to-html";
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
 import { useUpdateMessage } from "@/controllers/API/queries/messages";
 import { CustomMarkdownField } from "@/customization/components/custom-markdown-field";
@@ -7,6 +8,9 @@ import { CustomProfileIcon } from "@/customization/components/custom-profile-ico
 import { ENABLE_DATASTAX_SENSEI } from "@/customization/feature-flags";
 import useAgentStore from "@/stores/agentStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
+import { useMessagesStore } from "@/stores/messagesStore";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import Robot from "../../../../../assets/robot.png";
 import IconComponent, {
   ForwardedIconComponent,
@@ -46,6 +50,7 @@ export default function ChatMessage({
   const [editMessage, setEditMessage] = useState(false);
   const [showError, setShowError] = useState(false);
   const isBuilding = useAgentStore((state) => state.isBuilding);
+  const queryClient = useQueryClient();
 
   const isAudioMessage = chat.category === "audio";
 
@@ -155,6 +160,35 @@ export default function ChatMessage({
       },
     );
   };
+
+  // ── HITL approval ──────────────────────────────────────────────────────────
+  const isHitl = !chat.isSend && chat.properties?.hitl === true;
+  const hitlActions: string[] = isHitl ? (chat.properties?.actions ?? []) : [];
+  const hitlThreadId: string = isHitl ? (chat.properties?.thread_id ?? "") : "";
+  const [hitlDone, setHitlDone] = useState<string | null>(null);
+  const [hitlLoading, setHitlLoading] = useState<string | null>(null);
+
+  const handleHitlAction = async (action: string) => {
+    if (hitlDone || hitlLoading) return;
+    setHitlLoading(action);
+    try {
+      await api.post(`${getURL("HITL")}/${hitlThreadId}/resume`, {
+        action,
+        feedback: "",
+        edited_value: "",
+      });
+      setHitlDone(action);
+      // Clear the "agent running" spinner and re-fetch messages so the AI
+      // response from the resumed graph appears in chat automatically.
+      useMessagesStore.getState().setDisplayLoadingMessage(false);
+      queryClient.invalidateQueries({ queryKey: ["useGetMessagesQuery"] });
+    } catch (_err) {
+      // leave buttons enabled so user can retry
+    } finally {
+      setHitlLoading(null);
+    }
+  };
+  // ────────────────────────────────────────────────────────────────────────────
 
   const handleEvaluateAnswer = (evaluation: boolean | null) => {
     updateMessageMutation(
@@ -369,6 +403,34 @@ export default function ChatMessage({
                                 chatMessage={chatMessage}
                                 editedFlag={editedFlag}
                               />
+                            )}
+                            {isHitl && hitlActions.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {hitlActions.map((action) => (
+                                  <button
+                                    key={action}
+                                    onClick={() => handleHitlAction(action)}
+                                    disabled={!!hitlDone || !!hitlLoading}
+                                    className={cn(
+                                      "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                                      hitlDone === action
+                                        ? "border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                                        : hitlDone
+                                          ? "cursor-not-allowed border-border bg-muted/30 text-muted-foreground opacity-50"
+                                          : hitlLoading === action
+                                            ? "cursor-wait border-border bg-muted/50 text-muted-foreground"
+                                            : "border-border bg-background text-primary hover:bg-muted/40 cursor-pointer",
+                                    )}
+                                  >
+                                    {hitlLoading === action ? "…" : hitlDone === action ? `✓ ${action}` : action}
+                                  </button>
+                                ))}
+                                {hitlDone && (
+                                  <span className="self-center text-xs text-muted-foreground">
+                                    Decision submitted — agent will continue.
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         )}

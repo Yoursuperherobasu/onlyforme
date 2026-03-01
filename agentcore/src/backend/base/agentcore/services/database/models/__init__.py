@@ -31,6 +31,7 @@ from .guardrail_catalogue import GuardrailCatalogue
 from .help_support import HelpSupportQuestion
 from .package import Package
 from .teams_app import TeamsApp
+from .hitl_request import HITLRequest
 
 __all__ = [
     "Agent",
@@ -74,4 +75,5 @@ __all__ = [
     "OrchTransactionTable",
     "Package",
     "User",
+    "HITLRequest",
 ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from loguru import logger
 from pydantic import BaseModel
@@ -9,7 +10,7 @@ from agentcore.graph_langgraph import LangGraphVertex
 from agentcore.processing.utils import validate_and_repair_json
 from agentcore.schema.graph import InputValue, Tweaks
 from agentcore.schema.schema import INPUT_FIELD_NAME
-from agentcore.services.deps import get_settings_service
+from agentcore.services.deps import get_settings_service, session_scope
 
 if TYPE_CHECKING:
     from agentcore.api.v1_schemas import InputValueRequest
@@ -58,7 +59,50 @@ async def run_graph_internal(
         fallback_to_env_vars=fallback_to_env_vars,
         event_manager=event_manager,
     )
+
+    # If the graph was interrupted (HITL node called interrupt()), persist a
+    # HITLRequest record so the resume API can find the paused run.
+    await _persist_hitl_if_interrupted(run_outputs, agent_id, effective_session_id, graph)
+
     return run_outputs, effective_session_id
+
+
+async def _persist_hitl_if_interrupted(
+    run_outputs: list[RunOutputs],
+    agent_id: str,
+    session_id: str,
+    graph: LangGraphAdapter,
+) -> None:
+    """If any RunOutputs has status='interrupted', save a HITLRequest row."""
+    for ro in run_outputs:
+        meta = getattr(ro, "metadata", {}) or {}
+        if meta.get("status") != "interrupted":
+            continue
+        thread_id = meta.get("thread_id", session_id)
+        interrupt_data = meta.get("interrupt_data", {})
+        try:
+            from agentcore.services.database.models.hitl_request.model import (
+                HITLRequest,
+                HITLStatus,
+            )
+
+            async with session_scope() as db:
+                hitl_record = HITLRequest(
+                    thread_id=thread_id,
+                    agent_id=UUID(str(agent_id)),
+                    session_id=session_id,
+                    user_id=UUID(str(graph.user_id)) if getattr(graph, "user_id", None) else None,
+                    interrupt_data=interrupt_data,
+                    status=HITLStatus.PENDING,
+                )
+                db.add(hitl_record)
+                await db.commit()
+                logger.info(
+                    f"[HITL] Persisted HITLRequest id={hitl_record.id} "
+                    f"thread_id={thread_id!r} for agent_id={agent_id}"
+                )
+        except Exception as exc:
+            logger.warning(f"[HITL] Could not persist HITLRequest: {exc}")
 
 
 async def run_graph(

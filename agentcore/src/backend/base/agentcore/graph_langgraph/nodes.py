@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
+from langgraph.errors import GraphInterrupt
 from loguru import logger
 
 from agentcore.graph_langgraph.state import AgentCoreState
@@ -147,7 +148,7 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
                     user_id=state.get("user_id"),
                     inputs=inputs_dict,
                     files=state.get("files"),
-                    event_manager=state.get("event_manager"),
+                    event_manager=getattr(vertex.graph, "_event_manager", None),
                     fallback_to_env_vars=state.get("fallback_to_env_vars", False),
                 )
 
@@ -202,7 +203,7 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
             # ----------------------------------------------------------
             # 8. EMIT end_vertex EVENT for Playground streaming
             # ----------------------------------------------------------
-            event_manager = state.get("event_manager")
+            event_manager = getattr(vertex.graph, "_event_manager", None)
             if event_manager is not None:
                 _emit_end_vertex_event(
                     vertex=vertex,
@@ -234,6 +235,42 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
                 f"built_object type={type(vertex.built_object).__name__}"
             )
             return updates
+
+        except GraphInterrupt as gi:
+            # Expected HITL pause — LangGraph handles interrupt() internally:
+            # astream() terminates NORMALLY (no exception propagates to build.py).
+            # So THIS is the only place where we can do HITL work:
+            #   1. Emit frontend events (pause message + end_vertex)
+            #   2. Persist HITLRequest to DB
+            elapsed_time = time.time() - start_time
+
+            # Extract interrupt payload from gi.args[0] (tuple of Interrupt objects)
+            _interrupts = gi.args[0] if gi.args else ()
+            _first = _interrupts[0] if _interrupts else None
+            interrupt_value = getattr(_first, "value", {}) if _first is not None else {}
+
+            # 1. Frontend events
+            event_manager = getattr(vertex.graph, "_event_manager", None)
+            if event_manager is not None:
+                _emit_hitl_pause_event(
+                    vertex=vertex,
+                    graph=graph,
+                    event_manager=event_manager,
+                    elapsed_time=elapsed_time,
+                    interrupt_value=interrupt_value,
+                )
+
+            # 2. Persist HITLRequest to DB
+            # NOTE: build.py's except GraphInterrupt block is NEVER reached because
+            # LangGraph catches the re-raised exception internally and astream()
+            # returns normally.  This is the only reliable insertion point.
+            await _persist_hitl_request(
+                graph=graph,
+                state=state,
+                interrupt_value=interrupt_value,
+            )
+
+            raise
 
         except Exception as e:
             logger.exception(f"Error building vertex {vertex.id}: {e}")
@@ -329,6 +366,238 @@ def _emit_end_vertex_event(
         logger.opt(exception=True).warning(f"Error emitting end_vertex event for {vertex.id}")
 
 
+def _emit_hitl_pause_event(
+    *,
+    vertex: Any,
+    graph: Any,
+    event_manager: Any,
+    elapsed_time: float,
+    interrupt_value: dict,
+) -> None:
+    """Emit events that signal a HITL pause to the frontend.
+
+    Emits two events:
+    1. ``end_vertex`` — marks the HumanApproval node as "completed" (green checkmark
+       in the flow canvas) with the review question shown as the vertex output.
+    2. ``add_message`` with ``sender="Machine"`` — adds the HITL question to the
+       chat history AND clears the "agent running..." spinner (the frontend only
+       clears the spinner when a Machine message or error arrives).
+    """
+    import json
+    from uuid import uuid4
+
+    from agentcore.api.schemas import ResultDataResponse, VertexBuildResponse
+    from agentcore.api.utils import format_elapsed_time
+
+    try:
+        # Build a human-readable summary of the pending review request.
+        question = (
+            interrupt_value.get("question", "Awaiting human review")
+            if isinstance(interrupt_value, dict)
+            else str(interrupt_value)
+        )
+        actions = (
+            interrupt_value.get("actions", [])
+            if isinstance(interrupt_value, dict)
+            else []
+        )
+        actions_str = ", ".join(actions) if actions else "—"
+
+        # ── 1. end_vertex event ───────────────────────────────────────────────
+        result_data = ResultDataResponse(
+            results={"text": f"⏸ Waiting for human review\n\n{question}\n\nActions: {actions_str}"},
+            message=None,
+            duration=format_elapsed_time(elapsed_time),
+            timedelta=elapsed_time,
+        )
+
+        build_response = VertexBuildResponse(
+            inactivated_vertices=[],
+            next_vertices_ids=[],
+            top_level_vertices=[],
+            valid=True,
+            params=f"HITL pause — actions: {actions_str}",
+            id=vertex.id,
+            data=result_data,
+        )
+
+        build_data = json.loads(build_response.model_dump_json())
+        event_manager.on_end_vertex(data={"build_data": build_data})
+
+        graph.reset_inactivated_vertices()
+        graph.reset_activated_vertices()
+
+        # ── 2. add_message event (Machine) — clears "agent running..." spinner ──
+        # The frontend's messagesStore calls setDisplayLoadingMessage(false) only
+        # when it receives a message with sender="Machine" or category="error".
+        # Without this, the spinner stays permanently after a HITL pause.
+        #
+        # IMPORTANT: timestamp must be set to a current UTC time string in the
+        # format "YYYY-MM-DD HH:MM:SS UTC".  Without it parseTimestampAsUTC()
+        # returns 0 (1970 epoch), which sorts the message before the User's
+        # message and hides it above the StickToBottom scroll position.
+        from datetime import datetime, timezone as _tz
+
+        session_id = getattr(graph, "_session_id", None) or getattr(graph, "session_id", None)
+        agent_id = str(graph.agent_id) if getattr(graph, "agent_id", None) else None
+        now_utc = datetime.now(_tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        actions_display = "\n".join(f"• {a}" for a in actions) if actions else "—"
+        message_text = (
+            f"⏸ **Waiting for human review**\n\n"
+            f"{question}\n\n"
+            f"**Available actions:**\n{actions_display}"
+        )
+
+        event_manager.on_message(data={
+            "sender": "Machine",
+            "sender_name": "Agent",
+            "text": message_text,
+            "category": "message",
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "id": str(uuid4()),
+            "timestamp": now_utc,
+            "files": [],
+            "edit": False,
+            "background_color": "",
+            "text_color": "",
+            # HITL metadata — chat-message.tsx reads these to render action buttons.
+            "properties": {
+                "hitl": True,
+                "thread_id": session_id,
+                "actions": actions,
+            },
+        })
+
+        logger.info(
+            f"[HITL] Emitted pause events for {vertex.id} ({vertex.display_name}). "
+            f"Question: {question!r}"
+        )
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"[HITL] Error emitting pause events for {vertex.id}"
+        )
+
+
+async def _persist_hitl_request(
+    *,
+    graph: Any,
+    state: Any,
+    interrupt_value: dict,
+) -> None:
+    """Persist a HITLRequest row to the database.
+
+    Called from the ``except GraphInterrupt`` block in ``node_function``.
+    build.py's ``except GraphInterrupt`` is never reached because LangGraph
+    handles the re-raised exception internally (astream terminates normally).
+
+    NOTE: checkpoint_data is NOT set here because the LangGraph checkpoint has
+    not been saved to MemorySaver yet at this point — Pregel saves the checkpoint
+    AFTER catching the re-raised GraphInterrupt (i.e., after this handler runs).
+    The checkpoint is serialized in build.py's post-astream hook via
+    ``save_hitl_checkpoint_after_interrupt()``.
+    """
+    import uuid
+
+    try:
+        from agentcore.services.database.models.hitl_request.model import (
+            HITLRequest,
+            HITLStatus,
+        )
+        from agentcore.services.deps import session_scope as _session_scope
+
+        thread_id = getattr(graph, "_session_id", None) or ""
+        agent_id_raw = getattr(graph, "agent_id", None)
+        user_id_raw = state.get("user_id") if state else None
+
+        async with _session_scope() as _db:
+            _hitl = HITLRequest(
+                thread_id=thread_id,
+                agent_id=uuid.UUID(str(agent_id_raw)) if agent_id_raw else uuid.uuid4(),
+                session_id=thread_id,
+                user_id=uuid.UUID(str(user_id_raw)) if user_id_raw else None,
+                interrupt_data=interrupt_value,
+                status=HITLStatus.PENDING,
+                checkpoint_data=None,  # filled in by save_hitl_checkpoint_after_interrupt()
+            )
+            _db.add(_hitl)
+            await _db.commit()
+            logger.info(f"[HITL] Persisted HITLRequest for thread_id={thread_id!r}")
+    except Exception as _err:
+        logger.warning(f"[HITL] Could not persist HITLRequest: {_err}")
+
+
+async def save_hitl_checkpoint_after_interrupt(thread_id: str) -> None:
+    """Serialize the MemorySaver checkpoint and store it in the HITLRequest DB row.
+
+    Must be called AFTER ``compiled_app.astream()`` / ``ainvoke()`` returns when
+    the graph was interrupted.  At that point Pregel has already saved the
+    checkpoint to MemorySaver, so ``storage`` and ``blobs`` are populated.
+
+    Updates the most-recent PENDING HITLRequest row for ``thread_id`` with the
+    serialized checkpoint so it survives server restarts.
+    """
+    import base64
+    import pickle
+
+    try:
+        from agentcore.graph_langgraph.checkpointer import get_checkpointer
+        from agentcore.services.database.models.hitl_request.model import (
+            HITLRequest,
+            HITLStatus,
+        )
+        from agentcore.services.deps import session_scope as _session_scope
+        from sqlmodel import col, select
+
+        checkpointer = get_checkpointer()
+        # storage: defaultdict(thread_id -> defaultdict(checkpoint_ns -> dict[...]))
+        # blobs:   defaultdict((thread_id, ns, channel, version) -> (type, bytes))
+        storage_for_thread = dict(checkpointer.storage.get(thread_id, {}))
+        blobs_for_thread = {
+            key: value
+            for key, value in checkpointer.blobs.items()
+            if key[0] == thread_id
+        }
+        if not storage_for_thread and not blobs_for_thread:
+            logger.warning(
+                f"[HITL] No checkpoint in MemorySaver for thread_id={thread_id!r} "
+                "— checkpoint_data will remain NULL"
+            )
+            return
+
+        payload = {"storage": storage_for_thread, "blobs": blobs_for_thread}
+        checkpoint_b64 = base64.b64encode(pickle.dumps(payload)).decode()
+
+        # Update the most recent PENDING HITLRequest for this thread_id
+        async with _session_scope() as _db:
+            stmt = (
+                select(HITLRequest)
+                .where(HITLRequest.thread_id == thread_id)
+                .where(HITLRequest.status == HITLStatus.PENDING)
+                .where(HITLRequest.checkpoint_data.is_(None))
+                .order_by(col(HITLRequest.requested_at).desc())
+                .limit(1)
+            )
+            result = await _db.exec(stmt)
+            hitl_row = result.first()
+            if hitl_row:
+                hitl_row.checkpoint_data = checkpoint_b64
+                _db.add(hitl_row)
+                await _db.commit()
+                logger.info(
+                    f"[HITL] Checkpoint saved for thread_id={thread_id!r} "
+                    f"({len(checkpoint_b64)} chars)"
+                )
+            else:
+                logger.warning(
+                    f"[HITL] No PENDING HITLRequest found for thread_id={thread_id!r} "
+                    "to attach checkpoint"
+                )
+    except Exception as _err:
+        logger.warning(f"[HITL] Could not save checkpoint data: {_err}")
+
+
 def create_routing_function(
     *,
     vertex_id: str,
@@ -368,25 +637,80 @@ def create_routing_function(
     return route
 
 
+def _get_source_output_name(vertex: LangGraphVertex, source_vertex_id: str, target_param: str) -> str | None:
+    """Return the sourceHandle name for the edge connecting source_vertex_id → vertex[target_param].
+
+    Multi-output nodes (SmartRouter, HumanApproval, …) store their results as a
+    dict keyed by output name.  When resolving parameters from state we need to
+    know *which* output was connected to this parameter so we can extract the
+    right value instead of passing the whole dict downstream.
+    """
+    graph = getattr(vertex, "graph", None)
+    if graph is None:
+        return None
+    for edge in getattr(graph, "edges", []):
+        if edge.get("source") != source_vertex_id:
+            continue
+        if edge.get("target") != vertex.id:
+            continue
+        # Check that this edge targets the right parameter
+        target_handle = edge.get("data", {}).get("targetHandle", {})
+        field_name = target_handle.get("fieldName") if isinstance(target_handle, dict) else None
+        if field_name and field_name != target_param:
+            continue
+        source_handle = edge.get("data", {}).get("sourceHandle", {})
+        return source_handle.get("name") if isinstance(source_handle, dict) else None
+    return None
+
+
+def _extract_from_result(result: Any, source_output: str | None) -> Any:
+    """Extract a specific output value from a multi-output built_result dict.
+
+    When a node produces multiple outputs (e.g. HumanApproval with Approve/Reject),
+    its vertices_results entry is a dict like ``{"Approve": Message(...), "Reject": Message(...)}``.
+    This helper picks the right value using the connected output name.
+    """
+    if not isinstance(result, dict):
+        return result
+    if source_output and source_output in result:
+        return result[source_output]
+    # Single-value dict — unwrap automatically
+    if len(result) == 1:
+        return next(iter(result.values()))
+    # Multiple values but no matching key — return the whole dict (caller must handle)
+    return result
+
+
 def _resolve_vertex_dependencies(vertex: LangGraphVertex, state: AgentCoreState) -> dict[str, Any]:
     """Resolve vertex parameter dependencies from state.
 
     Vertices can have parameters that reference other vertices by ID. This function
     resolves those references by looking up the results in the state.
+
+    When the upstream vertex produced multiple outputs (built_result is a dict),
+    we use the edge's sourceHandle.name to extract only the connected output value.
     """
     resolved_params = {}
 
     for key, value in vertex.raw_params.items():
         # Case 1: Value is a vertex ID (string matching pattern)
         if isinstance(value, str) and value in state["vertices_results"]:
-            resolved_params[key] = state["vertices_results"][value]
+            result = state["vertices_results"][value]
+            if isinstance(result, dict):
+                source_output = _get_source_output_name(vertex, value, key)
+                result = _extract_from_result(result, source_output)
+            resolved_params[key] = result
 
         # Case 2: Value is a list that might contain vertex IDs
         elif isinstance(value, list):
             resolved_list = []
             for item in value:
                 if isinstance(item, str) and item in state["vertices_results"]:
-                    resolved_list.append(state["vertices_results"][item])
+                    item_result = state["vertices_results"][item]
+                    if isinstance(item_result, dict):
+                        source_output = _get_source_output_name(vertex, item, key)
+                        item_result = _extract_from_result(item_result, source_output)
+                    resolved_list.append(item_result)
                 else:
                     resolved_list.append(item)
             if resolved_list != value:
@@ -399,7 +723,11 @@ def _resolve_vertex_dependencies(vertex: LangGraphVertex, state: AgentCoreState)
             for sub_key, sub_value in value.items():
                 if isinstance(sub_value, str) and sub_value in state["vertices_results"]:
                     has_vertices = True
-                    resolved_dict[sub_key] = state["vertices_results"][sub_value]
+                    item_result = state["vertices_results"][sub_value]
+                    if isinstance(item_result, dict):
+                        source_output = _get_source_output_name(vertex, sub_value, key)
+                        item_result = _extract_from_result(item_result, source_output)
+                    resolved_dict[sub_key] = item_result
                 else:
                     resolved_dict[sub_key] = sub_value
 

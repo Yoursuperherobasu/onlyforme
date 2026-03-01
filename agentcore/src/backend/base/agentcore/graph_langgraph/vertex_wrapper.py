@@ -393,11 +393,16 @@ class LangGraphVertex:
             # Fall back to built_object
             if result_value is None and source_vertex.built_object is not None:
                 if isinstance(source_vertex.built_object, dict) and source_output:
-                    result_value = source_vertex.built_object.get(source_output, source_vertex.built_object)
+                    result_value = source_vertex.built_object.get(source_output)
+                    # If key not found, try single-value unwrap before returning full dict
+                    if result_value is None and len(source_vertex.built_object) == 1:
+                        result_value = next(iter(source_vertex.built_object.values()))
                 elif isinstance(source_vertex.built_object, dict) and len(source_vertex.built_object) == 1:
                     result_value = list(source_vertex.built_object.values())[0]
-                else:
+                elif not isinstance(source_vertex.built_object, dict):
                     result_value = source_vertex.built_object
+                # If built_object is a multi-key dict and we have no source_output,
+                # leave result_value = None so we skip rather than pass a raw dict.
 
             if result_value is None:
                 continue

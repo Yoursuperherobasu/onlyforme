@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from loguru import logger
 
@@ -80,7 +81,13 @@ class LangGraphExecutor:
         try:
             # Execute the workflow
             logger.debug("Invoking LangGraph workflow")
-            final_state = await self.compiled_app.ainvoke(initial_state)
+            _thread_id = (
+                getattr(self.adapter, "_session_id", None)
+                or getattr(self.adapter, "session_id", None)
+                or str(uuid4())
+            )
+            _lg_config = {"configurable": {"thread_id": _thread_id}}
+            final_state = await self.compiled_app.ainvoke(initial_state, config=_lg_config)
             
             logger.info(
                 f"LangGraph execution completed. "
@@ -142,7 +149,13 @@ class LangGraphExecutor:
         
         try:
             # Stream execution
-            async for state_update in self.compiled_app.astream(initial_state):
+            _thread_id = (
+                getattr(self.adapter, "_session_id", None)
+                or getattr(self.adapter, "session_id", None)
+                or str(uuid4())
+            )
+            _lg_config = {"configurable": {"thread_id": _thread_id}}
+            async for state_update in self.compiled_app.astream(initial_state, config=_lg_config):
                 logger.debug(f"State update: {state_update.keys() if isinstance(state_update, dict) else type(state_update)}")
                 yield state_update
                 
@@ -174,41 +187,43 @@ class LangGraphExecutor:
         Returns:
             Initial AgentCoreState
         """
+        # Store event_manager on adapter so node_function can access it
+        # via vertex.graph._event_manager (must NOT be in state — not serializable)
+        self.adapter._event_manager = event_manager
+
         return AgentCoreState(
             # Results storage
             vertices_results={},
             artifacts={},
             outputs_logs={},
-            
+
             # Execution tracking
             current_vertex="",
             completed_vertices=[],
             events=[],
-            
+
             # Agent metadata
             agent_id=self.adapter.agent_id or "",
             agent_name=self.adapter.agent_name,
             session_id=inputs.get("session_id") or self.adapter.session_id or self.adapter.agent_id or "",
             user_id=user_id,
-            
+
             # Context
-            event_manager=event_manager,
             input_data=inputs,
             files=files,
-            
+
             # Configuration
             fallback_to_env_vars=fallback_to_env_vars,
             stop_component_id=stop_component_id,
             start_component_id=start_component_id,
-            
+
             # Maps
-            vertex_objects=self.adapter.vertex_map,
             predecessor_map=self.adapter.predecessor_map,
             successor_map=self.adapter.successor_map,
             in_degree_map=self.adapter.in_degree_map,
-            
+
             # Cycles
-            cycle_vertices=self.adapter.cycle_vertices,
+            cycle_vertices=list(self.adapter.cycle_vertices),
             is_cyclic=self.adapter.is_cyclic,
 
             # Layers

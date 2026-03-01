@@ -24,6 +24,7 @@ from agentcore.base.tools.constants import (
 )
 from agentcore.custom.tree_visitor import FieldRequirementChecker
 from agentcore.exceptions.component import StreamingError
+from langgraph.errors import GraphInterrupt
 from agentcore.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
 
 from agentcore.helpers.custom import format_type
@@ -1054,6 +1055,11 @@ class Node(ExecutableNode):
                 source=e.source,
             )
             raise e.cause  # noqa: B904
+        except GraphInterrupt:
+            # HITL pause — let the interrupt propagate without calling send_error.
+            # send_error would emit an on_error event which shows a red box in the UI.
+            # The interrupt is handled cleanly by nodes.py and build.py upstream.
+            raise
         except Exception as e:
             await self.send_error(
                 exception=e,
@@ -1485,6 +1491,21 @@ class Node(ExecutableNode):
             and message is not None
             and isinstance(message.text, AsyncIterator | Iterator)
         )
+        # Fallback: consume iterator when no event_manager is available
+        # (e.g., during HITL resume where ainvoke bypasses astream/event_manager setup).
+        # Without this, _store_message receives an AsyncIterator which can't be serialized.
+        if not is_streaming and message is not None and isinstance(message.text, AsyncIterator | Iterator):
+            complete = ""
+            if isinstance(message.text, AsyncIterator):
+                async for chunk in message.text:
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    complete += content
+            else:
+                for chunk in message.text:
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    complete += content
+            message.text = complete
+
         if is_streaming:
             # OPTIMIZATION: For streaming messages, generate ID upfront and write to DB only ONCE at the end
             # This reduces DB writes from 100+ (one per chunk) to just 1

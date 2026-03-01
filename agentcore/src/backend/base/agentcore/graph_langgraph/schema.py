@@ -241,12 +241,15 @@ class ResultData(BaseModel):
 
 class RunOutputs(BaseModel):
     """Output structure for a graph run - contains inputs and results.
-    
+
     This is the return type of LangGraphAdapter.arun() method.
     Each run can have multiple outputs (one per output vertex).
     """
     inputs: dict = Field(default_factory=dict)
     outputs: list[ResultData | None] = Field(default_factory=list)
+    # Populated when graph is paused by interrupt() (HITL).
+    # Contains: {"status": "interrupted", "thread_id": ..., "interrupt_data": {...}}
+    metadata: dict = Field(default_factory=dict)
 
 
 class VertexBuildResult(NamedTuple):

@@ -59,6 +59,7 @@ import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
 import ConnectorsCatalogueView from "./pages/ConnectorsCatalogue";
 import AutomationsPage from "./pages/AutomationsPage";
+import HITLApprovalsPage from "./pages/HITLApprovalsPage";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const AccessControlPage = lazy(() => import("./pages/AccessControlPage"));
@@ -122,6 +123,10 @@ const router = createBrowserRouter(
                         <ApprovalPreviewPage />
                       </ProtectedPermissionRoute>
                     }
+                  />
+                  <Route
+                    path="hitl-approvals"
+                    element={<HITLApprovalsPage />}
                   />
                   <Route
                     path="model-catalogue"

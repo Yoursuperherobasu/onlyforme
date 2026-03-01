@@ -5,11 +5,13 @@ import asyncio
 import copy
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any, Iterable
+from uuid import uuid4
 
 import pandas as pd
 from langgraph.graph import StateGraph
 from loguru import logger
 
+from agentcore.graph_langgraph.checkpointer import get_checkpointer
 from agentcore.graph_langgraph.constants import Finish
 from agentcore.graph_langgraph.nodes import create_node_function
 from agentcore.graph_langgraph.state import AgentCoreState
@@ -497,6 +499,8 @@ class LangGraphAdapter:
             compile_kwargs: dict[str, Any] = {}
             if self.is_cyclic:
                 compile_kwargs["recursion_limit"] = 50
+            # Checkpointer is required for Human-in-the-Loop (interrupt() to work).
+            compile_kwargs["checkpointer"] = get_checkpointer()
             logger.info("Compiling LangGraph workflow...")
             self.compiled_app = self.workflow.compile(**compile_kwargs)
             logger.info("LangGraph workflow compiled successfully")
@@ -776,6 +780,10 @@ class LangGraphAdapter:
                 if v and INPUT_FIELD_NAME in run_inputs:
                     v.update_raw_params({INPUT_FIELD_NAME: run_inputs[INPUT_FIELD_NAME]}, overwrite=True)
 
+            # Store event_manager on adapter so node_function can access it
+            # via vertex.graph._event_manager (must NOT be in state — not serializable)
+            self._event_manager = event_manager
+
             # Create initial state for LangGraph
             initial_state = {
                 "vertices_results": {},
@@ -788,32 +796,65 @@ class LangGraphAdapter:
                 "agent_name": self.agent_name,
                 "session_id": self._session_id or str(self.agent_id) if self.agent_id else "",
                 "user_id": self.user_id,
-                "event_manager": event_manager,
                 "input_data": run_inputs,
                 "files": None,
                 "fallback_to_env_vars": fallback_to_env_vars,
                 "stop_component_id": None,
                 "start_component_id": start_component_id,
-                "vertex_objects": self.vertex_map,
                 "predecessor_map": dict(self.predecessor_map),
                 "successor_map": dict(self.successor_map),
                 "in_degree_map": dict(self.in_degree_map),
-                "cycle_vertices": self.cycle_vertices,
+                "cycle_vertices": list(self.cycle_vertices),
                 "is_cyclic": self.is_cyclic,
                 "current_layer": 0,
                 "vertices_layers": self.vertices_layers if hasattr(self, "vertices_layers") else [],
                 "input_vertex_ids": list(self._is_input_vertices),
             }
 
+            # Thread ID for LangGraph checkpointer — identifies this run's state.
+            # Required for interrupt() (HITL) to save and resume graph state.
+            thread_id = self._session_id or str(uuid4())
+            lg_config = {"configurable": {"thread_id": thread_id}}
+
             # Execute the compiled graph
             final_state = None
             if stream and event_manager:
                 # STREAMING: use astream() — yields state after each node
-                async for state_update in self.compiled_app.astream(initial_state):
+                async for state_update in self.compiled_app.astream(initial_state, config=lg_config):
                     final_state = state_update
             else:
                 # NON-STREAMING: use ainvoke() — returns final state directly
-                final_state = await self.compiled_app.ainvoke(initial_state)
+                final_state = await self.compiled_app.ainvoke(initial_state, config=lg_config)
+
+            # Detect if graph was interrupted by interrupt() (HITL node).
+            # When interrupted, state.next is non-empty and we should NOT
+            # collect results — the run is paused waiting for human input.
+            try:
+                graph_state = await self.compiled_app.aget_state(lg_config)
+                if graph_state.next:
+                    logger.info(
+                        f"[HITL] Graph interrupted at: {graph_state.next} "
+                        f"(thread_id={thread_id}). Awaiting human input."
+                    )
+                    # Return immediately — no output to collect yet.
+                    # The caller (API layer) should detect status="interrupted"
+                    # and store the thread_id for resumption.
+                    vertex_outputs.append(
+                        RunOutputs(
+                            inputs=run_inputs,
+                            outputs=[],
+                            metadata={
+                                "status": "interrupted",
+                                "thread_id": thread_id,
+                                "interrupt_data": graph_state.tasks[0].interrupts[0].value
+                                if graph_state.tasks and graph_state.tasks[0].interrupts
+                                else {},
+                            },
+                        )
+                    )
+                    continue
+            except Exception as _hitl_err:
+                logger.debug(f"[HITL] Could not check graph state: {_hitl_err}")
 
             # Collect results from output vertices.
             # After ainvoke()/astream() completes, the vertex objects have been
