@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         custom_component,
         data,
         google,
+        graph_rag,
         groq,
         helpers,
         input_output,
@@ -42,6 +43,7 @@ _dynamic_imports = {
     "groq": "agentcore.components.groq",
     "Guardrails": "agentcore.components.Guardrails",
     "HumanInTheLoop": "agentcore.components.HumanInTheLoop",
+    "graph_rag": "agentcore.components.graph_rag",
     "triggers": "agentcore.components.triggers",
 }
 
@@ -62,6 +64,7 @@ __all__: list[str] = [
     "tools",
     "triggers",
     "vectorstores",
+    "graph_rag",
 ]
 
 

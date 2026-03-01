@@ -131,7 +131,8 @@ dependencies = [
     "matplotlib", 
     "cryptography", 
     "psycopg2-binary",
-    "nemoguardrails"
+    "nemoguardrails",
+    "apscheduler>=3.10"
 ]
 
 [tool.hatch.build.targets.wheel]
