@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -142,6 +143,22 @@ async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, 
     ).all()
     if len({str(r if isinstance(r, UUID) else r[0]) for r in rows}) != len({str(d) for d in dept_ids}):
         raise HTTPException(status_code=400, detail="One or more public_dept_ids are invalid for org_id")
+
+
+async def _ensure_mcp_name_available(
+    session: DbSession,
+    server_name: str,
+    *,
+    exclude_id: UUID | None = None,
+) -> None:
+    stmt = select(McpRegistry.id).where(
+        func.lower(McpRegistry.server_name) == server_name.strip().lower(),
+    )
+    if exclude_id:
+        stmt = stmt.where(McpRegistry.id != exclude_id)
+    existing = (await session.exec(stmt)).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="MCP server name already exists")
 
 
 async def _enforce_creation_scope(
@@ -384,6 +401,7 @@ async def create_mcp_server(
     await _require_mcp_permission(current_user, "add_new_mcp")
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
+    await _ensure_mcp_name_available(session, body.server_name)
     body.deployment_env = _normalize_deployment_env(getattr(body, "deployment_env", None))
     now = datetime.now(timezone.utc)
     body.visibility = visibility
@@ -415,6 +433,7 @@ async def request_mcp_server(
         raise HTTPException(status_code=403, detail="Only developer/business_user can create MCP requests")
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
+    await _ensure_mcp_name_available(session, body.server_name)
     deployment_env = _normalize_deployment_env(getattr(body, "deployment_env", None))
     now = datetime.now(timezone.utc)
 
@@ -511,6 +530,8 @@ async def update_mcp_server(
         body.deployment_env = _normalize_deployment_env(body.deployment_env)
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
+    if body.server_name:
+        await _ensure_mcp_name_available(session, body.server_name, exclude_id=server_id)
     body.visibility = visibility
     body.public_scope = public_scope
     body.public_dept_ids = [UUID(v) for v in public_dept_ids] if public_dept_ids else None

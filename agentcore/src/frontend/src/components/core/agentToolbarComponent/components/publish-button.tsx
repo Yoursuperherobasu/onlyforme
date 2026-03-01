@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import useAgentStore from "@/stores/agentStore";
 import useAlertStore from "@/stores/alertStore";
+import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
 import { useValidatePublishEmail } from "@/controllers/API/queries/agents/use-validate-publish-email";
 import { usePatchUpdateAgent } from "@/controllers/API/queries/agents/use-patch-update-agent";
 import { usePostUnifiedPublishAgent } from "@/controllers/API/queries/agents/use-post-unified-publish-agent";
@@ -98,6 +99,12 @@ const PublishButton = ({
   const [validationInProgress, setValidationInProgress] = useState(false);
   const latestValidationRun = useRef(0);
   const publishMutation = usePostUnifiedPublishAgent();
+  const agentNameAvailability = useNameAvailability({
+    entity: "agent",
+    name: agentNameInput,
+    exclude_id: currentAgent?.id ?? null,
+    enabled: open && agentNameInput.trim().length > 0,
+  });
 
   const normalizedEmails = useMemo(() => {
     return Array.from(
@@ -241,6 +248,13 @@ const PublishButton = ({
   const handleSubmit = async () => {
     if (!currentAgent?.id) {
       setErrorData({ title: "No active agent found." });
+      return;
+    }
+    if (agentNameAvailability.isNameTaken) {
+      setErrorData({
+        title: "Agent name already taken",
+        list: [agentNameAvailability.reason || "Please choose a different name."],
+      });
       return;
     }
     const trimmedName = agentNameInput.trim();
@@ -434,6 +448,13 @@ const PublishButton = ({
               placeholder="Enter agent name"
               className="mt-2"
             />
+            {agentNameInput.trim().length > 0 &&
+              !agentNameAvailability.isFetching &&
+              agentNameAvailability.isNameTaken && (
+                <p className="mt-2 text-xs font-medium text-red-500">
+                  {agentNameAvailability.reason ?? "This agent name is already taken."}
+                </p>
+              )}
           </div>
         </DialogHeader>
 
@@ -556,7 +577,12 @@ const PublishButton = ({
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={validationInProgress || publishMutation.isPending}
+              disabled={
+                validationInProgress ||
+                publishMutation.isPending ||
+                agentNameAvailability.isFetching ||
+                agentNameAvailability.isNameTaken
+              }
             >
               {publishMutation.isPending ? "Publishing..." : "Submit Publish Request"}
             </Button>

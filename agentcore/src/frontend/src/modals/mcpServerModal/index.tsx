@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { MAX_MCP_SERVER_NAME_LENGTH } from "@/constants/constants";
 import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
+import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
 import { useAddMCPServer } from "@/controllers/API/queries/mcp/use-add-mcp-server";
 import { usePatchMCPServer } from "@/controllers/API/queries/mcp/use-patch-mcp-server";
 import { useRequestMCPServer } from "@/controllers/API/queries/mcp/use-request-mcp-server";
@@ -88,6 +89,15 @@ export default function AddMcpServerModal({
   const [sseEnv, setSseEnv] = useState<any>([]);
   const [sseHeaders, setSseHeaders] = useState<any>([]);
   const [sseDescription, setSseDescription] = useState(initialData?.description || "");
+  const activeNameInput = type === "STDIO" ? stdioName : type === "SSE" ? sseName : "";
+  const normalizedActiveName = parseString(activeNameInput, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
+  const nameAvailability = useNameAvailability({
+    entity: "mcp",
+    name: normalizedActiveName,
+    exclude_id: initialData?.id ?? null,
+    enabled: open && type !== "JSON" && activeNameInput.trim().length > 0,
+  });
+  const isNameTaken = nameAvailability.isNameTaken;
 
   const [jsonInput, setJsonInput] = useState("");
   const [visibility, setVisibility] = useState<"private" | "public">(
@@ -172,6 +182,10 @@ export default function AddMcpServerModal({
 
   async function submitForm() {
     setError(null);
+    if (type !== "JSON" && isNameTaken) {
+      setError(nameAvailability.reason || "Name is already taken.");
+      return;
+    }
     const tenancyPayload = buildTenancyPayload();
 
     if (type === "STDIO") {
@@ -401,6 +415,11 @@ export default function AddMcpServerModal({
                   <div className={cn("truncate text-xs font-medium text-red-500")}>{error}</div>
                 </ShadTooltip>
               )}
+              {type !== "JSON" && activeNameInput.trim().length > 0 && !nameAvailability.isFetching && isNameTaken && (
+                <div className="text-xs font-medium text-red-500">
+                  {nameAvailability.reason ?? "Name is already taken."}
+                </div>
+              )}
               <div className="flex max-h-[380px] flex-col gap-4 overflow-y-auto" id="global-variable-modal-inputs">
                 {type === "STDIO" && (
                   <div className="flex flex-col gap-4">
@@ -557,7 +576,13 @@ export default function AddMcpServerModal({
               <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
                 <span className="text-mmd font-normal">Cancel</span>
               </Button>
-              <Button size="sm" onClick={submitForm} data-testid="add-mcp-server-button" loading={isPending}>
+              <Button
+                size="sm"
+                onClick={submitForm}
+                data-testid="add-mcp-server-button"
+                loading={isPending}
+                disabled={isNameTaken || nameAvailability.isFetching}
+              >
                 <span className="text-mmd">{isEditMode ? "Save" : requestMode ? "Submit Request" : type === "JSON" ? "Import" : "Register"}</span>
               </Button>
             </div>
@@ -567,6 +592,4 @@ export default function AddMcpServerModal({
     </BaseModal>
   );
 }
-
-
 
