@@ -1,31 +1,52 @@
+"""
+Document OCR Extractor Component
+
+Drag-and-drop node that extracts text from files using a connected
+multimodal Language Model for vision-based OCR on scanned pages and images.
+
+Canvas wiring:
+  [Knowledge Base] ---> [Document OCR Extractor] ---> [Text Splitter]
+                              ^
+                          [LLM Model] (multimodal, e.g. GPT-4o, Gemini, Claude)
+
+Supports: PDF (native + scanned), images, DOCX, PPTX, XLSX, CSV, TXT.
+Native text extraction is used when possible; the LLM is only called
+for scanned/image content that requires OCR.
+"""
+
+from __future__ import annotations
+
+import base64
 import mimetypes
 import os
 import traceback
 from pathlib import Path
-from typing import Optional
 
 from loguru import logger
 
 from agentcore.custom.custom_node.node import Node
-from agentcore.io import BoolInput, DropdownInput, HandleInput, IntInput, Output
+from agentcore.io import BoolInput, HandleInput, IntInput, Output
 from agentcore.schema.data import Data
 
 
 class GeminiOCRExtractorNode(Node):
-    display_name: str = "Multimodal Document Loader"
+    """Extract text from documents using a connected multimodal LLM for OCR."""
+
+    display_name: str = "Document OCR Extractor"
     description: str = (
-        "Extract text from files using Gemini Multimodal Vision. "
+        "Extract text from files using a connected multimodal Language Model. "
         "Supports PDF (native + scanned), images, DOCX, PPTX, XLSX, CSV, TXT."
     )
-    name = "GeminiOCRExtractor"
+    name = "DocumentOCRExtractor"
     icon = "FileText"
 
     inputs = [
-        DropdownInput(
-            name="gemini_model",
-            display_name="Gemini Model",
-            options=["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
-            value="gemini-2.0-flash",
+        HandleInput(
+            name="llm",
+            display_name="Language Model",
+            input_types=["LanguageModel"],
+            info="Multimodal LLM for vision-based OCR (e.g. GPT-4o, Gemini Flash, Claude). "
+                 "Only used for scanned PDFs and images; native text is extracted without LLM.",
         ),
         HandleInput(
             name="file_paths",
@@ -60,25 +81,9 @@ class GeminiOCRExtractorNode(Node):
     # ══════════════════════════════════════════════════════════
 
     def extract_documents(self) -> list[Data]:
-        import google.generativeai as genai
-
-        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-        self._model = genai.GenerativeModel(self.gemini_model)
-        self._genai = genai
-
-        # ── Debug: log raw input ──
-        logger.info(f"[OCR] file_paths type: {type(self.file_paths)}")
-        logger.info(f"[OCR] file_paths value: {self.file_paths}")
-
-        if self.file_paths and isinstance(self.file_paths, list):
-            for i, item in enumerate(self.file_paths):
-                logger.info(f"[OCR] item[{i}] type={type(item).__name__}, has text={hasattr(item, 'text')}")
-                if hasattr(item, "text"):
-                    logger.info(f"[OCR] item[{i}].text = '{getattr(item, 'text', '')}'")
-
         # ── Resolve file paths ──
         paths = self._resolve_paths()
-        logger.info(f"[OCR] Resolved {len(paths)} path(s): {paths}")
+        logger.info(f"[OCR] Resolved {len(paths)} path(s)")
 
         if not paths:
             self.status = "No files found. Check Knowledge Base connection."
@@ -90,9 +95,8 @@ class GeminiOCRExtractorNode(Node):
 
         for path in paths:
             try:
-                logger.info(f"[OCR] Extracting: {path} (exists={path.exists()})")
+                logger.info(f"[OCR] Extracting: {path}")
                 page_docs = self._extract_file(path)
-                logger.info(f"[OCR] Got {len(page_docs)} page(s) from {path.name}")
 
                 if not page_docs:
                     continue
@@ -105,7 +109,7 @@ class GeminiOCRExtractorNode(Node):
                         "file_path": str(path),
                         "total_pages": len(page_docs),
                         "file_type": path.suffix.lstrip(".").lower(),
-                        "extraction_method": "gemini_ocr",
+                        "extraction_method": "ocr",
                     }))
                     logger.info(f"[OCR] Merged {len(page_docs)} page(s) into 1 document ({len(full_text)} chars)")
             except Exception as e:
@@ -118,9 +122,7 @@ class GeminiOCRExtractorNode(Node):
         if errors:
             status += f" | Errors: {'; '.join(errors[:3])}"
         self.status = status
-        logger.info(f"[OCR] Final status: {status}")
 
-        # If extraction produced nothing, return error info
         if not merged_docs:
             return [Data(
                 text=f"Extraction returned 0 documents. Errors: {'; '.join(errors)}",
@@ -130,20 +132,15 @@ class GeminiOCRExtractorNode(Node):
         return merged_docs
 
     # ══════════════════════════════════════════════════════════
-    #  PATH RESOLUTION — type-agnostic, no isinstance on custom types
-    #
-    #  Knowledge Base load_files_path() returns Message with:
-    #    .text = "C:/path/to/file.pptx"
+    #  PATH RESOLUTION
     # ══════════════════════════════════════════════════════════
 
     def _resolve_paths(self) -> list[Path]:
         paths: list[Path] = []
         if not self.file_paths:
-            logger.warning("[OCR] self.file_paths is empty/None")
             return paths
 
         items = self.file_paths if isinstance(self.file_paths, list) else [self.file_paths]
-        logger.info(f"[OCR] Processing {len(items)} input item(s)")
 
         for item in items:
             if item is None:
@@ -154,7 +151,7 @@ class GeminiOCRExtractorNode(Node):
             if isinstance(item, str):
                 candidates.append(item)
             elif isinstance(item, dict):
-                for key in ["file_path", "path", "file", "text", "source"]:
+                for key in ("file_path", "path", "file", "text", "source"):
                     val = item.get(key)
                     if val and isinstance(val, str):
                         candidates.append(val)
@@ -163,17 +160,16 @@ class GeminiOCRExtractorNode(Node):
                 text_val = getattr(item, "text", None)
                 if text_val and isinstance(text_val, str) and text_val.strip():
                     candidates.append(text_val.strip())
-                    logger.info(f"[OCR] Found .text = '{text_val.strip()}'")
 
                 # Check .data dict
                 data_dict = getattr(item, "data", None)
                 if data_dict and isinstance(data_dict, dict):
-                    for key in ["file_path", "path", "file", "text", "source"]:
+                    for key in ("file_path", "path", "file", "text", "source"):
                         val = data_dict.get(key)
                         if val and isinstance(val, str) and val.strip():
                             candidates.append(val.strip())
 
-                # Check .path attribute (only if non-None and non-empty)
+                # Check .path attribute
                 path_val = getattr(item, "path", None)
                 if path_val is not None:
                     path_str = str(path_val).strip()
@@ -192,11 +188,8 @@ class GeminiOCRExtractorNode(Node):
                             if p.exists():
                                 if p not in paths:
                                     paths.append(p)
-                                    logger.info(f"[OCR] Valid path added: {p}")
                             else:
                                 logger.warning(f"[OCR] Path does not exist: {p}")
-                        else:
-                            logger.debug(f"[OCR] Unsupported extension: {p.suffix}")
                     except (OSError, ValueError) as e:
                         logger.warning(f"[OCR] Invalid path '{line}': {e}")
 
@@ -220,13 +213,12 @@ class GeminiOCRExtractorNode(Node):
         return []
 
     def _extract_pdf(self, path: Path) -> list[Data]:
-        import fitz  # PyMuPDF — already in dependencies
+        import fitz  # PyMuPDF
 
         docs = []
         page_errors = []
         pdf_doc = fitz.open(str(path))
         total_pages = len(pdf_doc)
-        logger.info(f"[OCR] PDF '{path.name}' has {total_pages} page(s)")
 
         for page_num in range(total_pages):
             page = pdf_doc[page_num]
@@ -235,7 +227,6 @@ class GeminiOCRExtractorNode(Node):
             # Step 1: try native text extraction
             native_text = (page.get_text("text") or "").strip()
             if len(native_text) >= self.min_native_text_length:
-                logger.info(f"[OCR] Page {display_page}: native text OK ({len(native_text)} chars)")
                 docs.append(Data(text=native_text, data={
                     "source_file": path.name, "file_path": str(path),
                     "page_number": display_page, "total_pages": total_pages,
@@ -243,24 +234,26 @@ class GeminiOCRExtractorNode(Node):
                 }))
                 continue
 
-            # Step 2: scanned page — render to image and OCR via Gemini Vision
-            logger.info(f"[OCR] Page {display_page}: native text too short ({len(native_text)} chars), using Gemini Vision")
+            # Step 2: scanned page — render to image and OCR via connected LLM
+            if not self.llm:
+                page_errors.append(f"Page {display_page}: scanned page but no LLM connected for OCR")
+                continue
+
             try:
                 ocr_text = self._ocr_pdf_page(pdf_doc, page_num)
                 if ocr_text:
                     docs.append(Data(text=ocr_text, data={
                         "source_file": path.name, "file_path": str(path),
                         "page_number": display_page, "total_pages": total_pages,
-                        "file_type": "pdf", "extraction_method": "gemini_vision",
+                        "file_type": "pdf", "extraction_method": "llm_vision",
                     }))
                 else:
-                    page_errors.append(f"Page {display_page}: Gemini returned empty text")
+                    page_errors.append(f"Page {display_page}: LLM returned empty text")
             except Exception as e:
                 page_errors.append(f"Page {display_page}: {type(e).__name__}: {e}")
 
         pdf_doc.close()
 
-        # If no pages produced any text, raise so the error surfaces to the user
         if not docs and page_errors:
             raise RuntimeError(
                 f"All {total_pages} page(s) failed extraction. "
@@ -269,8 +262,8 @@ class GeminiOCRExtractorNode(Node):
 
         return docs
 
-    def _ocr_pdf_page(self, pdf_doc, page_index: int) -> Optional[str]:
-        """Render a PDF page to PNG using PyMuPDF and send to Gemini Vision."""
+    def _ocr_pdf_page(self, pdf_doc, page_index: int) -> str | None:
+        """Render a PDF page to PNG and send to the connected LLM for OCR."""
         import fitz
 
         page = pdf_doc[page_index]
@@ -278,16 +271,19 @@ class GeminiOCRExtractorNode(Node):
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat)
         png_bytes = pix.tobytes("png")
-        logger.info(f"[OCR] Rendered page {page_index + 1} to PNG ({len(png_bytes)} bytes)")
-        return self._gemini_vision_extract(png_bytes, "image/png")
+        return self._llm_vision_extract(png_bytes, "image/png")
 
     def _extract_image(self, path: Path) -> list[Data]:
+        if not self.llm:
+            self.log("No LLM connected — cannot OCR images.")
+            return []
+
         mime, _ = mimetypes.guess_type(str(path))
-        text = self._gemini_vision_extract(path.read_bytes(), mime or "image/png")
+        text = self._llm_vision_extract(path.read_bytes(), mime or "image/png")
         if text:
             return [Data(text=text, data={
                 "source_file": path.name, "file_path": str(path),
-                "page_number": 1, "file_type": "image", "extraction_method": "gemini_vision",
+                "page_number": 1, "file_type": "image", "extraction_method": "llm_vision",
             })]
         return []
 
@@ -311,9 +307,7 @@ class GeminiOCRExtractorNode(Node):
 
     def _extract_pptx(self, path: Path) -> list[Data]:
         from pptx import Presentation
-        logger.info(f"[OCR] Opening PPTX: {path}")
         prs = Presentation(str(path))
-        logger.info(f"[OCR] PPTX has {len(prs.slides)} slides")
         docs = []
         for slide_num, slide in enumerate(prs.slides, start=1):
             texts = []
@@ -329,7 +323,6 @@ class GeminiOCRExtractorNode(Node):
                             texts.append(rt)
             if texts:
                 slide_text = "\n".join(texts)
-                logger.info(f"[OCR] Slide {slide_num}: {len(slide_text)} chars")
                 docs.append(Data(text=slide_text, data={
                     "source_file": path.name, "file_path": str(path),
                     "page_number": slide_num, "total_pages": len(prs.slides),
@@ -375,18 +368,33 @@ class GeminiOCRExtractorNode(Node):
             })]
         return []
 
-    def _gemini_vision_extract(self, image_bytes: bytes, mime_type: str) -> Optional[str]:
-        prompt = (
-            "Extract ALL text from this image accurately. "
-            "Preserve the original structure: headings, paragraphs, tables, lists. "
-            "Format tables as markdown tables. "
-            "Return ONLY the extracted text, no commentary or explanation."
-        )
-        logger.info(f"[OCR] Calling Gemini Vision ({self.gemini_model}) with {len(image_bytes)} bytes ({mime_type})")
-        response = self._model.generate_content(
-            [prompt, {"mime_type": mime_type, "data": image_bytes}],
-            generation_config=self._genai.types.GenerationConfig(temperature=0.0, max_output_tokens=4096),
-        )
-        text = response.text.strip()
-        logger.info(f"[OCR] Gemini Vision returned {len(text)} chars")
+    # ══════════════════════════════════════════════════════════
+    #  LLM VISION OCR (model-agnostic via LangChain)
+    # ══════════════════════════════════════════════════════════
+
+    def _llm_vision_extract(self, image_bytes: bytes, mime_type: str) -> str | None:
+        """Send image to the connected LLM via LangChain multimodal messages."""
+        from langchain_core.messages import HumanMessage
+
+        b64_data = base64.b64encode(image_bytes).decode("utf-8")
+
+        message = HumanMessage(content=[
+            {
+                "type": "text",
+                "text": (
+                    "Extract ALL text from this image accurately. "
+                    "Preserve the original structure: headings, paragraphs, tables, lists. "
+                    "Format tables as markdown tables. "
+                    "Return ONLY the extracted text, no commentary or explanation."
+                ),
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{b64_data}"},
+            },
+        ])
+
+        response = self.llm.invoke([message])
+        raw = response.content if hasattr(response, "content") else str(response)
+        text = raw.strip()
         return text if text else None

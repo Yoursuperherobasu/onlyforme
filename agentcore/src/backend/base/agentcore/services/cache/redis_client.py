@@ -1,5 +1,10 @@
 from typing import Optional
+
 import redis.asyncio as redis
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError, TimeoutError
+
 from agentcore.services.settings.service import SettingsService
 
 _redis_client: Optional[redis.StrictRedis] = None
@@ -24,6 +29,11 @@ def get_redis_client(settings_service: SettingsService) -> redis.StrictRedis:
             decode_responses=True,
             socket_connect_timeout=5,
             socket_timeout=5,
+            # Auto-detect stale connections before use
+            health_check_interval=15,
+            # Retry on transient connection drops (Azure idle timeout, etc.)
+            retry=Retry(ExponentialBackoff(cap=2, base=0.1), retries=3),
+            retry_on_error=[ConnectionError, TimeoutError, OSError],
         )
         _redis_signature = signature
     return _redis_client

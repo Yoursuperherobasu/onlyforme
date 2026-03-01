@@ -14,13 +14,19 @@ class TextInput(TextNode):
             name="input_value",
             display_name="Text",
             info="Text to be passed as input.",
+            value="",
         ),
     ]
     outputs = [
         Output(display_name="Output Text", name="text", method="text_response"),
     ]
 
+    def build_config(self):
+        # Override parent's build_config to prevent input_types from
+        # turning input_value into a connection handle
+        return {}
+
     def text_response(self) -> Message:
         return Message(
-            text=self.input_value,
+            text=self.input_value or "",
         )

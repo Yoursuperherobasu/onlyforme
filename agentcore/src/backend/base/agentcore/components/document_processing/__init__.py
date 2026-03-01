@@ -8,17 +8,12 @@ from agentcore.components._importing import import_mod
 
 if TYPE_CHECKING:
     from agentcore.components.document_processing.gemini_ocr_extractor import GeminiOCRExtractorNode
-    from agentcore.components.document_processing.text_splitter import TextSplitterNode
-
 _dynamic_imports = {
     "GeminiOCRExtractorNode": "gemini_ocr_extractor",
-    "TextSplitterNode": "text_splitter",
 }
 
 __all__ = [
     "GeminiOCRExtractorNode",
-    "TextSplitterNode",
-    "PineconeRerankerNode",
 ]
 
 
