@@ -185,6 +185,10 @@ class AgentPublishStatusResponse(BaseModel):
     uat: PublishRecordSummary | None = None
     prod: PublishRecordSummary | None = None
     has_pending_approval: bool = False
+    pending_requested_by: UUID | None = None
+    latest_prod_status: str | None = None
+    latest_review_decision: str | None = None
+    latest_prod_published_by: UUID | None = None
 
 
 class PublishSnapshotResponse(BaseModel):
@@ -1320,13 +1324,38 @@ async def get_agent_publish_status(
                 AgentDeploymentProd.agent_id == agent_id,
                 AgentDeploymentProd.status == DeploymentPRODStatusEnum.PENDING_APPROVAL,
             )
+            .order_by(col(AgentDeploymentProd.deployed_at).desc())
         )).first()
+
+        latest_prod_any = (await session.exec(
+            select(AgentDeploymentProd).where(
+                AgentDeploymentProd.agent_id == agent_id,
+            ).order_by(col(AgentDeploymentProd.deployed_at).desc())
+        )).first()
+
+        latest_decision: str | None = None
+        if latest_prod_any and latest_prod_any.approval_id:
+            latest_approval = await session.get(ApprovalRequest, latest_prod_any.approval_id)
+            if latest_approval and latest_approval.decision is not None:
+                latest_decision = (
+                    latest_approval.decision.value
+                    if hasattr(latest_approval.decision, "value")
+                    else str(latest_approval.decision)
+                )
 
         return AgentPublishStatusResponse(
             agent_id=agent_id,
             uat=_record_to_summary(uat_record, "uat") if uat_record else None,
             prod=_record_to_summary(prod_record, "prod") if prod_record else None,
             has_pending_approval=pending is not None,
+            pending_requested_by=pending.deployed_by if pending else None,
+            latest_prod_status=(
+                latest_prod_any.status.value
+                if latest_prod_any and hasattr(latest_prod_any.status, "value")
+                else (str(latest_prod_any.status) if latest_prod_any else None)
+            ),
+            latest_review_decision=latest_decision,
+            latest_prod_published_by=latest_prod_any.deployed_by if latest_prod_any else None,
         )
 
     except Exception as e:
