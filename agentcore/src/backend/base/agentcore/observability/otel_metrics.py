@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 _metrics_initialized = False
 _request_counter = None
 _request_duration_histogram = None
+_meter_provider = None
 
 
 def is_metrics_enabled() -> bool:
@@ -37,8 +38,9 @@ def setup_otel_metrics(app) -> None:
     - Adds /metrics route returning Prometheus exposition format
     - Adds middleware to record http_server_requests_total and http_server_request_duration_ms
     - Idempotent: skips if already initialized
+    - Reuses existing MeterProvider if one is already set (avoids dual-provider conflict)
     """
-    global _metrics_initialized, _request_counter, _request_duration_histogram
+    global _metrics_initialized, _request_counter, _request_duration_histogram, _meter_provider
 
     if _metrics_initialized:
         return
@@ -55,10 +57,20 @@ def setup_otel_metrics(app) -> None:
         logger.warning("Prometheus metrics packages not available; metrics disabled: %s", e)
         return
 
-    reader = PrometheusMetricReader()
-    resource = Resource.create({"service.name": "agentcore"})
-    provider = MeterProvider(resource=resource, metric_readers=[reader])
-    metrics.set_meter_provider(provider)
+    # Check if a MeterProvider is already set (e.g. by another module); reuse it if so.
+    existing = metrics.get_meter_provider()
+    if isinstance(existing, MeterProvider):
+        from loguru import logger
+
+        logger.debug("Reusing existing MeterProvider; skipping new provider creation")
+        provider = existing
+    else:
+        reader = PrometheusMetricReader()
+        resource = Resource.create({"service.name": "agentcore"})
+        provider = MeterProvider(resource=resource, metric_readers=[reader])
+        metrics.set_meter_provider(provider)
+
+    _meter_provider = provider
 
     meter = provider.get_meter("agentcore.metrics", "1.0.0")
     _request_counter = meter.create_counter(
@@ -106,3 +118,21 @@ def setup_otel_metrics(app) -> None:
 
     app.add_middleware(MetricsMiddleware)
     _metrics_initialized = True
+
+
+def shutdown_otel_metrics() -> None:
+    """Gracefully shut down the MeterProvider, flushing pending metrics."""
+    global _meter_provider
+    if _meter_provider is None:
+        return
+    try:
+        from loguru import logger
+
+        _meter_provider.shutdown()
+        logger.debug("OpenTelemetry MeterProvider shut down")
+    except Exception as e:
+        from loguru import logger
+
+        logger.warning("Error shutting down MeterProvider: {}", e)
+    finally:
+        _meter_provider = None

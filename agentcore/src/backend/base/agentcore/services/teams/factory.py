@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import override
+from typing_extensions import override
 
 from agentcore.services.factory import ServiceFactory
 from agentcore.services.settings.service import SettingsService

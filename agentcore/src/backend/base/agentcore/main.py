@@ -44,6 +44,8 @@ from agentcore.observability import (
     is_tracing_enabled,
     setup_otel_metrics,
     setup_otel_tracing,
+    shutdown_otel_metrics,
+    shutdown_otel_tracing,
 )
 from agentcore.middleware import ContentSizeLimitMiddleware
 from agentcore.services.deps import (
@@ -101,11 +103,15 @@ class RequestCancelledMiddleware(BaseHTTPMiddleware):
         return await handler_task
 
 
+_app_ready = False
+
+
 def get_lifespan(*, fix_migration=True, version=None):
     telemetry_service = get_telemetry_service()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        global _app_ready
         configure(async_file=True)
 
         # Startup message
@@ -166,6 +172,8 @@ def get_lifespan(*, fix_migration=True, version=None):
 
             total_time = asyncio.get_event_loop().time() - start_time
             logger.debug(f"Total initialization time: {total_time:.2f}s")
+
+            _app_ready = True
             yield
 
         except asyncio.CancelledError:
@@ -175,6 +183,7 @@ def get_lifespan(*, fix_migration=True, version=None):
                 logger.exception(exc)
             raise
         finally:
+            _app_ready = False
             # Clean shutdown
             try:
                 # Stopping Server
@@ -201,6 +210,16 @@ def get_lifespan(*, fix_migration=True, version=None):
                 logger.debug("Teardown cancelled during shutdown.")
             except Exception as e:  # noqa: BLE001
                 logger.exception(f"Unhandled error during cleanup: {e}")
+
+            # Flush OTel providers before logger shutdown
+            try:
+                shutdown_otel_tracing()
+            except Exception:
+                pass
+            try:
+                shutdown_otel_metrics()
+            except Exception:
+                pass
 
             try:
                 await asyncio.shield(asyncio.sleep(0.1))  # let logger flush async logs
@@ -423,6 +442,12 @@ def create_app():
     app.include_router(health_check_router)
     app.include_router(log_router)
     app.include_router(openai_router, prefix="")
+
+    @app.get("/ready", include_in_schema=False)
+    async def readiness_probe():
+        if _app_ready:
+            return JSONResponse(content={"status": "ready"}, status_code=200)
+        return JSONResponse(content={"status": "not_ready"}, status_code=503)
 
     @app.exception_handler(Exception)
     async def exception_handler(_request: Request, exc: Exception):
