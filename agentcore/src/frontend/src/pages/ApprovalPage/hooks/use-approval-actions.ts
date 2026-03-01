@@ -29,6 +29,7 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
+        const entityLabel = agent.entityType === "mcp" ? "MCP request" : "Agent";
         await new Promise((resolve, reject) => {
           approveAgentMutation.mutate(
             {
@@ -39,13 +40,13 @@ export const useApprovalActions = () => {
             {
               onSuccess: () => {
                 setSuccessData({
-                  title: `Agent "${agent.title}" approved successfully.`,
+                  title: `${entityLabel} "${agent.title}" approved successfully.`,
                 });
                 resolve(null);
               },
               onError: () => {
                 setErrorData({
-                  title: `Failed to approve agent "${agent.title}".`,
+                  title: `Failed to approve ${entityLabel.toLowerCase()} "${agent.title}".`,
                 });
                 reject(new Error("Approval failed"));
               },
@@ -70,6 +71,7 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
+        const entityLabel = agent.entityType === "mcp" ? "MCP request" : "Agent";
         await new Promise((resolve, reject) => {
           rejectAgentMutation.mutate(
             {
@@ -80,13 +82,13 @@ export const useApprovalActions = () => {
             {
               onSuccess: () => {
                 setSuccessData({
-                  title: `Agent "${agent.title}" rejected.`,
+                  title: `${entityLabel} "${agent.title}" rejected.`,
                 });
                 resolve(null);
               },
               onError: () => {
                 setErrorData({
-                  title: `Failed to reject agent "${agent.title}".`,
+                  title: `Failed to reject ${entityLabel.toLowerCase()} "${agent.title}".`,
                 });
                 reject(new Error("Rejection failed"));
               },
