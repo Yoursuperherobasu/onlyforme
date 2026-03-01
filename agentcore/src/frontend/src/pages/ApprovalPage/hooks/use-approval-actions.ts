@@ -29,6 +29,7 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
+        const entityLabel = agent.entityType === "mcp" ? "MCP request" : "Agent";
         await new Promise((resolve, reject) => {
           approveAgentMutation.mutate(
             {
@@ -70,6 +71,7 @@ export const useApprovalActions = () => {
       attachments: File[],
     ) => {
       try {
+        const entityLabel = agent.entityType === "mcp" ? "MCP request" : "Agent";
         await new Promise((resolve, reject) => {
           rejectAgentMutation.mutate(
             {

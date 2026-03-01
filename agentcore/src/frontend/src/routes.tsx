@@ -59,6 +59,38 @@ import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
 import ConnectorsCatalogueView from "./pages/ConnectorsCatalogue";
 import SchedulerPage from "./pages/SchedulerPage";
+import useAuthStore from "./stores/authStore";
+
+function DefaultLandingRedirect() {
+  const permissions = useAuthStore((state) => state.permissions);
+
+  if (permissions.includes("view_dashboard")) {
+    return <CustomNavigate replace to="dashboard-admin" />;
+  }
+
+  if (permissions.includes("view_projects_page")) {
+    return <CustomNavigate replace to="agents" />;
+  }
+
+  if (permissions.includes("view_approval_page")) {
+    return <CustomNavigate replace to="approval" />;
+  }
+
+  if (permissions.includes("view_published_agents")) {
+    return <CustomNavigate replace to="agent-catalogue" />;
+  }
+
+  if (permissions.includes("view_models")) {
+    return <CustomNavigate replace to="model-catalogue" />;
+  }
+
+  if (permissions.includes("view_control_panel")) {
+    return <CustomNavigate replace to="workflows" />;
+  }
+
+  // Scheduler is currently visible from sidebar without a permission gate.
+  return <CustomNavigate replace to="scheduler" />;
+}
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const AccessControlPage = lazy(() => import("./pages/AccessControlPage"));
@@ -103,10 +135,7 @@ const router = createBrowserRouter(
             <Route path="" element={<AppAuthenticatedPage />}>
               <Route path="" element={<CustomDashboardWrapperPage />}>
                 <Route path="" element={<CollectionPage />}>
-                  <Route
-                    index
-                    element={<CustomNavigate replace to={"dashboard-admin"} />}
-                  />
+                  <Route index element={<DefaultLandingRedirect />} />
                   <Route
                     path="approval"
                     element={
@@ -176,9 +205,9 @@ const router = createBrowserRouter(
                   <Route
                     path="dashboard-admin"
                     element={
-                     
+                      <ProtectedPermissionRoute permission="view_dashboard">
                         <DashboardAdmin />
-                     
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route

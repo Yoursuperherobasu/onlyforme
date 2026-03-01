@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, XCircle, Play, FileText } from "lucide-react";
+import { CheckCircle2, XCircle, FileCode2 } from "lucide-react";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 
 interface AgentCardProps {
   id: string;
+  entityType?: "agent" | "model" | "mcp";
   title: string;
   status: "pending" | "approved" | "rejected";
   description: string;
@@ -22,7 +23,7 @@ interface AgentCardProps {
   onReject: () => void;
   onApprove: () => void;
   onReviewDetails: () => void;
-  onRunTest: () => void;
+  onViewMcpConfig?: () => void;
 }
 
 const ENTITY_BADGE_CLASSES: Record<string, string> = {
@@ -36,6 +37,7 @@ const ENTITY_LABELS: Record<string, string> = {
 };
 
 export function AgentCard({
+  entityType = "agent",
   title,
   status,
   description,
@@ -48,7 +50,7 @@ export function AgentCard({
   onReject,
   onApprove,
   onReviewDetails,
-  onRunTest,
+  onViewMcpConfig,
 }: AgentCardProps) {
   const { t } = useTranslation();
 
@@ -137,14 +139,15 @@ export function AgentCard({
       <div className="flex w-full items-center gap-2">
         {/* LEFT actions */}
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={onReviewDetails} className="gap-2">
-            <FileText className="h-4 w-4" />
-            {t("Review Details")}
-          </Button>
-          {entityType !== "model" && (
-            <Button variant="outline" onClick={onRunTest} className="gap-2">
-              <Play className="h-4 w-4" />
-              {t("Run Test")}
+          {entityType === "mcp" ? (
+            <Button variant="outline" onClick={onViewMcpConfig} className="gap-2">
+              <FileCode2 className="h-4 w-4" />
+              {t("MCP Config")}
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={onReviewDetails} className="gap-2">
+              <FileCode2 className="h-4 w-4" />
+              {t("Review Details")}
             </Button>
           )}
         </div>

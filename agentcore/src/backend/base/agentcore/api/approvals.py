@@ -10,6 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from loguru import logger
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -26,7 +27,7 @@ from agentcore.services.database.models.approval_request.model import (
 )
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.folder.model import Folder
-from agentcore.services.database.models.mcp_registry.model import McpRegistry
+from agentcore.services.database.models.mcp_registry.model import McpRegistry, McpRegistryRead, McpRegistryUpdate
 from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
 from agentcore.services.database.models.model_approval_request.model import (
     ModelApprovalRequest,
@@ -80,6 +81,20 @@ class ApprovalResponse(BaseModel):
 
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
+
+
+def _normalize_mcp_mode(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized not in {"sse", "stdio"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported mode '{value}'")
+    return normalized
+
+
+def _normalize_mcp_deployment_env(value: str) -> str:
+    normalized = str(value).strip().upper()
+    if normalized not in {"UAT", "PROD"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported deployment_env '{value}'")
+    return normalized
 
 
 def _to_status_label(decision: ApprovalDecisionEnum | None) -> str:
@@ -1254,6 +1269,103 @@ async def get_agent_details(
         adminComments=req.justification,
         adminAttachments=(req.file_path.get("files", []) if isinstance(req.file_path, dict) else []),
     )
+
+
+@router.get("/{agent_id}/mcp-config", response_model=McpRegistryRead)
+async def get_mcp_config_for_approval(
+    agent_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> McpRegistryRead:
+    """Return editable MCP configuration linked to an approval request."""
+    mcp_req = await _get_mcp_approval_for_view(
+        session=session,
+        approval_or_mcp_id=agent_id,
+        current_user=current_user,
+    )
+    row = await session.get(McpRegistry, mcp_req.mcp_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Linked MCP server not found")
+    return McpRegistryRead.from_orm_model(row)
+
+
+@router.put("/{agent_id}/mcp-config", response_model=McpRegistryRead)
+async def update_mcp_config_for_approval(
+    agent_id: str,
+    payload: McpRegistryUpdate,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> McpRegistryRead:
+    """Update MCP config during review; only approver assigned to pending request can edit."""
+    mcp_req = await _get_mcp_approval_for_action(
+        session=session,
+        approval_or_mcp_id=agent_id,
+        current_user=current_user,
+    )
+    if mcp_req.decision is not None:
+        raise HTTPException(status_code=400, detail="MCP approval request already finalized")
+
+    row = await session.get(McpRegistry, mcp_req.mcp_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Linked MCP server not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return McpRegistryRead.from_orm_model(row)
+
+    if "server_name" in updates and isinstance(updates["server_name"], str):
+        candidate_name = updates["server_name"].strip().lower()
+        existing = (
+            await session.exec(
+                select(McpRegistry.id).where(
+                    func.lower(McpRegistry.server_name) == candidate_name,
+                    McpRegistry.id != row.id,
+                )
+            )
+        ).first()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="MCP server name already exists")
+        updates["server_name"] = updates["server_name"].strip()
+
+    if "mode" in updates and updates["mode"] is not None:
+        updates["mode"] = _normalize_mcp_mode(updates["mode"])
+    effective_mode = updates.get("mode", row.mode)
+
+    if "deployment_env" in updates and updates["deployment_env"] is not None:
+        updates["deployment_env"] = _normalize_mcp_deployment_env(updates["deployment_env"])
+
+    # Keep transport fields coherent whenever mode changes.
+    if effective_mode == "sse":
+        updates["command"] = None
+        updates["args"] = None
+    elif effective_mode == "stdio":
+        updates["url"] = None
+
+    allowed_fields = {
+        "server_name",
+        "description",
+        "mode",
+        "deployment_env",
+        "url",
+        "command",
+        "args",
+        "visibility",
+        "public_scope",
+        "public_dept_ids",
+        "org_id",
+        "dept_id",
+    }
+    for field_name, value in updates.items():
+        if field_name in allowed_fields:
+            setattr(row, field_name, value)
+
+    row.updated_at = datetime.now(timezone.utc)
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return McpRegistryRead.from_orm_model(row)
 
 
 @router.get("/{agent_id}/preview", response_model=ApprovalPreviewResponse)

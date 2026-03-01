@@ -1,7 +1,9 @@
+import os
 import secrets
 from pathlib import Path
 from typing import Literal
-
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(), override=True)
 from loguru import logger
 from passlib.context import CryptContext
 from pydantic import Field, SecretStr, field_validator
@@ -25,8 +27,8 @@ class AuthSettings(BaseSettings):
     # API Key to execute /process endpoint
     API_KEY_ALGORITHM: str = "HS256"
     API_V1_STR: str = "/api"
-    AZURE_TENANT_ID: str = "69b98d34-6d85-4ddf-9d5f-6f8767b5f4b7"
-    AZURE_CLIENT_ID: str ="d717db80-a34b-43c3-b78b-41322e2058cc"
+    AZURE_TENANT_ID: str = str(os.getenv("AZURE_TENANT_ID"))
+    AZURE_CLIENT_ID: str =str(os.getenv("AZURE_CLIENT_ID"))
     PLATFORM_ROOT_EMAIL: str | None = None
     NEW_USER_IS_ACTIVE: bool = True
     REFRESH_SAME_SITE: Literal["lax", "strict", "none"] = "none"

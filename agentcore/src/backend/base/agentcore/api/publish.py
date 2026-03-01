@@ -280,6 +280,87 @@ async def _resolve_publish_scope(
     requested_department_admin_id: UUID | None = None,
 ) -> tuple[UUID, UUID]:
     """Resolve and validate publish department/admin in the agent's org tenant."""
+    current_role = str(getattr(current_user, "role", "")).lower()
+    is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
+
+    # Super/root admins may not have user_department_membership rows.
+    # For these roles, resolve scope by requested department (or agent.dept_id),
+    # while still enforcing tenant consistency.
+    if is_org_wide_admin:
+        resolved_department_id = requested_department_id or agent.dept_id
+        if not resolved_department_id and agent.org_id:
+            # For org-wide admins without department memberships, use a deterministic
+            # fallback department from the agent's organization.
+            fallback_department = (
+                await session.exec(
+                    select(Department)
+                    .where(Department.org_id == agent.org_id)
+                    .order_by(col(Department.id))
+                )
+            ).first()
+            if fallback_department:
+                resolved_department_id = fallback_department.id
+
+        if not resolved_department_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "department_id is required for publish scope resolution when "
+                    "no department could be inferred for this agent."
+                ),
+            )
+
+        department = (
+            await session.exec(
+                select(Department).where(Department.id == resolved_department_id)
+            )
+        ).first()
+        if not department:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Department {resolved_department_id} not found.",
+            )
+
+        # Keep publish within the agent's tenant if agent is already stitched.
+        if agent.org_id and department.org_id != agent.org_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Department {resolved_department_id} is not part of organization {agent.org_id}."
+                ),
+            )
+
+        # Stitch missing tenant fields from resolved department.
+        if not agent.org_id:
+            agent.org_id = department.org_id
+        if not agent.dept_id:
+            agent.dept_id = department.id
+        session.add(agent)
+
+        resolved_department_admin_id = department.admin_user_id
+        if (
+            requested_department_admin_id
+            and requested_department_admin_id != resolved_department_admin_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"department_admin_id {requested_department_admin_id} does not match "
+                    f"department admin {resolved_department_admin_id} for department {resolved_department_id}."
+                ),
+            )
+
+        admin_user = (
+            await session.exec(select(User).where(User.id == resolved_department_admin_id))
+        ).first()
+        if not admin_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Department admin user {resolved_department_admin_id} not found.",
+            )
+
+        return resolved_department_id, resolved_department_admin_id
+
     base_memberships = (
         await session.exec(
             select(UserDepartmentMembership).where(

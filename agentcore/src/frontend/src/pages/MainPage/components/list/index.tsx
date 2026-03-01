@@ -50,8 +50,12 @@ const ListComponent = ({
   const { folderId } = useParams();
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
-  const { userData } = useContext(AuthContext);
+  const { userData, role } = useContext(AuthContext);
   const currentUserId = String(userData?.id ?? "");
+  const normalizedRole = String(role ?? "").toLowerCase();
+  const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
+    normalizedRole,
+  );
   const isComponent = agentData.is_component ?? false;
   const { data: publishStatus } = useGetPublishStatus(
     { agent_id: agentData.id },
@@ -74,6 +78,10 @@ const ListComponent = ({
         : "";
 
   const editAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}`;
+  const readOnlyAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}?readonly=1`;
+  const isAgentOwnedByCurrentUser = agentData.user_id
+    ? String(agentData.user_id) === currentUserId
+    : true;
 
   const handleClick = async () => {
     if (effectiveDisabled) return; // Prevent click when disabled
@@ -82,6 +90,11 @@ const ListComponent = ({
       setSelected(!selected);
     } else {
       if (!isComponent) {
+        // In project sections, admins should open agents in read-only mode.
+        if (folderId && isAdminRole && !isAgentOwnedByCurrentUser) {
+          navigate(readOnlyAgentLink);
+          return;
+        }
         navigate(editAgentLink);
       }
     }
