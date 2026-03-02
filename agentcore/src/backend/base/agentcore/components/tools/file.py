@@ -6,6 +6,7 @@ from agentcore.base.data.base_file import BaseFileNode
 from agentcore.base.data.utils import TEXT_FILE_TYPES, parallel_load_data, parse_text_file_to_data
 from agentcore.io import BoolInput, FileInput, IntInput, Output
 from agentcore.schema.data import Data
+from agentcore.services.deps import get_storage_service
 
 
 class File(BaseFileNode):
@@ -52,22 +53,56 @@ class File(BaseFileNode):
         Output(display_name="Raw Content", name="message", method="load_files_message"),
     ]
 
+    @staticmethod
+    def _as_path_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value else []
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, str) and item]
+        if isinstance(value, dict):
+            file_path_value = value.get("file_path")
+            if isinstance(file_path_value, str):
+                return [file_path_value] if file_path_value else []
+            if isinstance(file_path_value, list):
+                return [item for item in file_path_value if isinstance(item, str) and item]
+        return []
+
+    @staticmethod
+    def _looks_like_path(path_value: str) -> bool:
+        # Stored file paths are like "<user_id>/<kb_name>/<file_name.ext>".
+        return "/" in path_value or "\\" in path_value
+
     def _has_selectable_content(self, path_value: str) -> bool:
         """Return True when a path points to at least one processable file."""
         if not path_value:
             return False
 
-        path = Path(self.resolve_path(path_value))
+        candidate_paths = [Path(self.resolve_path(path_value))]
+        storage_root = Path(str(get_storage_service().data_dir))
+        candidate_paths.append(storage_root / path_value)
+        if "/" in path_value:
+            try:
+                candidate_paths.append(Path(self.get_full_path(path_value)))
+            except Exception:
+                pass
+        user_id = getattr(self, "user_id", None)
+        if user_id and not path_value.startswith(f"{user_id}/"):
+            candidate_paths.append(storage_root / str(user_id) / path_value)
+
         supported_extensions = set(self.valid_extensions) | set(self.SUPPORTED_BUNDLE_EXTENSIONS)
 
-        if path.is_file():
-            suffix = path.suffix[1:].lower()
+        resolved_path = next((path for path in candidate_paths if path.exists()), None)
+        if resolved_path is None:
+            return False
+
+        if resolved_path.is_file():
+            suffix = resolved_path.suffix[1:].lower()
             return suffix in supported_extensions
 
-        if path.is_dir():
+        if resolved_path.is_dir():
             return any(
                 candidate.is_file() and candidate.suffix[1:].lower() in supported_extensions
-                for candidate in path.rglob("*")
+                for candidate in resolved_path.rglob("*")
             )
 
         return False
@@ -78,20 +113,32 @@ class File(BaseFileNode):
     def update_outputs(self, frontend_node: dict, field_name: str, field_value: Any) -> dict:
         """Dynamically show only the relevant output based on the number of files processed."""
         if field_name == "path":
-            selected_paths = field_value if isinstance(field_value, list) else [field_value]
-            selected_paths = [path for path in selected_paths if isinstance(path, str)]
+            path_template = frontend_node.get("template", {}).get("path")
+            template_file_paths = []
+            if isinstance(path_template, dict):
+                template_file_paths = self._as_path_list(path_template.get("file_path"))
+
+            incoming_paths = self._as_path_list(field_value)
+            # Realtime update sends KB names in field_value; actual storage paths are in template.path.file_path.
+            if template_file_paths and (
+                not incoming_paths or all(not self._looks_like_path(path) for path in incoming_paths)
+            ):
+                selected_paths = template_file_paths
+            else:
+                selected_paths = incoming_paths
+
             filtered_paths = self._filter_selectable_paths(selected_paths)
             invalid_paths = [path for path in selected_paths if path not in filtered_paths]
 
             if invalid_paths:
-                invalid_display = ", ".join(invalid_paths)
-                msg = (
-                    "Some selected knowledge bases cannot be used. "
-                    f"They are empty or contain only unsupported file types: {invalid_display}"
+                self.log(
+                    "Ignoring unresolved/unsupported knowledge base selections: "
+                    + ", ".join(invalid_paths)
                 )
-                raise ValueError(msg)
+                # Keep selection stable; avoid UI popup/revert for legacy path tokens.
+                if not filtered_paths and selected_paths:
+                    filtered_paths = selected_paths
 
-            path_template = frontend_node.get("template", {}).get("path")
             if isinstance(path_template, dict):
                 path_template["file_path"] = filtered_paths
 

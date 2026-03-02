@@ -50,9 +50,16 @@ const ListComponent = ({
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
   const isComponent = agentData.is_component ?? false;
+  const approvalLookupId =
+    (agentData as any)?.approval_id ||
+    (agentData as any)?.latest_approval_id ||
+    "";
   const { data: approvalDetails } = useGetApprovalDetails(
-    { agent_id: agentData.id },
-    { refetchInterval: 30000 },
+    { agent_id: approvalLookupId },
+    {
+      enabled: !!approvalLookupId,
+      refetchInterval: (query) => (query.state.data ? 30000 : false),
+    },
   );
   const approvalStatus = approvalDetails?.status;
   const workflowLocked = !isComponent && approvalStatus === "pending";

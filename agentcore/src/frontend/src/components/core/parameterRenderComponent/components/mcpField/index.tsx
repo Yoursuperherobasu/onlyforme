@@ -16,23 +16,14 @@ export default function McpComponent({
   editNode = false,
   id = "",
 }: InputProps<string, any>): JSX.Element {
-  const { data: mcpServers } = useGetMCPServers();
+  const { data: mcpServers } = useGetMCPServers({ active_only: true });
   const { mutate: addMcpServer } = useAddMCPServer();
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const options = useMemo(
     () =>
       mcpServers?.map((server) => ({
-        name: server.name,
-        description:
-          server.toolsCount === null
-            ? server.error
-              ? server.error.startsWith("Timeout")
-                ? "Timeout"
-                : "Error"
-              : "Loading..."
-            : !server.toolsCount
-              ? "No tools found"
-              : `${server.toolsCount} tool${server.toolsCount === 1 ? "" : "s"}`,
+        name: server.server_name,
+        description: server.description || server.mode?.toUpperCase() || "",
       })),
     [mcpServers],
   );
@@ -133,64 +124,58 @@ export default function McpComponent({
 
   return (
     <div className="flex w-full flex-col gap-2">
-      {options == null || options.length > 0 || showSaveButton ? (
-        <div className="flex w-full gap-2">
-          <Button
-            variant={!showSaveButton ? "primary" : "secondary"}
-            size="xs"
-            role="combobox"
-            onClick={
-              !showSaveButton
-                ? handleOpenListSelectionDialog
-                : handleRemoveButtonClick
-            }
-            className={cn(
-              !showSaveButton
-                ? "dropdown-component-outline input-edit-node"
-                : "",
-              "w-full py-2",
-            )}
-            data-testid="mcp-server-dropdown"
-            disabled={disabled || !options}
-          >
-            <div
-              className={cn(
-                "flex w-full items-center justify-start text-sm font-normal",
-              )}
-            >
-              <span className="truncate">
-                {!options
-                  ? "Loading servers..."
-                  : selectedItem[0]?.name
-                    ? selectedItem[0]?.name
-                    : "Choose a server..."}
-              </span>
-              <ForwardedIconComponent
-                name={!showSaveButton ? "ChevronsUpDown" : "X"}
-                className="ml-auto h-5 w-5 text-muted-foreground"
-              />
-            </div>
-          </Button>
-          {showSaveButton && (
-            <Button
-              variant="primary"
-              size="iconMd"
-              className="px-2.5"
-              onClick={handleSaveButtonClick}
-              data-testid="save-mcp-server-button"
-            >
-              <ForwardedIconComponent
-                name="Save"
-                className="h-5 w-5 text-muted-foreground"
-              />
-            </Button>
+      <div className="flex w-full gap-2">
+        <Button
+          variant={!showSaveButton ? "primary" : "secondary"}
+          size="xs"
+          role="combobox"
+          onClick={
+            !showSaveButton
+              ? handleOpenListSelectionDialog
+              : handleRemoveButtonClick
+          }
+          className={cn(
+            !showSaveButton
+              ? "dropdown-component-outline input-edit-node"
+              : "",
+            "w-full py-2",
           )}
-        </div>
-      ) : (
-        <Button size="sm" onClick={handleAddButtonClick}>
-          <span>Register MCP Server</span>
+          data-testid="mcp-server-dropdown"
+          disabled={disabled || !options}
+        >
+          <div
+            className={cn(
+              "flex w-full items-center justify-start text-sm font-normal",
+            )}
+          >
+            <span className="truncate">
+              {!options
+                ? "Loading servers..."
+                : selectedItem[0]?.name
+                  ? selectedItem[0]?.name
+                  : "Choose a server..."}
+            </span>
+            <ForwardedIconComponent
+              name={!showSaveButton ? "ChevronsUpDown" : "X"}
+              className="ml-auto h-5 w-5 text-muted-foreground"
+            />
+          </div>
         </Button>
-      )}
+        {showSaveButton && (
+          <Button
+            variant="primary"
+            size="iconMd"
+            className="px-2.5"
+            onClick={handleSaveButtonClick}
+            data-testid="save-mcp-server-button"
+          >
+            <ForwardedIconComponent
+              name="Save"
+              className="h-5 w-5 text-muted-foreground"
+            />
+          </Button>
+        )}
+      </div>
       {options && (
         <>
           <ListSelectionComponent

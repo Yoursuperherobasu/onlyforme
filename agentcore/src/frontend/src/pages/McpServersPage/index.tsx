@@ -1,7 +1,19 @@
 import { useContext, useState } from "react";
-import { Plus, Server, MoreVertical, Edit2, Trash2, Search } from "lucide-react";
+import {
+  Plus,
+  Server,
+  MoreVertical,
+  Edit2,
+  Trash2,
+  Search,
+  XCircle,
+  Plug,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Wrench,
+} from "lucide-react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
-import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,15 +22,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import Loading from "@/components/ui/loading";
+import { Switch } from "@/components/ui/switch";
 import { useDeleteMCPServer } from "@/controllers/API/queries/mcp/use-delete-mcp-server";
-import { useGetMCPServer } from "@/controllers/API/queries/mcp/use-get-mcp-server";
 import { useGetMCPServers } from "@/controllers/API/queries/mcp/use-get-mcp-servers";
+import { usePatchMCPServer } from "@/controllers/API/queries/mcp/use-patch-mcp-server";
+import { useProbeMCPServer } from "@/controllers/API/queries/mcp/use-probe-mcp-server";
 import AddMcpServerModal from "@/modals/mcpServerModal";
 import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
-import type { MCPServerInfoType } from "@/types/mcp";
-import { cn } from "@/utils/utils";
+import type { McpRegistryType, McpProbeResponse } from "@/types/mcp";
 import RequestMcpServerModal from "./components/request-mcp-server-modal";
 import { useTranslation } from "react-i18next";
 
@@ -26,49 +39,123 @@ export default function MCPServersPage() {
   const { t } = useTranslation();
   const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const { data: servers } = useGetMCPServers();
-  const { mutate: deleteServer } = useDeleteMCPServer();
+  const { data: servers, isLoading } = useGetMCPServers({ active_only: false });
+  const deleteMutation = useDeleteMCPServer();
+  const patchMutation = usePatchMCPServer();
+  const probeMutation = useProbeMCPServer();
   const setErrorData = useAlertStore((state) => state.setErrorData);
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const [searchQuery, setSearchQuery] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [editInitialData, setEditInitialData] = useState<any>(null);
-  const { mutateAsync: getServer } = useGetMCPServer();
+  const [editServer, setEditServer] = useState<McpRegistryType | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [serverToDelete, setServerToDelete] =
-    useState<MCPServerInfoType | null>(null);
+  const [serverToDelete, setServerToDelete] = useState<McpRegistryType | null>(null);
 
-  const handleEdit = async (name: string) => {
+  // Probe state
+  const [probeResults, setProbeResults] = useState<Record<string, McpProbeResponse>>({});
+  const [probingServerId, setProbingServerId] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  // Toggle state (tracks which servers are currently being toggled)
+  const [togglingServerId, setTogglingServerId] = useState<string | null>(null);
+
+  const handleEdit = (server: McpRegistryType) => {
+    setEditServer(server);
+    setEditOpen(true);
+  };
+
+  const handleDelete = async (server: McpRegistryType) => {
     try {
-      const data = await getServer({ name });
-      setEditInitialData(data);
-      setEditOpen(true);
+      await deleteMutation.mutateAsync({ id: server.id });
+      setSuccessData({ title: t("MCP Server \"{{name}}\" deleted.", { name: server.server_name }) });
     } catch (e: any) {
-      setErrorData({ title: t("Error fetching server"), list: [e.message] });
+      setErrorData({ title: t("Error deleting server"), list: [e.message] });
     }
   };
 
-  const handleDelete = (server: MCPServerInfoType) => {
-    deleteServer(
-      { name: server.name },
-      {
-        onError: (e: any) =>
-          setErrorData({ title: t("Error deleting server"), list: [e.message] }),
-      },
-    );
-  };
-
-  const openDeleteModal = (server: MCPServerInfoType) => {
+  const openDeleteModal = (server: McpRegistryType) => {
     setServerToDelete(server);
     setDeleteModalOpen(true);
+  };
+
+  const handleToggleActive = async (server: McpRegistryType) => {
+    const newActive = !server.is_active;
+    setTogglingServerId(server.id);
+    try {
+      await patchMutation.mutateAsync({
+        id: server.id,
+        data: { is_active: newActive },
+      });
+      setSuccessData({
+        title: newActive
+          ? t("\"{{name}}\" connected.", { name: server.server_name })
+          : t("\"{{name}}\" disconnected.", { name: server.server_name }),
+      });
+      // Clear probe result when disconnecting
+      if (!newActive) {
+        setProbeResults((prev) => {
+          const next = { ...prev };
+          delete next[server.id];
+          return next;
+        });
+        setExpandedRows((prev) => {
+          const next = new Set(prev);
+          next.delete(server.id);
+          return next;
+        });
+      }
+    } catch (e: any) {
+      setErrorData({ title: t("Error updating server"), list: [e.message] });
+    } finally {
+      setTogglingServerId(null);
+    }
+  };
+
+  const handleProbe = async (server: McpRegistryType) => {
+    setProbingServerId(server.id);
+    try {
+      const result = await probeMutation.mutateAsync({ id: server.id });
+      setProbeResults((prev) => ({ ...prev, [server.id]: result }));
+      if (result.success) {
+        setSuccessData({
+          title: t("Connection successful. Found {{count}} tool(s).", {
+            count: result.tools_count ?? 0,
+          }),
+        });
+      } else {
+        setErrorData({ title: t("Connection failed"), list: [result.message] });
+      }
+    } catch (e: any) {
+      setProbeResults((prev) => ({
+        ...prev,
+        [server.id]: { success: false, message: e.message },
+      }));
+      setErrorData({ title: t("Probe failed"), list: [e.message] });
+    } finally {
+      setProbingServerId(null);
+    }
+  };
+
+  const toggleRowExpand = (serverId: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(serverId)) {
+        next.delete(serverId);
+      } else {
+        next.add(serverId);
+      }
+      return next;
+    });
   };
 
   // Filter servers based on search
   const filteredServers = servers?.filter(
     (server) =>
       !searchQuery ||
-      server.name.toLowerCase().includes(searchQuery.toLowerCase())
+      server.server_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      server.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
   const canAddMcp = can("add_new_mcp");
   const canRequestMcp = can("request_new_mcp");
@@ -79,7 +166,6 @@ export default function MCPServersPage() {
       <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            
             <h1 className="text-2xl font-semibold">{t("MCP Servers")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -123,7 +209,7 @@ export default function MCPServersPage() {
 
       {/* Table - Scrollable */}
       <div className="flex-1 overflow-auto p-8">
-        {!servers ? (
+        {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
           </div>
@@ -137,26 +223,6 @@ export default function MCPServersPage() {
                   ? t("No servers match your search criteria")
                   : t("Get started by adding your first MCP server")}
               </p>
-              {!searchQuery && canAddMcp && (
-                <Button
-                  variant="default"
-                  className="mt-4"
-                  onClick={() => setAddOpen(true)}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  {t("Add MCP Server")}
-                </Button>
-              )}
-              {!searchQuery && !canAddMcp && canRequestMcp && (
-                <Button
-                  variant="default"
-                  className="mt-4"
-                  onClick={() => setRequestOpen(true)}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  {t("Request MCP Server")}
-                </Button>
-              )}
             </div>
           </div>
         ) : (
@@ -169,10 +235,13 @@ export default function MCPServersPage() {
                       {t("Server Name")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      {t("Mode")}
+                    </th>
+                    <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       {t("Status")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      {t("Tools")}
+                      {t("Connection")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       {t("Actions")}
@@ -182,106 +251,166 @@ export default function MCPServersPage() {
 
                 <tbody className="divide-y divide-border">
                   {filteredServers?.map((server) => (
-                    <tr key={server.id} className="group hover:bg-muted/50">
-                      {/* Server Name */}
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-100 dark:bg-orange-900/30">
-                            <ForwardedIconComponent
-                              name="Mcp"
-                              className="h-5 w-5 text-orange-600 dark:text-orange-400"
-                            />
+                    <>
+                      <tr key={server.id} className="group hover:bg-muted/50">
+                        {/* Server Name */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${server.is_active ? "bg-orange-100 dark:bg-orange-900/30" : "bg-muted"}`}>
+                              <ForwardedIconComponent
+                                name="Mcp"
+                                className={`h-5 w-5 ${server.is_active ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground"}`}
+                              />
+                            </div>
+                            <div className={server.is_active ? "" : "opacity-50"}>
+                              <div className="font-semibold">{server.server_name}</div>
+                              {server.description && (
+                                <div className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                                  {server.description}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div>
-                            <div className="font-semibold">{server.name}</div>
-                            {server.error && (
-                              <div className="mt-1 text-xs text-destructive">
-                                {server.error}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Status */}
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          {server.error ? (
-                            <>
-                              <span className="h-2 w-2 rounded-full bg-red-500"></span>
-                              <span className="text-sm text-destructive">
-                                {server.error.startsWith("Timeout")
-                                  ? t("Timeout")
-                                  : t("Error")}
-                              </span>
-                            </>
-                          ) : server.toolsCount === null ? (
-                            <>
-                              <span className="h-2 w-2 animate-pulse rounded-full bg-yellow-500"></span>
-                              <span className="text-sm text-muted-foreground">
-                                {t("Loading...")}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="h-2 w-2 rounded-full bg-green-500"></span>
-                              <span className="text-sm">{t("Connected")}</span>
-                            </>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Tools Count */}
-                      <td className="px-6 py-4">
-                        <ShadTooltip content={server.error || ""}>
-                          <span
-                            className={cn(
-                              "text-sm",
-                              server.error
-                                ? "text-destructive"
-                                : "text-muted-foreground"
-                            )}
-                          >
-                            {server.toolsCount === null
-                              ? "-"
-                              : !server.toolsCount
-                                ? t("No tools found")
-                                : `${server.toolsCount} ${
-                                    server.toolsCount === 1 ? t("tool") : t("tools")
-                                  }`}
+                        {/* Mode */}
+                        <td className="px-6 py-4">
+                          <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium uppercase">
+                            {server.mode}
                           </span>
-                        </ShadTooltip>
-                      </td>
+                        </td>
 
-                      {/* Actions */}
-                      <td className="px-6 py-4">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-accent group-hover:opacity-100"
-                              data-testid={`mcp-server-menu-button-${server.name}`}
+                        {/* Status - Toggle Switch */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <Switch
+                              checked={server.is_active}
+                              onCheckedChange={() => handleToggleActive(server)}
+                              disabled={togglingServerId === server.id}
+                              className="data-[state=checked]:bg-green-600"
+                            />
+                            <span className={`text-xs font-medium ${server.is_active ? "text-green-600" : "text-muted-foreground"}`}>
+                              {server.is_active ? t("Connected") : t("Disconnected")}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Connection - Probe */}
+                        <td className="px-6 py-4">
+                          {!server.is_active ? (
+                            <span className="text-xs text-muted-foreground">
+                              {t("--")}
+                            </span>
+                          ) : probingServerId === server.id ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              {t("Probing...")}
+                            </span>
+                          ) : probeResults[server.id] ? (
+                            <div className="flex items-center gap-2">
+                              {probeResults[server.id].success ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
+                                  <Plug className="h-3.5 w-3.5" />
+                                  {t("OK")}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-xs font-medium text-red-500">
+                                  <XCircle className="h-3.5 w-3.5" />
+                                  {t("Failed")}
+                                </span>
+                              )}
+                              {probeResults[server.id].success &&
+                                probeResults[server.id].tools_count != null && (
+                                  <button
+                                    onClick={() => toggleRowExpand(server.id)}
+                                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                                  >
+                                    <Wrench className="h-3 w-3" />
+                                    {probeResults[server.id].tools_count} {t("tools")}
+                                    {expandedRows.has(server.id) ? (
+                                      <ChevronDown className="h-3 w-3" />
+                                    ) : (
+                                      <ChevronRight className="h-3 w-3" />
+                                    )}
+                                  </button>
+                                )}
+                            </div>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleProbe(server)}
+                              className="h-7 text-xs"
                             >
-                              <MoreVertical className="h-4 w-4 text-foreground" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() => handleEdit(server.name)}
-                            >
-                              <Edit2 className="mr-2 h-4 w-4" />
-                              {t("Edit")}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => openDeleteModal(server)}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              {t("Delete")}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </td>
-                    </tr>
+                              <Plug className="mr-1 h-3.5 w-3.5" />
+                              {t("Test Connection")}
+                            </Button>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-6 py-4">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-accent group-hover:opacity-100"
+                                data-testid={`mcp-server-menu-button-${server.server_name}`}
+                              >
+                                <MoreVertical className="h-4 w-4 text-foreground" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => handleEdit(server)}
+                              >
+                                <Edit2 className="mr-2 h-4 w-4" />
+                                {t("Edit")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => openDeleteModal(server)}
+                                className="text-destructive"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                {t("Delete")}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </td>
+                      </tr>
+
+                      {/* Expandable tool list */}
+                      {expandedRows.has(server.id) &&
+                        probeResults[server.id]?.tools &&
+                        probeResults[server.id].tools!.length > 0 && (
+                          <tr key={`${server.id}-tools`} className="bg-muted/30">
+                            <td colSpan={5} className="px-6 py-3">
+                              <div className="ml-[52px] space-y-1">
+                                <div className="mb-2 text-xs font-medium text-muted-foreground">
+                                  {t("Discovered Tools:")}
+                                </div>
+                                {probeResults[server.id].tools!.map((tool) => (
+                                  <div
+                                    key={tool.name}
+                                    className="flex items-start gap-2 py-1"
+                                  >
+                                    <Wrench className="mt-0.5 h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                                    <div>
+                                      <span className="text-sm font-medium">
+                                        {tool.name}
+                                      </span>
+                                      {tool.description && (
+                                        <p className="text-xs text-muted-foreground">
+                                          {tool.description}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                    </>
                   ))}
                 </tbody>
               </table>
@@ -300,11 +429,11 @@ export default function MCPServersPage() {
       {/* Modals */}
       <AddMcpServerModal open={addOpen} setOpen={setAddOpen} />
       <RequestMcpServerModal open={requestOpen} setOpen={setRequestOpen} />
-      {editOpen && (
+      {editOpen && editServer && (
         <AddMcpServerModal
           open={editOpen}
           setOpen={setEditOpen}
-          initialData={editInitialData}
+          initialData={editServer}
         />
       )}
       <DeleteConfirmationModal
@@ -320,4 +449,3 @@ export default function MCPServersPage() {
     </div>
   );
 }
-

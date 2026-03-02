@@ -1,5 +1,6 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { useQueryFunctionType } from "@/types/api";
+import useAuthStore from "@/stores/authStore";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
@@ -34,6 +35,7 @@ export const useGetKnowledgeBases: useQueryFunctionType<
   KnowledgeBaseInfo[]
 > = (options?) => {
   const { query } = UseRequestProcessor();
+  const userId = useAuthStore((state) => state.userData?.id);
 
   const getKnowledgeBasesFn = async (): Promise<KnowledgeBaseInfo[]> => {
     const res = await api.get(`${getURL("KNOWLEDGE_BASES")}/`);
@@ -41,7 +43,7 @@ export const useGetKnowledgeBases: useQueryFunctionType<
   };
 
   const queryResult: UseQueryResult<KnowledgeBaseInfo[], any> = query(
-    ["useGetKnowledgeBases"],
+    ["useGetKnowledgeBases", userId ?? "anonymous"],
     getKnowledgeBasesFn,
     {
       refetchOnWindowFocus: false,

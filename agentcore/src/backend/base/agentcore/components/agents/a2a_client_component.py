@@ -12,6 +12,7 @@ knowledge base before sending the enriched message to the remote agent.
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from typing import Any
@@ -43,6 +44,12 @@ from agentcore.schema.data import Data
 from agentcore.schema.message import Message
 from agentcore.utils.constants import MESSAGE_SENDER_AI
 
+LOCALHOST_HOST = os.getenv("LOCALHOST_HOST", "localhost")
+LOCALHOST_A2A_URL_EXAMPLE = os.getenv(
+    "LOCALHOST_A2A_URL_EXAMPLE",
+    "http://localhost:7860/api/a2a/{agent-id}",
+)
+
 
 class A2AClientComponent(Node):
     """Component that calls an external A2A-compatible agent.
@@ -72,7 +79,7 @@ class A2AClientComponent(Node):
             display_name="Agent URL",
             info=(
                 "Backend API URL of the A2A-compatible agent "
-                "(e.g., http://localhost:7860/api/a2a/{agent-id}). "
+                f"(e.g., {LOCALHOST_A2A_URL_EXAMPLE}). "
                 "This must be the backend API URL, not the frontend URL. "
                 "The agent card will be fetched from <url>/.well-known/agent.json "
                 "and the RPC endpoint will be read from the agent card."
@@ -212,8 +219,8 @@ class A2AClientComponent(Node):
             msg = "Agent URL cannot be empty"
             raise ValueError(msg)
         if not url.startswith(("http://", "https://")):
-            # Default to http for localhost/127.0.0.1, https for everything else
-            if url.startswith(("localhost", "127.0.0.1")):
+            # Default to http for localhost-like URLs and 127.0.0.1, https for everything else
+            if url.startswith((LOCALHOST_HOST, "127.0.0.1")):
                 url = f"http://{url}"
             else:
                 url = f"https://{url}"

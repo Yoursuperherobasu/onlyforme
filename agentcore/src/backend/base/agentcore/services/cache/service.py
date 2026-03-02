@@ -1,4 +1,5 @@
 import asyncio
+import os
 import pickle
 import threading
 import time
@@ -196,7 +197,7 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         b = cache["b"]
     """
 
-    def __init__(self, host="localhost", port=6379, db=0, url=None, password=None, ssl=False, expiration_time=60 * 60) -> None:
+    def __init__(self, host=os.getenv("LOCALHOST_HOST", "localhost"), port=6379, db=0, url=None, password=None, ssl=False, expiration_time=60 * 60) -> None:
         """Initialize a new RedisCache instance.
 
         Args:

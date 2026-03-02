@@ -114,8 +114,14 @@ def _detect_best_chart_type(columns: list[str], rows: list[list], user_query: st
 
 
 def _generate_chart(chart_type: str, columns: list[str], rows: list[list],
-                    style_name: str, title: str) -> str:
-    """Generate a chart and return as base64 PNG."""
+                    style_name: str, title: str,
+                    chart_options: dict | None = None) -> str:
+    """Generate a chart and return as base64 PNG.
+
+    Args:
+        chart_options: Optional dict with keys:
+            x_axis_label, y_axis_label, show_value_labels, show_legend, auto_axis_labels
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -123,6 +129,14 @@ def _generate_chart(chart_type: str, columns: list[str], rows: list[list],
 
     style = STYLE_PRESETS.get(style_name, STYLE_PRESETS["corporate"])
     colors = style["colors"]
+
+    # Parse chart options (with safe defaults)
+    opts = chart_options or {}
+    custom_x_label = opts.get("x_axis_label", "")
+    custom_y_label = opts.get("y_axis_label", "")
+    show_value_labels = opts.get("show_value_labels", True)
+    show_legend = opts.get("show_legend", True)
+    auto_axis_labels = opts.get("auto_axis_labels", True)
 
     fig, ax = plt.subplots(figsize=(10, 6))
     fig.patch.set_facecolor(style["bg_color"])
@@ -162,8 +176,9 @@ def _generate_chart(chart_type: str, columns: list[str], rows: list[list],
                        color=colors[(i - 1) % len(colors)], edgecolor="none")
             ax.set_xticks(x_pos)
             ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=style["label_size"])
-            ax.legend(fontsize=9, facecolor=style["bg_color"], edgecolor=style["grid_color"],
-                     labelcolor=style["text_color"])
+            if show_legend:
+                ax.legend(fontsize=9, facecolor=style["bg_color"], edgecolor=style["grid_color"],
+                         labelcolor=style["text_color"])
         else:
             vals = []
             for row in rows:
@@ -175,10 +190,11 @@ def _generate_chart(chart_type: str, columns: list[str], rows: list[list],
             bars = ax.bar(labels, vals, color=bar_colors, edgecolor="none", width=0.7)
             ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=style["label_size"])
             # Add value labels on bars
-            for bar, val in zip(bars, vals):
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                        f"{val:,.0f}" if val > 1 else f"{val:.2f}",
-                        ha="center", va="bottom", fontsize=8, color=style["text_color"])
+            if show_value_labels:
+                for bar, val in zip(bars, vals):
+                    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                            f"{val:,.0f}" if val > 1 else f"{val:.2f}",
+                            ha="center", va="bottom", fontsize=8, color=style["text_color"])
 
     elif chart_type == "bar_horizontal":
         vals = []
@@ -202,8 +218,9 @@ def _generate_chart(chart_type: str, columns: list[str], rows: list[list],
                         vals.append(0)
                 ax.plot(labels, vals, marker="o", markersize=5, linewidth=2,
                         color=colors[(i - 1) % len(colors)], label=columns[i])
-            ax.legend(fontsize=9, facecolor=style["bg_color"], edgecolor=style["grid_color"],
-                     labelcolor=style["text_color"])
+            if show_legend:
+                ax.legend(fontsize=9, facecolor=style["bg_color"], edgecolor=style["grid_color"],
+                         labelcolor=style["text_color"])
         else:
             vals = []
             for row in rows:
@@ -251,8 +268,15 @@ def _generate_chart(chart_type: str, columns: list[str], rows: list[list],
                     x_vals.append(0)
                     y_vals.append(0)
             ax.scatter(x_vals, y_vals, c=colors[0], alpha=0.7, edgecolors=colors[1], s=60)
-            ax.set_xlabel(columns[1], fontsize=style["label_size"])
-            ax.set_ylabel(columns[2], fontsize=style["label_size"])
+            # Scatter axis labels: custom > auto > column name
+            if custom_x_label:
+                ax.set_xlabel(custom_x_label, fontsize=style["label_size"])
+            elif auto_axis_labels:
+                ax.set_xlabel(columns[1].replace("_", " ").title(), fontsize=style["label_size"])
+            if custom_y_label:
+                ax.set_ylabel(custom_y_label, fontsize=style["label_size"])
+            elif auto_axis_labels:
+                ax.set_ylabel(columns[2].replace("_", " ").title(), fontsize=style["label_size"])
         else:
             x_vals = list(range(len(rows)))
             y_vals = []
@@ -267,6 +291,25 @@ def _generate_chart(chart_type: str, columns: list[str], rows: list[list],
         # Fallback: just show text
         ax.text(0.5, 0.5, "Chart type not supported", ha="center", va="center",
                 fontsize=14, color=style["text_color"], transform=ax.transAxes)
+
+    # --- Apply axis labels (all chart types except pie and scatter which handles its own) ---
+    if chart_type not in ("pie", "scatter"):
+        # X-axis label
+        x_label = custom_x_label
+        if not x_label and auto_axis_labels and columns:
+            x_label = columns[0].replace("_", " ").title()
+        if x_label:
+            ax.set_xlabel(x_label, fontsize=style["label_size"], color=style["text_color"])
+
+        # Y-axis label
+        y_label = custom_y_label
+        if not y_label and auto_axis_labels and len(columns) > 1:
+            if len(columns) == 2:
+                y_label = columns[1].replace("_", " ").title()
+            else:
+                y_label = "Value"
+        if y_label:
+            ax.set_ylabel(y_label, fontsize=style["label_size"], color=style["text_color"])
 
     if chart_type != "pie":
         ax.set_title(title, fontsize=style["title_size"], fontweight="bold",
@@ -408,7 +451,14 @@ class DataVisualizerComponent(Node):
         # Generate chart
         try:
             title = user_query[:80] + ("..." if len(user_query) > 80 else "")
-            b64_image = _generate_chart(chart_type, columns, rows, self.chart_style, title)
+            chart_options = {
+                "x_axis_label": "",
+                "y_axis_label": "",
+                "show_value_labels": True,
+                "show_legend": True,
+                "auto_axis_labels": True,
+            }
+            b64_image = _generate_chart(chart_type, columns, rows, self.chart_style, title, chart_options)
 
             parts = []
             # Query summary first (SQL + data table)

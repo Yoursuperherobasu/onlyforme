@@ -1,4 +1,4 @@
-//Sensei Desktop Base URL
+//AgentCore Desktop Base URL
 export const baseURL = "";
 
 export const customCodeTabsClass = {

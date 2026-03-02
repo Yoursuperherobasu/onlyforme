@@ -26,16 +26,16 @@ export default function PublishStatusBadge() {
     return null;
   }
 
-  const senseiPublications = activePublications.filter(
-    (record) => record.platform === "sensei",
+  const agentcorePublications = activePublications.filter(
+    (record) => record.platform === "agentcore",
   );
 
   const tooltipContent = (
     <div className="space-y-1">
       <div className="font-semibold">Published to:</div>
-      {senseiPublications.map((record, idx) => (
+      {agentcorePublications.map((record, idx) => (
         <div key={idx} className="text-xs">
-          <div>• Sensei: {record.platform_url}</div>
+          <div>• AgentCore: {record.platform_url}</div>
           <div className="ml-3 text-muted-foreground">
             Model: {record.metadata?.model_name || record.external_id}
           </div>
@@ -51,7 +51,7 @@ export default function PublishStatusBadge() {
         className="flex items-center gap-1 border-green-500 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-300"
       >
         <IconComponent name="Globe" className="h-3 w-3" />
-        <span className="text-xs">Published ({senseiPublications.length})</span>
+        <span className="text-xs">Published ({agentcorePublications.length})</span>
       </Badge>
     </ShadTooltipComponent>
   );

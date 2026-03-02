@@ -13,19 +13,17 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlmodel import col, select
-from sqlalchemy import or_, true
+from sqlalchemy import or_
 
 from agentcore.api.schemas import UploadFileResponse
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.file.model import File as UserFile
 from agentcore.services.database.models.knowledge_base.model import KBVisibilityEnum, KnowledgeBase
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.deps import get_settings_service, get_storage_service
 from agentcore.services.storage.service import StorageService
-
-from agentcore.services.auth.decorators import PermissionChecker
-from agentcore.services.auth.permissions import normalize_role
 
 
 router = APIRouter(tags=["Files"], prefix="/files")
@@ -35,45 +33,214 @@ MCP_SERVERS_FILE = "_mcp_servers"
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
 
 
-async def _get_scope_memberships(session: DbSession, user_id: uuid.UUID) -> tuple[set[uuid.UUID], set[uuid.UUID]]:
-    org_rows = (
+async def _build_file_visibility_filters(session: DbSession, current_user: CurrentActiveUser):
+    viewer_dept_ids = select(UserDepartmentMembership.department_id).where(
+        UserDepartmentMembership.user_id == current_user.id,
+        UserDepartmentMembership.status == "active",
+    )
+    viewer_org_ids = select(UserOrganizationMembership.org_id).where(
+        UserOrganizationMembership.user_id == current_user.id,
+        UserOrganizationMembership.status.in_(["accepted", "active"]),
+    )
+    viewer_is_dept_admin_of_creator_dept = (
+        select(Department.id)
+        .where(
+            Department.admin_user_id == current_user.id,
+            Department.id.in_(
+                select(UserDepartmentMembership.department_id).where(
+                    UserDepartmentMembership.user_id == KnowledgeBase.created_by,
+                    UserDepartmentMembership.status == "active",
+                )
+            ),
+        )
+        .exists()
+    )
+    private_kb_visible = (
+        select(KnowledgeBase.id)
+        .where(
+            KnowledgeBase.id == UserFile.knowledge_base_id,
+            KnowledgeBase.visibility == KBVisibilityEnum.PRIVATE,
+            or_(
+                KnowledgeBase.created_by == current_user.id,
+                viewer_is_dept_admin_of_creator_dept,
+            ),
+        )
+        .exists()
+    )
+    dept_kb_visible = (
+        select(KnowledgeBase.id)
+        .where(
+            KnowledgeBase.id == UserFile.knowledge_base_id,
+            KnowledgeBase.visibility == KBVisibilityEnum.DEPARTMENT,
+            select(UserDepartmentMembership.id)
+            .where(
+                UserDepartmentMembership.user_id == KnowledgeBase.created_by,
+                UserDepartmentMembership.status == "active",
+                UserDepartmentMembership.department_id.in_(viewer_dept_ids),
+            )
+            .exists(),
+        )
+        .exists()
+    )
+    org_kb_visible = (
+        select(KnowledgeBase.id)
+        .where(
+            KnowledgeBase.id == UserFile.knowledge_base_id,
+            KnowledgeBase.visibility == KBVisibilityEnum.ORGANIZATION,
+            select(UserOrganizationMembership.id)
+            .where(
+                UserOrganizationMembership.user_id == KnowledgeBase.created_by,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+                UserOrganizationMembership.org_id.in_(viewer_org_ids),
+            )
+            .exists(),
+        )
+        .exists()
+    )
+    return [UserFile.user_id == current_user.id, private_kb_visible, dept_kb_visible, org_kb_visible]
+
+
+async def _resolve_default_scope(session: DbSession, current_user: CurrentActiveUser) -> tuple[uuid.UUID, uuid.UUID]:
+    membership = (
+        await session.exec(
+            select(UserDepartmentMembership.org_id, UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=403, detail="No active department scope found for user")
+    return membership[0], membership[1]
+
+
+async def _resolve_upload_scope(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    visibility: str | None,
+    public_scope: str | None,
+    org_id: str | None,
+    dept_id: str | None,
+) -> tuple[KBVisibilityEnum, uuid.UUID, uuid.UUID | None]:
+    normalized_visibility = (visibility or "PRIVATE").strip().upper()
+    if normalized_visibility not in {"PRIVATE", "PUBLIC", "DEPARTMENT", "ORGANIZATION"}:
+        raise HTTPException(status_code=400, detail="Unsupported visibility")
+
+    if normalized_visibility == "PRIVATE":
+        resolved_org_id, resolved_dept_id = await _resolve_default_scope(session, current_user)
+        return KBVisibilityEnum.PRIVATE, resolved_org_id, resolved_dept_id
+
+    if normalized_visibility == "PUBLIC":
+        if not public_scope:
+            raise HTTPException(status_code=400, detail="public_scope is required for public visibility")
+        normalized_visibility = "ORGANIZATION" if public_scope.strip().lower() == "organization" else "DEPARTMENT"
+
+    if normalized_visibility == "DEPARTMENT":
+        memberships = (
+            await session.exec(
+                select(UserDepartmentMembership.org_id, UserDepartmentMembership.department_id).where(
+                    UserDepartmentMembership.user_id == current_user.id,
+                    UserDepartmentMembership.status == "active",
+                )
+            )
+        ).all()
+        if not memberships:
+            raise HTTPException(status_code=403, detail="No active department scope found for user")
+        allowed = {(m[0], m[1]) for m in memberships}
+        if org_id and dept_id:
+            parsed_org_id = uuid.UUID(org_id)
+            parsed_dept_id = uuid.UUID(dept_id)
+            if (parsed_org_id, parsed_dept_id) not in allowed:
+                raise HTTPException(status_code=403, detail="Selected department is outside your scope")
+            return KBVisibilityEnum.DEPARTMENT, parsed_org_id, parsed_dept_id
+        default_org_id, default_dept_id = sorted(allowed, key=lambda x: (str(x[0]), str(x[1])))[0]
+        return KBVisibilityEnum.DEPARTMENT, default_org_id, default_dept_id
+
+    # ORGANIZATION
+    org_memberships = (
         await session.exec(
             select(UserOrganizationMembership.org_id).where(
-                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.user_id == current_user.id,
                 UserOrganizationMembership.status.in_(["accepted", "active"]),
             )
         )
     ).all()
-    dept_rows = (
+    allowed_orgs = {r if isinstance(r, uuid.UUID) else r[0] for r in org_memberships}
+    if not allowed_orgs:
+        raise HTTPException(status_code=403, detail="No active organization scope found for user")
+    parsed_org_id = uuid.UUID(org_id) if org_id else sorted(allowed_orgs, key=str)[0]
+    if parsed_org_id not in allowed_orgs:
+        raise HTTPException(status_code=403, detail="Selected organization is outside your scope")
+    return KBVisibilityEnum.ORGANIZATION, parsed_org_id, None
+
+
+def sanitize_knowledge_base_name(raw_name: str) -> str:
+    clean_name = raw_name.strip()
+    clean_name = clean_name.replace("\\", "_").replace("/", "_")
+    clean_name = re.sub(r"[^A-Za-z0-9 _.-]", "_", clean_name)
+    return re.sub(r"\s+", " ", clean_name).strip(" .")
+
+
+async def _can_access_existing_kb(session: DbSession, current_user: CurrentActiveUser, kb: KnowledgeBase) -> bool:
+    if kb.created_by == current_user.id:
+        return True
+    if kb.visibility == KBVisibilityEnum.PRIVATE:
+        creator_dept_ids = (
+            await session.exec(
+                select(UserDepartmentMembership.department_id).where(
+                    UserDepartmentMembership.user_id == kb.created_by,
+                    UserDepartmentMembership.status == "active",
+                )
+            )
+        ).all()
+        if not creator_dept_ids:
+            return False
+        return (
+            await session.exec(
+                select(Department.id)
+                .where(
+                    Department.admin_user_id == current_user.id,
+                    Department.id.in_(list(creator_dept_ids)),
+                )
+            )
+        ).first() is not None
+    if kb.visibility == KBVisibilityEnum.DEPARTMENT:
+        viewer_dept_ids = select(UserDepartmentMembership.department_id).where(
+            UserDepartmentMembership.user_id == current_user.id,
+            UserDepartmentMembership.status == "active",
+        )
+        return (
+            await session.exec(
+                select(UserDepartmentMembership.id).where(
+                    UserDepartmentMembership.user_id == kb.created_by,
+                    UserDepartmentMembership.status == "active",
+                    UserDepartmentMembership.department_id.in_(viewer_dept_ids),
+                )
+            )
+        ).first() is not None
+    viewer_org_ids = select(UserOrganizationMembership.org_id).where(
+        UserOrganizationMembership.user_id == current_user.id,
+        UserOrganizationMembership.status.in_(["accepted", "active"]),
+    )
+    return (
         await session.exec(
-            select(UserDepartmentMembership.department_id).where(
-                UserDepartmentMembership.user_id == user_id,
-                UserDepartmentMembership.status == "active",
+            select(UserOrganizationMembership.id).where(
+                UserOrganizationMembership.user_id == kb.created_by,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+                UserOrganizationMembership.org_id.in_(viewer_org_ids),
             )
         )
-    ).all()
-    org_ids = {r if isinstance(r, uuid.UUID) else r[0] for r in org_rows}
-    dept_ids = {r if isinstance(r, uuid.UUID) else r[0] for r in dept_rows}
-    return org_ids, dept_ids
-
-
-async def _resolve_default_tenant_scope(session: DbSession, user_id: uuid.UUID) -> tuple[uuid.UUID | None, uuid.UUID | None]:
-    org_ids, dept_ids = await _get_scope_memberships(session, user_id)
-    org_id = sorted(org_ids, key=str)[0] if org_ids else None
-    dept_id = sorted(dept_ids, key=str)[0] if dept_ids else None
-    return org_id, dept_id
+    ).first() is not None
 
 
 async def _get_or_create_knowledge_base(
-    *,
     session: DbSession,
     current_user: CurrentActiveUser,
     knowledge_base_name: str,
-    visibility: KBVisibilityEnum = KBVisibilityEnum.PRIVATE,
+    visibility: KBVisibilityEnum,
+    org_id: uuid.UUID,
+    dept_id: uuid.UUID | None,
 ) -> KnowledgeBase:
-    org_id, dept_id = await _resolve_default_tenant_scope(session, current_user.id)
-    role = normalize_role(getattr(current_user, "role", None) or "")
-    is_admin = role in {"root", "super_admin", "department_admin"}
     existing = (
         await session.exec(
             select(KnowledgeBase).where(
@@ -84,109 +251,20 @@ async def _get_or_create_knowledge_base(
         )
     ).first()
     if existing:
-        if existing.created_by != current_user.id and not is_admin:
-            raise HTTPException(status_code=403, detail="Not authorized to modify this knowledge base")
+        if not await _can_access_existing_kb(session, current_user, existing):
+            raise HTTPException(status_code=403, detail="Not authorized to use this knowledge base")
         return existing
 
     kb = KnowledgeBase(
         name=knowledge_base_name,
+        visibility=visibility,
         org_id=org_id,
         dept_id=dept_id,
         created_by=current_user.id,
-        visibility=visibility,
     )
     session.add(kb)
     await session.flush()
     return kb
-
-
-async def _build_file_visibility_filters(session: DbSession, current_user: CurrentActiveUser):
-    role = normalize_role(getattr(current_user, "role", None) or "")
-    org_ids, dept_ids = await _get_scope_memberships(session, current_user.id)
-
-    filters = [UserFile.user_id == current_user.id]
-
-    if role == "root":
-        return [true()]
-
-    if getattr(current_user, "is_superuser", False) or role == "super_admin":
-        if org_ids:
-            org_kb_access = (
-                select(KnowledgeBase.id)
-                .where(
-                    KnowledgeBase.id == UserFile.knowledge_base_id,
-                    KnowledgeBase.org_id.in_(list(org_ids)),
-                )
-                .exists()
-            )
-            filters.append(org_kb_access)
-        return filters
-
-    if role == "department_admin":
-        if dept_ids:
-            creator_shares_dept = (
-                select(UserDepartmentMembership.department_id)
-                .where(
-                    UserDepartmentMembership.user_id == KnowledgeBase.created_by,
-                    UserDepartmentMembership.status == "active",
-                    UserDepartmentMembership.department_id.in_(list(dept_ids)),
-                )
-                .exists()
-            )
-            dept_kb_access = (
-                select(KnowledgeBase.id)
-                .where(
-                    KnowledgeBase.id == UserFile.knowledge_base_id,
-                    creator_shares_dept,
-                )
-                .exists()
-            )
-            filters.append(dept_kb_access)
-        if org_ids:
-            org_kb_visible = (
-                select(KnowledgeBase.id)
-                .where(
-                    KnowledgeBase.id == UserFile.knowledge_base_id,
-                    KnowledgeBase.visibility == KBVisibilityEnum.ORGANIZATION,
-                    KnowledgeBase.org_id.in_(list(org_ids)),
-                )
-                .exists()
-            )
-            filters.append(org_kb_visible)
-        return filters
-
-    if dept_ids:
-        creator_shares_dept = (
-            select(UserDepartmentMembership.department_id)
-            .where(
-                UserDepartmentMembership.user_id == KnowledgeBase.created_by,
-                UserDepartmentMembership.status == "active",
-                UserDepartmentMembership.department_id.in_(list(dept_ids)),
-            )
-            .exists()
-        )
-        dept_kb_visible = (
-            select(KnowledgeBase.id)
-            .where(
-                KnowledgeBase.id == UserFile.knowledge_base_id,
-                KnowledgeBase.visibility == KBVisibilityEnum.DEPARTMENT,
-                creator_shares_dept,
-            )
-            .exists()
-        )
-        filters.append(dept_kb_visible)
-    if org_ids:
-        org_kb_visible = (
-            select(KnowledgeBase.id)
-            .where(
-                KnowledgeBase.id == UserFile.knowledge_base_id,
-                KnowledgeBase.visibility == KBVisibilityEnum.ORGANIZATION,
-                KnowledgeBase.org_id.in_(list(org_ids)),
-            )
-            .exists()
-        )
-        filters.append(org_kb_visible)
-    return filters
 
 
 async def byte_stream_generator(file_input, chunk_size: int = 8192) -> AsyncGenerator[bytes, None]:
@@ -237,14 +315,6 @@ async def save_file_routine(file, storage_service, current_user: CurrentActiveUs
     return file_id, file_name
 
 
-def sanitize_knowledge_base_name(raw_name: str) -> str:
-    """Sanitize user-provided folder names for safe storage usage."""
-    clean_name = raw_name.strip()
-    clean_name = clean_name.replace("\\", "_").replace("/", "_")
-    clean_name = re.sub(r"[^A-Za-z0-9 _.-]", "_", clean_name)
-    return re.sub(r"\s+", " ", clean_name).strip(" .")
-
-
 def get_storage_relative_path(file_path: str, user_id: uuid.UUID) -> str:
     """Convert stored DB path into storage-relative path under user root."""
     user_prefix = f"{user_id}/"
@@ -263,6 +333,9 @@ async def upload_user_file(
     settings_service=Depends(get_settings_service),
     knowledge_base_name: Annotated[str | None, Form()] = None,
     visibility: Annotated[str | None, Form()] = None,
+    public_scope: Annotated[str | None, Form()] = None,
+    org_id: Annotated[str | None, Form()] = None,
+    dept_id: Annotated[str | None, Form()] = None,
 ) -> UploadFileResponse:
 
     """Upload a file for the current user and track it in the database."""
@@ -326,19 +399,30 @@ async def upload_user_file(
             safe_knowledge_base_name = sanitize_knowledge_base_name(knowledge_base_name)
             if not safe_knowledge_base_name:
                 raise HTTPException(status_code=400, detail="Invalid knowledge base name")
-            kb_visibility = KBVisibilityEnum.PRIVATE
-            if visibility and visibility.upper() in KBVisibilityEnum.__members__:
-                kb_visibility = KBVisibilityEnum(visibility.upper())
+            kb_visibility, kb_org_id, kb_dept_id = await _resolve_upload_scope(
+                session=session,
+                current_user=current_user,
+                visibility=visibility,
+                public_scope=public_scope,
+                org_id=org_id,
+                dept_id=dept_id,
+            )
             knowledge_base = await _get_or_create_knowledge_base(
                 session=session,
                 current_user=current_user,
                 knowledge_base_name=safe_knowledge_base_name,
                 visibility=kb_visibility,
+                org_id=kb_org_id,
+                dept_id=kb_dept_id,
             )
 
-        storage_file_name = (
-            f"{safe_knowledge_base_name}/{unique_filename}" if safe_knowledge_base_name else unique_filename
-        )
+        # For KB uploads, include KB id in storage path for stable unique mapping.
+        # Final physical path stays rooted by user id in storage service:
+        # <storage>/<user_id>/<kb_id>/<kb_name>/<file_name>
+        if knowledge_base and safe_knowledge_base_name:
+            storage_file_name = f"{knowledge_base.id}/{safe_knowledge_base_name}/{unique_filename}"
+        else:
+            storage_file_name = unique_filename
 
         # Read file content and save with unique filename
         try:
@@ -355,12 +439,11 @@ async def upload_user_file(
         )
 
         # Create a new file record
-        org_id, dept_id = await _resolve_default_tenant_scope(session, current_user.id)
         new_file = UserFile(
             id=file_id,
             user_id=current_user.id,
-            org_id=knowledge_base.org_id if knowledge_base else org_id,
-            dept_id=knowledge_base.dept_id if knowledge_base else dept_id,
+            org_id=knowledge_base.org_id if knowledge_base else None,
+            dept_id=knowledge_base.dept_id if knowledge_base else None,
             knowledge_base_id=knowledge_base.id if knowledge_base else None,
             name=root_filename,
             path=f"{current_user.id}/{storage_file_name}",

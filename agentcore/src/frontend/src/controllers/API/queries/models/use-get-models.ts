@@ -5,6 +5,7 @@ import type { ModelType } from "@/types/models/models";
 export const useGetRegistryModels = (params?: {
   provider?: string;
   environment?: string;
+  model_type?: string;
   active_only?: boolean;
 }) => {
   return useQuery<ModelType[]>({
@@ -14,6 +15,8 @@ export const useGetRegistryModels = (params?: {
       if (params?.provider) searchParams.set("provider", params.provider);
       if (params?.environment)
         searchParams.set("environment", params.environment);
+      if (params?.model_type)
+        searchParams.set("model_type", params.model_type);
       if (params?.active_only !== undefined)
         searchParams.set("active_only", String(params.active_only));
 

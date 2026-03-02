@@ -130,7 +130,9 @@ dependencies = [
     "sqlparse", 
     "matplotlib", 
     "cryptography", 
-    "psycopg2-binary"
+    "psycopg2-binary",
+    "nemoguardrails",
+    "apscheduler>=3.10"
 ]
 
 [tool.hatch.build.targets.wheel]
