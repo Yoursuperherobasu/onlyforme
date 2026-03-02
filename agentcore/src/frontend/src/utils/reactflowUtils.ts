@@ -38,7 +38,6 @@ import {
   SUCCESS_BUILD,
   specialCharsRegex,
 } from "../constants/constants";
-import { DESCRIPTIONS } from "../agent_constants";
 import type {
   APIClassType,
   APIKindType,
@@ -2024,17 +2023,13 @@ export function getRandomElement<T>(array: T[]): T {
   return array[Math.floor(Math.random() * array.length)];
 }
 
-export function getRandomDescription(): string {
-  return getRandomElement(DESCRIPTIONS);
-}
-
 export const createNewAgent = (
   agentData: reactFlowJsonObject<AllNodeType, EdgeType>,
   folderId: string,
   agent?: AgentType,
 ) => {
   return {
-    description: agent?.description ?? getRandomDescription(),
+    description: agent?.description ?? "",
     name: agent?.name ? agent.name : "New Agent",
     data: agentData,
     id: "",

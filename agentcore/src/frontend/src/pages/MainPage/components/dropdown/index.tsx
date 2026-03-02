@@ -60,7 +60,7 @@ const DropdownComponent = ({
           Edit details
         </DropdownMenuItem>
       )}
-      <DropdownMenuItem
+      {/* <DropdownMenuItem
         onClick={(e) => {
           e.stopPropagation();
           handleSelectOptionsChange("export");
@@ -74,7 +74,7 @@ const DropdownComponent = ({
           className="mr-2 h-4 w-4"
         />
         Export
-      </DropdownMenuItem>
+      </DropdownMenuItem> */}
       <DropdownMenuItem
         onClick={(e) => {
           e.stopPropagation();

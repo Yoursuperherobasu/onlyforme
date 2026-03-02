@@ -229,29 +229,6 @@ export const NAV_DISPLAY_STYLE =
  * The base text for subtitle of code dialog
  * @constant
  */
-export const DESCRIPTIONS: string[] = [
-  "Chain the Words, Master Language!",
-  "Language Architect at Work!",
-  "Empowering Language Engineering.",
-  "Craft Language Connections Here.",
-  "Create, Connect, Converse.",
-  "Smart Chains, Smarter Conversations.",
-  "Bridging Prompts for Brilliance.",
-  "Language Models, Unleashed.",
-  "Your Hub for Text Generation.",
-  "Promptly Ingenious!",
-  "Building Linguistic Labyrinths.",
-  "AgentCore: Create, Chain, Communicate.",
-  "Connect the Dots, Craft Language.",
-  "Interactive Language Weaving.",
-  "Generate, Innovate, Communicate.",
-  "Conversation Catalyst Engine.",
-  "Language Chainlink Master.",
-  "Design Dialogues with AgentCore.",
-  "Nurture NLP Nodes Here.",
-  "Conversational Cartography Unlocked.",
-  "Design, Develop, Dialogize.",
-];
 export const BUTTON_DIV_STYLE =
   " flex gap-2 focus:ring-1 focus:ring-offset-1 focus:ring-ring focus:outline-none ";
 
