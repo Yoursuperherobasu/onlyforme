@@ -24,7 +24,11 @@ interface SavedConnection {
   lastUsed: number;
 }
 
-const STORAGE_KEY = "sensei_connections";
+const STORAGE_KEY = "agentcore_connections";
+const DEFAULT_AGENTCORE_PUBLISH_URL =
+  process.env.AGENTCORE_PUBLISH_URL ||
+  process.env.BACKEND_URL ||
+  `${window.location.protocol}//${window.location.host}`;
 
 // Helper functions for localStorage
 const loadConnections = (): SavedConnection[] => {
@@ -101,7 +105,7 @@ export default function PublishModal({
   setOpen,
   onSuccess,
 }: PublishModalProps) {
-  const [senseiUrl, setSenseiUrl] = useState("http://localhost:5839");
+  const [agentcoreUrl, setAgentCoreUrl] = useState(DEFAULT_AGENTCORE_PUBLISH_URL);
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState(agentName);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +125,7 @@ export default function PublishModal({
       if (connections.length > 0) {
         const mostRecent = connections[0];
         setSelectedConnection(mostRecent.id);
-        setSenseiUrl(mostRecent.url);
+        setAgentCoreUrl(mostRecent.url);
         setApiKey(mostRecent.apiKey);
       }
     } else {
@@ -140,13 +144,13 @@ export default function PublishModal({
 
     if (value === "new") {
       // Clear fields for new connection
-      setSenseiUrl("http://localhost:5839");
+      setAgentCoreUrl(DEFAULT_AGENTCORE_PUBLISH_URL);
       setApiKey("");
     } else {
       // Load selected connection
       const connection = savedConnections.find((c) => c.id === value);
       if (connection) {
-        setSenseiUrl(connection.url);
+        setAgentCoreUrl(connection.url);
         setApiKey(connection.apiKey);
       }
     }
@@ -159,27 +163,27 @@ export default function PublishModal({
     }
 
     if (!apiKey.trim()) {
-      setError("Please enter your Sensei API key");
+      setError("Please enter your AgentCore API key");
       return;
     }
 
-    if (!senseiUrl.trim()) {
-      setError("Please enter your Sensei URL");
+    if (!agentcoreUrl.trim()) {
+      setError("Please enter your AgentCore URL");
       return;
     }
 
     publishMutation.mutate(
       {
         agent_id: agentId,
-        sensei_url: senseiUrl,
-        sensei_api_key: apiKey,
+        agentcore_url: agentcoreUrl,
+        agentcore_api_key: apiKey,
         model_name: modelName.trim() || undefined,
       },
       {
         onSuccess: (data) => {
           setError(null);
           // Save connection on successful publish
-          saveConnection(senseiUrl, apiKey);
+          saveConnection(agentcoreUrl, apiKey);
           onSuccess?.(data);
           setOpen(false);
           // Reset form
@@ -196,8 +200,8 @@ export default function PublishModal({
 
   return (
     <BaseModal open={open} setOpen={setOpen} size="medium">
-      <BaseModal.Header description="Deploy your agent to Sensei as a selectable model">
-        <span className="pr-2">Publish to Sensei</span>
+      <BaseModal.Header description="Deploy your agent to AgentCore as a selectable model">
+        <span className="pr-2">Publish to AgentCore</span>
         <IconComponent
           name="Globe"
           className="h-6 w-6 pl-1 text-foreground"
@@ -216,7 +220,7 @@ export default function PublishModal({
           {/* Saved Connections Selector */}
           {savedConnections.length > 0 && (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="connection-select">Sensei Connection</Label>
+              <Label htmlFor="connection-select">AgentCore Connection</Label>
               <Select
                 value={selectedConnection}
                 onValueChange={handleConnectionChange}
@@ -246,7 +250,7 @@ export default function PublishModal({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Select a previously used Sensei instance or add a new one
+                Select a previously used AgentCore instance or add a new one
               </p>
             </div>
           )}
@@ -254,7 +258,7 @@ export default function PublishModal({
           {/* Model Name */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="model-name">
-              Model Name in Sensei
+              Model Name in AgentCore
               <span className="ml-1 text-destructive">*</span>
             </Label>
             <Input
@@ -266,33 +270,33 @@ export default function PublishModal({
               disabled={publishMutation.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              The name that will appear in Sensei's model selector
+              The name that will appear in AgentCore's model selector
             </p>
           </div>
 
-          {/* Sensei URL */}
+          {/* AgentCore URL */}
           <div className="flex flex-col gap-2">
-            <Label htmlFor="sensei-url">
-              Sensei URL
+            <Label htmlFor="agentcore-url">
+              AgentCore URL
               <span className="ml-1 text-destructive">*</span>
             </Label>
             <Input
-              id="sensei-url"
+              id="agentcore-url"
               type="url"
-              placeholder="http://localhost:5839"
-              value={senseiUrl}
-              onChange={(e) => setSenseiUrl(e.target.value)}
+              placeholder={DEFAULT_AGENTCORE_PUBLISH_URL}
+              value={agentcoreUrl}
+              onChange={(e) => setAgentCoreUrl(e.target.value)}
               disabled={publishMutation.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              The base URL of your Sensei instance
+              The base URL of your AgentCore instance
             </p>
           </div>
 
           {/* API Key */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="api-key">
-              Sensei API Key
+              AgentCore API Key
               <span className="ml-1 text-destructive">*</span>
             </Label>
             <div className="relative">
@@ -319,7 +323,7 @@ export default function PublishModal({
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Get your API key from Sensei Settings → Account → API Keys
+              Get your API key from AgentCore Settings → Account → API Keys
             </p>
           </div>
 

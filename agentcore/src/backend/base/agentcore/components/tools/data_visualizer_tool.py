@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from agentcore.base.langchain_utilities.model import LCToolNode
 from agentcore.field_typing import Tool
-from agentcore.inputs.inputs import DropdownInput
+from agentcore.inputs.inputs import BoolInput, DropdownInput, MessageTextInput
 from agentcore.schema.data import Data
 from agentcore.logging import logger
 
@@ -52,6 +52,41 @@ class DataVisualizerTool(LCToolNode):
             options=["corporate", "modern", "colorful"],
             value="corporate",
             info="Visual style preset for generated charts.",
+            advanced=True,
+        ),
+        MessageTextInput(
+            name="x_axis_label",
+            display_name="X-Axis Label",
+            value="",
+            info="Custom label for the X-axis. Leave empty to auto-detect from column names.",
+            advanced=True,
+        ),
+        MessageTextInput(
+            name="y_axis_label",
+            display_name="Y-Axis Label",
+            value="",
+            info="Custom label for the Y-axis. Leave empty to auto-detect from column names.",
+            advanced=True,
+        ),
+        BoolInput(
+            name="show_value_labels",
+            display_name="Show Value Labels",
+            value=True,
+            info="Display data values directly on chart elements (bars, points).",
+            advanced=True,
+        ),
+        BoolInput(
+            name="show_legend",
+            display_name="Show Legend",
+            value=True,
+            info="Display the chart legend (applies to multi-series charts).",
+            advanced=True,
+        ),
+        BoolInput(
+            name="auto_axis_labels",
+            display_name="Auto Axis Labels from Columns",
+            value=True,
+            info="Automatically set axis labels from column names when no custom labels are provided.",
             advanced=True,
         ),
     ]
@@ -142,7 +177,14 @@ class DataVisualizerTool(LCToolNode):
             try:
                 title = chart_title if chart_title else f"Data Visualization ({len(rows)} rows)"
                 title = title[:80] + ("..." if len(title) > 80 else "")
-                b64_image = _generate_chart(chart_type, columns, rows, self.chart_style, title)
+                chart_options = {
+                    "x_axis_label": self.x_axis_label or "",
+                    "y_axis_label": self.y_axis_label or "",
+                    "show_value_labels": self.show_value_labels,
+                    "show_legend": self.show_legend,
+                    "auto_axis_labels": self.auto_axis_labels,
+                }
+                b64_image = _generate_chart(chart_type, columns, rows, self.chart_style, title, chart_options)
                 parts.append("\n---\n")
                 parts.append(f"![{title}](data:image/png;base64,{b64_image})\n")
                 logger.info(f"DataVisualizerTool: generated {chart_type} chart")

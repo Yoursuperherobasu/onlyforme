@@ -14,7 +14,7 @@ import os
 import threading
 
 from agentcore.custom.custom_node.node import Node
-from agentcore.inputs.inputs import DropdownInput, MultilineInput
+from agentcore.inputs.inputs import BoolInput, DropdownInput, MultilineInput
 from agentcore.schema.data import Data
 from agentcore.schema.message import Message
 from agentcore.template.field.base import Output
@@ -52,16 +52,10 @@ def _get_sync_engine():
 
 
 def _run_async(coro):
-    """Run an async coroutine from a synchronous context.
-
-    NOTE: import locally — components are loaded via exec() from string,
-    so module-level imports may not be in scope.
-    """
-    import concurrent.futures as _cf
-
+    """Run an async coroutine from a synchronous context."""
     try:
         asyncio.get_running_loop()
-        with _cf.ThreadPoolExecutor() as pool:
+        with concurrent.futures.ThreadPoolExecutor() as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=30)
     except RuntimeError:
@@ -179,6 +173,13 @@ class DatabaseConnectorComponent(Node):
             info="Comma-separated list of table names to include. Leave empty to include all tables.",
             advanced=True,
         ),
+        BoolInput(
+            name="discover_fks",
+            display_name="Auto-discover Foreign Keys",
+            value=True,
+            info="Automatically discover foreign key relationships and include them in the schema DDL.",
+            advanced=True,
+        ),
     ]
 
     outputs = [
@@ -288,15 +289,99 @@ class DatabaseConnectorComponent(Node):
             logger.warning(f"Provider '{provider}' not yet supported for schema fetch")
             return []
 
-    def _build_ddl_string(self, tables_meta: list[dict]) -> str:
+    def _fetch_foreign_keys(self, params: dict) -> list[dict]:
+        """Fetch foreign key relationships from PostgreSQL information_schema."""
+        provider = params.get("provider", "")
+        if provider != "postgresql":
+            return []
+
+        import psycopg2
+
+        conn_kwargs = {
+            "host": params["host"],
+            "port": params["port"],
+            "dbname": params["database_name"],
+            "user": params["username"],
+            "password": params["password"],
+            "connect_timeout": 15,
+        }
+        if params.get("ssl_enabled"):
+            conn_kwargs["sslmode"] = "require"
+
+        conn = psycopg2.connect(**conn_kwargs)
+        cur = conn.cursor()
+
+        schema = params.get("schema_name", "public")
+
+        cur.execute("""
+            SELECT
+                tc.table_name       AS source_table,
+                kcu.column_name     AS source_column,
+                ccu.table_name      AS target_table,
+                ccu.column_name     AS target_column
+            FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage AS ccu
+                ON tc.constraint_name = ccu.constraint_name
+                AND tc.table_schema = ccu.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_schema = %s
+            ORDER BY tc.table_name, kcu.column_name
+        """, (schema,))
+
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        # Apply table filter if provided
+        filter_str = self.tables_filter.strip() if self.tables_filter else ""
+        allowed = None
+        if filter_str:
+            allowed = {t.strip().lower() for t in filter_str.split(",") if t.strip()}
+
+        results = []
+        for source_table, source_column, target_table, target_column in rows:
+            if allowed and source_table.lower() not in allowed:
+                continue
+            results.append({
+                "source_table": source_table,
+                "source_column": source_column,
+                "target_table": target_table,
+                "target_column": target_column,
+            })
+
+        return results
+
+    def _build_ddl_string(self, tables_meta: list[dict], fk_list: list[dict] | None = None) -> str:
         """Convert schema metadata into DDL-like string for LLM context."""
+        # Index FKs by source table for fast lookup
+        fk_by_table: dict[str, list[dict]] = {}
+        if fk_list:
+            for fk in fk_list:
+                fk_by_table.setdefault(fk["source_table"], []).append(fk)
+
         ddl_parts = []
         for table in tables_meta:
             cols = []
             for col in table["columns"]:
                 null_str = "" if col["nullable"] else " NOT NULL"
                 cols.append(f"  {col['name']} {col['type'].upper()}{null_str}")
-            ddl = f"TABLE {table['table_name']} (\n" + ",\n".join(cols) + "\n)"
+
+            # Append FK relationships as comments
+            table_fks = fk_by_table.get(table["table_name"], [])
+            fk_comments = []
+            for fk in table_fks:
+                fk_comments.append(
+                    f"  -- FK: {fk['source_column']} REFERENCES "
+                    f"{fk['target_table']}({fk['target_column']})"
+                )
+
+            ddl = f"TABLE {table['table_name']} (\n" + ",\n".join(cols)
+            if fk_comments:
+                ddl += "\n" + "\n".join(fk_comments)
+            ddl += "\n)"
             ddl_parts.append(ddl)
         return "\n\n".join(ddl_parts)
 
@@ -312,13 +397,24 @@ class DatabaseConnectorComponent(Node):
 
         try:
             tables_meta = self._fetch_schema(params)
-            schema_ddl = self._build_ddl_string(tables_meta)
+
+            # FK discovery (non-fatal)
+            fk_list = []
+            if self.discover_fks:
+                try:
+                    fk_list = self._fetch_foreign_keys(params)
+                    logger.info(f"DatabaseConnector: discovered {len(fk_list)} FK relationships")
+                except Exception as e:
+                    logger.warning(f"FK discovery failed (non-fatal): {e}")
+
+            schema_ddl = self._build_ddl_string(tables_meta, fk_list)
             status = "connected"
             table_count = len(tables_meta)
-            self.status = f"Connected: {table_count} tables found"
+            self.status = f"Connected: {table_count} tables, {len(fk_list)} FKs"
             logger.info(f"DatabaseConnector: fetched schema with {table_count} tables, DDL length={len(schema_ddl)}")
         except Exception as e:
             tables_meta = []
+            fk_list = []
             schema_ddl = ""
             status = f"error: {e!s}"
             table_count = 0
@@ -336,6 +432,7 @@ class DatabaseConnectorComponent(Node):
             "ssl_enabled": params["ssl_enabled"],
             "status": status,
             "tables_metadata": tables_meta,
+            "foreign_keys": fk_list,
             "schema_ddl": schema_ddl,
             "table_count": table_count,
         })
@@ -351,11 +448,20 @@ class DatabaseConnectorComponent(Node):
 
         try:
             tables_meta = self._fetch_schema(params)
-            ddl = self._build_ddl_string(tables_meta)
+
+            # FK discovery (non-fatal)
+            fk_list = []
+            if self.discover_fks:
+                try:
+                    fk_list = self._fetch_foreign_keys(params)
+                except Exception as e:
+                    logger.warning(f"FK discovery failed (non-fatal, schema output): {e}")
+
+            ddl = self._build_ddl_string(tables_meta, fk_list)
             summary = f"**Database Schema** ({params['provider']}://{params['host']}:{params['port']}/{params['database_name']})\n\n"
-            summary += f"Schema: `{params['schema_name']}` | Tables: **{len(tables_meta)}**\n\n"
+            summary += f"Schema: `{params['schema_name']}` | Tables: **{len(tables_meta)}** | FKs: **{len(fk_list)}**\n\n"
             summary += f"```sql\n{ddl}\n```"
-            self.status = f"Schema: {len(tables_meta)} tables"
+            self.status = f"Schema: {len(tables_meta)} tables, {len(fk_list)} FKs"
             return Message(text=summary)
         except Exception as e:
             self.status = f"Error: {e!s}"

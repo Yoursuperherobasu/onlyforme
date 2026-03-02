@@ -1,6 +1,7 @@
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { useMutationFunctionType } from "@/types/api";
 import type { FileType } from "@/types/file_management";
+import useAuthStore from "@/stores/authStore";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
@@ -9,6 +10,9 @@ interface IPostUploadFile {
   file: File;
   knowledgeBaseName?: string;
   visibility?: string;
+  public_scope?: "organization" | "department";
+  org_id?: string;
+  dept_id?: string;
 }
 
 export const usePostUploadFileV2: useMutationFunctionType<
@@ -16,6 +20,9 @@ export const usePostUploadFileV2: useMutationFunctionType<
   IPostUploadFile
 > = (params, options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
+  const userId = useAuthStore((state) => state.userData?.id);
+  const filesQueryKey = ["useGetFilesV2", userId ?? "anonymous"];
+  const kbQueryKey = ["useGetKnowledgeBases", userId ?? "anonymous"];
 
   const postUploadFileFn = async (payload: IPostUploadFile): Promise<any> => {
     const formData = new FormData();
@@ -25,6 +32,15 @@ export const usePostUploadFileV2: useMutationFunctionType<
     }
     if (payload.visibility) {
       formData.append("visibility", payload.visibility);
+    }
+    if (payload.public_scope) {
+      formData.append("public_scope", payload.public_scope);
+    }
+    if (payload.org_id) {
+      formData.append("org_id", payload.org_id);
+    }
+    if (payload.dept_id) {
+      formData.append("dept_id", payload.dept_id);
     }
     const data = new Date().toISOString().split("Z")[0];
 
@@ -38,7 +54,7 @@ export const usePostUploadFileV2: useMutationFunctionType<
       created_at: data,
       progress: 0,
     };
-    queryClient.setQueryData(["useGetFilesV2"], (old: FileType[]) => {
+    queryClient.setQueryData(filesQueryKey, (old: FileType[] = []) => {
       return [...old.filter((file) => file.id !== "temp"), newFile];
     });
 
@@ -49,7 +65,7 @@ export const usePostUploadFileV2: useMutationFunctionType<
         {
           onUploadProgress: (progressEvent) => {
             if (progressEvent.progress) {
-              queryClient.setQueryData(["useGetFilesV2"], (old: any) => {
+              queryClient.setQueryData(filesQueryKey, (old: any[] = []) => {
                 return old.map((file: any) => {
                   if (file?.id === "temp") {
                     return { ...file, progress: progressEvent.progress };
@@ -61,19 +77,15 @@ export const usePostUploadFileV2: useMutationFunctionType<
           },
         }
       );
-      console.log(response, "<<< response");
       return response.data;
     } catch (error: any) {
       const status = error?.response?.status;
-      console.log(status, error);
-      // Permission denied → REMOVE temp file
       if (status === 403) {
-        queryClient.setQueryData(["useGetFilesV2"], (old: FileType[] = []) => {
+        queryClient.setQueryData(filesQueryKey, (old: FileType[] = []) => {
           return old.filter((file) => file.id !== "temp");
         });
       } else {
-        // Other errors → mark failed
-        queryClient.setQueryData(["useGetFilesV2"], (old: FileType[] = []) => {
+        queryClient.setQueryData(filesQueryKey, (old: FileType[] = []) => {
           return old.map((file: any) => {
             if (file?.id === "temp") {
               return { ...file, progress: -1 };
@@ -83,7 +95,6 @@ export const usePostUploadFileV2: useMutationFunctionType<
         });
       }
 
-      // Always throw a SAFE error shape
       throw {
         status,
         message:
@@ -105,10 +116,10 @@ export const usePostUploadFileV2: useMutationFunctionType<
         onSettled: (data, error, variables, context) => {
           if (!error) {
             queryClient.invalidateQueries({
-              queryKey: ["useGetFilesV2"],
+              queryKey: filesQueryKey,
             });
             queryClient.invalidateQueries({
-              queryKey: ["useGetKnowledgeBases"],
+              queryKey: kbQueryKey,
             });
           }
           options?.onSettled?.(data, error, variables, context);

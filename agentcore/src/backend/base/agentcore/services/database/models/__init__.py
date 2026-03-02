@@ -32,6 +32,8 @@ from .help_support import HelpSupportQuestion
 from .package import Package
 from .teams_app import TeamsApp
 from .hitl_request import HITLRequest
+from .evaluator.model import Evaluator
+from .vertex_builds import VertexBuildTable
 
 __all__ = [
     "Agent",
@@ -76,4 +78,6 @@ __all__ = [
     "Package",
     "User",
     "HITLRequest",
+    "Evaluator",
+    "VertexBuildTable",
 ]

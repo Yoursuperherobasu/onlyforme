@@ -6,7 +6,7 @@ import { IS_MAC } from "@/constants/constants";
 import { useGetFolderQuery } from "@/controllers/API/queries/folders/use-get-folder";
 import { CustomBanner } from "@/customization/components/custom-banner";
 import {
-  ENABLE_DATASTAX_SENSEI,
+  ENABLE_AGENTCORE,
 } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { useFolderStore } from "@/stores/foldersStore";
@@ -243,7 +243,7 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
         data-testid="cards-wrapper"
       >
         <div className="flex h-full w-full flex-col 3xl:container">
-          {ENABLE_DATASTAX_SENSEI && <CustomBanner />}
+          {ENABLE_AGENTCORE && <CustomBanner />}
           <div className="flex flex-1 flex-col justify-start p-4">
             <div className="flex h-full flex-col justify-start">
               <HeaderComponent

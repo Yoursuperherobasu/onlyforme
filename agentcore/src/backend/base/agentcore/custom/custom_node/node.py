@@ -1028,7 +1028,10 @@ class Node(ExecutableNode):
         metadata = self.get_trace_as_metadata()
         async with self._tracing_service.trace_component(self, self.trace_name, inputs, metadata):
             results, artifacts = await self._build_results()
-            self._tracing_service.set_outputs(self.trace_name, results)
+            output_metadata = getattr(self, "trace_output_metadata", None)
+            self._tracing_service.set_outputs(self.trace_name, results, output_metadata=output_metadata)
+            if hasattr(self, "trace_output_metadata"):
+                self.trace_output_metadata = None
 
         return results, artifacts
 

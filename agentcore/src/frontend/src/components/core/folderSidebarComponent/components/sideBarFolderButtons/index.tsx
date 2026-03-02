@@ -30,7 +30,7 @@ import { useGetDownloadFolders } from "@/controllers/API/queries/folders/use-get
 import { CustomStoreButton } from "@/customization/components/custom-store-button";
 import {
   ENABLE_CUSTOM_PARAM,
-  ENABLE_DATASTAX_SENSEI,
+  ENABLE_AGENTCORE,
   ENABLE_FILE_MANAGEMENT,
   ENABLE_KNOWLEDGE_BASES,
   ENABLE_MCP_NOTICE,
@@ -541,15 +541,15 @@ const SideBarFoldersButtonsComponent = ({
         <SidebarMenuItem>
           <SidebarMenuButton
             size="md"
-            isActive={pathname.startsWith("/automations")}
-            onClick={() => _navigate("/automations")}
+            isActive={pathname.startsWith("/scheduler")}
+            onClick={() => _navigate("/scheduler")}
             className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
           >
             <ForwardedIconComponent
               name="Zap"
               className="h-4 w-4"
             />
-            {t("Automations")}
+            {t("Agent Scheduler")}
           </SidebarMenuButton>
         </SidebarMenuItem>
 
@@ -641,20 +641,22 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        <SidebarMenuItem>
-            <SidebarMenuButton
-              size="md"
-              isActive={pathname.startsWith("/connectors")}
-              onClick={() => _navigate("/connectors")}
-              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-            >
-              <ForwardedIconComponent
-                name="Cable"
-                className="h-4 w-4"
-              />
-              Connectors
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+        {(can("connectore_page") || can("view_connectors_page") || can("connector_page")) && (
+          <SidebarMenuItem>
+              <SidebarMenuButton
+                size="md"
+                isActive={pathname.startsWith("/connectors")}
+                onClick={() => _navigate("/connectors")}
+                className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+              >
+                <ForwardedIconComponent
+                  name="Cable"
+                  className="h-4 w-4"
+                />
+                Connectors
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+        )}
 
         {can("view_mcp_page") && (
           <SidebarMenuItem>

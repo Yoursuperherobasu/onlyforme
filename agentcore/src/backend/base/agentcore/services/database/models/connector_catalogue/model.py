@@ -26,6 +26,13 @@ class ConnectorCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     ssl_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     # Provider-specific config for non-DB connectors (Azure Blob, SharePoint, etc.)
     provider_config: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    visibility: str = Field(
+        default="private",
+        sa_column=Column(String(20), nullable=False, default="private"),
+    )
+    public_scope: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))  # organization | department
+    shared_user_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     status: str = Field(sa_column=Column(String(50), nullable=False, default="disconnected"))  # connected, disconnected, error
     tables_metadata: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))  # cached schema info

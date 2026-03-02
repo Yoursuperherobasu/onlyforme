@@ -47,7 +47,7 @@ export const useGetApprovalDetails: useQueryFunctionType<
 
   return query(["useGetApprovalDetails", params?.agent_id], getDetailsFn, {
     enabled: !!params?.agent_id,
+    retry: false,
     ...options,
   });
 };
-

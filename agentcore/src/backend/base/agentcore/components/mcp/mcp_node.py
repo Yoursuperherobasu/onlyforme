@@ -6,7 +6,6 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool  # noqa: TC002
 
-from agentcore.api.mcp_config import get_server
 from agentcore.base.agents.utils import maybe_unflatten_dict, safe_cache_get, safe_cache_set
 from agentcore.base.mcp.util import (
     MCPSseClient,
@@ -22,9 +21,7 @@ from agentcore.logging import logger
 from agentcore.schema.dataframe import DataFrame
 from agentcore.schema.message import Message
 
-# Import get_server from the backend API
-from agentcore.services.database.models.user.crud import get_user_by_id
-from agentcore.services.deps import get_session, get_settings_service, get_storage_service
+from agentcore.services.deps import get_session
 
 
 class MCPToolsNode(NodeWithCache):
@@ -441,30 +438,13 @@ class MCPToolsNode(NodeWithCache):
             return self.tools, {"name": server_name, "config": server_config_from_value}
 
         try:
+            from agentcore.services import mcp_registry_service
+
             async for db in get_session():
-                # Use component's user_id from agent context
-                user_id = self.user_id
-                if not user_id:
-                    logger.warning("No user_id available in component context for MCP server lookup")
-                    self.tools = []
-                    return [], {"name": server_name, "config": server_config_from_value}
+                # Fetch server config from the MCP registry DB table
+                server_config = await mcp_registry_service.get_decrypted_config(db, server_name)
 
-                current_user = await get_user_by_id(db, user_id)
-                if not current_user:
-                    logger.warning(f"User {user_id} not found in database")
-                    self.tools = []
-                    return [], {"name": server_name, "config": server_config_from_value}
-
-                # Try to get server config from DB/API
-                server_config = await get_server(
-                    server_name,
-                    current_user,
-                    db,
-                    storage_service=get_storage_service(),
-                    settings_service=get_settings_service(),
-                )
-
-                # If get_server returns empty but we have a config, use it
+                # If DB lookup returns empty but we have a config from the value, use it
                 if not server_config and server_config_from_value:
                     server_config = server_config_from_value
 

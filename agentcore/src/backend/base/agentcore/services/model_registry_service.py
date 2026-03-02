@@ -50,6 +50,7 @@ async def create_model(
         description=data.description,
         provider=data.provider,
         model_name=data.model_name,
+        model_type=data.model_type,
         base_url=data.base_url,
         environment=data.environment,
         provider_config=data.provider_config,
@@ -73,6 +74,7 @@ async def get_models(
     *,
     provider: str | None = None,
     environment: str | None = None,
+    model_type: str | None = None,
     active_only: bool = True,
 ) -> list[ModelRegistryRead]:
     """Return all registry entries, optionally filtered."""
@@ -83,6 +85,8 @@ async def get_models(
         stmt = stmt.where(ModelRegistry.provider == provider)
     if environment:
         stmt = stmt.where(ModelRegistry.environment == environment)
+    if model_type:
+        stmt = stmt.where(ModelRegistry.model_type == model_type)
     stmt = stmt.order_by(ModelRegistry.provider, ModelRegistry.display_name)
 
     result = await session.execute(stmt)

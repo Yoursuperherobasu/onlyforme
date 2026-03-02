@@ -5,37 +5,18 @@ from typing import TYPE_CHECKING, Any
 from agentcore.components._importing import import_mod
 
 if TYPE_CHECKING:
-    
-    from .azure_openai_embeddings import AzureOpenAIEmbeddingsComponent
-    
-    from .google_generative_ai_embeddings import GoogleGenerativeAIEmbeddingsComponent
+    from .registry_embeddings import RegistryEmbeddingsComponent
     from .registry_model import RegistryModelComponent
-    
-    from .mistral_embeddings import MistralAIEmbeddingsComponent
 
 
 _dynamic_imports = {
-    "GroqModel": "groq",
-    "AzureChatOpenAIComponent": "azure_openai",
-    "AzureOpenAIEmbeddingsComponent": "azure_openai_embeddings",
-    "GoogleGenerativeAIComponent":"google_chat",
-    "GoogleGenerativeAIEmbeddingsComponent":"google_embedding",
-    "MistralAIEmbeddingsComponent": "mistral_embeddings",
-    "GoogleGenerativeAIEmbeddingsComponent": "google_embedding",
-    "MistralAIEmbeddingsComponent": "mistral_embeddings",
     "RegistryModelComponent": "registry_model",
+    "RegistryEmbeddingsComponent": "registry_embeddings",
 }
 
 __all__ = [
-    "GroqModel",
-    "AzureChatOpenAIComponent",
-    "AzureOpenAIEmbeddingsComponent",
-    "GoogleGenerativeAIComponent",
-    "GoogleGenerativeAIEmbeddingsComponent",
-    "HuggingFaceInferenceAPIEmbeddingsComponent",
-    "MistralAIModelComponent",
-    "MistralAIEmbeddingsComponent",
     "RegistryModelComponent",
+    "RegistryEmbeddingsComponent",
 ]
 
 

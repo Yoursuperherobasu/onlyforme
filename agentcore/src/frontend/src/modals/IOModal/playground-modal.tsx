@@ -7,10 +7,10 @@ import { useGetSessionsFromAgentQuery } from "@/controllers/API/queries/messages
 import { ENABLE_PUBLISH } from "@/customization/feature-flags";
 import { track } from "@/customization/utils/analytics";
 import { customOpenNewTab } from "@/customization/utils/custom-open-new-tab";
-import { SenseiButtonRedirectTarget } from "@/customization/utils/urls";
+import { AgentCoreButtonRedirectTarget } from "@/customization/utils/urls";
 import { useUtilityStore } from "@/stores/utilityStore";
 import { swatchColors } from "@/utils/styleUtils";
-import SenseiLogoColor from "../../assets/motherson_name.svg";
+import AgentCoreLogoColor from "../../assets/motherson_name.svg";
 import IconComponent from "../../components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import useAlertStore from "../../stores/alertStore";
@@ -275,9 +275,9 @@ export default function IOModal({
 
   const showPublishOptions = playgroundPage && ENABLE_PUBLISH;
 
-  const SenseiButtonClick = () => {
-    track("SenseiButtonClick");
-    customOpenNewTab(SenseiButtonRedirectTarget());
+  const AgentCoreButtonClick = () => {
+    track("AgentCoreButtonClick");
+    customOpenNewTab(AgentCoreButtonRedirectTarget());
   };
 
   const swatchIndex =
@@ -376,12 +376,12 @@ export default function IOModal({
           </div>
 
           <Button
-            onClick={SenseiButtonClick}
+            onClick={AgentCoreButtonClick}
             variant="primary"
             className="w-full !rounded-lg"
           >
-            <SenseiLogoColor />
-            <span className="ml-1 text-sm">Built with Sensei</span>
+            <AgentCoreLogoColor />
+            <span className="ml-1 text-sm">Built with AgentCore</span>
           </Button>
         </div>
       )}

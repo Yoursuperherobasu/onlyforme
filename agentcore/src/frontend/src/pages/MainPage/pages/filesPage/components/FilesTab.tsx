@@ -126,7 +126,11 @@ const FilesTab = ({
   const getKnowledgeBaseNameFromPath = (path: string) => {
     const normalizedPath = path.replace(/\\/g, "/");
     const segments = normalizedPath.split("/").filter(Boolean);
-    return segments.length >= 3 ? segments[1] : "Ungrouped";
+    // Legacy: <user_id>/<kb_name>/<file>
+    // New:    <user_id>/<kb_id>/<kb_name>/<file>
+    if (segments.length >= 4) return segments[2];
+    if (segments.length >= 3) return segments[1];
+    return "Ungrouped";
   };
 
   const displayRows: DisplayRow[] = useMemo(() => {

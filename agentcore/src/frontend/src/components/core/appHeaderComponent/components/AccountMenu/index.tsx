@@ -1,13 +1,9 @@
 import { FaDiscord, FaGithub } from "react-icons/fa";
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
-import {
-  DATASTAX_DOCS_URL,
-  DOCS_URL,
-} from "@/constants/constants";
 import { useLogout } from "@/controllers/API/queries/auth";
 import { CustomProfileIcon } from "@/customization/components/custom-profile-icon";
-import { ENABLE_DATASTAX_SENSEI } from "@/customization/feature-flags";
+import { ENABLE_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { useDarkStore } from "@/stores/darkStore";
 import { stripReleaseStageFromVersion } from "@/utils/utils";
@@ -175,14 +171,7 @@ export const AccountMenu = () => {
                 </HeaderMenuItemButton>
               </div>
             )}
-            <HeaderMenuItemLink
-              newPage
-              href={ENABLE_DATASTAX_SENSEI ? DATASTAX_DOCS_URL : DOCS_URL}
-            >
-              <span data-testid="menu_docs_button" id="menu_docs_button">
-                {t("Docs")}
-              </span>
-            </HeaderMenuItemLink>
+            
           </div>
 
           

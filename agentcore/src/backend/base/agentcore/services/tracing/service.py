@@ -192,13 +192,16 @@ class TracingService(Service):
             return
         try:
             project_name = project_name or os.getenv("LANGCHAIN_PROJECT", "Agentcore")
+            # Session-centric observability views require a session_id.
+            # If upstream did not provide one, fall back to run_id so the trace is still discoverable.
+            effective_session_id = session_id or str(run_id)
             logger.info(f"📝 Creating trace context: agent={agent_name}, user={user_id}, session={session_id}")
             trace_context = TraceContext(
                 run_id=run_id,
                 run_name=run_name,
                 project_name=project_name,
                 user_id=user_id,
-                session_id=session_id,
+                session_id=effective_session_id,
                 agent_id=agent_id,
                 agent_name=agent_name,
                 observability_project_id=observability_project_id,
@@ -335,6 +338,7 @@ class TracingService(Service):
                         trace_id=component_trace_context.trace_id,
                         trace_name=component_trace_context.trace_name,
                         outputs=trace_context.all_outputs[component_trace_context.trace_name],
+                        output_metadata=component_trace_context.outputs_metadata[component_trace_context.trace_name],
                         error=error,
                         logs=component_trace_context.logs[component_trace_context.trace_name],
                     )

@@ -17,9 +17,11 @@ import {
   XCircle,
   Cloud,
 } from "lucide-react";
-import { useContext, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import Loading from "@/components/ui/loading";
 import { AuthContext } from "@/contexts/authContext";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import {
   useGetConnectorCatalogue,
   type ConnectorInfo,
@@ -29,6 +31,7 @@ import {
   useUpdateConnector,
   useDeleteConnector,
   useTestConnectorConnection,
+  useTestConnectorDraftConnection,
   useDisconnectConnector,
 } from "@/controllers/API/queries/connectors/use-mutate-connector";
 
@@ -59,6 +62,10 @@ const PROVIDER_PORTS: Record<string, number> = {
 
 const DB_PROVIDERS = new Set(["postgresql", "oracle", "sqlserver", "mysql"]);
 const STORAGE_PROVIDERS = new Set(["azure_blob", "sharepoint"]);
+const DEFAULT_CONNECTOR_HOST =
+  process.env.DEFAULT_CONNECTOR_HOST ||
+  process.env.HOST_IP ||
+  window.location.hostname;
 
 function isDbProvider(provider: string): boolean {
   return DB_PROVIDERS.has(provider);
@@ -69,7 +76,7 @@ const BLANK_FORM = {
   description: "",
   provider: "postgresql",
   // DB fields
-  host: "localhost",
+  host: DEFAULT_CONNECTOR_HOST,
   port: 5432,
   database_name: "",
   schema_name: "public",
@@ -87,6 +94,12 @@ const BLANK_FORM = {
   sharepoint_client_id: "",
   sharepoint_client_secret: "",
   sharepoint_tenant_id: "",
+  visibility: "private",
+  public_scope: "department",
+  org_id: "",
+  dept_id: "",
+  public_dept_ids: [] as string[],
+  shared_user_emails: [] as string[],
 };
 
 type FormState = typeof BLANK_FORM;
@@ -103,17 +116,69 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     message: string;
   } | null>(null);
 
-  const { role } = useContext(AuthContext);
-  const isRoot = role === "root";
+  const { role, permissions } = useContext(AuthContext);
+  const canViewConnectorPage =
+    permissions?.includes("connectore_page") ||
+    permissions?.includes("view_connectors_page") ||
+    permissions?.includes("connector_page");
+  const canAddConnector = permissions?.includes("add_connector");
+  const canSeeVisibilityColumn = role === "department_admin" || role === "super_admin";
+
+  const [visibilityOptions, setVisibilityOptions] = useState<{
+    organizations: { id: string; name: string }[];
+    departments: { id: string; name: string; org_id: string }[];
+    private_share_users: { id: string; email: string }[];
+  }>({ organizations: [], departments: [], private_share_users: [] });
 
   const { data: connectors, isLoading, error } = useGetConnectorCatalogue();
   const createMutation = useCreateConnector();
   const updateMutation = useUpdateConnector();
   const deleteMutation = useDeleteConnector();
   const testMutation = useTestConnectorConnection();
+  const testDraftMutation = useTestConnectorDraftConnection();
   const disconnectMutation = useDisconnectConnector();
 
   const [form, setForm] = useState<FormState>({ ...BLANK_FORM });
+
+  useEffect(() => {
+    if (!canViewConnectorPage) return;
+    api.get(`${getURL("CONNECTOR_CATALOGUE")}/visibility-options`).then((res) => {
+      setVisibilityOptions(res.data || { organizations: [], departments: [], private_share_users: [] });
+      const firstOrg = res.data?.organizations?.[0]?.id || "";
+      const firstDept = res.data?.departments?.[0]?.id || "";
+      setForm((prev) => ({ ...prev, org_id: prev.org_id || firstOrg, dept_id: prev.dept_id || firstDept }));
+    });
+  }, [canViewConnectorPage]);
+
+  const departmentsForSelectedOrg = useMemo(
+    () =>
+      visibilityOptions.departments.filter(
+        (d) => !form.org_id || d.org_id === form.org_id,
+      ),
+    [visibilityOptions.departments, form.org_id],
+  );
+
+  useEffect(() => {
+    if (form.visibility !== "public") return;
+    const isOrgLockedRole = role === "developer" || role === "department_admin";
+    if (form.public_scope === "organization" && isOrgLockedRole && !form.org_id && visibilityOptions.organizations.length > 0) {
+      setForm((prev) => ({ ...prev, org_id: visibilityOptions.organizations[0].id }));
+      return;
+    }
+    const canMultiDept = role === "super_admin" || role === "root";
+    if (form.public_scope === "department" && !canMultiDept && !form.dept_id && visibilityOptions.departments.length > 0) {
+      const firstDept = visibilityOptions.departments[0];
+      setForm((prev) => ({ ...prev, dept_id: firstDept.id, org_id: prev.org_id || firstDept.org_id }));
+    }
+  }, [
+    form.visibility,
+    form.public_scope,
+    form.org_id,
+    form.dept_id,
+    role,
+    visibilityOptions.organizations,
+    visibilityOptions.departments,
+  ]);
 
   const resetForm = () => {
     setForm({ ...BLANK_FORM });
@@ -134,7 +199,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       description: connector.description || "",
       provider: connector.provider,
       // DB fields
-      host: connector.host ?? "localhost",
+      host: connector.host ?? DEFAULT_CONNECTOR_HOST,
       port: connector.port ?? PROVIDER_PORTS[connector.provider] ?? 5432,
       database_name: connector.database_name ?? "",
       schema_name: connector.schema_name ?? "public",
@@ -152,6 +217,12 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       sharepoint_client_id: cfg.client_id ?? "",
       sharepoint_client_secret: "",
       sharepoint_tenant_id: cfg.tenant_id ?? "",
+      visibility: connector.visibility ?? "private",
+      public_scope: connector.public_scope ?? "department",
+      org_id: connector.org_id ?? "",
+      dept_id: connector.dept_id ?? "",
+      public_dept_ids: connector.public_dept_ids || [],
+      shared_user_emails: [],
     });
     setEditingConnector(connector);
     setTestResult(null);
@@ -175,6 +246,29 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   };
 
   const buildPayload = () => {
+    const scopePayload = {
+      visibility: form.visibility as "private" | "public",
+      public_scope: form.visibility === "public" ? form.public_scope : null,
+      org_id:
+        form.org_id ||
+        ((role === "developer" || role === "department_admin") && form.visibility === "public" && form.public_scope === "organization"
+          ? visibilityOptions.organizations[0]?.id
+          : undefined),
+      dept_id:
+        form.dept_id ||
+        ((form.visibility === "public" && form.public_scope === "department" && role !== "super_admin" && role !== "root")
+          ? visibilityOptions.departments[0]?.id
+          : undefined),
+      public_dept_ids:
+        form.visibility === "public" && form.public_scope === "department"
+          ? form.public_dept_ids
+          : [],
+      shared_user_emails:
+        role === "department_admin" && form.visibility === "private"
+          ? form.shared_user_emails
+          : [],
+    };
+
     if (form.provider === "azure_blob") {
       const provider_config: Record<string, string> = {
         container_name: form.azure_container_name,
@@ -190,6 +284,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         description: form.description || undefined,
         provider: form.provider,
         provider_config,
+        ...scopePayload,
       };
     }
 
@@ -213,6 +308,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         description: form.description || undefined,
         provider: form.provider,
         provider_config,
+        ...scopePayload,
       };
     }
 
@@ -229,11 +325,25 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       ssl_enabled: form.ssl_enabled,
     };
     if (form.password) payload.password = form.password;
-    return payload;
+    return { ...payload, ...scopePayload };
   };
 
   const isSaveDisabled = () => {
     if (!form.name) return true;
+    if (form.visibility === "public") {
+      if (!form.public_scope) return true;
+      if (form.public_scope === "organization") {
+        const effectiveOrgId =
+          form.org_id || ((role === "developer" || role === "department_admin") ? visibilityOptions.organizations[0]?.id : "");
+        if (!effectiveOrgId) return true;
+      }
+      if (form.public_scope === "department") {
+        const canMultiDept = role === "super_admin" || role === "root";
+        if (canMultiDept && form.public_dept_ids.length === 0) return true;
+        const effectiveDeptId = form.dept_id || (!canMultiDept ? visibilityOptions.departments[0]?.id : "");
+        if (!canMultiDept && !effectiveDeptId) return true;
+      }
+    }
     if (form.provider === "azure_blob") {
       // On create, connection_string is required; on edit, container_name is always required
       if (!form.azure_container_name) return true;
@@ -279,6 +389,60 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       setTestResult(result);
     } catch (err: any) {
       setTestResult({ success: false, message: "Test request failed" });
+    }
+  };
+
+  const handleModalTestConnection = async () => {
+    try {
+      let payload: any;
+      if (editingConnector) {
+        payload = buildPayload();
+        const result = await testMutation.mutateAsync({
+          id: editingConnector.id,
+          payload,
+        });
+        setTestResult(result);
+        return;
+      }
+
+      if (form.provider === "azure_blob") {
+        payload = {
+          provider: form.provider,
+          provider_config: {
+            connection_string: form.azure_connection_string,
+            container_name: form.azure_container_name,
+            ...(form.azure_blob_prefix ? { blob_prefix: form.azure_blob_prefix } : {}),
+          },
+        };
+      } else if (form.provider === "sharepoint") {
+        payload = {
+          provider: form.provider,
+          provider_config: {
+            site_url: form.sharepoint_site_url,
+            library: form.sharepoint_library,
+            client_id: form.sharepoint_client_id,
+            client_secret: form.sharepoint_client_secret,
+            ...(form.sharepoint_tenant_id ? { tenant_id: form.sharepoint_tenant_id } : {}),
+            ...(form.sharepoint_folder ? { folder: form.sharepoint_folder } : {}),
+          },
+        };
+      } else {
+        payload = {
+          provider: form.provider,
+          host: form.host,
+          port: form.port,
+          database_name: form.database_name,
+          schema_name: form.schema_name,
+          username: form.username,
+          password: form.password,
+          ssl_enabled: form.ssl_enabled,
+        };
+      }
+
+      const result = await testDraftMutation.mutateAsync(payload);
+      setTestResult(result);
+    } catch (err: any) {
+      setTestResult({ success: false, message: err?.response?.data?.detail || "Test request failed" });
     }
   };
 
@@ -362,9 +526,31 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     return c.schema_name ?? "—";
   };
 
+  const getConnectorVisibilityLabel = (c: ConnectorInfo): string => {
+    if (c.visibility === "private") return "Private";
+    if (c.public_scope === "organization") {
+      const org = visibilityOptions.organizations.find((o) => o.id === c.org_id);
+      return `Organization: ${org?.name || c.org_id || "Unknown"}`;
+    }
+    if (c.public_scope === "department") {
+      const deptId = c.dept_id || c.public_dept_ids?.[0];
+      const dept = visibilityOptions.departments.find((d) => d.id === deptId);
+      return `Department: ${dept?.name || deptId || "Unknown"}`;
+    }
+    return "Private";
+  };
+
   const FILTER_TABS: ProviderFilter[] = ["all", "postgresql", "oracle", "sqlserver", "mysql", "azure_blob", "sharepoint"];
 
   /* ---- JSX ---- */
+  if (!canViewConnectorPage) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+        You do not have permission to access the Connectors page.
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
@@ -387,10 +573,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
-          {isRoot && (
+          {canAddConnector && (
             <button
               onClick={openAddModal}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg  px-4 py-2.5 text-sm font-medium !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
             >
               <Plus className="h-4 w-4" />
               Add Connector
@@ -407,7 +593,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             onClick={() => setFilter(f)}
             className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
               filter === f
-                ? "bg-primary text-primary-foreground"
+                ? "!bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
                 : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
           >
@@ -439,9 +625,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       "Host / Container / Site",
                       "Database",
                       "Schema",
+                      ...(canSeeVisibilityColumn ? ["Visibility"] : []),
                       "Status",
                       "Tables",
-                      ...(isRoot ? ["Actions"] : []),
+                      ...(canAddConnector ? ["Actions"] : []),
                     ].map((h) => (
                       <th
                         key={h}
@@ -456,13 +643,13 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   {filteredConnectors.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={isRoot ? 8 : 7}
+                        colSpan={7 + (canSeeVisibilityColumn ? 1 : 0) + (canAddConnector ? 1 : 0)}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         <div className="flex flex-col items-center gap-3">
                           <Cable className="h-10 w-10 text-muted-foreground/50" />
                           <p>No connectors found</p>
-                          {isRoot && (
+                          {canAddConnector && (
                             <button
                               onClick={openAddModal}
                               className="text-primary hover:underline text-sm"
@@ -509,6 +696,11 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             {getConnectorSchema(c)}
                           </span>
                         </td>
+                        {canSeeVisibilityColumn && (
+                          <td className="px-6 py-4">
+                            <span className="text-sm">{getConnectorVisibilityLabel(c)}</span>
+                          </td>
+                        )}
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
                             {getStatusIcon(c.status)}
@@ -526,7 +718,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                               : (c.tables_metadata?.length ?? "—")}
                           </span>
                         </td>
-                        {isRoot && (
+                        {canAddConnector && (
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-1">
                               <button
@@ -628,6 +820,130 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 />
               </div>
 
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Visibility</label>
+                <select
+                  value={form.visibility}
+                  onChange={(e) => setForm({ ...form, visibility: e.target.value as "private" | "public" })}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="private">Private</option>
+                  <option value="public">Public</option>
+                </select>
+              </div>
+
+              {form.visibility === "public" && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">Public To</label>
+                    <select
+                      value={form.public_scope}
+                      onChange={(e) => setForm({ ...form, public_scope: e.target.value as "organization" | "department" })}
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="organization">Organization</option>
+                      <option value="department">Department</option>
+                    </select>
+                  </div>
+
+                  {form.public_scope === "organization" && (
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                      <select
+                        value={form.org_id}
+                        onChange={(e) => setForm({ ...form, org_id: e.target.value })}
+                        disabled={role === "developer" || role === "department_admin"}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-80"
+                      >
+                        {visibilityOptions.organizations.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {form.public_scope === "department" && (
+                    <div>
+                      {(role === "super_admin" || role === "root") && (
+                        <div className="mb-3">
+                          <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                          <select
+                            value={form.org_id}
+                            onChange={(e) => setForm({ ...form, org_id: e.target.value, public_dept_ids: [] })}
+                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            {visibilityOptions.organizations.map((org) => (
+                              <option key={org.id} value={org.id}>
+                                {org.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <label className="mb-1.5 block text-sm font-medium">Department{role === "super_admin" || role === "root" ? "s" : ""}</label>
+                      {role === "super_admin" || role === "root" ? (
+                        <select
+                          multiple
+                          value={form.public_dept_ids}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              public_dept_ids: Array.from(e.target.selectedOptions).map((o) => o.value),
+                            })
+                          }
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          {departmentsForSelectedOrg.map((dept) => (
+                            <option key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          value={form.dept_id}
+                          disabled
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm opacity-80"
+                        >
+                          {visibilityOptions.departments.map((dept) => (
+                            <option key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {form.visibility === "private" && role === "department_admin" && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">
+                    Additional Users (optional, same department)
+                  </label>
+                  <select
+                    multiple
+                    value={form.shared_user_emails}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        shared_user_emails: Array.from(e.target.selectedOptions).map((o) => o.value),
+                      })
+                    }
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    {visibilityOptions.private_share_users.map((u) => (
+                      <option key={u.id} value={u.email}>
+                        {u.email}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Provider */}
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Provider</label>
@@ -660,7 +976,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                         value={form.host}
                         onChange={(e) => setForm({ ...form, host: e.target.value })}
                         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="localhost"
+                        placeholder={DEFAULT_CONNECTOR_HOST}
                       />
                     </div>
                     <div>
@@ -915,6 +1231,16 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             {/* Modal Actions */}
             <div className="mt-6 flex justify-end gap-3 border-t pt-4">
               <button
+                onClick={handleModalTestConnection}
+                disabled={testDraftMutation.isPending || testMutation.isPending || updateMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                {(testDraftMutation.isPending || testMutation.isPending) && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Test Connection
+              </button>
+              <button
                 onClick={() => {
                   setShowModal(false);
                   resetForm();
@@ -926,7 +1252,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               <button
                 onClick={handleSave}
                 disabled={isSaveDisabled()}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-2 rounded-lg  px-4 py-2 text-sm font-medium !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground "
               >
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="h-4 w-4 animate-spin" />

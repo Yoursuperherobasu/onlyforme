@@ -6,8 +6,8 @@ import { UseRequestProcessor } from "../../services/request-processor";
 
 export interface IUnpublishAgentRequest {
   agent_id: string;
-  sensei_url: string;
-  sensei_api_key: string;
+  agentcore_url: string;
+  agentcore_api_key: string;
 }
 
 export interface IUnpublishAgentResponse {
@@ -27,12 +27,12 @@ export const useDeleteUnpublishAgent: useMutationFunctionType<
     payload: IUnpublishAgentRequest,
   ): Promise<IUnpublishAgentResponse> => {
     const response = await api.delete<IUnpublishAgentResponse>(
-      `${getURL("PUBLISH")}/sensei`,
+      `${getURL("PUBLISH")}/agentcore`,
       {
         data: {
           agent_id: payload.agent_id,
-          sensei_url: payload.sensei_url,
-          sensei_api_key: payload.sensei_api_key,
+          agentcore_url: payload.agentcore_url,
+          agentcore_api_key: payload.agentcore_api_key,
         },
       },
     );
