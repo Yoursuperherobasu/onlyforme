@@ -241,6 +241,20 @@ class Settings(BaseSettings):
     mcp_server_enable_progress_notifications: bool = False
     """If set to False, Agentcore will not send progress notifications in the MCP server."""
 
+    # Model Microservice
+    model_service_url: str = ""
+    """Base URL of the Model microservice (e.g. http://localhost:8001).
+    When set, registry operations and LLM/embedding invocations are proxied through the microservice."""
+    model_service_api_key: str = ""
+    """API key for authenticating with the Model microservice (sent as x-api-key header)."""
+
+    # MCP Microservice
+    mcp_service_url: str = ""
+    """Base URL of the MCP microservice (e.g. http://localhost:8002).
+    When set, MCP registry operations, tool discovery, and tool invocations are proxied through the microservice."""
+    mcp_service_api_key: str = ""
+    """API key for authenticating with the MCP microservice (sent as x-api-key header)."""
+
     # Public Agent Settings
     public_agent_cleanup_interval: int = Field(default=3600, gt=600)
     """The interval in seconds at which public temporary agents will be cleaned up.
