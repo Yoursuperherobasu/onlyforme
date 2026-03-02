@@ -58,15 +58,24 @@ class LangGraphExecutor:
         """
         logger.info(f"Starting LangGraph execution for agent {self.adapter.agent_id}")
         
-        # Update input vertices with the input data (like ChatInput's input_value)
+        # Update input vertices with the input data (like ChatInput's input_value).
+        # Only overwrite when the new input_value is non-empty so that
+        # TextInput's configured value is preserved when the Playground
+        # sends an empty chat message.
         if inputs:
+            from agentcore.schema.schema import INPUT_FIELD_NAME
+
             for vertex_id in self.adapter._is_input_vertices:
                 vertex = self.adapter.get_vertex(vertex_id)
                 if vertex:
-                    logger.debug(f"Updating vertex {vertex_id} with inputs: {inputs}")
-                    vertex.update_raw_params(inputs, overwrite=True)
-                    logger.debug(f"Vertex {vertex_id} params after update: {vertex.raw_params}")
-        
+                    filtered = {
+                        k: v for k, v in inputs.items()
+                        if k != INPUT_FIELD_NAME or v
+                    }
+                    if filtered:
+                        logger.debug(f"Updating vertex {vertex_id} with inputs: {filtered}")
+                        vertex.update_raw_params(filtered, overwrite=True)
+
         # Prepare initial state
         initial_state = self._create_initial_state(
             inputs=inputs or {},
@@ -77,7 +86,7 @@ class LangGraphExecutor:
             stop_component_id=stop_component_id,
             start_component_id=start_component_id,
         )
-        
+
         try:
             # Execute the workflow
             logger.debug("Invoking LangGraph workflow")
@@ -126,15 +135,23 @@ class LangGraphExecutor:
         """
         logger.info(f"Starting streaming LangGraph execution for agent {self.adapter.agent_id}")
         
-        # Update input vertices with the input data (like ChatInput's input_value)
+        # Update input vertices with the input data (like ChatInput's input_value).
+        # Only overwrite when the new input_value is non-empty so that
+        # TextInput's configured value is preserved.
         if inputs:
+            from agentcore.schema.schema import INPUT_FIELD_NAME
+
             logger.debug(f"Updating input vertices with data: {inputs}")
             for vertex_id in self.adapter._is_input_vertices:
                 vertex = self.adapter.get_vertex(vertex_id)
                 if vertex:
-                    logger.debug(f"Updating vertex {vertex_id} with inputs: {inputs}")
-                    vertex.update_raw_params(inputs, overwrite=True)
-                    logger.debug(f"Vertex {vertex_id} params after update: {vertex.raw_params}")
+                    filtered = {
+                        k: v for k, v in inputs.items()
+                        if k != INPUT_FIELD_NAME or v
+                    }
+                    if filtered:
+                        logger.debug(f"Updating vertex {vertex_id} with inputs: {filtered}")
+                        vertex.update_raw_params(filtered, overwrite=True)
         
         # Prepare initial state
         initial_state = self._create_initial_state(

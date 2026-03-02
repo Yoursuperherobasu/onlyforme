@@ -773,11 +773,13 @@ class LangGraphAdapter:
             else:
                 output_ids = [v.id for v in self.vertices if v.is_output]
 
-            # Set input values on input vertices
+            # Set input values on input vertices.
+            # Only overwrite when the new value is non-empty so that
+            # TextInput's configured value is preserved.
             from agentcore.schema.schema import INPUT_FIELD_NAME
             for vid in self._is_input_vertices:
                 v = self.get_vertex(vid)
-                if v and INPUT_FIELD_NAME in run_inputs:
+                if v and INPUT_FIELD_NAME in run_inputs and run_inputs[INPUT_FIELD_NAME]:
                     v.update_raw_params({INPUT_FIELD_NAME: run_inputs[INPUT_FIELD_NAME]}, overwrite=True)
 
             # Store event_manager on adapter so node_function can access it
@@ -944,7 +946,7 @@ class LangGraphAdapter:
             if should_update:
                 logger.debug(f"Updating input vertex {vertex_id} with inputs: {inputs_dict}")
                 
-                if INPUT_FIELD_NAME in inputs_dict:
+                if INPUT_FIELD_NAME in inputs_dict and inputs_dict[INPUT_FIELD_NAME]:
                     vertex.update_raw_params({INPUT_FIELD_NAME: inputs_dict[INPUT_FIELD_NAME]}, overwrite=True)
                     logger.debug(f"Input vertex {vertex_id} updated with input_value: {inputs_dict[INPUT_FIELD_NAME]}")
         

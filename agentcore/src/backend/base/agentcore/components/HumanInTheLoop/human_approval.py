@@ -135,42 +135,6 @@ class HumanApprovalComponent(Node):
             show=False,
             advanced=True,
         ),
-        SliderInput(
-            name="auto_approve_threshold",
-            display_name="Auto-Approve Above (%)",
-            info="Confidence score at or above this threshold will auto-approve without human review.",
-            value=85,
-            range_spec={"min": 0, "max": 100, "step": 5},
-            show=False,
-            advanced=True,
-        ),
-        SliderInput(
-            name="auto_reject_threshold",
-            display_name="Auto-Reject Below (%)",
-            info="Confidence score at or below this threshold will auto-reject without human review.",
-            value=30,
-            range_spec={"min": 0, "max": 100, "step": 5},
-            show=False,
-            advanced=True,
-        ),
-        DropdownInput(
-            name="auto_action",
-            display_name="Auto-Approve Action",
-            info="Which action to take when auto-approving (high confidence or rules pass).",
-            options=["Approve"],
-            value="Approve",
-            show=False,
-            advanced=True,
-        ),
-        DropdownInput(
-            name="auto_reject_action",
-            display_name="Auto-Reject Action",
-            info="Which action to take when auto-rejecting (low confidence).",
-            options=["Reject"],
-            value="Reject",
-            show=False,
-            advanced=True,
-        ),
         TableInput(
             name="actions",
             display_name="Actions",
@@ -232,42 +196,123 @@ class HumanApprovalComponent(Node):
             return str(val.data)
         return str(val)
 
+    @staticmethod
+    def _extract_kv_from_text(text: str) -> dict:
+        """Extract key-value pairs from natural language text.
+
+        Patterns matched: "key is value", "key: value", "key = value"
+        Delimiters: comma, semicolon, newline, " and ".
+        Always includes a "text" key with the original string.
+        """
+        result: dict[str, str] = {"text": text}
+        segments = re.split(r'[,;\n]|\band\b', text)
+        kv_pattern = re.compile(
+            r'^\s*(\w[\w\s]*?)\s*(?:is|:|=)\s*(.+?)\s*$',
+            re.IGNORECASE,
+        )
+        for segment in segments:
+            m = kv_pattern.match(segment.strip())
+            if m:
+                key = m.group(1).strip().lower().replace(" ", "_")
+                value = m.group(2).strip()
+                result[key] = value
+        return result
+
     def _parse_input_as_dict(self) -> dict:
-        """Convert input_value (Message/Data/str) to a dict for rule evaluation."""
+        """Convert input_value (Message/Data/str) to a dict for rule evaluation.
+
+        Handles:
+        1. Data.data dict → merge KV pairs extracted from "text" field
+        2. JSON string → parse
+        3. Plain text / Message → extract key-value pairs from NL
+        """
         val = self.input_value
         if val is None:
             return {}
+
+        # Data object wrapping a dict (e.g. full message record)
         if isinstance(val, Data) and isinstance(val.data, dict):
-            return val.data
+            data = dict(val.data)  # shallow copy so we don't mutate original
+            # Always extract KV pairs from the "text" field and merge them in.
+            # The Data dict is typically a message record with keys like
+            # timestamp, sender, session_id, text, etc. Business rules
+            # reference fields like "amount" that only exist inside the text.
+            text_val = data.get("text", "")
+            if isinstance(text_val, str) and text_val.strip():
+                # Try JSON first (user may send '{"amount": "6000"}')
+                try:
+                    parsed = json.loads(text_val.strip())
+                    if isinstance(parsed, dict):
+                        for k, v in parsed.items():
+                            if k not in data:
+                                data[k] = v
+                        logger.info(
+                            f"[HumanApproval] Parsed input (Data+JSON): "
+                            f"extracted keys={list(parsed.keys())}"
+                        )
+                        return data
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # Fall back to NL key-value extraction ("amount is 6000")
+                kv = self._extract_kv_from_text(text_val)
+                for k, v in kv.items():
+                    if k not in data:  # don't overwrite existing real keys
+                        data[k] = v
+                logger.info(
+                    f"[HumanApproval] Parsed input (Data+KV): "
+                    f"extracted keys={[k for k in kv if k != 'text']}"
+                )
+            else:
+                logger.info("[HumanApproval] Parsed input (Data dict, no text to parse)")
+            return data
+
+        # Get raw text
+        text = ""
         if isinstance(val, Message):
             text = val.text or ""
-            # Try to parse as JSON
-            try:
-                parsed = json.loads(text)
-                if isinstance(parsed, dict):
-                    return parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
-            return {"text": text}
-        if isinstance(val, str):
-            try:
-                parsed = json.loads(val)
-                if isinstance(parsed, dict):
-                    return parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
-            return {"text": val}
-        return {"value": str(val)}
+        elif isinstance(val, str):
+            text = val
+        else:
+            text = str(val)
+
+        # Try JSON first
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                logger.info(f"[HumanApproval] Parsed input (JSON): {parsed}")
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Extract key-value pairs from natural language
+        result = self._extract_kv_from_text(text)
+        logger.info(f"[HumanApproval] Parsed input (NL→KV): {result}")
+        return result
 
     def _extract_field(self, data: dict, field_path: str) -> Any:
-        """Extract a value from a dict using dot notation (e.g. 'data.amount')."""
+        """Extract a value from a dict using dot notation (e.g. 'data.amount').
+
+        Key lookup is case-insensitive so rule field "Amount" matches
+        parsed key "amount" from natural language input.
+        """
         parts = field_path.strip().split(".")
         current = data
         for part in parts:
-            if isinstance(current, dict) and part in current:
+            if not isinstance(current, dict):
+                return None
+            # Exact match first, then case-insensitive fallback
+            if part in current:
                 current = current[part]
             else:
-                return None
+                part_lower = part.lower()
+                found = False
+                for key in current:
+                    if key.lower() == part_lower:
+                        current = current[key]
+                        found = True
+                        break
+                if not found:
+                    return None
         return current
 
     def _get_action_names(self) -> list[str]:
@@ -303,6 +348,7 @@ class HumanApprovalComponent(Node):
             actual = self._extract_field(input_data, field_path)
             matched = _compare(actual, operator, expected)
             desc = f"{field_path} {operator} {expected}"
+            logger.info(f"[HumanApproval] Rule: {desc} | actual={actual!r} | matched={matched}")
             results.append((matched, desc))
 
         if not results:
@@ -321,16 +367,16 @@ class HumanApprovalComponent(Node):
 
     # ── AI-Decided evaluation ────────────────────────────────────────────────
 
-    async def _evaluate_ai_decision(self, content: str) -> tuple[bool, str]:
+    async def _evaluate_ai_decision(self, content: str) -> tuple[bool, str, int]:
         """Ask the connected LLM whether the input needs human approval.
 
         Returns:
-            (needs_approval, reason)
+            (needs_approval, reason, confidence) — confidence is 0-100.
         """
         llm = self.evaluation_llm
         if not llm or isinstance(llm, str):
             logger.warning("[HumanApproval] AI-Decided mode but no LLM connected — defaulting to pause")
-            return True, "No LLM connected"
+            return True, "No LLM connected", 50
 
         rule_desc = getattr(self, "rule_description", "") or ""
         prompt = (
@@ -338,8 +384,11 @@ class HumanApprovalComponent(Node):
             "decide whether this content needs human approval.\n\n"
             f"RULES:\n{rule_desc}\n\n"
             f"CONTENT TO EVALUATE:\n{content}\n\n"
-            'Respond with JSON only: {"needs_approval": true, "reason": "brief explanation"}\n'
-            "or: {\"needs_approval\": false, \"reason\": \"brief explanation\"}"
+            "Respond with JSON only:\n"
+            '{"needs_approval": true/false, "confidence": 0-100, "reason": "brief explanation"}\n\n'
+            "needs_approval = true if any rule says this content requires human review, false if it can be auto-approved.\n"
+            "confidence = how confident you are in your needs_approval decision "
+            "(100 = absolutely certain, 0 = completely unsure)."
         )
 
         try:
@@ -351,15 +400,17 @@ class HumanApprovalComponent(Node):
                 parsed = json.loads(json_match.group())
                 needs = bool(parsed.get("needs_approval", True))
                 reason = parsed.get("reason", "")
-                return needs, reason
+                confidence = int(parsed.get("confidence", 50))
+                confidence = max(0, min(100, confidence))  # clamp to 0-100
+                return needs, reason, confidence
             # Fallback: if response contains "false" or "no", auto-approve
             lower = text.lower()
             if "false" in lower or '"needs_approval": false' in lower:
-                return False, "AI decided: auto-approve"
-            return True, "AI decided: needs approval"
+                return False, "AI decided: auto-approve", 75
+            return True, "AI decided: needs approval", 25
         except Exception as err:
             logger.warning(f"[HumanApproval] AI evaluation failed: {err} — defaulting to pause")
-            return True, f"AI evaluation error: {err}"
+            return True, f"AI evaluation error: {err}", 50
 
     # ── Main output method ───────────────────────────────────────────────────
 
@@ -381,7 +432,6 @@ class HumanApprovalComponent(Node):
         # ── Determine decision (interrupt or auto-approve) ────────────────
         if not hasattr(self, "_hitl_decision") or self._hitl_decision is None:
             trigger_mode = getattr(self, "trigger_mode", "Always Pause") or "Always Pause"
-            auto_action = getattr(self, "auto_action", default_action) or default_action
 
             interrupt_value = {
                 "question": self.approval_message,
@@ -402,24 +452,28 @@ class HumanApprovalComponent(Node):
                     logger.info(f"[HumanApproval] Auto-approved (rules): {reason}")
                     self.status = f"Auto-approved: {reason}"
                     self._hitl_decision = {
-                        "action": auto_action,
+                        "action": default_action,
                         "feedback": f"Auto-approved: {reason}",
                     }
 
             elif trigger_mode == "AI-Decided":
                 content = self._extract_content()
-                needs_approval, reason = await self._evaluate_ai_decision(content)
-                if needs_approval:
-                    interrupt_value["auto_eval_reason"] = reason
-                    logger.info(f"[HumanApproval] AI decided: needs approval — {reason}")
-                    self._hitl_decision = interrupt(interrupt_value)
-                else:
-                    logger.info(f"[HumanApproval] Auto-approved (AI): {reason}")
-                    self.status = f"Auto-approved (AI): {reason}"
+                needs_approval, reason, confidence = await self._evaluate_ai_decision(content)
+
+                if not needs_approval:
+                    # AI says no approval needed → auto-approve via first action
+                    logger.info(f"[HumanApproval] Auto-approved (AI {confidence}%): {reason}")
+                    self.status = f"Auto-approved (AI {confidence}%): {reason}"
                     self._hitl_decision = {
-                        "action": auto_action,
-                        "feedback": f"Auto-approved (AI): {reason}",
+                        "action": default_action,
+                        "feedback": f"Auto-approved (AI confidence: {confidence}%): {reason}",
                     }
+                else:
+                    # AI says approval needed → pause for human review, confidence shown as metadata
+                    interrupt_value["auto_eval_reason"] = f"AI confidence: {confidence}% — {reason}"
+                    interrupt_value["confidence"] = confidence
+                    logger.info(f"[HumanApproval] Human review needed (AI {confidence}%): {reason}")
+                    self._hitl_decision = interrupt(interrupt_value)
 
             else:
                 # "Always Pause" — existing behavior
@@ -450,16 +504,50 @@ class HumanApprovalComponent(Node):
             for name in action_names:
                 if name != chosen:
                     self.stop(name)
+
             # Pass through the original input along with optional feedback.
             input_val = self.input_value
-            if feedback and isinstance(input_val, Message):
-                return Message(
-                    text=input_val.text,
-                    sender=input_val.sender,
-                    sender_name=input_val.sender_name,
-                    additional_kwargs={"hitl_feedback": feedback},
-                )
-            return input_val if input_val is not None else Message(text="")
+
+            logger.debug(
+                f"[HumanApproval] input_val type={type(input_val).__name__}, "
+                f"repr={input_val!r:.200}"
+            )
+
+            # Create a FRESH Message without the upstream storage id.
+            # If we pass through the original Message (which carries an id
+            # from ChatInput's send_message()), ChatOutput will treat it as
+            # already-stored and skip creating a new AI response message.
+            text = ""
+            if isinstance(input_val, Message):
+                text = input_val.text or ""
+            elif isinstance(input_val, Data):
+                text = str(input_val.data.get("text", "")) if isinstance(input_val.data, dict) else str(input_val.data)
+            elif isinstance(input_val, dict):
+                # Checkpoint deserialization may return a plain dict instead
+                # of a Message/Data object.  Extract text from it.
+                text = str(input_val.get("text", "")) if "text" in input_val else str(input_val)
+            elif input_val is not None and input_val != "":
+                text = str(input_val)
+
+            # Fallback: if text is still empty after extraction, recover from
+            # the original_content that the resume API injected into the
+            # decision dict (sourced from interrupt_data["context"]).
+            # This handles cases where checkpoint serialization corrupted the
+            # upstream result or _resolve_params() couldn't resolve the input.
+            if not text.strip() and isinstance(human_decision, dict):
+                original = human_decision.get("original_content", "")
+                if original:
+                    logger.info(
+                        f"[HumanApproval] Using original_content fallback: {original!r:.100}"
+                    )
+                    text = original
+
+            extra_kwargs = {}
+            if feedback:
+                extra_kwargs["hitl_feedback"] = feedback
+
+            logger.debug(f"[HumanApproval] Passing text to downstream: {text!r:.200}")
+            return Message(text=text, **({} if not extra_kwargs else {"additional_kwargs": extra_kwargs}))
 
         # This branch was not chosen — deactivate it.
         self.stop(current_output_name)
@@ -513,25 +601,6 @@ class HumanApprovalComponent(Node):
             if "rule_description" in build_config:
                 build_config["rule_description"]["show"] = is_ai
                 build_config["rule_description"]["advanced"] = not is_ai
-
-            # Auto-approve action (shown for both conditional modes)
-            if "auto_action" in build_config:
-                build_config["auto_action"]["show"] = show_auto
-                build_config["auto_action"]["advanced"] = not show_auto
-
-        # Sync auto_action dropdown options with actions table
-        if field_name == "actions" and field_value and "auto_action" in build_config:
-            action_names = []
-            for row in field_value:
-                if isinstance(row, dict) and row.get("action_name"):
-                    name = row["action_name"].strip()
-                    if name:
-                        action_names.append(name)
-            if action_names:
-                build_config["auto_action"]["options"] = action_names
-                current = build_config["auto_action"].get("value", "")
-                if current not in action_names:
-                    build_config["auto_action"]["value"] = action_names[0]
 
         return build_config
 

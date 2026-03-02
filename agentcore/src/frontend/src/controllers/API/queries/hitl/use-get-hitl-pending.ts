@@ -14,6 +14,9 @@ export interface HITLRequestItem {
     context: string;
     actions: string[];
     timeout_seconds: number;
+    auto_eval_reason?: string;
+    confidence?: number;
+    node_id?: string;
   } | null;
   status:
     | "pending"

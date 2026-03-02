@@ -32,6 +32,8 @@ export default function ChatMessage({
   updateChat,
   closeChat,
   playgroundPage,
+  hitlDoneMap = {},
+  onHitlDone,
 }: chatMessagePropsType): JSX.Element {
   const convert = new Convert({ newline: true });
   const [hidden, setHidden] = useState(true);
@@ -165,7 +167,8 @@ export default function ChatMessage({
   const isHitl = !chat.isSend && chat.properties?.hitl === true;
   const hitlActions: string[] = isHitl ? (chat.properties?.actions ?? []) : [];
   const hitlThreadId: string = isHitl ? (chat.properties?.thread_id ?? "") : "";
-  const [hitlDone, setHitlDone] = useState<string | null>(null);
+  const chatId = String(chat.id ?? "");
+  const hitlDone = hitlDoneMap[chatId] ?? null;
   const [hitlLoading, setHitlLoading] = useState<string | null>(null);
 
   const handleHitlAction = async (action: string) => {
@@ -177,7 +180,7 @@ export default function ChatMessage({
         feedback: "",
         edited_value: "",
       });
-      setHitlDone(action);
+      onHitlDone?.(chatId, action);
       // Clear the "agent running" spinner and re-fetch messages so the AI
       // response from the resumed graph appears in chat automatically.
       useMessagesStore.getState().setDisplayLoadingMessage(false);
@@ -405,29 +408,46 @@ export default function ChatMessage({
                               />
                             )}
                             {isHitl && hitlActions.length > 0 && (
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {hitlActions.map((action) => (
+                              <div className="mt-3 flex flex-col gap-2.5">
+                                <div className="flex flex-wrap gap-2">
+                                {hitlActions.map((action) => {
+                                  const isReject = action.toLowerCase().includes("reject");
+                                  return (
                                   <button
                                     key={action}
                                     onClick={() => handleHitlAction(action)}
                                     disabled={!!hitlDone || !!hitlLoading}
                                     className={cn(
-                                      "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                                      "inline-flex items-center gap-1.5 rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
                                       hitlDone === action
-                                        ? "border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                                        ? isReject
+                                          ? "border-red-500 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                                          : "border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
                                         : hitlDone
                                           ? "cursor-not-allowed border-border bg-muted/30 text-muted-foreground opacity-50"
                                           : hitlLoading === action
-                                            ? "cursor-wait border-border bg-muted/50 text-muted-foreground"
-                                            : "border-border bg-background text-primary hover:bg-muted/40 cursor-pointer",
+                                            ? isReject
+                                              ? "cursor-wait border-red-400 bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
+                                              : "cursor-wait border-green-400 bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400"
+                                            : hitlLoading
+                                              ? "cursor-not-allowed border-border bg-muted/30 text-muted-foreground opacity-50"
+                                              : isReject
+                                                ? "cursor-pointer border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/30"
+                                                : "cursor-pointer border-border text-foreground hover:bg-muted",
                                     )}
                                   >
-                                    {hitlLoading === action ? "…" : hitlDone === action ? `✓ ${action}` : action}
+                                    {hitlLoading === action
+                                      ? "Submitting..."
+                                      : hitlDone === action
+                                        ? `✓ ${action}`
+                                        : action}
                                   </button>
-                                ))}
+                                  );
+                                })}
+                                </div>
                                 {hitlDone && (
-                                  <span className="self-center text-xs text-muted-foreground">
-                                    Decision submitted — agent will continue.
+                                  <span className="text-xs text-muted-foreground">
+                                    Decision submitted — agent continued.
                                   </span>
                                 )}
                               </div>

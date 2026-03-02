@@ -234,6 +234,75 @@ async def resume_hitl(
                 f"next={_pre_state.next}"
             )
 
+        # Hydrate upstream vertex objects from checkpoint state so that
+        # _resolve_params() in vertex_wrapper.py can resolve edge-connected
+        # inputs.  On resume, the graph is rebuilt from scratch (new vertex
+        # objects with built=False), but LangGraph only re-executes from the
+        # interrupted node onward — upstream vertices never run.  Without
+        # hydration, _resolve_params() skips them (built=False) and downstream
+        # components receive None for their inputs.
+        #
+        # IMPORTANT: Only hydrate vertices that are UPSTREAM (predecessors) of
+        # the interrupted node.  The interrupted node itself and all downstream
+        # nodes must NOT be hydrated — they need to re-execute fresh.
+        # We use the predecessor_map to compute the full set of transitive
+        # predecessors via BFS.
+        try:
+            checkpoint_values = _pre_state.values or {}
+            vertices_results = checkpoint_values.get("vertices_results", {})
+            predecessor_map = checkpoint_values.get("predecessor_map", {})
+            next_nodes = set(_pre_state.next or ())
+
+            # BFS: collect all transitive predecessors of the interrupted node(s)
+            upstream: set[str] = set()
+            queue = list(next_nodes)
+            while queue:
+                nid = queue.pop(0)
+                for pred in predecessor_map.get(nid, []):
+                    if pred not in upstream and pred not in next_nodes:
+                        upstream.add(pred)
+                        queue.append(pred)
+
+            if vertices_results and upstream:
+                hydrated = []
+                for vid in upstream:
+                    result = vertices_results.get(vid)
+                    v = graph.get_vertex(vid)
+                    if v and not v.built and result is not None:
+                        v.built = True
+                        v.built_result = result
+                        v.built_object = result
+                        hydrated.append(vid)
+                        # Debug: log the type and structure of the hydrated result
+                        if isinstance(result, dict):
+                            detail = {k: type(val).__name__ for k, val in result.items()}
+                        else:
+                            detail = type(result).__name__
+                        logger.info(
+                            f"[HITL] Hydrated vertex {vid}: result_structure={detail}"
+                        )
+                if hydrated:
+                    logger.info(
+                        f"[HITL] Hydrated {len(hydrated)} upstream vertices "
+                        f"from checkpoint: {hydrated}"
+                    )
+                else:
+                    logger.debug(
+                        f"[HITL] No upstream vertices to hydrate "
+                        f"(next={next_nodes}, upstream={upstream})"
+                    )
+        except Exception as _hydrate_err:
+            logger.warning(f"[HITL] Could not hydrate vertices from checkpoint: {_hydrate_err}")
+
+        # Recover the original input content from the stored interrupt data
+        # as a fallback — in case hydration didn't cover the input.
+        try:
+            if _pre_state.tasks and _pre_state.tasks[0].interrupts:
+                interrupt_data = _pre_state.tasks[0].interrupts[0].value or {}
+                decision["original_content"] = interrupt_data.get("context", "")
+        except (IndexError, AttributeError):
+            pass
+
         # Resume: pass Command(resume=decision) instead of initial_state.
         final_state = await graph.compiled_app.ainvoke(
             Command(resume=decision),
@@ -280,11 +349,8 @@ async def resume_hitl(
         session.add(hitl_req)
         await session.commit()
 
-        # Check if any output vertex already stored its message during the
-        # resumed build (e.g. ChatOutput with an LLM upstream).  If so, the
-        # AI response is already in the messages table and we only need a
-        # brief confirmation.  If not (simple pass-through flows), include
-        # the approved content in the confirmation so the user sees output.
+        # Extract the output text from the output vertex and check if
+        # ChatOutput already stored its message to the conversation table.
         output_stored_by_component = False
         output_text: str | None = None
         for oid in getattr(graph, "_is_output_vertices", []):
@@ -294,10 +360,11 @@ async def resume_hitl(
             comp = getattr(vertex, "custom_component", None)
             if comp and getattr(comp, "_stored_message_id", None):
                 output_stored_by_component = True
-            elif vertex.built_result is not None:
+            # Always extract the text — we need it for orch_conversation
+            # even when ChatOutput already stored to the conversation table.
+            if vertex.built_result is not None:
                 result = vertex.built_result
                 if isinstance(result, dict):
-                    # Multi-output: grab the first non-None value
                     for v in result.values():
                         if v is not None and hasattr(v, "text"):
                             output_text = v.text
@@ -306,11 +373,25 @@ async def resume_hitl(
                     output_text = result.text
             break  # Only check the first output vertex
 
+        # Determine if this was an orchestrator run (orch metadata attached by nodes.py)
+        orch_meta = (hitl_req.interrupt_data or {}).get("_orch_meta")
+
+        # For orchestrator runs, store the LLM response as a separate
+        # orch_conversation message.  ChatOutput stores to the conversation
+        # table (Playground), but the Orch page reads from orch_conversation.
+        if orch_meta and output_text:
+            await _store_orch_agent_response(
+                agent_id=str(hitl_req.agent_id),
+                output_text=output_text,
+                orch_meta=orch_meta,
+            )
+
         await _store_hitl_confirmation(
             thread_id=thread_id,
             agent_id=str(hitl_req.agent_id),
             action=body.action,
-            output_text=output_text if not output_stored_by_component else None,
+            output_text=output_text if not output_stored_by_component and not orch_meta else None,
+            orch_meta=orch_meta,
         )
 
         logger.info(f"[HITL] Run {thread_id!r} resumed and completed successfully.")
@@ -318,6 +399,7 @@ async def resume_hitl(
             "status": "completed",
             "thread_id": thread_id,
             "action": body.action,
+            "output_text": output_text,
         }
 
     except Exception as exc:
@@ -359,40 +441,105 @@ async def cancel_hitl(
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
+async def _store_orch_agent_response(
+    agent_id: str,
+    output_text: str,
+    orch_meta: dict,
+) -> None:
+    """Store the LLM/ChatOutput response to orch_conversation after HITL resume.
+
+    During normal orchestrator runs, the orch endpoint extracts the response text
+    and stores it to orch_conversation.  During HITL resume, ChatOutput stores to
+    the conversation table (Playground) but NOT orch_conversation.  This function
+    fills that gap so the Orchestration page shows the full AI response.
+    """
+    try:
+        from uuid import UUID as _UUID
+        from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+        from agentcore.services.database.models.orch_conversation.crud import orch_add_message
+        from agentcore.services.deps import session_scope
+
+        async with session_scope() as db:
+            orch_msg = OrchConversationTable(
+                sender="agent",
+                sender_name="AI",
+                session_id=orch_meta.get("session_id"),
+                text=output_text,
+                agent_id=_UUID(agent_id) if agent_id else None,
+                user_id=_UUID(orch_meta["user_id"]) if orch_meta.get("user_id") else None,
+                deployment_id=_UUID(orch_meta["deployment_id"]) if orch_meta.get("deployment_id") else None,
+                files=[],
+                properties={},
+                category="message",
+                content_blocks=[],
+            )
+            await orch_add_message(orch_msg, db)
+        logger.info(f"[HITL] Stored orch agent response ({len(output_text)} chars)")
+    except Exception as _err:
+        logger.warning(f"[HITL] Could not store orch agent response: {_err}")
+
+
 async def _store_hitl_confirmation(
     thread_id: str,
     agent_id: str,
     action: str,
     output_text: str | None = None,
+    orch_meta: dict | None = None,
 ) -> None:
-    """Store a confirmation chat message so the playground shows the outcome.
+    """Store a confirmation chat message after HITL resume.
 
-    The HITL pause message is only sent via SSE (not persisted to DB), so after
-    the messages query refetches it disappears.  This confirmation message fills
-    the gap: it is stored in the messages table so the refetch returns it.
+    Writes to the correct table depending on context:
+    - Playground runs  → ``conversation`` table (via ``astore_message``)
+    - Orchestrator runs → ``orch_conversation`` table (via ``orch_add_message``)
 
-    When ``output_text`` is provided (simple pass-through flows where the output
-    component didn't store a new message), it is appended as a blockquote so the
-    user can see the content that flowed through.
+    ``orch_meta`` is set by ``_persist_hitl_request`` in nodes.py when the graph
+    was launched from the orchestrator.  It contains ``deployment_id``, ``user_id``,
+    and ``session_id`` needed for the orch_conversation row.
     """
     try:
-        from agentcore.memory import astore_message
-        from agentcore.schema.message import Message
-
         is_reject = "reject" in action.lower()
         icon = "✗" if is_reject else "✓"
         text = f"{icon} **{action}** — Human review completed"
         if output_text:
             text += f"\n\n> {output_text}"
-        msg = Message(
-            text=text,
-            sender="Machine",
-            sender_name="Agent",
-            session_id=thread_id,
-            agent_id=agent_id,
-        )
-        await astore_message(msg, agent_id=agent_id)
-        logger.info(f"[HITL] Stored confirmation message for thread_id={thread_id!r}, action={action!r}")
+
+        if orch_meta:
+            # Orchestrator run → write to orch_conversation
+            from uuid import UUID as _UUID
+            from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+            from agentcore.services.database.models.orch_conversation.crud import orch_add_message
+            from agentcore.services.deps import session_scope
+
+            async with session_scope() as db:
+                orch_msg = OrchConversationTable(
+                    sender="agent",
+                    sender_name="Agent",
+                    session_id=orch_meta.get("session_id") or thread_id,
+                    text=text,
+                    agent_id=_UUID(agent_id) if agent_id else None,
+                    user_id=_UUID(orch_meta["user_id"]) if orch_meta.get("user_id") else None,
+                    deployment_id=_UUID(orch_meta["deployment_id"]) if orch_meta.get("deployment_id") else None,
+                    files=[],
+                    properties={},
+                    category="message",
+                    content_blocks=[],
+                )
+                await orch_add_message(orch_msg, db)
+            logger.info(f"[HITL] Stored orch confirmation for thread_id={thread_id!r}, action={action!r}")
+        else:
+            # Playground run → write to conversation
+            from agentcore.memory import astore_message
+            from agentcore.schema.message import Message
+
+            msg = Message(
+                text=text,
+                sender="Machine",
+                sender_name="Agent",
+                session_id=thread_id,
+                agent_id=agent_id,
+            )
+            await astore_message(msg, agent_id=agent_id)
+            logger.info(f"[HITL] Stored playground confirmation for thread_id={thread_id!r}, action={action!r}")
     except Exception as _err:
         logger.warning(f"[HITL] Could not store confirmation message: {_err}")
 

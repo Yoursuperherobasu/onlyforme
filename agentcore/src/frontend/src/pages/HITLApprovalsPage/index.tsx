@@ -54,6 +54,44 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function ConfidenceBadge({ confidence }: { confidence: number }) {
+  const color =
+    confidence >= 80
+      ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+      : confidence >= 40
+        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+        : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+  return (
+    <span
+      className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${color}`}
+    >
+      {confidence}%
+    </span>
+  );
+}
+
+function ConfidenceBar({ confidence }: { confidence: number }) {
+  const barColor =
+    confidence >= 80
+      ? "bg-green-500"
+      : confidence >= 40
+        ? "bg-amber-500"
+        : "bg-red-500";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-2 w-full max-w-[120px] rounded-full bg-muted">
+        <div
+          className={`h-2 rounded-full transition-all ${barColor}`}
+          style={{ width: `${Math.min(100, Math.max(0, confidence))}%` }}
+        />
+      </div>
+      <span className="text-xs font-medium text-muted-foreground">
+        {confidence}%
+      </span>
+    </div>
+  );
+}
+
 interface DetailModalProps {
   item: HITLRequestItem | null;
   open: boolean;
@@ -127,6 +165,28 @@ function DetailModal({
               {question}
             </p>
           </div>
+
+          {/* Trigger Reason */}
+          {item.interrupt_data?.auto_eval_reason && (
+            <div>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {t("Trigger Reason")}
+              </p>
+              <div className="rounded-md border border-blue-200 bg-blue-50/50 px-3 py-2 dark:border-blue-800/50 dark:bg-blue-950/20">
+                <p className="text-sm text-blue-800 dark:text-blue-300">
+                  {item.interrupt_data.auto_eval_reason}
+                </p>
+                {item.interrupt_data.confidence != null && (
+                  <div className="mt-2">
+                    <p className="mb-1 text-xs text-blue-600 dark:text-blue-400">
+                      {t("AI Confidence")}
+                    </p>
+                    <ConfidenceBar confidence={item.interrupt_data.confidence} />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Context */}
           {context && (
@@ -417,6 +477,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                   {[
                     t("Agent"),
                     t("Question"),
+                    t("Reason"),
                     t("Actions"),
                     t("Requested"),
                     t("Status"),
@@ -435,7 +496,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                 {filteredItems.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-4 py-12 text-center text-sm text-muted-foreground"
                     >
                       <IconComponent
@@ -477,6 +538,24 @@ export default function HITLApprovalsPage(): JSX.Element {
                               ? question.slice(0, 80) + "…"
                               : question}
                           </p>
+                        </td>
+
+                        {/* Reason */}
+                        <td className="max-w-[200px] px-4 py-3">
+                          {item.interrupt_data?.auto_eval_reason ? (
+                            <div className="flex items-center">
+                              <p className="truncate text-xs text-muted-foreground">
+                                {item.interrupt_data.auto_eval_reason.length > 60
+                                  ? item.interrupt_data.auto_eval_reason.slice(0, 60) + "..."
+                                  : item.interrupt_data.auto_eval_reason}
+                              </p>
+                              {item.interrupt_data.confidence != null && (
+                                <ConfidenceBadge confidence={item.interrupt_data.confidence} />
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground/50">—</span>
+                          )}
                         </td>
 
                         {/* Actions badges */}

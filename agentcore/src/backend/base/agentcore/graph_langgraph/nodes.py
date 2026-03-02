@@ -130,7 +130,12 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
                     should_update = False
 
             if should_update and INPUT_FIELD_NAME in inputs_dict:
-                vertex.update_raw_params({INPUT_FIELD_NAME: inputs_dict[INPUT_FIELD_NAME]}, overwrite=True)
+                new_val = inputs_dict[INPUT_FIELD_NAME]
+                # Only overwrite if the new value is non-empty.
+                # This preserves TextInput's configured value when the
+                # Playground sends an empty chat message.
+                if new_val:
+                    vertex.update_raw_params({INPUT_FIELD_NAME: new_val}, overwrite=True)
 
         try:
             if should_build:
@@ -449,6 +454,13 @@ def _emit_hitl_pause_event(
             f"**Available actions:**\n{actions_display}"
         )
 
+        msg_id = str(uuid4())
+        hitl_properties = {
+            "hitl": True,
+            "thread_id": session_id,
+            "actions": actions,
+        }
+
         event_manager.on_message(data={
             "sender": "Machine",
             "sender_name": "Agent",
@@ -456,19 +468,52 @@ def _emit_hitl_pause_event(
             "category": "message",
             "session_id": session_id,
             "agent_id": agent_id,
-            "id": str(uuid4()),
+            "id": msg_id,
             "timestamp": now_utc,
             "files": [],
             "edit": False,
             "background_color": "",
             "text_color": "",
             # HITL metadata — chat-message.tsx reads these to render action buttons.
-            "properties": {
-                "hitl": True,
-                "thread_id": session_id,
-                "actions": actions,
-            },
+            "properties": hitl_properties,
         })
+
+        # Persist the HITL pause message to the conversation table so the
+        # buttons survive page refreshes / message refetches.
+        # Skip for orchestrator runs — orchestrator.py already persists to
+        # orch_conversation with the correct deployment_id / user_id.
+        is_orch = bool(getattr(graph, "orch_deployment_id", None))
+
+        if not is_orch:
+            import asyncio
+
+            async def _persist_hitl_message():
+                try:
+                    from agentcore.schema.message import Message as SchemaMessage
+                    from agentcore.schema.properties import Properties
+
+                    hitl_msg = await SchemaMessage.create(
+                        text=message_text,
+                        sender="Machine",
+                        sender_name="Agent",
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        files=[],
+                        properties=Properties(**hitl_properties),
+                    )
+                    hitl_msg.data["id"] = msg_id
+                    from agentcore.memory import astore_message
+                    await astore_message(hitl_msg, agent_id=agent_id)
+                except Exception as store_err:
+                    logger.warning(f"[HITL] Could not persist pause message to DB: {store_err}")
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_persist_hitl_message())
+            except RuntimeError:
+                logger.warning("[HITL] No running event loop — skipping DB persistence of pause message")
+        else:
+            logger.info("[HITL] Orchestrator run — skipping conversation table persistence (orch handles its own)")
 
         logger.info(
             f"[HITL] Emitted pause events for {vertex.id} ({vertex.display_name}). "
@@ -510,6 +555,15 @@ async def _persist_hitl_request(
         thread_id = getattr(graph, "_session_id", None) or ""
         agent_id_raw = getattr(graph, "agent_id", None)
         user_id_raw = state.get("user_id") if state else None
+
+        # Tag orchestrator runs so _store_hitl_confirmation writes to orch_conversation
+        orch_deployment_id = getattr(graph, "orch_deployment_id", None)
+        if orch_deployment_id:
+            interrupt_value["_orch_meta"] = {
+                "deployment_id": str(orch_deployment_id),
+                "user_id": str(user_id_raw) if user_id_raw else None,
+                "session_id": getattr(graph, "orch_session_id", None),
+            }
 
         async with _session_scope() as _db:
             _hitl = HITLRequest(

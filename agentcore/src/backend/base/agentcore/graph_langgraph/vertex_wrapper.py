@@ -405,7 +405,16 @@ class LangGraphVertex:
                 # leave result_value = None so we skip rather than pass a raw dict.
 
             if result_value is None:
+                logger.debug(
+                    f"[_resolve_params] {self.id}.{field_name}: "
+                    f"source={source_id}.{source_output}, result_value=None (skipping)"
+                )
                 continue
+
+            logger.debug(
+                f"[_resolve_params] {self.id}.{field_name} ← "
+                f"{source_id}.{source_output} (type={type(result_value).__name__})"
+            )
 
             # Check if this is a list parameter (like tools) - need to append/extend
             current_value = resolved_params.get(field_name)
@@ -448,6 +457,15 @@ class LangGraphVertex:
 
         # Update params with resolved values
         self.params = resolved_params
+
+        # Log final resolved input_value for diagnosis
+        if "input_value" in resolved_params:
+            iv = resolved_params["input_value"]
+            iv_text = getattr(iv, "text", None) if hasattr(iv, "text") else str(iv)[:100]
+            logger.debug(
+                f"[_resolve_params] {self.id} final input_value: "
+                f"type={type(iv).__name__}, text={iv_text!r:.100}"
+            )
 
     def built_object_repr(self) -> str:
         """Get string representation of build status."""
