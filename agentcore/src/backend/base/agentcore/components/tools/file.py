@@ -3,25 +3,29 @@ from pathlib import Path
 from typing import Any
 
 from agentcore.base.data.base_file import BaseFileNode
-from agentcore.base.data.utils import TEXT_FILE_TYPES, parallel_load_data, parse_text_file_to_data
+from agentcore.base.data.utils import IMG_FILE_TYPES, TEXT_FILE_TYPES, parallel_load_data, parse_text_file_to_data
 from agentcore.io import BoolInput, FileInput, IntInput, Output
 from agentcore.schema.data import Data
 from agentcore.services.deps import get_storage_service
 
+_BINARY_FILE_TYPES = [
+    *IMG_FILE_TYPES,
+    "tiff",
+    "bmp",
+    "webp",
+    "pptx",
+    "xlsx",
+]
+
 
 class File(BaseFileNode):
-    """Handles loading and processing of individual or zipped text files.
-
-    This component supports processing multiple valid files within a zip archive,
-    resolving paths, validating file types, and optionally using multithreading for processing.
-    """
 
     display_name = "Knowledge Base"
     description = "Select one or more knowledge bases and load their files."
     icon = "file-text"
     name = "File"
 
-    VALID_EXTENSIONS = TEXT_FILE_TYPES
+    VALID_EXTENSIONS = [*TEXT_FILE_TYPES, *_BINARY_FILE_TYPES]
 
     _base_inputs = deepcopy(BaseFileNode._base_inputs)
 
@@ -188,6 +192,17 @@ class File(BaseFileNode):
 
         def process_file(file_path: str, *, silent_errors: bool = False) -> Data | None:
             """Processes a single file and returns its Data object."""
+            ext = Path(file_path).suffix.lstrip(".").lower()
+
+            # Binary files (images, pptx, xlsx, etc.) can't be parsed as text.
+            # Return a Data object with the file path so downstream components
+            # (e.g. Document OCR Extractor) can consume them.
+            if ext in _BINARY_FILE_TYPES:
+                return Data(
+                    text=file_path,
+                    data={"file_path": file_path, "file_type": ext},
+                )
+
             try:
                 return parse_text_file_to_data(file_path, silent_errors=silent_errors)
             except FileNotFoundError as e:
