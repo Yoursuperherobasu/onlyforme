@@ -13,7 +13,7 @@ import type {
 } from "../../types/components";
 
 import { useMsal } from "@azure/msal-react";
-import { loginRequest } from "@/authConfig";
+import { loginRequest, msalConfig } from "@/authConfig";
 import { useTranslation } from "react-i18next";
 import useAuthStore from "@/stores/authStore";
 
@@ -62,6 +62,38 @@ export default function LoginPage(): JSX.Element {
      ========================= */
   async function handleAzureSSO() {
     try {
+      const clientId = msalConfig?.auth?.clientId;
+      const authority = msalConfig?.auth?.authority;
+      const redirectUri = msalConfig?.auth?.redirectUri;
+      const isValidHttpUrl = (value: string | undefined) => {
+        if (!value) return false;
+        try {
+          const parsed = new URL(value);
+          return parsed.protocol === "http:" || parsed.protocol === "https:";
+        } catch {
+          return false;
+        }
+      };
+      const invalidMsalConfig =
+        !clientId ||
+        !isValidHttpUrl(authority) ||
+        !isValidHttpUrl(redirectUri);
+
+      if (invalidMsalConfig) {
+        setErrorData({
+          title: "Microsoft SSO configuration is invalid",
+          list: [
+            "Check AZURE_CLIENT_ID, AZURE_TENANT_ID/MSAL_AUTHORITY, and MSAL_REDIRECT_URI in .env, then restart frontend.",
+          ],
+        });
+        console.error("[SSO] Invalid MSAL config", {
+          clientId,
+          authority,
+          redirectUri,
+        });
+        return;
+      }
+
       console.log("🟣 [SSO] Starting Azure login...");
 
       const response = await instance.loginPopup(loginRequest);
