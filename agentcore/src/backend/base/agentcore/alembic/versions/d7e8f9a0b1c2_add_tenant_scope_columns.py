@@ -44,7 +44,7 @@ def _has_fk(bind, table_name: str, fk_name: str) -> bool:
     return any(fk.get("name") == fk_name for fk in sa.inspect(bind).get_foreign_keys(table_name))
 
 
-def _add_tenant_columns(bind, table_name: str, org_index: str, dept_index: str | None = None) -> None:
+def _add_tenant_columns(bind, table_name: str, org_index: str, dept_index: Union[str, None] = None) -> None:
     if not _table_exists(bind, table_name):
         return
     if not _has_column(bind, table_name, "org_id"):

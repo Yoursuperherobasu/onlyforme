@@ -15,6 +15,7 @@ export interface GuardrailInfo {
   id: string;
   name: string;
   description: string;
+  framework?: "nemo" | "arize";
   provider: string;
   modelRegistryId?: string | null;
   modelName?: string | null;
@@ -36,6 +37,7 @@ export interface GuardrailInfo {
 export interface GuardrailCreateOrUpdatePayload {
   name: string;
   description?: string | null;
+  framework?: "nemo" | "arize";
   modelRegistryId: string;
   category: string;
   status: "active" | "inactive";
@@ -50,19 +52,25 @@ export interface GuardrailCreateOrUpdatePayload {
   shared_user_emails?: string[] | null;
 }
 
+export interface GuardrailsCatalogueParams {
+  framework?: "nemo" | "arize";
+}
+
 export const useGetGuardrailsCatalogue: useQueryFunctionType<
-  undefined,
+  GuardrailsCatalogueParams,
   GuardrailInfo[]
-> = (options?) => {
+> = (params, options?) => {
   const { query } = UseRequestProcessor();
 
   const getGuardrailsCatalogueFn = async (): Promise<GuardrailInfo[]> => {
-    const res = await api.get(`${getURL("GUARDRAILS_CATALOGUE")}/`);
+    const res = await api.get(`${getURL("GUARDRAILS_CATALOGUE")}/`, {
+      params: params?.framework ? { framework: params.framework } : undefined,
+    });
     return res.data ?? [];
   };
 
   const queryResult: UseQueryResult<GuardrailInfo[], any> = query(
-    ["useGetGuardrailsCatalogue"],
+    ["useGetGuardrailsCatalogue", params?.framework ?? "all"],
     getGuardrailsCatalogueFn,
     {
       refetchOnWindowFocus: false,

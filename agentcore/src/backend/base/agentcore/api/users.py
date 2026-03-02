@@ -3,7 +3,8 @@ import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import distinct, func
+from sqlalchemy import and_, distinct, exists, func
+from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.sql.expression import SelectOfScalar
@@ -28,6 +29,20 @@ router = APIRouter(tags=["Users"], prefix="/users")
 
 ACTIVE_ORG_STATUSES = {"accepted", "active"}
 ACTIVE_DEPT_STATUS = "active"
+
+
+def _strip_or_none(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _normalize_identity(value: str | None) -> str | None:
+    stripped = _strip_or_none(value)
+    if not stripped:
+        return None
+    return stripped.lower() if "@" in stripped else stripped
 
 
 async def _assignable_roles_for_creator(session: DbSession, creator_role: str) -> list[str]:
@@ -239,7 +254,20 @@ async def add_user(
 ) -> User:
     """Add a new user to the database and stitch org/dept memberships by creator role."""
     try:
-        existing_user = await get_user_by_username(session, user.username)
+        username = _normalize_identity(user.username)
+        if not username:
+            raise HTTPException(status_code=400, detail="Username cannot be empty.")
+
+        email = _normalize_identity(user.email)
+        display_name = _strip_or_none(user.display_name)
+        department_name = _strip_or_none(user.department_name)
+        organization_name = _strip_or_none(user.organization_name)
+        organization_description = _strip_or_none(user.organization_description)
+        country = _strip_or_none(user.country)
+
+        existing_user = await get_user_by_username(session, username)
+        if not existing_user and email:
+            existing_user = await get_user_by_username(session, email)
         is_reusing_consumer = bool(
             existing_user and normalize_role(getattr(existing_user, "role", "consumer")) == "consumer"
         )
@@ -249,10 +277,17 @@ async def add_user(
         raw_password = user.password or secrets.token_urlsafe(32)
         if is_reusing_consumer and existing_user:
             new_user = existing_user
-            new_user.display_name = user.display_name or new_user.display_name
-            new_user.email = new_user.email or user.email or user.username
+            new_user.display_name = display_name or new_user.display_name
+            new_user.email = new_user.email or email or username
         else:
             user_payload = user.model_dump()
+            user_payload["username"] = username
+            user_payload["email"] = email
+            user_payload["display_name"] = display_name
+            user_payload["department_name"] = department_name
+            user_payload["organization_name"] = organization_name
+            user_payload["organization_description"] = organization_description
+            user_payload["country"] = country
             user_payload["password"] = raw_password
             new_user = User.model_validate(user_payload, from_attributes=True)
 
@@ -268,7 +303,7 @@ async def add_user(
         if target_role not in assignable_roles:
             raise HTTPException(status_code=403, detail="Selected role is not assignable by current user.")
 
-        if creator_role == "root" and not user.organization_name:
+        if creator_role == "root" and not organization_name:
             raise HTTPException(status_code=400, detail="Organization name is required.")
 
         if creator_role not in {"root", "super_admin", "department_admin"}:
@@ -284,8 +319,8 @@ async def add_user(
 
         if creator_role == "root":
             org = Organization(
-                name=user.organization_name,
-                description=user.organization_description,
+                name=organization_name,
+                description=organization_description,
                 status="active",
                 owner_user_id=new_user.id,
                 created_by=current_user.id,
@@ -310,7 +345,7 @@ async def add_user(
             )
 
         elif creator_role == "super_admin":
-            org_id = await _resolve_creator_org(session, current_user, user.organization_name)
+            org_id = await _resolve_creator_org(session, current_user, organization_name)
             await _ensure_org_membership(
                 session,
                 user_id=new_user.id,
@@ -320,11 +355,11 @@ async def add_user(
             )
 
             if target_role == "department_admin":
-                if not user.department_name:
+                if not department_name:
                     raise HTTPException(status_code=400, detail="Department name is required for department admins.")
                 department = Department(
                     org_id=org_id,
-                    name=user.department_name,
+                    name=department_name,
                     admin_user_id=new_user.id,
                     status="active",
                     created_by=current_user.id,
@@ -537,6 +572,20 @@ async def read_all_users(
     query: SelectOfScalar = select(User).where(User.id.in_(list(visible_user_ids)))
     if normalize_role(current_admin.role) != "root":
         query = query.where(User.role != "root")
+    else:
+        duplicate = aliased(User)
+        current_identity = func.lower(func.coalesce(User.email, User.username))
+        duplicate_identity = func.lower(func.coalesce(duplicate.email, duplicate.username))
+        has_non_consumer_duplicate = exists(
+            select(1).where(
+                duplicate.id != User.id,
+                duplicate_identity == current_identity,
+                func.lower(duplicate.role) != "consumer",
+            )
+        )
+        query = query.where(
+            ~and_(func.lower(User.role) == "consumer", has_non_consumer_duplicate)
+        )
     if role:
         query = query.where(User.role == normalize_role(role))
     if q:
@@ -547,6 +596,20 @@ async def read_all_users(
     count_query = select(func.count()).select_from(User).where(User.id.in_(list(visible_user_ids)))
     if normalize_role(current_admin.role) != "root":
         count_query = count_query.where(User.role != "root")
+    else:
+        duplicate = aliased(User)
+        current_identity = func.lower(func.coalesce(User.email, User.username))
+        duplicate_identity = func.lower(func.coalesce(duplicate.email, duplicate.username))
+        has_non_consumer_duplicate = exists(
+            select(1).where(
+                duplicate.id != User.id,
+                duplicate_identity == current_identity,
+                func.lower(duplicate.role) != "consumer",
+            )
+        )
+        count_query = count_query.where(
+            ~and_(func.lower(User.role) == "consumer", has_non_consumer_duplicate)
+        )
     if role:
         count_query = count_query.where(User.role == normalize_role(role))
     if q:

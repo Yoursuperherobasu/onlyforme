@@ -20,6 +20,7 @@ import {
 } from "@/controllers/API/queries/guardrails";
 import { api } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
+import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
 import { useGetRegistryModels } from "@/controllers/API/queries/models";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
@@ -28,6 +29,7 @@ interface EditGuardrailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   guardrail?: GuardrailInfo | null;
+  frameworkId?: "nemo" | "arize";
 }
 
 const CATEGORY_OPTIONS = [
@@ -75,6 +77,7 @@ export default function EditGuardrailModal({
   open,
   onOpenChange,
   guardrail,
+  frameworkId = "nemo",
 }: EditGuardrailModalProps) {
   const isEditMode = !!guardrail;
   const { role } = useContext(AuthContext);
@@ -243,6 +246,51 @@ export default function EditGuardrailModal({
   ]);
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
+  const effectiveNameScope = useMemo(() => {
+    let effectiveOrgId: string | null = orgId || null;
+    let effectiveDeptId: string | null = deptId || null;
+    const canMultiDept = role === "super_admin" || role === "root";
+
+    if (visibility === "public") {
+      if (publicScope === "organization") {
+        effectiveDeptId = null;
+      } else if (publicScope === "department") {
+        if (canMultiDept) {
+          effectiveDeptId = publicDeptIds.length === 1 ? publicDeptIds[0] : null;
+        }
+        if (!effectiveOrgId) {
+          const selectedDept =
+            visibilityOptions.departments.find((d) => d.id === effectiveDeptId) ||
+            visibilityOptions.departments[0];
+          effectiveOrgId = selectedDept?.org_id || null;
+        }
+      }
+    } else if (role === "developer" || role === "department_admin") {
+      const defaultDept = visibilityOptions.departments[0];
+      if (defaultDept) {
+        effectiveOrgId = effectiveOrgId || defaultDept.org_id;
+        effectiveDeptId = effectiveDeptId || defaultDept.id;
+      }
+    }
+
+    return { org_id: effectiveOrgId, dept_id: effectiveDeptId };
+  }, [
+    visibility,
+    publicScope,
+    publicDeptIds,
+    orgId,
+    deptId,
+    role,
+    visibilityOptions.departments,
+  ]);
+  const guardrailNameAvailability = useNameAvailability({
+    entity: "guardrail",
+    name,
+    org_id: effectiveNameScope.org_id,
+    dept_id: effectiveNameScope.dept_id,
+    exclude_id: guardrail?.id ?? null,
+    enabled: open && name.trim().length > 0,
+  });
   const isVisibilityInvalid =
     visibility === "public" &&
     (
@@ -283,6 +331,13 @@ export default function EditGuardrailModal({
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (guardrailNameAvailability.isNameTaken) {
+      setErrorData({
+        title: "Name already taken",
+        list: [guardrailNameAvailability.reason || "Please choose a different name."],
+      });
+      return;
+    }
 
     if (!modelRegistryId) {
       setErrorData({
@@ -311,6 +366,7 @@ export default function EditGuardrailModal({
     const payload: GuardrailCreateOrUpdatePayload = {
       name: name.trim(),
       description: description.trim() || null,
+      framework: (guardrail?.framework as "nemo" | "arize" | undefined) || frameworkId,
       modelRegistryId,
       category,
       status,
@@ -369,6 +425,14 @@ export default function EditGuardrailModal({
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
+              {name.trim().length > 0 &&
+                !guardrailNameAvailability.isFetching &&
+                guardrailNameAvailability.isNameTaken && (
+                  <p className="text-xs font-medium text-red-500">
+                    {guardrailNameAvailability.reason ??
+                      "This name is already taken in the selected scope."}
+                  </p>
+                )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="guardrail-model">Model Registry Entry *</Label>
@@ -634,7 +698,13 @@ export default function EditGuardrailModal({
             </Button>
             <Button
               type="submit"
-              disabled={isSaving || registryModels.length === 0 || isVisibilityInvalid}
+              disabled={
+                isSaving ||
+                registryModels.length === 0 ||
+                isVisibilityInvalid ||
+                guardrailNameAvailability.isFetching ||
+                guardrailNameAvailability.isNameTaken
+              }
             >
               {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isEditMode ? "Save Changes" : "Create Guardrail"}

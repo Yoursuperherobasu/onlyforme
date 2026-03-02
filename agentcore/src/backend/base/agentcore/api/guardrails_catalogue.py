@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/guardrails-catalogue", tags=["Guardrails Catalogue"]
 class GuardrailPayload(BaseModel):
     name: str
     description: str | None = None
+    framework: str | None = None
     provider: str | None = None
     modelRegistryId: UUID | None = None
     category: str
@@ -66,6 +68,13 @@ def _normalize_public_scope(value: str | None) -> str | None:
     normalized = value.strip().lower()
     if normalized not in {"organization", "department"}:
         raise HTTPException(status_code=400, detail=f"Unsupported public_scope '{value}'")
+    return normalized
+
+
+def _normalize_guardrail_framework(value: str | None) -> str:
+    normalized = (value or "nemo").strip().lower()
+    if normalized not in {"nemo", "arize"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported framework '{value}'")
     return normalized
 
 
@@ -143,6 +152,30 @@ async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, 
     ).all()
     if len({str(r if isinstance(r, UUID) else r[0]) for r in rows}) != len({str(d) for d in dept_ids}):
         raise HTTPException(status_code=400, detail="One or more public_dept_ids are invalid for org_id")
+
+
+async def _ensure_guardrail_name_available(
+    session: DbSession,
+    name: str,
+    org_id: UUID | None,
+    dept_id: UUID | None,
+    *,
+    exclude_id: UUID | None = None,
+) -> None:
+    stmt = select(GuardrailCatalogue.id).where(
+        func.lower(GuardrailCatalogue.name) == name.strip().lower(),
+    )
+    stmt = stmt.where(
+        GuardrailCatalogue.org_id.is_(None) if org_id is None else GuardrailCatalogue.org_id == org_id,
+    )
+    stmt = stmt.where(
+        GuardrailCatalogue.dept_id.is_(None) if dept_id is None else GuardrailCatalogue.dept_id == dept_id,
+    )
+    if exclude_id:
+        stmt = stmt.where(GuardrailCatalogue.id != exclude_id)
+    existing = (await session.exec(stmt)).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Guardrail name already exists for this scope")
 
 
 async def _enforce_creation_scope(
@@ -343,6 +376,7 @@ def _serialize_guardrail(row: GuardrailCatalogue, model_row: ModelRegistry | Non
         "id": str(row.id),
         "name": row.name,
         "description": row.description or "",
+        "framework": row.framework or "nemo",
         "provider": model_provider,
         "modelRegistryId": str(row.model_registry_id) if row.model_registry_id else None,
         "modelName": model_name,
@@ -387,11 +421,15 @@ async def _resolve_guardrail_model_registry(
 async def list_guardrails_catalogue(
     current_user: CurrentActiveUser,
     session: DbSession,
+    framework: str | None = None,
 ) -> list[dict]:
     await _require_guardrail_permission(current_user, "view_guardrail_page")
     query = select(GuardrailCatalogue).order_by(GuardrailCatalogue.name.asc())
 
     rows = (await session.exec(query)).all()
+    if framework is not None:
+        normalized_framework = _normalize_guardrail_framework(framework)
+        rows = [row for row in rows if (row.framework or "nemo") == normalized_framework]
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     rows = [row for row in rows if _can_access_guardrail(row, current_user, org_ids, dept_pairs)]
     model_ids = {row.model_registry_id for row in rows if row.model_registry_id}
@@ -481,6 +519,8 @@ async def create_guardrail_catalogue(
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
         session, current_user, payload
     )
+    await _ensure_guardrail_name_available(session, payload.name, payload.org_id, payload.dept_id)
+    framework = _normalize_guardrail_framework(payload.framework)
     model_row = await _resolve_guardrail_model_registry(session, payload.modelRegistryId)
     _validate_runtime_config_shape(payload)
     normalized_runtime_config = _normalize_runtime_config_payload(payload.runtimeConfig)
@@ -498,6 +538,7 @@ async def create_guardrail_catalogue(
     row = GuardrailCatalogue(
         name=payload.name,
         description=payload.description,
+        framework=framework,
         provider=model_row.provider,
         model_registry_id=model_row.id,
         category=payload.category,
@@ -554,9 +595,17 @@ async def update_guardrail_catalogue(
         payload.public_scope = row.public_scope
     if payload.dept_id is None and payload.public_scope != "organization":
         payload.dept_id = row.dept_id
+    framework = _normalize_guardrail_framework(payload.framework or row.framework)
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
         session, current_user, payload
+    )
+    await _ensure_guardrail_name_available(
+        session,
+        payload.name,
+        payload.org_id,
+        payload.dept_id,
+        exclude_id=guardrail_id,
     )
     model_row = await _resolve_guardrail_model_registry(session, payload.modelRegistryId)
     _validate_runtime_config_shape(payload)
@@ -580,6 +629,7 @@ async def update_guardrail_catalogue(
 
     row.name = payload.name
     row.description = payload.description
+    row.framework = framework
     row.provider = model_row.provider
     row.model_registry_id = model_row.id
     row.category = payload.category

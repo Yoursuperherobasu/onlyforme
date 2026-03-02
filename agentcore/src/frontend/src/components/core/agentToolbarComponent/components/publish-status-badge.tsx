@@ -1,58 +1,82 @@
-import { useEffect } from "react";
-import { Badge } from "@/components/ui/badge";
-import ShadTooltipComponent from "@/components/common/shadTooltipComponent";
+import { useContext } from "react";
 import IconComponent from "@/components/common/genericIconComponent";
+import ShadTooltipComponent from "@/components/common/shadTooltipComponent";
+import { Badge } from "@/components/ui/badge";
 import { useGetPublishStatus } from "@/controllers/API/queries/agents/use-get-publish-status";
+import { AuthContext } from "@/contexts/authContext";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 
 export default function PublishStatusBadge() {
   const currentAgent = useAgentsManagerStore((state) => state.currentAgent);
   const agentId = currentAgent?.id;
+  const { userData } = useContext(AuthContext);
+  const currentUserId = String(userData?.id ?? "");
 
-  const { data: publishRecords, refetch } = useGetPublishStatus(
+  const { data: publishStatus } = useGetPublishStatus(
     { agent_id: agentId ?? "" },
-    {
-      refetchInterval: 30000, // Refetch every 30 seconds
-    },
+    { refetchInterval: 30000 },
   );
 
-  const activePublications = publishRecords?.filter(
-    (record) => record.status === "ACTIVE",
-  );
-
-  const hasActivePublications = activePublications && activePublications.length > 0;
-
-  if (!hasActivePublications) {
+  if (!publishStatus) {
     return null;
   }
 
-  const agentcorePublications = activePublications.filter(
-    (record) => record.platform === "agentcore",
-  );
+  const isRequester =
+    (publishStatus.pending_requested_by &&
+      String(publishStatus.pending_requested_by) === currentUserId) ||
+    (publishStatus.latest_prod_published_by &&
+      String(publishStatus.latest_prod_published_by) === currentUserId);
 
-  const tooltipContent = (
-    <div className="space-y-1">
-      <div className="font-semibold">Published to:</div>
-      {agentcorePublications.map((record, idx) => (
-        <div key={idx} className="text-xs">
-          <div>• AgentCore: {record.platform_url}</div>
-          <div className="ml-3 text-muted-foreground">
-            Model: {record.metadata?.model_name || record.external_id}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+  if (!isRequester) {
+    return null;
+  }
 
-  return (
-    <ShadTooltipComponent side="bottom" content={tooltipContent}>
-      <Badge
-        variant="outline"
-        className="flex items-center gap-1 border-green-500 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-300"
-      >
-        <IconComponent name="Globe" className="h-3 w-3" />
-        <span className="text-xs">Published ({agentcorePublications.length})</span>
-      </Badge>
-    </ShadTooltipComponent>
-  );
+  const latestDecision = (publishStatus.latest_review_decision || "").toUpperCase();
+  const latestProdStatus = (publishStatus.latest_prod_status || "").toUpperCase();
+  const activeProdStatus = (publishStatus.prod?.status || "").toUpperCase();
+
+  if (publishStatus.has_pending_approval) {
+    return (
+      <ShadTooltipComponent side="bottom" content="Your PROD publish request is awaiting admin approval.">
+        <Badge
+          variant="outline"
+          className="flex items-center gap-1 border-amber-500 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300"
+        >
+          <IconComponent name="Clock3" className="h-3 w-3" />
+          <span className="text-xs">Awaiting Approval</span>
+        </Badge>
+      </ShadTooltipComponent>
+    );
+  }
+
+  if (latestDecision === "REJECTED") {
+    return (
+      <ShadTooltipComponent side="bottom" content="Your last PROD publish request was rejected.">
+        <Badge
+          variant="outline"
+          className="flex items-center gap-1 border-red-500 bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950 dark:text-red-300"
+        >
+          <IconComponent name="XCircle" className="h-3 w-3" />
+          <span className="text-xs">Rejected</span>
+        </Badge>
+      </ShadTooltipComponent>
+    );
+  }
+
+  if (latestProdStatus === "PUBLISHED" || activeProdStatus === "PUBLISHED") {
+    return (
+      <ShadTooltipComponent side="bottom" content="Your PROD publish request is approved and deployed.">
+        <Badge
+          variant="outline"
+          className="flex items-center gap-1 border-green-500 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-300"
+        >
+          <IconComponent name="CheckCircle2" className="h-3 w-3" />
+          <span className="text-xs">Approved</span>
+        </Badge>
+      </ShadTooltipComponent>
+    );
+  }
+
+  return null;
 }
+

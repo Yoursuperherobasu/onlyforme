@@ -22,6 +22,7 @@ import Loading from "@/components/ui/loading";
 import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
+import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
 import {
   useGetConnectorCatalogue,
   type ConnectorInfo,
@@ -157,6 +158,63 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       ),
     [visibilityOptions.departments, form.org_id],
   );
+  const effectiveNameScope = useMemo(() => {
+    let orgId: string | null = form.org_id || null;
+    let deptId: string | null = form.dept_id || null;
+    const canMultiDept = role === "super_admin" || role === "root";
+
+    if (form.visibility === "public") {
+      if (form.public_scope === "organization") {
+        orgId =
+          orgId ||
+          ((role === "developer" || role === "department_admin")
+            ? visibilityOptions.organizations[0]?.id || null
+            : null);
+        deptId = null;
+      } else if (form.public_scope === "department") {
+        if (canMultiDept) {
+          if (form.public_dept_ids.length === 1) {
+            deptId = form.public_dept_ids[0];
+          } else {
+            deptId = null;
+          }
+        } else {
+          deptId = deptId || visibilityOptions.departments[0]?.id || null;
+        }
+        if (!orgId) {
+          const selectedDept =
+            visibilityOptions.departments.find((d) => d.id === deptId) ||
+            visibilityOptions.departments[0];
+          orgId = selectedDept?.org_id || null;
+        }
+      }
+    } else if (role === "developer" || role === "department_admin") {
+      const defaultDept = visibilityOptions.departments[0];
+      if (defaultDept) {
+        orgId = orgId || defaultDept.org_id;
+        deptId = deptId || defaultDept.id;
+      }
+    }
+
+    return { org_id: orgId, dept_id: deptId };
+  }, [
+    form.visibility,
+    form.public_scope,
+    form.public_dept_ids,
+    form.org_id,
+    form.dept_id,
+    role,
+    visibilityOptions.departments,
+    visibilityOptions.organizations,
+  ]);
+  const connectorNameAvailability = useNameAvailability({
+    entity: "connector",
+    name: form.name,
+    org_id: effectiveNameScope.org_id,
+    dept_id: effectiveNameScope.dept_id,
+    exclude_id: editingConnector?.id ?? null,
+    enabled: showModal && form.name.trim().length > 0,
+  });
 
   useEffect(() => {
     if (form.visibility !== "public") return;
@@ -356,10 +414,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       if (!form.host || !form.database_name || !form.username) return true;
       if (!editingConnector && !form.password) return true;
     }
+    if (connectorNameAvailability.isFetching) return true;
+    if (connectorNameAvailability.isNameTaken) return true;
     return createMutation.isPending || updateMutation.isPending;
   };
 
   const handleSave = async () => {
+    if (connectorNameAvailability.isNameTaken) {
+      return;
+    }
     try {
       const payload = buildPayload();
       if (editingConnector) {
@@ -807,6 +870,14 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                   placeholder="e.g., Manufacturing DB"
                 />
+                {form.name.trim().length > 0 &&
+                  !connectorNameAvailability.isFetching &&
+                  connectorNameAvailability.isNameTaken && (
+                    <p className="mt-1 text-xs font-medium text-red-500">
+                      {connectorNameAvailability.reason ??
+                        "This name is already taken in the selected scope."}
+                    </p>
+                  )}
               </div>
 
               {/* Description */}
