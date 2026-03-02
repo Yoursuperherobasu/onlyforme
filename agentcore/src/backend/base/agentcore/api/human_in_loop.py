@@ -6,8 +6,7 @@ These endpoints allow the frontend (or any client) to:
   - Resume a paused run with a human decision
   - Cancel a paused run
 
-A run is paused when a HumanApproval node (or RequestHumanReview tool) calls
-LangGraph's interrupt().  The graph state is frozen in the MemorySaver
+A run is paused when a HumanApproval node calls LangGraph's interrupt().  The graph state is frozen in the MemorySaver
 checkpointer, identified by thread_id (== session_id used in arun()).
 """
 

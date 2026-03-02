@@ -4,7 +4,6 @@ from .directory import Directory
 from .file import File
 from .file_trigger import FileTrigger
 from .web_search import WebSearch
-from .request_human_review import RequestHumanReviewComponent
 
 __all__ = [
     "APIRequest",
@@ -13,5 +12,4 @@ __all__ = [
     "FileTrigger",
     "WebSearch",
     "CalculatorTool",
-    "RequestHumanReviewComponent",
 ]
