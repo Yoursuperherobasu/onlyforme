@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from typing import Annotated
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from agentcore.services.database.models.user.crud import get_user_by_username
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, or_
 
 import httpx
 from pydantic import BaseModel
@@ -13,6 +15,7 @@ from jose import jwt
 import secrets
 from agentcore.api.utils import DbSession
 from agentcore.api.schemas import Token
+from sqlmodel import select
 from agentcore.services.auth.utils import (
     authenticate_user,
     create_refresh_token,
@@ -39,6 +42,88 @@ router = APIRouter(tags=["Login"])
 def _normalize_login_identity(value: str | None) -> str:
     identity = (value or "").strip()
     return identity.lower() if "@" in identity else identity
+
+
+def _role_priority(role: str | None) -> int:
+    normalized = normalize_role(role or "consumer")
+    priorities = {
+        "root": 500,
+        "super_admin": 400,
+        "department_admin": 300,
+        "developer": 200,
+        "business_user": 200,
+        "consumer": 100,
+    }
+    return priorities.get(normalized, 0)
+
+
+async def _resolve_sso_identity_user(
+    db: DbSession,
+    *,
+    normalized_email: str,
+    entra_object_id: str | None,
+    display_name: str | None,
+) -> User | None:
+    predicates = [
+        func.lower(User.username) == normalized_email,
+        func.lower(User.email) == normalized_email,
+    ]
+    if entra_object_id:
+        predicates.append(User.entra_object_id == entra_object_id)
+
+    candidates = (
+        await db.exec(
+            select(User).where(
+                User.deleted_at.is_(None),
+                or_(*predicates),
+            )
+        )
+    ).all()
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda user: (
+            _role_priority(getattr(user, "role", None)),
+            1 if getattr(user, "is_superuser", False) else 0,
+            1 if getattr(user, "created_by", None) else 0,
+            getattr(user, "updated_at", None) or getattr(user, "create_at", None),
+        ),
+        reverse=True,
+    )
+
+    canonical = candidates[0]
+    now = datetime.now(timezone.utc)
+    changed = False
+
+    if not canonical.email:
+        canonical.email = normalized_email
+        changed = True
+    if display_name and not canonical.display_name:
+        canonical.display_name = display_name
+        changed = True
+    if entra_object_id and canonical.entra_object_id != entra_object_id:
+        canonical.entra_object_id = entra_object_id
+        changed = True
+
+    for duplicate in candidates[1:]:
+        if normalize_role(getattr(duplicate, "role", "consumer")) != "consumer":
+            continue
+        duplicate.is_active = False
+        duplicate.deleted_at = duplicate.deleted_at or now
+        duplicate.updated_at = now
+        if entra_object_id and duplicate.entra_object_id == entra_object_id:
+            duplicate.entra_object_id = None
+        db.add(duplicate)
+        changed = True
+
+    if changed:
+        canonical.updated_at = now
+        db.add(canonical)
+        await db.commit()
+        await db.refresh(canonical)
+
+    return canonical
 
 
 @router.post("/login", response_model=AzureSSOResponse)
@@ -89,8 +174,6 @@ async def login_to_get_access_token(
         )
         current_role = normalize_role(getattr(user, "role", "developer"))
         permissions = await get_permissions_for_role(current_role)
-        print(current_role,"current_roleeeeeeeeeee")
-        print(permissions,"permissssssssssssssssions")
         return {
             **tokens,
             "role": current_role,
@@ -143,12 +226,16 @@ async def azure_sso_login(
             detail="Email not found in Azure token",
         )
 
-    existing_user = await get_user_by_username(db, normalized_email)
+    user = await _resolve_sso_identity_user(
+        db,
+        normalized_email=normalized_email,
+        entra_object_id=entra_object_id,
+        display_name=payload.get("name"),
+    )
 
     # -----------------------------
     # Find or Create User
     # -----------------------------
-    user = existing_user
     resolved_role = "consumer"
 
     if root_email and normalized_email == root_email:
@@ -183,7 +270,12 @@ async def azure_sso_login(
             await db.refresh(user)
         except IntegrityError:
             await db.rollback()
-            existing_user = await get_user_by_username(db, normalized_email)
+            existing_user = await _resolve_sso_identity_user(
+                db,
+                normalized_email=normalized_email,
+                entra_object_id=entra_object_id,
+                display_name=payload.get("name"),
+            )
             if not existing_user:
                 raise HTTPException(status_code=500, detail="Unable to provision SSO user.")
             user = existing_user

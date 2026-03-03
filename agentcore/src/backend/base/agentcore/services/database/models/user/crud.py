@@ -32,6 +32,7 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
         return None
     lowered = identity.lower()
     stmt = select(User).where(
+        User.deleted_at.is_(None),
         or_(
             func.lower(User.username) == lowered,
             func.lower(User.email) == lowered,
@@ -59,7 +60,7 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
 async def get_user_by_id(db: AsyncSession, user_id: UUID) -> User | None:
     if isinstance(user_id, str):
         user_id = UUID(user_id)
-    stmt = select(User).where(User.id == user_id)
+    stmt = select(User).where(User.id == user_id, User.deleted_at.is_(None))
     return (await db.exec(stmt)).first()
 
 
