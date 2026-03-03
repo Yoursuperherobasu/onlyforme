@@ -1,16 +1,14 @@
-"""Unified Language Model component that reads models from the model_registry table."""
+"""Unified Language Model component that reads models from the model_registry table.
 
-from __future__ import annotations
-
-import asyncio
-import concurrent.futures
+All LLM invocations are delegated to the Model microservice via
+``MicroserviceChatModel`` — no provider SDKs are imported here.
+"""
 
 import os
 import threading
 from uuid import UUID
 
 from loguru import logger
-from pydantic.v1 import SecretStr
 
 from agentcore.base.models.model import LCModelNode
 from agentcore.field_typing import LanguageModel
@@ -27,54 +25,6 @@ PROVIDER_LABEL_TO_KEY = {
 }
 PROVIDER_KEY_TO_LABEL = {v: k for k, v in PROVIDER_LABEL_TO_KEY.items()}
 PROVIDER_OPTIONS = list(PROVIDER_LABEL_TO_KEY.keys())
-_sync_engine = None
-_sync_engine_lock = threading.Lock()
-def _get_sync_engine():
-    """Return a dedicated synchronous SQLAlchemy engine (created once)."""
-    global _sync_engine
-    if _sync_engine is not None:
-        return _sync_engine
-
-    with _sync_engine_lock:
-        if _sync_engine is not None:
-            return _sync_engine
-
-        from sqlalchemy import create_engine
-
-        from agentcore.services.deps import get_db_service
-
-        db_service = get_db_service()
-        # Convert async URL (postgresql+psycopg) to sync-compatible URL
-        db_url = db_service.database_url
-        # psycopg (v3) supports both sync and async, so the same URL works
-        # But if it uses an explicitly async driver, fall back to psycopg2
-        if "+asyncpg" in db_url:
-            db_url = db_url.replace("+asyncpg", "")
-
-        _sync_engine = create_engine(db_url, pool_pre_ping=True, pool_size=3)
-        logger.info(f"Created dedicated sync engine for registry component: {db_url.split('@')[-1]}")
-        return _sync_engine
-
-
-# ---------------------------------------------------------------------------
-# Async helper for update_build_config (runs in HTTP request context)
-# ---------------------------------------------------------------------------
-
-def _run_async(coro):
-    """Run an async coroutine from a synchronous context, handling existing event loops.
-
-    NOTE: import locally — components are loaded via exec() from string,
-    so module-level imports may not be in scope.
-    """
-    import concurrent.futures as _cf
-
-    try:
-        asyncio.get_running_loop()
-        with _cf.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result(timeout=30)
-    except RuntimeError:
-        return asyncio.run(coro)
 
 
 def _fetch_models_for_provider(provider: str, user_id: str | None = None) -> list[str]:
@@ -84,13 +34,6 @@ def _fetch_models_for_provider(provider: str, user_id: str | None = None) -> lis
     """
     if not provider:
         return []
-    try:
-        from agentcore.services.deps import get_db_service
-
-        db_service = get_db_service()
-
-        async def _query():
-            from sqlalchemy import select
 
             from agentcore.services.database.models.model_registry.model import ModelRegistry
             from agentcore.services.database.models.user.model import User
@@ -169,9 +112,13 @@ def _fetch_models_for_provider(provider: str, user_id: str | None = None) -> lis
                     rows = filtered
                 return [f"{r.display_name} | {r.model_name} | {r.id}" for r in rows]
 
-        return _run_async(_query())
+        results = fetch_registry_models(provider=provider, model_type="llm")
+        return [
+            f"{r['display_name']} | {r['model_name']} | {r['id']}"
+            for r in results
+        ]
     except Exception as e:
-        logger.warning(f"Could not fetch registry models for provider {provider}: {e}")
+        logger.warning(f"Failed to fetch models via microservice: {e}")
         return []
 
 # ---------------------------------------------------------------------------
@@ -371,7 +318,9 @@ class RegistryModelComponent(LCModelNode):
         return build_config
 
     def build_model(self) -> LanguageModel:  # type: ignore[type-var]
-        """Build a LangChain chat model from the selected registry entry."""
+        """Build a MicroserviceChatModel proxy that delegates to the Model microservice."""
+        from agentcore.services.model_service_client import MicroserviceChatModel, _get_model_service_settings
+
         selected = self.registry_model
         if not selected:
             msg = "No model selected. Please select a model from the Registry Model dropdown."
@@ -383,6 +332,7 @@ class RegistryModelComponent(LCModelNode):
             msg = f"Invalid registry model format: {selected}. Please refresh the dropdown."
             raise ValueError(msg)
 
+        model_name = parts[1]
         model_id = parts[2]
 
         # Fetch decrypted config from registry
@@ -396,35 +346,26 @@ class RegistryModelComponent(LCModelNode):
             msg = f"Model {model_id} not found in registry or has been deleted."
             raise ValueError(msg)
 
-        provider = config["provider"].lower()
-        model_name = config["model_name"]
-        api_key = config.get("api_key", "")
-        base_url = config.get("base_url", "")
-        provider_config = config.get("provider_config", {})
-        default_params = config.get("default_params", {})
+        provider_label = self.provider or ""
+        provider_key = PROVIDER_LABEL_TO_KEY.get(provider_label, provider_label).lower()
 
-        # Override with component-level settings if provided (None / "" = use model default)
-        temperature = self.temperature if self.temperature not in (None, "") else default_params.get("temperature")
-        if temperature not in (None, ""):
+        temperature = self.temperature if self.temperature not in (None, "") else None
+        if temperature is not None:
             temperature = float(temperature)
-        else:
-            temperature = None
-        max_tokens = self.max_tokens or default_params.get("max_tokens") or None
-        if max_tokens not in (None, ""):
-            max_tokens = int(max_tokens)
-        else:
-            max_tokens = None
-        stream = self.stream
 
-        return self._build_provider_model(
-            provider=provider,
-            model_name=model_name,
-            api_key=api_key,
-            base_url=base_url,
-            provider_config=provider_config,
+        max_tokens = self.max_tokens if self.max_tokens not in (None, "") else None
+        if max_tokens is not None:
+            max_tokens = int(max_tokens)
+
+        return MicroserviceChatModel(
+            service_url=service_url,
+            service_api_key=service_api_key,
+            provider=provider_key,
+            model=model_name,
+            registry_model_id=model_id,
             temperature=temperature,
             max_tokens=max_tokens,
-            stream=stream,
+            streaming=self.stream,
         )
 
     

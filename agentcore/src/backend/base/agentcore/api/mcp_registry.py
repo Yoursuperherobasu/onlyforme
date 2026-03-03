@@ -1,4 +1,7 @@
-"""REST endpoints for the MCP server registry."""
+"""REST endpoints for the MCP server registry.
+
+All operations proxy through the MCP microservice.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ from agentcore.services.database.models.mcp_registry.model import (
     McpRegistryUpdate,
     McpTestConnectionRequest,
     McpTestConnectionResponse,
+    McpProbeResponse,
     McpToolInfo,
 )
 from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
@@ -338,6 +342,10 @@ async def list_mcp_servers(
     current_user: CurrentActiveUser,
     active_only: bool = False,
 ):
+    """List all registered MCP servers."""
+    from agentcore.services.mcp_service_client import fetch_mcp_servers_async
+
+    return await fetch_mcp_servers_async(active_only=active_only)
     """List MCP servers visible to the current user based on tenancy + approval state."""
     await _require_mcp_permission(current_user, "view_mcp_page")
     stmt = select(McpRegistry).order_by(McpRegistry.server_name)
@@ -609,7 +617,7 @@ async def update_mcp_server(
     server = await mcp_registry_service.update_server(session, server_id, body)
     if server is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    return server
+    return result
 
 
 @router.delete("/{server_id}", status_code=204)
@@ -669,7 +677,7 @@ async def test_mcp_connection(
             tools_count=len(tool_list),
         )
     except Exception as e:
-        logger.warning("MCP test connection failed: %s", e)
+        logger.warning("MCP test connection via microservice failed: %s", e)
         return McpTestConnectionResponse(success=False, message=str(e))
 
 

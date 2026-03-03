@@ -966,7 +966,7 @@ async def test_model_connection(
             latency_ms=round(latency_ms, 1),
         )
     except Exception as e:
-        logger.warning("Test connection failed for %s/%s: %s", body.provider, body.model_name, e)
+        logger.warning("Test connection via microservice failed: %s", e)
         return TestConnectionResponse(success=False, message=str(e))
 
 
@@ -1050,31 +1050,9 @@ async def test_embedding_connection(
     current_user: CurrentActiveUser,
 ):
     try:
-        provider_name = body.provider.lower()
-        provider_config: dict = body.provider_config or {}
-        api_key = body.api_key or ""
-        base_url = body.base_url or ""
-
-        embeddings = _build_test_embeddings(
-            provider_name=provider_name,
-            model_name=body.model_name,
-            api_key=api_key,
-            base_url=base_url,
-            provider_config=provider_config,
-        )
-
-        start = time.perf_counter()
-        result = await embeddings.aembed_query("Hello")
-        latency_ms = (time.perf_counter() - start) * 1000
-
-        dim = len(result) if result else 0
-        return TestConnectionResponse(
-            success=True,
-            message=f"Embedding generated: {dim} dimensions",
-            latency_ms=round(latency_ms, 1),
-        )
+        return await test_embedding_connection_via_service(body.model_dump())
     except Exception as e:
-        logger.warning("Test embedding connection failed for %s/%s: %s", body.provider, body.model_name, e)
+        logger.warning("Test embedding connection via microservice failed: %s", e)
         return TestConnectionResponse(success=False, message=str(e))
 
 
