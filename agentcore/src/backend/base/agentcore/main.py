@@ -174,15 +174,6 @@ def get_lifespan(*, fix_migration=True, version=None):
                 # Stopping Server
                 logger.debug("Stopping server gracefully...")
 
-                # Shut down MCP sessions first (STDIO subprocesses block if left to GC)
-                try:
-                    from agentcore.base.mcp.util import cleanup_all_mcp_sessions
-                    await asyncio.wait_for(cleanup_all_mcp_sessions(), timeout=5)
-                except asyncio.TimeoutError:
-                    logger.warning("MCP session cleanup timed out.")
-                except Exception as e:  # noqa: BLE001
-                    logger.debug(f"MCP session cleanup error: {e}")
-
                 # Cleaning Up Services
                 try:
                     await asyncio.wait_for(teardown_services(), timeout=10)

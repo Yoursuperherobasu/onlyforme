@@ -265,6 +265,11 @@ class LCModelNode(Node):
             if isinstance(message, AIMessage):
                 status_message = self.build_status_message(message)
                 self.status = status_message
+                # Propagate token usage to Langfuse via trace_output_metadata.
+                # When LLM calls go through the model-service microservice,
+                # LangChain callbacks never see the real provider response,
+                # so we must extract tokens from the AIMessage metadata.
+                self._set_trace_usage_from_message(message)
             elif isinstance(result, dict):
                 result = json.dumps(message, indent=4)
                 self.status = result
@@ -275,6 +280,37 @@ class LCModelNode(Node):
                 raise ValueError(message) from e
             raise
         return lf_message or Message(text=result)
+
+    def _set_trace_usage_from_message(self, message: AIMessage) -> None:
+        """Extract token usage from AIMessage.response_metadata and set trace_output_metadata."""
+        meta = message.response_metadata or {}
+
+        input_tokens = 0
+        output_tokens = 0
+        model_name = meta.get("model_name") or meta.get("model") or ""
+
+        # OpenAI-style (token_usage dict)
+        token_usage = meta.get("token_usage")
+        if isinstance(token_usage, dict):
+            input_tokens = int(token_usage.get("prompt_tokens") or 0)
+            output_tokens = int(token_usage.get("completion_tokens") or 0)
+
+        # Anthropic-style (usage dict)
+        if not (input_tokens or output_tokens):
+            usage = meta.get("usage")
+            if isinstance(usage, dict):
+                input_tokens = int(usage.get("input_tokens") or 0)
+                output_tokens = int(usage.get("output_tokens") or 0)
+
+        if input_tokens or output_tokens:
+            self.trace_output_metadata = {
+                "agentcore_usage": {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                    "model": model_name,
+                }
+            }
 
     async def _handle_stream(self, runnable, inputs):
         """Handle streaming responses from the language model.

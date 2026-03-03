@@ -32,10 +32,7 @@ lark==1.2.2
 jq==1.8.0
 pydantic-settings>=2.2.0,<3.0.0
 opensearch-py==2.8.0
-langchain-google-genai==4.2.0
-langchain-openai>=1.1.0,<2.0.0
-langchain-google-vertexai>=3.2.0,<4.0.0
-langchain-groq==1.1.2
+# LLM provider SDKs removed — delegated to LLM microservice
 langchain-pinecone>=0.2.13,<1.0.0
 langchain-chroma>=1.1.0,<2.0.0
 langchain-unstructured==1.0.1
