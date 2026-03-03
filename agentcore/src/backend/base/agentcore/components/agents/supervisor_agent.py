@@ -194,7 +194,15 @@ class SupervisorAgent(Node):
         steps: list[ToolContent] = []
 
         # ── Initial message ────────────────────────────────────────────
-        session_id = getattr(self.graph, "session_id", None) if hasattr(self, "graph") else None
+        # In the LangGraph execution path arun() is never called, so
+        # graph.session_id is not set.  Read from _current_lg_state (populated
+        # by node_function just before build()) and fall back to graph attrs.
+        _lg_state_ref = getattr(self._vertex.graph, "_current_lg_state", {}) if hasattr(self, "_vertex") else {}
+        session_id = (
+            _lg_state_ref.get("session_id")
+            or getattr(self.graph, "_session_id", None)
+            or getattr(self.graph, "session_id", None)
+        ) if hasattr(self, "graph") else None
         agent_message = Message(
             text="",
             sender=MESSAGE_SENDER_AI,
@@ -211,6 +219,46 @@ class SupervisorAgent(Node):
                 ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
             ]
             agent_message = await self.send_message(agent_message)
+
+        async def _finish(final_answer: str) -> Message:
+            """Finalise the supervisor run.
+
+            Streams the final answer into the SAME trace bubble (agent_message)
+            so there is only one Supervisor Agent block in the chat — identical
+            to how AgentNode shows tool steps + final text in one bubble.
+
+            Pattern (mirrors AgentNode / handle_on_chain_stream):
+            1. Stream tokens directly via event_manager.on_token() into
+               agent_message.id — no extra DB writes during streaming.
+            2. One final send_message() updates the DB record with the complete
+               text, final content_blocks, and "complete" state.
+            """
+            nonlocal agent_message
+
+            # ── 1. Stream tokens into the existing trace bubble ──────────────────────
+            # agent_message.id is already set (from the initial send_message at the top
+            # of _run_supervisor_loop and every _push_update call). We reuse that id so
+            # tokens stream into the SAME bubble — no second "Message empty." block.
+            event_manager = getattr(self, "_event_manager", None)
+            msg_id = str(agent_message.id) if hasattr(agent_message, "id") and agent_message.id else None
+            logger.info(
+                f"[SupervisorAgent] _finish: event_manager={bool(event_manager)}, "
+                f"msg_id={msg_id}, answer_len={len(final_answer)}"
+            )
+            if event_manager and msg_id:
+                words = final_answer.split(" ")
+                for i, word in enumerate(words):
+                    chunk = word + (" " if i < len(words) - 1 else "")
+                    event_manager.on_token(data={"chunk": chunk, "id": msg_id})
+                    await asyncio.sleep(0.02)  # 20 ms per word — lets SSE flush each token
+
+            # ── 2. Final DB write: complete text + trace accordion + "complete" state ─
+            agent_message.text = final_answer
+            agent_message.properties.state = "complete"
+            agent_message.content_blocks = [
+                ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
+            ]
+            return await self.send_message(agent_message)
 
         async def _invoke_step(worker_name: str, task: str, step_label: str) -> str:
             """Invoke one worker step, update live bubble, return result text."""
@@ -302,12 +350,7 @@ class SupervisorAgent(Node):
                 logger.info(f"[SupervisorAgent] Plan step {i + 1}: {worker_name} done")
 
             final_answer = self._last_successful_result(history, errored_workers) or original_task
-            agent_message.text = final_answer
-            agent_message.properties.state = "complete"
-            agent_message.content_blocks = [
-                ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
-            ]
-            return await self.send_message(agent_message)
+            return await _finish(final_answer)
 
         # ── FALLBACK: hop-by-hop routing ───────────────────────────────
         # Plan generation failed (LLM error / parse error / empty plan).
@@ -332,12 +375,7 @@ class SupervisorAgent(Node):
                     final_answer = self._last_successful_result(history, errored_workers_hbh)
                 else:
                     final_answer = decision.get("final_answer") or original_task
-                agent_message.text = final_answer
-                agent_message.properties.state = "complete"
-                agent_message.content_blocks = [
-                    ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
-                ]
-                return await self.send_message(agent_message)
+                return await _finish(final_answer)
 
             worker_name = decision["next"]
 
@@ -348,12 +386,7 @@ class SupervisorAgent(Node):
                     f"'{worker_name}' — returning last successful result."
                 )
                 final_answer = self._last_successful_result(history, errored_workers_hbh)
-                agent_message.text = final_answer
-                agent_message.properties.state = "complete"
-                agent_message.content_blocks = [
-                    ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
-                ]
-                return await self.send_message(agent_message)
+                return await _finish(final_answer)
 
             # Guard 2: same worker twice in a row
             if worker_name == last_called:
@@ -362,23 +395,13 @@ class SupervisorAgent(Node):
                     f"(hop {hop + 1}) — returning last successful result."
                 )
                 final_answer = self._last_successful_result(history, errored_workers_hbh)
-                agent_message.text = final_answer
-                agent_message.properties.state = "complete"
-                agent_message.content_blocks = [
-                    ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
-                ]
-                return await self.send_message(agent_message)
+                return await _finish(final_answer)
 
             task = decision.get("task") or original_task
             result = await _invoke_step(worker_name, task, f"Hop {hop + 1}/{self.max_hops}")
 
             if result.startswith(f"Worker '{worker_name}' is not connected"):
-                agent_message.text = result
-                agent_message.properties.state = "complete"
-                agent_message.content_blocks = [
-                    ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
-                ]
-                return await self.send_message(agent_message)
+                return await _finish(result)
 
             called_workers.add(worker_name)
             last_called = worker_name
@@ -399,12 +422,7 @@ class SupervisorAgent(Node):
         # max_hops exhausted
         logger.info("[SupervisorAgent] Max hops reached — returning last successful result.")
         final_answer = self._last_successful_result(history, errored_workers_hbh)
-        agent_message.text = final_answer
-        agent_message.properties.state = "complete"
-        agent_message.content_blocks = [
-            ContentBlock(title="Supervisor Execution Trace", contents=list(steps))
-        ]
-        return await self.send_message(agent_message)
+        return await _finish(final_answer)
 
     # ------------------------------------------------------------------
     # LLM routing decision
