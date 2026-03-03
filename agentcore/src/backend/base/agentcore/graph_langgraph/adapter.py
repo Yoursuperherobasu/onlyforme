@@ -405,6 +405,7 @@ class LangGraphAdapter:
             is_router = vertex.id in routing_vids
             node_func = create_node_function(vertex, is_cycle_router=is_router)
             self.workflow.add_node(vertex.id, node_func)
+            logger.debug(f"  NODE: {vertex.id} ({vertex.display_name})")
 
         # Separate edges: routing-cycle-vertex outgoing vs everything else
         routing_outgoing: dict[str, list[tuple[str, dict]]] = defaultdict(list)
@@ -434,6 +435,7 @@ class LangGraphAdapter:
             try:
                 self.workflow.add_edge(source_id, target_id)
                 added_edges.add(edge_key)
+                logger.debug(f"  EDGE: {source_id} -> {target_id}")
             except Exception as e:
                 logger.warning(f"Failed to add edge {source_id} -> {target_id}: {e}")
 

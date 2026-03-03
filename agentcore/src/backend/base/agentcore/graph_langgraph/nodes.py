@@ -78,6 +78,25 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
             # Return empty update — nothing changed
             return {}
 
+        # ------------------------------------------------------------------
+        # 1b. PREDECESSOR BARRIER — LangGraph schedules a node as soon as
+        #     ANY incoming edge fires.  For fan-in nodes (multiple predecessors
+        #     at different depths) this means the node can run before all
+        #     upstream results are available.  Return {} to skip this
+        #     premature invocation; LangGraph will invoke the node again
+        #     once the remaining predecessors complete and fire their edges.
+        # ------------------------------------------------------------------
+        predecessors = state.get("predecessor_map", {}).get(vertex.id, [])
+        if predecessors:
+            vertices_results = state.get("vertices_results", {})
+            missing = [p for p in predecessors if p not in vertices_results]
+            if missing:
+                logger.debug(
+                    f"Vertex {vertex.id} ({vertex.display_name}) waiting for "
+                    f"predecessors: {missing} — skipping this invocation"
+                )
+                return {}
+
         logger.debug(f"Executing node for vertex: {vertex.id} ({vertex.display_name})")
         start_time = time.time()
 

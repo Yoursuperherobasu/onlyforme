@@ -217,13 +217,23 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
 
             vectors.append(vec_data)
 
-        logger.info(f"[Pinecone] Upserting {len(vectors)} vector(s) to namespace={self.namespace!r}...")
+        batch_size = 50
+        total_batches = (len(vectors) + batch_size - 1) // batch_size
+        logger.info(
+            f"[Pinecone] Upserting {len(vectors)} vector(s) to namespace={self.namespace!r} "
+            f"in {total_batches} batch(es) of {batch_size}..."
+        )
         t2 = time.time()
-        for i in range(0, len(vectors), 100):
-            batch = vectors[i:i+100]
-            index.upsert(vectors=batch, namespace=self.namespace or "")
-            logger.info(f"[Pinecone] Upserted batch {i//100+1} ({len(batch)} vectors)")
-        logger.info(f"[Pinecone] Upsert complete in {time.time()-t2:.1f}s")
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            try:
+                index.upsert(vectors=batch, namespace=self.namespace or "")
+                logger.info(f"[Pinecone] Batch {batch_num}/{total_batches} done ({len(batch)} vectors)")
+            except Exception as e:
+                logger.error(f"[Pinecone] Batch {batch_num}/{total_batches} FAILED: {e}")
+                raise
+        logger.info(f"[Pinecone] Upsert complete: {len(vectors)} vectors in {time.time()-t2:.1f}s")
         return len(vectors)
 
     def _ingest_if_needed(self, wrapped_embeddings):
