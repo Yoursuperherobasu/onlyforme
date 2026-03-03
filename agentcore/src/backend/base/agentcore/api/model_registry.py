@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -11,8 +10,16 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services import model_registry_service
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
+from agentcore.services.model_service_client import (
+    create_registry_model_via_service,
+    delete_registry_model_via_service,
+    fetch_registry_models_async,
+    get_registry_model_via_service,
+    test_connection_via_service,
+    test_embedding_connection_via_service,
+    update_registry_model_via_service,
+)
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.model_approval_request.model import (
     ModelApprovalRequest,
@@ -410,19 +417,21 @@ async def list_registry_models(
 ):
     """List visible models only (tenant + visibility aware)."""
     await _require_any_permission(current_user, {"view_model_catalogue_page", "view_models"})
-    rows = await model_registry_service.get_models(
-        session,
+    raw_rows = await fetch_registry_models_async(
         provider=provider,
         environment=_normalize_environment(environment) if environment else None,
         model_type=model_type,
         active_only=active_only,
     )
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    visible = [
-        row
-        for row in rows
-        if _can_access_model(ModelRegistry.model_validate(row.model_dump()), current_user, org_ids, dept_pairs)
-    ]
+    visible = []
+    for r in raw_rows:
+        try:
+            model_obj = ModelRegistry.model_validate(r)
+            if _can_access_model(model_obj, current_user, org_ids, dept_pairs):
+                visible.append(r)
+        except Exception:
+            continue
     return visible
 
 
@@ -516,14 +525,15 @@ async def create_registry_model(
         body.is_active = False
         body.request_to = None
 
-    created = await model_registry_service.create_model(session, body)
-    created_row = await session.get(ModelRegistry, created.id)
+    created_dict = await create_registry_model_via_service(body.model_dump(mode="json"))
+    created_id = UUID(created_dict["id"])
+    created_row = await session.get(ModelRegistry, created_id)
     if created_row is None:
         raise HTTPException(status_code=500, detail="Created model not found")
 
     await _append_audit(
         session,
-        model_id=created.id,
+        model_id=created_id,
         actor_id=current_user.id,
         action="model.create",
         org_id=created_row.org_id,
@@ -557,7 +567,7 @@ async def create_registry_model(
             session.add(created_row)
             await _append_audit(
                 session,
-                model_id=created.id,
+                model_id=created_id,
                 actor_id=current_user.id,
                 action="model.create.auto_approved",
                 org_id=created_row.org_id,
@@ -575,7 +585,7 @@ async def create_registry_model(
 
             await _create_model_approval_request(
                 session,
-                model_id=created.id,
+                model_id=created_id,
                 org_id=created_row.org_id,
                 dept_id=created_row.dept_id,
                 request_type=ModelApprovalRequestType.CREATE,
@@ -592,7 +602,7 @@ async def create_registry_model(
 
             await _append_audit(
                 session,
-                model_id=created.id,
+                model_id=created_id,
                 actor_id=current_user.id,
                 action="model.create.requested",
                 org_id=created_row.org_id,
@@ -801,8 +811,8 @@ async def get_registry_model(
     current_user: CurrentActiveUser,
 ):
     await _require_any_permission(current_user, {"view_model_catalogue_page", "view_models"})
-    model = await model_registry_service.get_model(session, model_id)
-    if model is None:
+    model_dict = await get_registry_model_via_service(str(model_id))
+    if model_dict is None:
         raise HTTPException(status_code=404, detail="Model not found")
     row = await session.get(ModelRegistry, model_id)
     if row is None:
@@ -810,7 +820,7 @@ async def get_registry_model(
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_model(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="Model is outside your visibility scope")
-    return model
+    return model_dict
 
 
 @router.put("/{model_id}", response_model=ModelRegistryRead)
@@ -831,8 +841,8 @@ async def update_registry_model(
     if body.visibility_scope and _normalize_visibility_scope(body.visibility_scope) != _normalize_visibility_scope(existing.visibility_scope):
         raise HTTPException(status_code=400, detail="Direct visibility change is blocked. Use /visibility flow")
 
-    model = await model_registry_service.update_model(session, model_id, body)
-    if model is None:
+    model_dict = await update_registry_model_via_service(str(model_id), body.model_dump(mode="json", exclude_unset=True))
+    if model_dict is None:
         raise HTTPException(status_code=404, detail="Model not found")
 
     await _append_audit(
@@ -845,7 +855,7 @@ async def update_registry_model(
         message="Model metadata updated",
     )
     await session.commit()
-    return model
+    return model_dict
 
 
 @router.delete("/{model_id}", status_code=204)
@@ -900,8 +910,8 @@ async def delete_registry_model(
         details={"deleted_model_id": str(model_id)},
         message="Model deleted",
     )
-    await session.delete(row)
     await session.commit()
+    await delete_registry_model_via_service(str(model_id))
 
 
 @router.get("/{model_id}/audit", response_model=list[dict])
@@ -942,106 +952,11 @@ async def test_model_connection(
     current_user: CurrentActiveUser,
 ):
     try:
-        provider_name = body.provider.lower()
-        provider_config: dict = body.provider_config or {}
-        api_key = body.api_key or ""
-        base_url = body.base_url or ""
-        model = _build_test_model(
-            provider_name=provider_name,
-            model_name=body.model_name,
-            api_key=api_key,
-            base_url=base_url,
-            provider_config=provider_config,
-        )
-        from langchain_core.messages import HumanMessage
-
-        start = time.perf_counter()
-        ai_message = await model.ainvoke([HumanMessage(content="Hello")])
-        latency_ms = (time.perf_counter() - start) * 1000
-
-        content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
-        return TestConnectionResponse(
-            success=True,
-            message=f"Model responded: {content[:100]}",
-            latency_ms=round(latency_ms, 1),
-        )
+        result = await test_connection_via_service(body.model_dump(mode="json"))
+        return TestConnectionResponse(**result)
     except Exception as e:
         logger.warning("Test connection via microservice failed: %s", e)
         return TestConnectionResponse(success=False, message=str(e))
-
-
-def _build_test_model(
-    *,
-    provider_name: str,
-    model_name: str,
-    api_key: str,
-    base_url: str,
-    provider_config: dict,
-):
-    if provider_name == "openai":
-        from langchain_openai import ChatOpenAI
-
-        kwargs = {"model": model_name, "api_key": api_key, "max_tokens": 50, "streaming": False}
-        if base_url:
-            kwargs["base_url"] = base_url
-        return ChatOpenAI(**kwargs)
-
-    if provider_name == "azure":
-        from langchain_openai import AzureChatOpenAI
-
-        return AzureChatOpenAI(
-            azure_deployment=provider_config.get("azure_deployment", model_name),
-            azure_endpoint=base_url,
-            api_key=api_key,
-            api_version=provider_config.get("api_version", "2024-02-15-preview"),
-            max_tokens=50,
-            streaming=False,
-        )
-
-    if provider_name == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-
-        return ChatAnthropic(
-            model=model_name,
-            api_key=api_key,
-            max_tokens=50,
-            streaming=False,
-        )
-
-    if provider_name == "google":
-        from langchain_google_genai import ChatGoogleGenerativeAI
-
-        return ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
-            max_output_tokens=50,
-        )
-
-    if provider_name == "groq":
-        from langchain_groq import ChatGroq
-
-        kwargs = {"model": model_name, "api_key": api_key, "max_tokens": 50, "streaming": False}
-        if base_url:
-            kwargs["base_url"] = base_url
-        return ChatGroq(**kwargs)
-
-    if provider_name == "openai_compatible":
-        from langchain_openai import ChatOpenAI
-
-        custom_headers = provider_config.get("custom_headers", {})
-        kwargs = {
-            "model": model_name,
-            "api_key": api_key or "not-needed",
-            "base_url": base_url,
-            "max_tokens": 50,
-            "streaming": False,
-        }
-        if custom_headers:
-            kwargs["default_headers"] = custom_headers
-        return ChatOpenAI(**kwargs)
-
-    msg = f"Unsupported provider for test connection: {provider_name}"
-    raise ValueError(msg)
 
 
 @router.post("/test-embedding-connection", response_model=TestConnectionResponse)
@@ -1054,56 +969,3 @@ async def test_embedding_connection(
     except Exception as e:
         logger.warning("Test embedding connection via microservice failed: %s", e)
         return TestConnectionResponse(success=False, message=str(e))
-
-
-def _build_test_embeddings(
-    *,
-    provider_name: str,
-    model_name: str,
-    api_key: str,
-    base_url: str,
-    provider_config: dict,
-):
-    if provider_name == "openai":
-        from langchain_openai import OpenAIEmbeddings
-
-        kwargs: dict = {"model": model_name, "api_key": api_key}
-        if base_url:
-            kwargs["base_url"] = base_url
-        return OpenAIEmbeddings(**kwargs)
-
-    if provider_name == "azure":
-        from langchain_openai import AzureOpenAIEmbeddings
-
-        return AzureOpenAIEmbeddings(
-            model=model_name,
-            azure_endpoint=base_url or provider_config.get("azure_endpoint", ""),
-            azure_deployment=provider_config.get("azure_deployment", model_name),
-            api_version=provider_config.get("api_version", "2025-10-01-preview"),
-            api_key=api_key,
-        )
-
-    if provider_name == "google":
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-        return GoogleGenerativeAIEmbeddings(
-            model=model_name,
-            google_api_key=api_key,
-        )
-
-    if provider_name in ("openai_compatible", "groq", "anthropic"):
-        from langchain_openai import OpenAIEmbeddings
-
-        kwargs = {
-            "model": model_name,
-            "api_key": api_key or "not-needed",
-        }
-        if base_url:
-            kwargs["base_url"] = base_url
-        custom_headers = provider_config.get("custom_headers", {})
-        if custom_headers:
-            kwargs["default_headers"] = custom_headers
-        return OpenAIEmbeddings(**kwargs)
-
-    msg = f"Unsupported provider for embedding test connection: {provider_name}"
-    raise ValueError(msg)

@@ -37,6 +37,21 @@ class McpRegistry(SQLModel, table=True):
 
     is_active: bool = Field(default=True)
     created_by: str | None = Field(default=None, nullable=True)
+
+    # Tenancy / RBAC columns (shared DB — no FK constraints in microservice)
+    deployment_env: str = Field(default="DEV", nullable=False, index=True)
+    status: str = Field(default="disconnected", nullable=False)
+    visibility: str = Field(default="private", nullable=False)
+    public_scope: str | None = Field(default=None, nullable=True)
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    shared_user_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    org_id: UUID | None = Field(default=None, nullable=True, index=True)
+    dept_id: UUID | None = Field(default=None, nullable=True, index=True)
+    approval_status: str = Field(default="approved", nullable=False, index=True)
+    requested_by: UUID | None = Field(default=None, nullable=True, index=True)
+    request_to: UUID | None = Field(default=None, nullable=True, index=True)
+    created_by_id: UUID | None = Field(default=None, nullable=True, index=True)
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -58,6 +73,18 @@ class McpRegistryCreate(BaseModel):
     headers: dict[str, str] | None = None  # plain-text; encrypted before storage
     is_active: bool = True
     created_by: str | None = None
+    deployment_env: str = "DEV"
+    status: str = "disconnected"
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    visibility: str = "private"
+    public_scope: str | None = None
+    public_dept_ids: list[str] | None = None
+    shared_user_ids: list[str] | None = None
+    approval_status: str = "approved"
+    requested_by: UUID | None = None
+    request_to: UUID | None = None
+    created_by_id: UUID | None = None
 
 
 class McpRegistryUpdate(BaseModel):
@@ -72,6 +99,18 @@ class McpRegistryUpdate(BaseModel):
     env_vars: dict[str, str] | None = None  # plain-text; re-encrypted if provided
     headers: dict[str, str] | None = None  # plain-text; re-encrypted if provided
     is_active: bool | None = None
+    deployment_env: str | None = None
+    status: str | None = None
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    visibility: str | None = None
+    public_scope: str | None = None
+    public_dept_ids: list[str] | None = None
+    shared_user_ids: list[str] | None = None
+    approval_status: str | None = None
+    requested_by: UUID | None = None
+    request_to: UUID | None = None
+    created_by_id: UUID | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +129,18 @@ class McpRegistryRead(BaseModel):
     args: list[str] | None = None
     is_active: bool
     created_by: str | None = None
+    deployment_env: str = "DEV"
+    status: str = "disconnected"
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    visibility: str = "private"
+    public_scope: str | None = None
+    public_dept_ids: list[str] | None = None
+    shared_user_ids: list[str] | None = None
+    approval_status: str = "approved"
+    requested_by: UUID | None = None
+    request_to: UUID | None = None
+    created_by_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 

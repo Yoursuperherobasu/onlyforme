@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.api.files_user import MCP_SERVERS_FILE, delete_file, download_file, get_file_by_name, upload_user_file
-from agentcore.base.mcp.util import update_tools
 from agentcore.logging import logger
+from agentcore.services.mcp_service_client import test_mcp_connection_via_service
 from agentcore.services.deps import get_settings_service, get_storage_service
 
 router = APIRouter(tags=["MCP"], prefix="/mcp")
@@ -130,54 +130,35 @@ async def get_servers(
     async def check_server(server_name: str) -> dict:
         server_info: dict[str, str | int | None] = {"name": server_name, "mode": None, "toolsCount": None}
         try:
-            mode, tool_list, _ = await update_tools(
-                server_name=server_name,
-                server_config=server_list["mcpServers"][server_name],
-            )
-            server_info["mode"] = mode.lower()
-            server_info["toolsCount"] = len(tool_list)
-            if len(tool_list) == 0:
-                server_info["error"] = "No tools found"
-        except ValueError as e:
-            # Configuration validation errors, invalid URLs, etc.
-            logger.error(f"Configuration error for server {server_name}: {e}")
-            server_info["error"] = f"Configuration error: {e}"
-        except ConnectionError as e:
-            # Network connection and timeout issues
-            logger.error(f"Connection error for server {server_name}: {e}")
-            server_info["error"] = f"Connection failed: {e}"
-        except (TimeoutError, asyncio.TimeoutError) as e:
-            # Timeout errors
-            logger.error(f"Timeout error for server {server_name}: {e}")
-            server_info["error"] = "Timeout when checking server tools"
-        except OSError as e:
-            # System-level errors (process execution, file access)
-            logger.error(f"System error for server {server_name}: {e}")
-            server_info["error"] = f"System error: {e}"
-        except (KeyError, TypeError) as e:
-            # Data parsing and access errors
-            logger.error(f"Data error for server {server_name}: {e}")
-            server_info["error"] = f"Configuration data error: {e}"
-        except (RuntimeError, ProcessLookupError, PermissionError) as e:
-            # Runtime and process-related errors
-            logger.error(f"Runtime error for server {server_name}: {e}")
-            server_info["error"] = f"Runtime error: {e}"
-        except Exception as e:  # noqa: BLE001
-            # Generic catch-all for other exceptions (including ExceptionGroup)
-            if hasattr(e, "exceptions") and e.exceptions:
-                # Extract the first underlying exception for a more meaningful error message
-                underlying_error = e.exceptions[0]
-                if hasattr(underlying_error, "exceptions"):
-                    logger.error(
-                        f"Error checking server {server_name}: {underlying_error}, {underlying_error.exceptions}"
-                    )
-                    underlying_error = underlying_error.exceptions[0]
-                else:
-                    logger.exception(f"Error checking server {server_name}: {underlying_error}")
-                server_info["error"] = f"Error loading server: {underlying_error}"
+            cfg = server_list["mcpServers"][server_name]
+            # Build a test-connection request for the MCP microservice
+            body: dict = {}
+            if "url" in cfg:
+                body["mode"] = "sse"
+                body["url"] = cfg["url"]
+                if cfg.get("headers"):
+                    body["headers"] = cfg["headers"]
+                server_info["mode"] = "sse"
+            elif "command" in cfg:
+                body["mode"] = "stdio"
+                body["command"] = cfg["command"]
+                if cfg.get("args"):
+                    body["args"] = cfg["args"]
+                server_info["mode"] = "stdio"
+            if cfg.get("env"):
+                body["env_vars"] = cfg["env"]
+
+            result = await test_mcp_connection_via_service(body)
+            if result.get("success"):
+                tools_count = result.get("tools_count", 0)
+                server_info["toolsCount"] = tools_count
+                if tools_count == 0:
+                    server_info["error"] = "No tools found"
             else:
-                logger.exception(f"Error checking server {server_name}: {e}")
-                server_info["error"] = f"Error loading server: {e}"
+                server_info["error"] = result.get("message", "Connection failed")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Error checking server {server_name}: {e}")
+            server_info["error"] = f"Error loading server: {e}"
         return server_info
 
     # Run all server checks concurrently

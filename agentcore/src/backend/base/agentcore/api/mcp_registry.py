@@ -15,8 +15,16 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services import mcp_registry_service
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
+from agentcore.services.mcp_service_client import (
+    create_mcp_server_via_service,
+    delete_mcp_server_via_service,
+    fetch_mcp_servers_async,
+    get_mcp_server_via_service,
+    probe_mcp_server_via_service,
+    test_mcp_connection_via_service,
+    update_mcp_server_via_service,
+)
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.mcp_registry.model import (
     McpProbeResponse,
@@ -26,10 +34,10 @@ from agentcore.services.database.models.mcp_registry.model import (
     McpRegistryUpdate,
     McpTestConnectionRequest,
     McpTestConnectionResponse,
-    McpProbeResponse,
     McpToolInfo,
 )
 from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
+from agentcore.services.database.models.mcp_audit_log.model import McpAuditLog
 from agentcore.services.database.models.organization.model import Organization
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
@@ -75,6 +83,66 @@ def _string_ids(values: list[UUID] | None) -> list[str]:
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "root"
+
+
+def _normalize_role_variants(raw: str | None) -> set[str]:
+    """Return a set of normalised role strings for flexible matching."""
+    if not raw:
+        return set()
+    lowered = str(raw).strip().lower().replace(" ", "_")
+    normalized = {lowered, lowered.replace("-", "_")}
+    if "." in lowered:
+        normalized.add(lowered.split(".")[-1].replace("-", "_"))
+    normalized.add(normalize_role(raw))
+    return normalized
+
+
+def _can_self_approve(current_user: CurrentActiveUser) -> bool:
+    """Return True if the user's role qualifies for self-approval fallback."""
+    normalized = _normalize_role_variants(getattr(current_user, "role", ""))
+    return bool(
+        normalized.intersection(
+            {
+                "root",
+                "root_admin",
+                "super_admin",
+                "superadmin",
+                "department_admin",
+                "departmentadmin",
+                "dept_admin",
+                "deptadmin",
+            }
+        )
+    )
+
+
+async def _append_mcp_audit(
+    session: DbSession,
+    *,
+    mcp_id: UUID | None,
+    actor_id: UUID | None,
+    action: str,
+    org_id: UUID | None = None,
+    dept_id: UUID | None = None,
+    deployment_env: str | None = None,
+    visibility: str | None = None,
+    details: dict | None = None,
+    message: str | None = None,
+) -> None:
+    """Write one row to the mcp_audit_log table."""
+    session.add(
+        McpAuditLog(
+            mcp_id=mcp_id,
+            actor_id=actor_id,
+            action=action,
+            org_id=org_id,
+            dept_id=dept_id,
+            deployment_env=deployment_env,
+            visibility=visibility,
+            details=details,
+            message=message,
+        )
+    )
 
 
 async def _require_mcp_permission(current_user: CurrentActiveUser, permission: str) -> None:
@@ -263,15 +331,20 @@ def _can_access_server(
     dept_pairs: list[tuple[UUID, UUID]],
 ) -> bool:
     if _is_root_user(current_user):
-        return (
-            str(getattr(row, "created_by_id", "")) == str(current_user.id)
-            and row.org_id is None
-            and row.dept_id is None
-        )
+        return True
 
     role = normalize_role(str(current_user.role))
     if role == "super_admin" and row.org_id and row.org_id in org_ids:
         return True
+
+    # Department admin bypass: see everything in their departments (matches model registry).
+    if role == "department_admin":
+        dept_id_set = {str(d) for _, d in dept_pairs}
+        scoped_public_depts = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+        if row.dept_id and str(row.dept_id) in dept_id_set:
+            return True
+        if scoped_public_depts.intersection(dept_id_set):
+            return True
 
     # Keep requester/approver visibility for pending/rejected requests.
     if (row.approval_status or "approved") != "approved":
@@ -323,6 +396,8 @@ async def _resolve_super_admin_approver(
     stmt = select(User).where(User.role == "super_admin", User.id != current_user.id).order_by(User.create_at.asc())
     row = (await session.exec(stmt)).first()
     if not row:
+        if _can_self_approve(current_user):
+            return current_user.id
         raise HTTPException(status_code=400, detail="No Super Admin approver available")
     return row.id
 
@@ -342,19 +417,20 @@ async def list_mcp_servers(
     current_user: CurrentActiveUser,
     active_only: bool = False,
 ):
-    """List all registered MCP servers."""
-    from agentcore.services.mcp_service_client import fetch_mcp_servers_async
-
-    return await fetch_mcp_servers_async(active_only=active_only)
     """List MCP servers visible to the current user based on tenancy + approval state."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    stmt = select(McpRegistry).order_by(McpRegistry.server_name)
-    rows = (await session.exec(stmt)).all()
+
+    raw_rows = await fetch_mcp_servers_async(active_only=active_only)
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    visible_rows = [row for row in rows if _can_access_server(row, current_user, org_ids, dept_pairs)]
-    if active_only:
-        visible_rows = [r for r in visible_rows if bool(r.is_active)]
-    return [McpRegistryRead.from_orm_model(r) for r in visible_rows]
+    visible = []
+    for r in raw_rows:
+        try:
+            server_obj = McpRegistry.model_validate(r)
+            if _can_access_server(server_obj, current_user, org_ids, dept_pairs):
+                visible.append(r)
+        except Exception:
+            continue
+    return visible
 
 
 @router.get("/visibility-options")
@@ -459,7 +535,21 @@ async def create_mcp_server(
         body.approval_status = "approved"
         body.is_active = True
         body.status = "connected"
-        return await mcp_registry_service.create_server(session, body)
+        created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
+        await _append_mcp_audit(
+            session,
+            mcp_id=UUID(created_dict["id"]),
+            actor_id=current_user.id,
+            action="mcp.create.auto_approved",
+            org_id=body.org_id,
+            dept_id=body.dept_id,
+            deployment_env=body.deployment_env,
+            visibility=visibility,
+            details={"auto_approved": True, "reason": "admin_create"},
+            message="MCP server created and auto-approved by admin",
+        )
+        await session.commit()
+        return created_dict
 
     approver_id = await _resolve_super_admin_approver(session, current_user)
     body.request_to = approver_id
@@ -468,10 +558,11 @@ async def create_mcp_server(
     body.approval_status = "pending"
     body.is_active = False
     body.status = "pending_approval"
-    created = await mcp_registry_service.create_server(session, body)
+    created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
+    created_id = UUID(created_dict["id"])
 
     approval = McpApprovalRequest(
-        mcp_id=UUID(str(created.id)),
+        mcp_id=created_id,
         org_id=body.org_id,
         dept_id=body.dept_id,
         requested_by=current_user.id,
@@ -480,8 +571,20 @@ async def create_mcp_server(
         deployment_env=body.deployment_env,
     )
     session.add(approval)
+    await _append_mcp_audit(
+        session,
+        mcp_id=created_id,
+        actor_id=current_user.id,
+        action="mcp.create.requested",
+        org_id=body.org_id,
+        dept_id=body.dept_id,
+        deployment_env=body.deployment_env,
+        visibility=visibility,
+        details={"request_to": str(approver_id)},
+        message="MCP server creation pending approval",
+    )
     await session.commit()
-    return created
+    return created_dict
 
 
 @router.post("/request", response_model=McpRegistryRead, status_code=201)
@@ -522,7 +625,21 @@ async def request_mcp_server(
         body.approval_status = "approved"
         body.is_active = True
         body.status = "connected"
-        return await mcp_registry_service.create_server(session, body)
+        created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
+        await _append_mcp_audit(
+            session,
+            mcp_id=UUID(created_dict["id"]),
+            actor_id=current_user.id,
+            action="mcp.request.auto_approved",
+            org_id=body.org_id,
+            dept_id=body.dept_id,
+            deployment_env=deployment_env,
+            visibility=visibility,
+            details={"auto_approved": True, "reason": "dev_private"},
+            message="MCP server request auto-approved (DEV + private)",
+        )
+        await session.commit()
+        return created_dict
 
     if _requires_super_admin_mcp_approval(
         deployment_env=deployment_env,
@@ -538,10 +655,11 @@ async def request_mcp_server(
     body.approval_status = "pending"
     body.is_active = False
     body.status = "pending_approval"
-    created = await mcp_registry_service.create_server(session, body)
+    created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
+    created_id = UUID(created_dict["id"])
 
     approval = McpApprovalRequest(
-        mcp_id=UUID(str(created.id)),
+        mcp_id=created_id,
         org_id=body.org_id,
         dept_id=body.dept_id,
         requested_by=current_user.id,
@@ -550,8 +668,20 @@ async def request_mcp_server(
         deployment_env=deployment_env,
     )
     session.add(approval)
+    await _append_mcp_audit(
+        session,
+        mcp_id=created_id,
+        actor_id=current_user.id,
+        action="mcp.request.requested",
+        org_id=body.org_id,
+        dept_id=body.dept_id,
+        deployment_env=deployment_env,
+        visibility=visibility,
+        details={"request_to": str(approver_id)},
+        message="MCP server request pending approval",
+    )
     await session.commit()
-    return created
+    return created_dict
 
 
 @router.get("/{server_id}", response_model=McpRegistryRead)
@@ -562,13 +692,17 @@ async def get_mcp_server(
 ):
     """Get a single MCP server by ID."""
     await _require_mcp_permission(current_user, "view_mcp_page")
+    server_dict = await get_mcp_server_via_service(str(server_id))
+    if server_dict is None:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    # RBAC check using local DB row
     server = await session.get(McpRegistry, server_id)
     if server is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_server(server, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="MCP server is outside your visibility scope")
-    return McpRegistryRead.from_orm_model(server)
+    return server_dict
 
 
 @router.put("/{server_id}", response_model=McpRegistryRead)
@@ -614,10 +748,22 @@ async def update_mcp_server(
     body.requested_by = row.requested_by
     body.request_to = row.request_to
 
-    server = await mcp_registry_service.update_server(session, server_id, body)
-    if server is None:
+    server_dict = await update_mcp_server_via_service(str(server_id), body.model_dump(mode="json", exclude_unset=True))
+    if server_dict is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
-    return result
+    await _append_mcp_audit(
+        session,
+        mcp_id=server_id,
+        actor_id=current_user.id,
+        action="mcp.updated",
+        org_id=body.org_id,
+        dept_id=body.dept_id,
+        deployment_env=body.deployment_env,
+        visibility=visibility,
+        message="MCP server updated",
+    )
+    await session.commit()
+    return server_dict
 
 
 @router.delete("/{server_id}", status_code=204)
@@ -635,7 +781,40 @@ async def delete_mcp_server(
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_server(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="MCP server is outside your visibility scope")
-    deleted = await mcp_registry_service.delete_server(session, server_id)
+    # Clean up any local approval requests before deleting via microservice
+    approval_rows = (
+        await session.exec(
+            select(McpApprovalRequest).where(McpApprovalRequest.mcp_id == server_id)
+        )
+    ).all()
+    for ar in approval_rows:
+        await session.delete(ar)
+
+    # Null-out mcp_id on existing audit rows so the FK doesn't block deletion
+    audit_rows = (
+        await session.exec(
+            select(McpAuditLog).where(McpAuditLog.mcp_id == server_id)
+        )
+    ).all()
+    for audit in audit_rows:
+        audit.mcp_id = None
+        session.add(audit)
+
+    await _append_mcp_audit(
+        session,
+        mcp_id=None,
+        actor_id=current_user.id,
+        action="mcp.deleted",
+        org_id=row.org_id,
+        dept_id=row.dept_id,
+        deployment_env=row.deployment_env,
+        visibility=row.visibility,
+        details={"deleted_mcp_id": str(server_id)},
+        message="MCP server deleted",
+    )
+    await session.commit()
+
+    deleted = await delete_mcp_server_via_service(str(server_id))
     if not deleted:
         raise HTTPException(status_code=404, detail="MCP server not found")
 
@@ -649,33 +828,8 @@ async def test_mcp_connection(
     await _require_mcp_permission(current_user, "view_mcp_page")
     await _require_any_mcp_permission(current_user, {"add_new_mcp", "request_new_mcp"})
     try:
-        from agentcore.base.mcp.util import update_tools
-
-        server_config: dict = {}
-        if body.mode == "sse":
-            if body.url:
-                server_config["url"] = body.url
-            if body.headers:
-                server_config["headers"] = body.headers
-        elif body.mode == "stdio":
-            if body.command:
-                server_config["command"] = body.command
-            if body.args:
-                server_config["args"] = body.args
-
-        if body.env_vars:
-            server_config["env"] = body.env_vars
-
-        _, tool_list, _ = await update_tools(
-            server_name="test-connection",
-            server_config=server_config,
-        )
-
-        return McpTestConnectionResponse(
-            success=True,
-            message=f"Connected successfully. Found {len(tool_list)} tool(s).",
-            tools_count=len(tool_list),
-        )
+        result = await test_mcp_connection_via_service(body.model_dump(mode="json"))
+        return McpTestConnectionResponse(**result)
     except Exception as e:
         logger.warning("MCP test connection via microservice failed: %s", e)
         return McpTestConnectionResponse(success=False, message=str(e))
@@ -699,39 +853,10 @@ async def probe_mcp_server(
         raise HTTPException(status_code=400, detail="MCP server request is not approved yet")
 
     try:
-        from agentcore.base.mcp.util import update_tools
-
-        result = await mcp_registry_service.get_decrypted_config_by_id(session, server_id)
-        if result is None:
-            raise HTTPException(status_code=404, detail="MCP server not found or inactive")
-
-        server_name, server_config = result
-
-        _, tool_list, _ = await update_tools(
-            server_name=server_name,
-            server_config=server_config,
-        )
-
-        tools_info = [McpToolInfo(name=t.name, description=t.description or "") for t in tool_list]
-        now = datetime.now(timezone.utc)
-        row.status = "connected"
-        row.updated_at = now
-        session.add(row)
-        await session.commit()
-
-        return McpProbeResponse(
-            success=True,
-            message=f"Connected successfully. Found {len(tool_list)} tool(s).",
-            tools_count=len(tool_list),
-            tools=tools_info,
-        )
+        result = await probe_mcp_server_via_service(str(server_id))
+        return McpProbeResponse(**result)
     except HTTPException:
         raise
     except Exception as e:
-        now = datetime.now(timezone.utc)
-        row.status = "error"
-        row.updated_at = now
-        session.add(row)
-        await session.commit()
         logger.warning("MCP probe failed for server %s: %s", server_id, e)
         return McpProbeResponse(success=False, message=str(e))

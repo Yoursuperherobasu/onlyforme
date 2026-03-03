@@ -35,6 +35,19 @@ async def create_server(
         args=data.args,
         is_active=data.is_active,
         created_by=data.created_by,
+        # Tenancy / RBAC fields
+        deployment_env=getattr(data, "deployment_env", "DEV"),
+        status=getattr(data, "status", "disconnected"),
+        org_id=data.org_id,
+        dept_id=data.dept_id,
+        visibility=getattr(data, "visibility", "private"),
+        public_scope=data.public_scope,
+        public_dept_ids=data.public_dept_ids,
+        shared_user_ids=data.shared_user_ids,
+        approval_status=getattr(data, "approval_status", "approved"),
+        requested_by=data.requested_by,
+        request_to=data.request_to,
+        created_by_id=data.created_by_id,
     )
 
     if data.env_vars and encryption_key:

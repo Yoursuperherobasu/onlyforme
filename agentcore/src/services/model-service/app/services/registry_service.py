@@ -39,6 +39,15 @@ async def create_model(
         default_params=data.default_params,
         is_active=data.is_active,
         created_by=data.created_by,
+        # Tenancy / RBAC fields
+        org_id=data.org_id,
+        dept_id=data.dept_id,
+        public_dept_ids=data.public_dept_ids,
+        created_by_id=data.created_by_id,
+        visibility_scope=data.visibility_scope,
+        approval_status=data.approval_status,
+        requested_by=data.requested_by,
+        request_to=data.request_to,
     )
 
     if data.api_key and encryption_key:
