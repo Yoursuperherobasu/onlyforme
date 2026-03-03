@@ -221,7 +221,10 @@ class SupervisorAgent(Node):
                 )
                 return f"Worker '{worker_name}' is not connected."
 
-            logger.info(f"[SupervisorAgent] {step_label}: invoking '{worker_name}'")
+            logger.info(
+                f"[SupervisorAgent] {step_label}: invoking '{worker_name}' "
+                f"| task dispatched → {task!r}"
+            )
             calling_content = ToolContent(
                 name=worker_name,
                 tool_input={"task": task},
@@ -266,9 +269,11 @@ class SupervisorAgent(Node):
         plan = await self._plan_execution(original_task, worker_map)
 
         if plan:
-            logger.info(
-                f"[SupervisorAgent] Execution plan: {[s['worker'] for s in plan]}"
+            plan_summary = " → ".join(
+                f"{s['worker']}({s['task'][:60]}{'…' if len(s['task']) > 60 else ''})"
+                for s in plan
             )
+            logger.info(f"[SupervisorAgent] Execution plan: {plan_summary}")
             errored_workers: set[str] = set()
 
             for i, step in enumerate(plan[: self.max_hops]):
@@ -508,6 +513,9 @@ CRITICAL RULES:
 - Do NOT put two workers' responsibilities into one task.
 - Include ONLY the workers genuinely needed.
 - Order workers logically (e.g., calculate before summarize; research before analyze).
+
+  "Do NOT add any summary, conclusion, or overview — that will be handled by the next worker."
+  This prevents duplication and keeps each worker focused on its own job only.
 
 Respond with ONLY a JSON array — no explanation, no markdown:
 [
