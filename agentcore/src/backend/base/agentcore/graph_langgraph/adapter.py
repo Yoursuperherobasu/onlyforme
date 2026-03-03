@@ -500,14 +500,26 @@ class LangGraphAdapter:
             if self.is_cyclic:
                 compile_kwargs["recursion_limit"] = 50
             # Checkpointer is required for Human-in-the-Loop (interrupt() to work).
-            compile_kwargs["checkpointer"] = get_checkpointer()
+            # Only attach it when the graph contains HITL nodes — attaching it
+            # unconditionally causes LangGraph to msgpack-serialize the full state
+            # (vertices_results) which includes LangChain StructuredTool objects
+            # that are not msgpack-serializable, crashing all non-HITL runs.
+            _HITL_TYPES = {"HumanApproval", "RequestHumanReview"}
+            _has_hitl = any(
+                getattr(v, "vertex_type", "") in _HITL_TYPES for v in self.vertices
+            )
+            if _has_hitl:
+                compile_kwargs["checkpointer"] = get_checkpointer()
+                logger.info("HITL node detected — checkpointer enabled.")
+            else:
+                logger.debug("No HITL nodes — running without checkpointer.")
             logger.info("Compiling LangGraph workflow...")
             self.compiled_app = self.workflow.compile(**compile_kwargs)
             logger.info("LangGraph workflow compiled successfully")
         except Exception as e:
             logger.error(f"Failed to compile LangGraph workflow: {e}")
             self.compiled_app = None
-    
+
     def get_vertex(self, vertex_id: str) -> LangGraphVertex | None:
         """Get a vertex by ID.
         
@@ -608,7 +620,60 @@ class LangGraphAdapter:
         
         # 1. Reset all vertex states to ACTIVE
         self.mark_all_vertices("ACTIVE")
-        
+
+        # 1b. SupervisorAgent: immediately re-mark worker children INACTIVE.
+        #     This MUST happen right after mark_all_vertices("ACTIVE") — if done
+        #     earlier (e.g. in _build_langgraph_workflow) the reset above wipes it.
+        #     Workers must be INACTIVE before compiled_app.astream() starts so that
+        #     their concurrent LangGraph tasks exit at the is_active() guard without
+        #     running full LLM chains.  Supervisor's _invoke_worker() calls
+        #     vertex.build() directly and does NOT check is_active(), so marking
+        #     workers INACTIVE here does not affect internal supervisor hops.
+        for vertex in self.vertices:
+            if getattr(vertex, "base_name", "") == "SupervisorAgent" or getattr(vertex, "vertex_type", "") == "SupervisorAgent":
+                marked: set[str] = set()
+
+                # Strategy 1: sourceHandle.name from graph.edges
+                for edge in self.edges:
+                    if edge.get("source") != vertex.id:
+                        continue
+                    sh = edge.get("data", {}).get("sourceHandle", {})
+                    if isinstance(sh, str):
+                        try:
+                            import json as _json_s
+                            sh = _json_s.loads(sh)
+                        except Exception:
+                            sh = {}
+                    handle_name = (sh.get("name") or "") if isinstance(sh, dict) else ""
+                    if not handle_name or handle_name == "Final Response":
+                        continue
+                    child_vertex = self.get_vertex(edge.get("target", ""))
+                    if child_vertex is not None:
+                        child_vertex.set_state("INACTIVE")
+                        marked.add(edge.get("target", ""))
+                        logger.info(
+                            f"[SupervisorAgent] Pre-marked worker '{handle_name}' "
+                            f"({edge.get('target')}) INACTIVE before run"
+                        )
+
+                # Strategy 2 (fallback): use successor_map — mark all non-output
+                # successors INACTIVE when Strategy 1 found nothing (sourceHandle.name
+                # was None/missing in this run's edge serialisation).
+                if not marked:
+                    logger.warning(
+                        f"[SupervisorAgent] sourceHandle.name missing for supervisor "
+                        f"'{vertex.id}' edges — falling back to successor_map pre-marking."
+                    )
+                    for successor_id in self.successor_map.get(vertex.id, []):
+                        child_vertex = self.get_vertex(successor_id)
+                        if child_vertex is None or child_vertex.is_interface_component:
+                            continue
+                        child_vertex.set_state("INACTIVE")
+                        logger.info(
+                            f"[SupervisorAgent] Pre-marked (fallback) successor "
+                            f"'{successor_id}' INACTIVE before run"
+                        )
+
         # 2. Reset tracking sets
         self.reset_inactivated_vertices()  # Clear inactivated_vertices set
         self.reset_activated_vertices()     # Clear activated_vertices list

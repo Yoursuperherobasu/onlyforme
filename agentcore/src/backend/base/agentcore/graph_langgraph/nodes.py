@@ -149,6 +149,10 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
                 # ----------------------------------------------------------
                 # 5. BUILD THE VERTEX (execute the component)
                 # ----------------------------------------------------------
+                # Store current LangGraph state so SupervisorAgent can
+                # resolve worker vertex dependencies during its internal loop.
+                vertex.graph._current_lg_state = state
+
                 await vertex.build(
                     user_id=state.get("user_id"),
                     inputs=inputs_dict,

@@ -276,7 +276,13 @@ class LangGraphVertex:
             )
         else:
             custom_params = loading.get_params(self.params)
-        
+            # Refresh the event_manager on the cached component.
+            # Each run creates a new asyncio.Queue + EventManager; if we don't
+            # update the component, send_message() will write to the previous
+            # run's dead queue and the frontend sees an empty response.
+            if event_manager is not None and hasattr(self.custom_component, "set_event_manager"):
+                self.custom_component.set_event_manager(event_manager)
+
         # Build the component
         result = await loading.get_instance_results(
             custom_component=self.custom_component,

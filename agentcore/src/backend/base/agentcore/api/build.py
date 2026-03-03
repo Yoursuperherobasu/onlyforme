@@ -417,13 +417,15 @@ async def generate_agent_events(
             pass  # end_vertex events already emitted by node_function
 
         # After astream() returns normally: check if the graph was interrupted.
-        # When interrupt() fires, Pregel saves the checkpoint to MemorySaver and
-        # terminates astream() without raising.  At this point the checkpoint IS
-        # saved, so we can serialize it and attach it to the HITLRequest row so
-        # the resume endpoint can restore it even after a server restart.
+        # Only applicable when a checkpointer is attached (HITL graphs).
+        # Non-HITL graphs (no checkpointer) skip this block entirely — calling
+        # aget_state() without a checkpointer raises "No checkpointer set".
         try:
-            _graph_state = await graph.compiled_app.aget_state(_lg_config)
-            if _graph_state.next:
+            if getattr(graph.compiled_app, "checkpointer", None) is not None:
+                _graph_state = await graph.compiled_app.aget_state(_lg_config)
+            else:
+                _graph_state = None
+            if _graph_state is not None and _graph_state.next:
                 # Extract interrupt data from the graph state
                 _interrupt_data = {}
                 if _graph_state.tasks and _graph_state.tasks[0].interrupts:
