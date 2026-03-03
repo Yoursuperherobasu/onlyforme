@@ -1,9 +1,18 @@
-import { useState, useEffect } from "react";
-import { X, Loader2, Zap } from "lucide-react";
+import { useContext, useEffect, useMemo, useState } from "react";
+import { ChevronDown, Loader2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { AuthContext } from "@/contexts/authContext";
+import { api } from "@/controllers/API/api";
 import type {
   ModelType,
   ModelTypeFilter,
@@ -16,6 +25,8 @@ import {
   usePostRegistryModel,
   usePutRegistryModel,
   useTestModelConnection,
+  usePromoteRegistryModel,
+  useChangeModelVisibility,
 } from "@/controllers/API/queries/models";
 
 const PROVIDERS = [
@@ -30,10 +41,15 @@ const PROVIDERS = [
 const DEFAULT_AZURE_API_VERSION = "2025-10-01-preview";
 
 const ENVIRONMENTS: { value: ModelEnvironment; label: string }[] = [
-  { value: "test", label: "Test" },
+  { value: "test", label: "DEV" },
   { value: "uat", label: "UAT" },
-  { value: "prod", label: "Production" },
+  { value: "prod", label: "PROD" },
 ];
+
+type VisibilityOptions = {
+  organizations: { id: string; name: string }[];
+  departments: { id: string; name: string; org_id: string }[];
+};
 
 interface EditModelModalProps {
   open: boolean;
@@ -48,6 +64,9 @@ export default function EditModelModal({
   model,
   modelType = "llm",
 }: EditModelModalProps) {
+  const { role } = useContext(AuthContext);
+  const normalizedRole = String(role || "").toLowerCase();
+  const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
   const isEditMode = !!model;
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -56,6 +75,8 @@ export default function EditModelModal({
   const createMutation = usePostRegistryModel();
   const updateMutation = usePutRegistryModel();
   const testMutation = useTestModelConnection();
+  const promoteMutation = usePromoteRegistryModel();
+  const visibilityMutation = useChangeModelVisibility();
 
   /* ---------------------------------- Form State ---------------------------------- */
 
@@ -66,12 +87,19 @@ export default function EditModelModal({
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [environment, setEnvironment] = useState<ModelEnvironment>("test");
+  const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">("private");
+  const [orgId, setOrgId] = useState("");
+  const [deptId, setDeptId] = useState("");
+  const [publicDeptIds, setPublicDeptIds] = useState<string[]>([]);
+  const [visibilityOptions, setVisibilityOptions] = useState<VisibilityOptions>({
+    organizations: [],
+    departments: [],
+  });
   const [isActive, setIsActive] = useState(true);
 
   // Provider-specific
   const [azureDeployment, setAzureDeployment] = useState("");
   const [azureApiVersion, setAzureApiVersion] = useState(DEFAULT_AZURE_API_VERSION);
-  const [organization, setOrganization] = useState("");
   const [customHeaders, setCustomHeaders] = useState("");
 
   // Default params (LLM)
@@ -80,6 +108,20 @@ export default function EditModelModal({
 
   // Embedding-specific
   const [dimensions, setDimensions] = useState<number | "">("");
+
+  const departmentsForSelectedOrg = useMemo(
+    () => visibilityOptions.departments.filter((d) => !orgId || d.org_id === orgId),
+    [visibilityOptions.departments, orgId],
+  );
+  const selectedDeptLabel = useMemo(() => {
+    if (publicDeptIds.length === 0) return "Select departments";
+    const names = departmentsForSelectedOrg
+      .filter((dept) => publicDeptIds.includes(dept.id))
+      .map((dept) => dept.name);
+    if (names.length === 0) return "Select departments";
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  }, [departmentsForSelectedOrg, publicDeptIds]);
 
   /* ---------------------------------- Populate form on edit ---------------------------------- */
 
@@ -94,12 +136,21 @@ export default function EditModelModal({
       setApiKey(""); // never pre-fill
       setBaseUrl(model.base_url ?? "");
       setEnvironment(model.environment ?? "test");
+      setVisibilityScope(model.visibility_scope ?? "private");
+      setOrgId(model.org_id ?? "");
+      setDeptId(model.dept_id ?? "");
+      setPublicDeptIds(
+        model.public_dept_ids && model.public_dept_ids.length > 0
+          ? model.public_dept_ids
+          : model.dept_id
+            ? [model.dept_id]
+            : [],
+      );
       setIsActive(model.is_active);
 
       const pc = model.provider_config ?? {};
       setAzureDeployment(pc.azure_deployment ?? "");
       setAzureApiVersion(pc.api_version ?? DEFAULT_AZURE_API_VERSION);
-      setOrganization(pc.organization ?? "");
       setCustomHeaders(pc.custom_headers ? JSON.stringify(pc.custom_headers, null, 2) : "");
 
       const dp = model.default_params ?? {};
@@ -115,16 +166,42 @@ export default function EditModelModal({
       setApiKey("");
       setBaseUrl("");
       setEnvironment("test");
+      setVisibilityScope("private");
+      setOrgId("");
+      setDeptId("");
+      setPublicDeptIds([]);
       setIsActive(true);
       setAzureDeployment("");
       setAzureApiVersion(DEFAULT_AZURE_API_VERSION);
-      setOrganization("");
       setCustomHeaders("");
       setTemperature(0.7);
       setMaxTokens("");
       setDimensions("");
     }
   }, [model, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    api.get("api/mcp/registry/visibility-options").then((res) => {
+      const options: VisibilityOptions = res.data || {
+        organizations: [],
+        departments: [],
+      };
+      setVisibilityOptions(options);
+      if (!orgId) setOrgId(options.organizations?.[0]?.id || "");
+      if (!deptId) setDeptId(options.departments?.[0]?.id || "");
+    });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if ((normalizedRole === "developer" || normalizedRole === "department_admin") && visibilityOptions.departments.length > 0) {
+      const firstDept = visibilityOptions.departments[0];
+      if (!deptId) setDeptId(firstDept.id);
+      if (!orgId) setOrgId(firstDept.org_id);
+      if (publicDeptIds.length === 0) setPublicDeptIds([firstDept.id]);
+    }
+  }, [open, normalizedRole, visibilityOptions, deptId, orgId, publicDeptIds]);
 
   /* ---------------------------------- Build payload ---------------------------------- */
 
@@ -133,9 +210,6 @@ export default function EditModelModal({
     if (provider === "azure") {
       if (azureDeployment) config.azure_deployment = azureDeployment;
       if (azureApiVersion) config.api_version = azureApiVersion;
-    }
-    if (provider === "openai" && organization) {
-      config.organization = organization;
     }
     if (provider === "openai_compatible" && customHeaders) {
       try {
@@ -168,6 +242,9 @@ export default function EditModelModal({
 
     try {
       if (isEditMode && model) {
+        const originalEnvironment = model.environment ?? "test";
+        const originalVisibility = model.visibility_scope ?? "private";
+
         const payload: ModelUpdateRequest = {
           display_name: displayName,
           description: description || null,
@@ -175,7 +252,12 @@ export default function EditModelModal({
           model_name: modelName,
           model_type: isEmbedding ? "embedding" : "llm",
           base_url: baseUrl || null,
-          environment,
+          org_id: visibilityScope === "private" ? null : orgId || null,
+          dept_id: visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null,
+          public_dept_ids:
+            visibilityScope === "department"
+              ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
+              : [],
           provider_config: buildProviderConfig() ?? null,
           default_params: buildDefaultParams() ?? null,
           is_active: isActive,
@@ -183,7 +265,27 @@ export default function EditModelModal({
         if (apiKey) payload.api_key = apiKey;
 
         await updateMutation.mutateAsync({ id: model.id, data: payload });
-        setSuccessData({ title: `Model "${displayName}" updated.` });
+
+        if (environment !== originalEnvironment) {
+          await promoteMutation.mutateAsync({
+            id: model.id,
+            target_environment: environment,
+          });
+        }
+
+        if (visibilityScope !== originalVisibility) {
+          await visibilityMutation.mutateAsync({
+            id: model.id,
+            visibility_scope: visibilityScope,
+          });
+        }
+
+        setSuccessData({
+          title:
+            environment !== originalEnvironment || visibilityScope !== originalVisibility
+              ? `Model "${displayName}" updated. Related approval request(s) submitted.`
+              : `Model "${displayName}" updated.`,
+        });
       } else {
         const payload: ModelCreateRequest = {
           display_name: displayName,
@@ -194,6 +296,13 @@ export default function EditModelModal({
           base_url: baseUrl || null,
           api_key: apiKey || null,
           environment,
+          visibility_scope: visibilityScope,
+          org_id: visibilityScope === "organization" ? orgId || null : null,
+          dept_id: visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null,
+          public_dept_ids:
+            visibilityScope === "department"
+              ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
+              : [],
           provider_config: buildProviderConfig() ?? null,
           default_params: buildDefaultParams() ?? null,
           is_active: isActive,
@@ -239,7 +348,11 @@ export default function EditModelModal({
 
   const handleClose = () => onOpenChange(false);
 
-  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const isSaving =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    promoteMutation.isPending ||
+    visibilityMutation.isPending;
   const canTest = !!modelName && !!apiKey;
 
   if (!open) return null;
@@ -247,18 +360,8 @@ export default function EditModelModal({
   /* ---------------------------------- JSX ---------------------------------- */
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm"
-        onClick={handleClose}
-      />
-
-      {/* Modal */}
-      <div
-        className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl max-h-[90vh] -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-card shadow-lg flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0">
         {/* Header */}
         <div className="flex-shrink-0 border-b p-6">
           <div className="flex items-start justify-between">
@@ -274,12 +377,6 @@ export default function EditModelModal({
                   : isEmbedding ? "Onboard a new embedding model to the registry" : "Onboard a new AI model to the registry"}
               </p>
             </div>
-            <button
-              onClick={handleClose}
-              className="rounded-sm opacity-70 transition-opacity hover:opacity-100"
-            >
-              <X className="h-5 w-5" />
-            </button>
           </div>
         </div>
 
@@ -299,7 +396,7 @@ export default function EditModelModal({
                 <Label>Display Name *</Label>
                 <Input
                   required
-                  placeholder="e.g., GPT-4o Production"
+                  placeholder="e.g., GPT-4o PROD"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                 />
@@ -406,18 +503,6 @@ export default function EditModelModal({
               </div>
             )}
 
-            {/* OpenAI org */}
-            {provider === "openai" && (
-              <div>
-                <Label>Organization ID</Label>
-                <Input
-                  placeholder="org-..."
-                  value={organization}
-                  onChange={(e) => setOrganization(e.target.value)}
-                />
-              </div>
-            )}
-
             {/* Custom headers */}
             {provider === "openai_compatible" && (
               <div>
@@ -435,7 +520,7 @@ export default function EditModelModal({
           {/* ========== ENVIRONMENT ========== */}
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Environment
+              Environment & Tenancy
             </legend>
             <div className="flex gap-3">
               {ENVIRONMENTS.map((env) => (
@@ -445,7 +530,7 @@ export default function EditModelModal({
                   onClick={() => setEnvironment(env.value)}
                   className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
                     environment === env.value
-                      ? "border-primary bg-primary text-primary-foreground"
+                      ? "border-[var(--button-primary)] bg-[var(--button-primary)] text-[var(--button-primary-foreground)]"
                       : "border-input bg-background hover:bg-muted"
                   }`}
                 >
@@ -454,9 +539,102 @@ export default function EditModelModal({
               ))}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Models default to <strong>Test</strong>. Promote to UAT or
-              Production when ready.
+              {isEditMode
+                ? "Changing environment here will submit a promotion request when applicable."
+                : <>Models default to <strong>DEV</strong>. Promote to UAT or <strong>PROD</strong> when ready.</>}
             </p>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Visibility Scope</Label>
+                <select
+                  value={visibilityScope}
+                  onChange={(e) =>
+                    setVisibilityScope(e.target.value as "private" | "department" | "organization")
+                  }
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="private">private</option>
+                  <option value="department">department</option>
+                  <option value="organization">organization</option>
+                </select>
+              </div>
+              {visibilityScope === "organization" ? (
+                <div>
+                  <Label>Organization</Label>
+                  <select
+                    value={orgId}
+                    onChange={(e) => setOrgId(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
+                  >
+                    <option value="">Select organization</option>
+                    {visibilityOptions.organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : visibilityScope === "department" ? (
+                <div>
+                  <Label>{canMultiDept ? "Departments" : "Department"}</Label>
+                  {canMultiDept ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full justify-between font-normal"
+                        >
+                          <span className="truncate text-left">{selectedDeptLabel}</span>
+                          <ChevronDown className="ml-2 h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="max-h-64 w-[340px] overflow-auto">
+                        {departmentsForSelectedOrg.map((dept) => (
+                          <DropdownMenuCheckboxItem
+                            key={dept.id}
+                            checked={publicDeptIds.includes(dept.id)}
+                            onSelect={(event) => event.preventDefault()}
+                            onCheckedChange={(checked) => {
+                              setPublicDeptIds((prev) =>
+                                checked
+                                  ? Array.from(new Set([...prev, dept.id]))
+                                  : prev.filter((id) => id !== dept.id),
+                              );
+                            }}
+                          >
+                            {dept.name}
+                          </DropdownMenuCheckboxItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <select
+                      value={deptId}
+                      onChange={(e) => setDeptId(e.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
+                    >
+                      <option value="">Select department</option>
+                      {departmentsForSelectedOrg.map((dept) => (
+                        <option key={dept.id} value={dept.id}>
+                          {dept.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ) : (
+                <div />
+              )}
+            </div>
+            {isEditMode && (
+              <p className="text-[11px] text-muted-foreground">
+                Visibility changes here will submit approval requests when required.
+              </p>
+            )}
           </fieldset>
 
           {/* ========== DEFAULT PARAMS ========== */}
@@ -570,7 +748,7 @@ export default function EditModelModal({
             </Button>
           </div>
         </div>
-      </div>
-    </>
+      </DialogContent>
+    </Dialog>
   );
 }

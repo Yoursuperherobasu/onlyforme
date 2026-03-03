@@ -5,6 +5,7 @@ import { UseRequestProcessor } from "../../services/request-processor";
 
 export interface ApprovalAgent {
   id: string;
+  entityType?: "agent" | "model" | "mcp";
   title: string;
   status: "pending" | "approved" | "rejected";
   description: string;
@@ -22,7 +23,7 @@ export interface ApprovalAgent {
  * Hook to fetch all agents pending approval
  * Uses React Query for caching and automatic refetching
  */
-export const useGetApprovals: useQueryFunctionType<ApprovalAgent[]> = (
+export const useGetApprovals: useQueryFunctionType<undefined, ApprovalAgent[]> = (
   options?,
 ) => {
   const { query } = UseRequestProcessor();

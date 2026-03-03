@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import useAgentStore from "@/stores/agentStore";
 import useAlertStore from "@/stores/alertStore";
+import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
+import { useGetPublishStatus } from "@/controllers/API/queries/agents/use-get-publish-status";
 import { useValidatePublishEmail } from "@/controllers/API/queries/agents/use-validate-publish-email";
 import { usePatchUpdateAgent } from "@/controllers/API/queries/agents/use-patch-update-agent";
 import { usePostUnifiedPublishAgent } from "@/controllers/API/queries/agents/use-post-unified-publish-agent";
@@ -19,6 +21,7 @@ import { cn } from "@/utils/utils";
 import { Input } from "@/components/ui/input";
 import { api } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
+import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 
 interface PublishButtonProps {
   hasIO: boolean;
@@ -72,6 +75,7 @@ const PublishButton = ({
   hasIO,
 }: PublishButtonProps) => {
   const { permissions, userData } = useContext(AuthContext);
+  const navigate = useCustomNavigate();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canPublish = can("view_project_page");
   const currentAgent = useAgentsManagerStore((state) => state.currentAgent);
@@ -98,6 +102,17 @@ const PublishButton = ({
   const [validationInProgress, setValidationInProgress] = useState(false);
   const latestValidationRun = useRef(0);
   const publishMutation = usePostUnifiedPublishAgent();
+  const { data: publishStatus } = useGetPublishStatus(
+    { agent_id: currentAgent?.id ?? "" },
+    { refetchInterval: 30000 },
+  );
+  const hasPendingApproval = Boolean(publishStatus?.has_pending_approval);
+  const agentNameAvailability = useNameAvailability({
+    entity: "agent",
+    name: agentNameInput,
+    exclude_id: currentAgent?.id ?? null,
+    enabled: open && agentNameInput.trim().length > 0,
+  });
 
   const normalizedEmails = useMemo(() => {
     return Array.from(
@@ -243,6 +258,20 @@ const PublishButton = ({
       setErrorData({ title: "No active agent found." });
       return;
     }
+    if (hasPendingApproval) {
+      setErrorData({
+        title: "Awaiting approval",
+        list: ["This agent already has a pending PROD approval request."],
+      });
+      return;
+    }
+    if (agentNameAvailability.isNameTaken) {
+      setErrorData({
+        title: "Agent name already taken",
+        list: [agentNameAvailability.reason || "Please choose a different name."],
+      });
+      return;
+    }
     const trimmedName = agentNameInput.trim();
     if (!trimmedName) {
       setErrorData({ title: "Agent name cannot be empty." });
@@ -378,6 +407,13 @@ const PublishButton = ({
         title: `Publish completed successfully. ${responseLines.join(" | ")}`,
       });
       setOpen(false);
+      if (publishProd) {
+        const folderId =
+          (currentAgent as any)?.project_id ||
+          (currentAgent as any)?.folder_id ||
+          "";
+        navigate(folderId ? `/agents/folder/${folderId}` : "/agents");
+      }
     } catch (error: any) {
       setErrorData({
         title: "Failed to publish agent",
@@ -410,6 +446,16 @@ const PublishButton = ({
     );
   }
 
+  if (hasPendingApproval) {
+    return (
+      <ShadTooltip content="This agent is awaiting approval. You can publish again after approve/reject.">
+        <div className="pointer-events-none">
+          <DisabledButton />
+        </div>
+      </ShadTooltip>
+    );
+  }
+
   // User has permission and agent has IO - show active button
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -434,6 +480,13 @@ const PublishButton = ({
               placeholder="Enter agent name"
               className="mt-2"
             />
+            {agentNameInput.trim().length > 0 &&
+              !agentNameAvailability.isFetching &&
+              agentNameAvailability.isNameTaken && (
+                <p className="mt-2 text-xs font-medium text-red-500">
+                  {agentNameAvailability.reason ?? "This agent name is already taken."}
+                </p>
+              )}
           </div>
         </DialogHeader>
 
@@ -556,7 +609,12 @@ const PublishButton = ({
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={validationInProgress || publishMutation.isPending}
+              disabled={
+                validationInProgress ||
+                publishMutation.isPending ||
+                agentNameAvailability.isFetching ||
+                agentNameAvailability.isNameTaken
+              }
             >
               {publishMutation.isPending ? "Publishing..." : "Submit Publish Request"}
             </Button>

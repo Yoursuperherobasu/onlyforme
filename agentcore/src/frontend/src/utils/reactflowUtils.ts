@@ -38,7 +38,6 @@ import {
   SUCCESS_BUILD,
   specialCharsRegex,
 } from "../constants/constants";
-import { DESCRIPTIONS } from "../agent_constants";
 import type {
   APIClassType,
   APIKindType,
@@ -509,15 +508,24 @@ export const processAgents = (DbData: AgentType[], skipUpdate = true) => {
       if (!agent.data) {
         return;
       }
+      if (!Array.isArray(agent.data.nodes)) {
+        (agent.data as any).nodes = [];
+      }
+      if (!Array.isArray(agent.data.edges)) {
+        (agent.data as any).edges = [];
+      }
       if (agent.data && agent.is_component) {
-        (agent.data.nodes[0].data as NodeDataType).node!.display_name =
-          agent.name;
+        const componentNode = agent.data.nodes[0];
+        if (!componentNode?.data) {
+          return;
+        }
+        (componentNode.data as NodeDataType).node!.display_name = agent.name;
         savedComponents[
           createRandomKey(
-            (agent.data.nodes[0].data as NodeDataType).type,
+            (componentNode.data as NodeDataType).type,
             uid.randomUUID(5),
           )
-        ] = cloneDeep((agent.data.nodes[0].data as NodeDataType).node!);
+        ] = cloneDeep((componentNode.data as NodeDataType).node!);
         return;
       }
       await processDataFromAgent(agent, !skipUpdate).catch((e) => {
@@ -530,7 +538,8 @@ export const processAgents = (DbData: AgentType[], skipUpdate = true) => {
   return { data: savedComponents, agents: DbData };
 };
 
-export const needsLayout = (nodes: AllNodeType[]) => {
+export const needsLayout = (nodes?: AllNodeType[] | null) => {
+  if (!Array.isArray(nodes) || nodes.length === 0) return false;
   return nodes.some((node) => !node.position);
 };
 
@@ -540,6 +549,12 @@ export async function processDataFromAgent(
 ): Promise<reactFlowJsonObject<AllNodeType, EdgeType> | null> {
   const data = agent?.data ? agent.data : null;
   if (data) {
+    if (!Array.isArray(data.nodes)) {
+      (data as any).nodes = [];
+    }
+    if (!Array.isArray(data.edges)) {
+      (data as any).edges = [];
+    }
     processAgentEdges(agent);
     //add dropdown option to nodeOutputs
     processAgentNodes(agent);
@@ -2008,17 +2023,13 @@ export function getRandomElement<T>(array: T[]): T {
   return array[Math.floor(Math.random() * array.length)];
 }
 
-export function getRandomDescription(): string {
-  return getRandomElement(DESCRIPTIONS);
-}
-
 export const createNewAgent = (
   agentData: reactFlowJsonObject<AllNodeType, EdgeType>,
   folderId: string,
   agent?: AgentType,
 ) => {
   return {
-    description: agent?.description ?? getRandomDescription(),
+    description: agent?.description ?? "",
     name: agent?.name ? agent.name : "New Agent",
     data: agentData,
     id: "",

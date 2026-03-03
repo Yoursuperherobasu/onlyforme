@@ -6,6 +6,9 @@ import {
 import useAlertStore from "@/stores/alertStore";
 import type { ApprovalAgent } from "@/controllers/API/queries/approvals";
 
+const entityLabel = (entityType?: string) =>
+  entityType === "model" ? "Model" : entityType === "mcp" ? "MCP request" : "Agent";
+
 /**
  * Custom hook to handle approval and rejection actions
  * Combines API mutations and user feedback notifications
@@ -39,13 +42,13 @@ export const useApprovalActions = () => {
             {
               onSuccess: () => {
                 setSuccessData({
-                  title: `Agent "${agent.title}" approved successfully.`,
+                  title: `${entityLabel(agent.entityType)} "${agent.title}" approved successfully.`,
                 });
                 resolve(null);
               },
               onError: () => {
                 setErrorData({
-                  title: `Failed to approve agent "${agent.title}".`,
+                  title: `Failed to approve ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
                 });
                 reject(new Error("Approval failed"));
               },
@@ -80,13 +83,13 @@ export const useApprovalActions = () => {
             {
               onSuccess: () => {
                 setSuccessData({
-                  title: `Agent "${agent.title}" rejected.`,
+                  title: `${entityLabel(agent.entityType)} "${agent.title}" rejected.`,
                 });
                 resolve(null);
               },
               onError: () => {
                 setErrorData({
-                  title: `Failed to reject agent "${agent.title}".`,
+                  title: `Failed to reject ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
                 });
                 reject(new Error("Rejection failed"));
               },

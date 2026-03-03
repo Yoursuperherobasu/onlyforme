@@ -26,6 +26,10 @@ class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(sa_column=Column(String(255), nullable=False))
     description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    framework: str = Field(
+        default="nemo",
+        sa_column=Column(String(50), nullable=False, default="nemo", index=True),
+    )
     provider: str = Field(sa_column=Column(String(100), nullable=False, index=True))
     model_registry_id: UUID | None = Field(default=None, foreign_key="model_registry.id", nullable=True, index=True)
     category: str = Field(sa_column=Column(String(50), nullable=False, index=True))

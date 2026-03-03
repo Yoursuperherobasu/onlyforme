@@ -55,11 +55,28 @@ async def create_server(
         server_name=data.server_name,
         description=data.description,
         mode=data.mode,
+        deployment_env=(data.deployment_env or "PROD").upper(),
         url=data.url,
         command=data.command,
         args=data.args,
         is_active=data.is_active,
+        status=data.status,
+        org_id=data.org_id,
+        dept_id=data.dept_id,
+        visibility=data.visibility,
+        public_scope=data.public_scope,
+        public_dept_ids=[str(v) for v in (data.public_dept_ids or [])] if data.public_dept_ids is not None else None,
+        shared_user_ids=data.shared_user_ids,
+        approval_status=data.approval_status,
+        requested_by=data.requested_by,
+        request_to=data.request_to,
+        requested_at=data.requested_at,
+        reviewed_at=data.reviewed_at,
+        reviewed_by=data.reviewed_by,
+        review_comments=data.review_comments,
+        review_attachments=data.review_attachments,
         created_by=data.created_by,
+        created_by_id=data.created_by_id,
     )
 
     if data.env_vars and enc_key:
@@ -119,6 +136,10 @@ async def update_server(
         return None
 
     update_fields = data.model_dump(exclude_unset=True)
+    if "public_dept_ids" in update_fields and update_fields["public_dept_ids"] is not None:
+        update_fields["public_dept_ids"] = [str(v) for v in update_fields["public_dept_ids"]]
+    if "deployment_env" in update_fields and update_fields["deployment_env"] is not None:
+        update_fields["deployment_env"] = str(update_fields["deployment_env"]).upper()
 
     # Handle secrets separately
     plain_env_vars = update_fields.pop("env_vars", None)
@@ -158,6 +179,8 @@ async def get_decrypted_config_by_id(
     row = await session.get(McpRegistry, server_id)
     if row is None:
         return None
+    if not row.is_active or (row.approval_status or "approved") != "approved":
+        return None
 
     config: dict = {}
 
@@ -188,6 +211,8 @@ async def get_decrypted_config(
     result = await session.execute(stmt)
     row = result.scalars().first()
     if row is None:
+        return None
+    if not row.is_active or (row.approval_status or "approved") != "approved":
         return None
 
     config: dict = {}

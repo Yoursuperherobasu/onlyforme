@@ -17,3 +17,5 @@ export { useApproveAgent } from "./use-approve-agent";
 export { useRejectAgent } from "./use-reject-agent";
 
 export { useUploadApprovalAttachments } from "./use-upload-approval-attachments";
+export { useGetMcpApprovalConfig } from "./use-get-mcp-approval-config";
+export { useUpdateMcpApprovalConfig } from "./use-update-mcp-approval-config";

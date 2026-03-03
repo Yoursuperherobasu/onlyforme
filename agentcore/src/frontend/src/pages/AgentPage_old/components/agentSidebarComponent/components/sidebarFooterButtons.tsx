@@ -6,7 +6,7 @@ import { AuthContext } from "@/contexts/authContext";
 import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import AddMcpServerModal from "@/modals/mcpServerModal";
-import RequestMcpServerModal from "@/pages/McpServersPage/components/request-mcp-server-modal";
+
 import { useTranslation } from 'react-i18next';
 
 const SidebarMenuButtons = ({
@@ -87,7 +87,7 @@ const SidebarMenuButtons = ({
         </Button>
       </SidebarMenuButton>
       <AddMcpServerModal open={addMcpOpen} setOpen={setAddMcpOpen} />
-      <RequestMcpServerModal open={requestMcpOpen} setOpen={setRequestMcpOpen} />
+      <AddMcpServerModal open={requestMcpOpen} setOpen={setRequestMcpOpen} requestMode />
     </>
   ) : (
     <SidebarMenuButton asChild className="group">
@@ -115,3 +115,4 @@ const SidebarMenuButtons = ({
 };
 
 export default SidebarMenuButtons;
+

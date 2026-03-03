@@ -31,6 +31,7 @@ def _fetch_active_guardrail_options() -> list[str]:
             stmt = (
                 select(GuardrailCatalogue)
                 .where(
+                    GuardrailCatalogue.framework == "nemo",
                     GuardrailCatalogue.status == "active",
                     GuardrailCatalogue.model_registry_id.is_not(None),
                 )

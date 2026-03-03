@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
-import { useBlocker, useParams } from "react-router-dom";
+import { useContext, useEffect, useState } from "react";
+import { useBlocker, useParams, useSearchParams } from "react-router-dom";
+import SideBarFoldersButtonsComponent from "@/components/core/folderSidebarComponent/components/sideBarFolderButtons";
+import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useGetAgent } from "@/controllers/API/queries/agents/use-get-agent";
 import { useGetTypes } from "@/controllers/API/queries/agents/use-get-types";
@@ -15,7 +17,8 @@ import { useTypesStore } from "@/stores/typesStore";
 import { customStringify } from "@/utils/reactFlowUtils";
 import useAgentStore from "../../stores/agentStore";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from "react-i18next";
+import { AuthContext } from "@/contexts/authContext";
 import {
   AgentSearchProvider,
   AgentSidebarComponent,
@@ -36,24 +39,39 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const [isLoading, setIsLoading] = useState(false);
 
+  const isBuilding = useAgentStore((state) => state.isBuilding);
+  const setOnAgentBuilderPage = useAgentStore((state) => state.setOnAgentBuilderPage);
+  const stopBuilding = useAgentStore((state) => state.stopBuilding);
+  const { id, folderId } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useCustomNavigate();
+  const saveAgent = useSaveAgent();
+  const { userData, role } = useContext(AuthContext);
+  const currentUserId = String(userData?.id ?? "");
+  const normalizedRole = String(role ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
+    normalizedRole,
+  );
+  const requestedReadOnlyMode = view || searchParams.get("readonly") === "1";
+  const forceReadOnlyByOwnership =
+    !!folderId &&
+    isAdminRole &&
+    !!currentAgent &&
+    (!!currentAgent.user_id ? String(currentAgent.user_id) !== currentUserId : true);
+  const isReadOnlyMode = requestedReadOnlyMode || forceReadOnlyByOwnership;
+
   const changesNotSaved =
+    !isReadOnlyMode &&
     customStringify(currentAgent) !== customStringify(currentSavedAgent) &&
     (currentAgent?.data?.nodes?.length ?? 0) > 0;
 
-  const isBuilding = useAgentStore((state) => state.isBuilding);
-  const blocker = useBlocker(changesNotSaved || isBuilding);
-
-  const setOnAgentBuilderPage = useAgentStore((state) => state.setOnAgentBuilderPage);
-  const { id } = useParams();
-  const navigate = useCustomNavigate();
-  const saveAgent = useSaveAgent();
+  const blocker = useBlocker(!isReadOnlyMode && (changesNotSaved || isBuilding));
 
   const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
-
   const updatedAt = currentSavedAgent?.updated_at;
   const autoSaving = useAgentsManagerStore((state) => state.autoSaving);
-  const stopBuilding = useAgentStore((state) => state.stopBuilding);
-
   const { mutateAsync: getAgent } = useGetAgent();
 
   const handleSave = () => {
@@ -90,6 +108,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   };
 
   useEffect(() => {
+    if (isReadOnlyMode) return;
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (changesNotSaved || isBuilding) {
         event.preventDefault();
@@ -102,59 +121,18 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, [changesNotSaved, isBuilding]);
+  }, [changesNotSaved, isBuilding, isReadOnlyMode]);
 
-  // Set agent tab id
-  useEffect(() => {
-    const awaitgetTypes = async () => {
-      if (!id || Object.keys(types).length === 0) {
-        return;
-      }
-
-      // Route id is the source of truth. If store has stale state, reload.
-      if (currentAgentId !== id || !currentAgent) {
-        await getAgentToAddToCanvas(id);
-      }
-    };
-    awaitgetTypes();
-  }, [id, currentAgentId, currentAgent, types]);
-
-  useEffect(() => {
-    setOnAgentBuilderPage(true);
-
-    return () => {
-      setOnAgentBuilderPage(false);
-      console.warn("unmounting");
-
-      setCurrentAgent(undefined);
-    };
-  }, [id]);
-
-  useEffect(() => {
-    if (
-      blocker.state === "blocked" &&
-      autoSaving &&
-      changesNotSaved &&
-      !isBuilding
-    ) {
-      handleSave();
-    }
-  }, [blocker.state, isBuilding]);
-
-  useEffect(() => {
-    if (blocker.state === "blocked") {
-      if (isBuilding) {
-        stopBuilding();
-      } else if (!changesNotSaved) {
-        blocker.proceed && blocker.proceed();
-      }
-    }
-  }, [blocker.state, isBuilding]);
-
-  const getAgentToAddToCanvas = async (id: string) => {
+  const getAgentToAddToCanvas = async (agentId: string) => {
     try {
-      const agent = await getAgent({ id: id });
-      await api.post(`${getURL("AGENTS")}/${id}/session/acquire`);
+      const agent = await getAgent({ id: agentId });
+      const shouldForceReadOnlyForFetchedAgent =
+        !!folderId &&
+        isAdminRole &&
+        (!!agent?.user_id ? String(agent.user_id) !== currentUserId : true);
+      if (!requestedReadOnlyMode && !shouldForceReadOnlyForFetchedAgent) {
+        await api.post(`${getURL("AGENTS")}/${agentId}/session/acquire`);
+      }
       setCurrentAgent(agent);
     } catch (error: any) {
       const status = error?.response?.status;
@@ -167,8 +145,55 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
     }
   };
 
+  // Set agent tab id
   useEffect(() => {
-    if (!id || !currentAgent) return;
+    const awaitGetTypes = async () => {
+      if (!id || Object.keys(types).length === 0) {
+        return;
+      }
+
+      // Route id is the source of truth. If store has stale state, reload.
+      if (currentAgentId !== id || !currentAgent) {
+        await getAgentToAddToCanvas(id);
+      }
+    };
+    awaitGetTypes();
+  }, [id, currentAgentId, currentAgent, types, isReadOnlyMode]);
+
+  useEffect(() => {
+    setOnAgentBuilderPage(true);
+
+    return () => {
+      setOnAgentBuilderPage(false);
+      console.warn("unmounting");
+      setCurrentAgent(undefined);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (
+      !isReadOnlyMode &&
+      blocker.state === "blocked" &&
+      autoSaving &&
+      changesNotSaved &&
+      !isBuilding
+    ) {
+      handleSave();
+    }
+  }, [blocker.state, isBuilding, autoSaving, changesNotSaved, isReadOnlyMode]);
+
+  useEffect(() => {
+    if (!isReadOnlyMode && blocker.state === "blocked") {
+      if (isBuilding) {
+        stopBuilding();
+      } else if (!changesNotSaved) {
+        blocker.proceed && blocker.proceed();
+      }
+    }
+  }, [blocker.state, isBuilding, stopBuilding, changesNotSaved, isReadOnlyMode]);
+
+  useEffect(() => {
+    if (!id || !currentAgent || isReadOnlyMode) return;
 
     const heartbeat = setInterval(() => {
       api.post(`${getURL("AGENTS")}/${id}/session/acquire`).catch(() => {
@@ -189,33 +214,70 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
       window.removeEventListener("beforeunload", release);
       release();
     };
-  }, [id, currentAgent]);
+  }, [id, currentAgent, isReadOnlyMode]);
 
   const isMobile = useIsMobile();
+  const handleBackToProject = () => {
+    if (folderId) {
+      navigate(`/agents/folder/${folderId}`);
+      return;
+    }
+    navigate("/agents");
+  };
 
   return (
     <>
       <div className="agent-page-positioning">
         {currentAgent && (
           <div className="flex h-full overflow-hidden">
-            <SidebarProvider
-              width="17.5rem"
-              defaultOpen={!isMobile}
-              segmentedSidebar={ENABLE_NEW_SIDEBAR}
-            >
-              <AgentSearchProvider>
-                {!view && <AgentSidebarComponent isLoading={isLoading} />}
-                <main className="flex w-full overflow-hidden">
-                  <div className="h-full w-full">
-                    <Page setIsLoading={setIsLoading} />
+            {isReadOnlyMode ? (
+              <SidebarProvider width="280px">
+                <SideBarFoldersButtonsComponent
+                  handleChangeFolder={(projectId: string) =>
+                    navigate(`/agents/folder/${projectId}`)
+                  }
+                  handleFilesClick={() => navigate("/assets/files")}
+                />
+                <main className="flex h-full w-full overflow-hidden">
+                  <div className="flex h-full w-full flex-col overflow-hidden">
+                    <div className="flex items-center gap-2 border-b bg-background px-3 py-2">
+                      <Button variant="outline" size="sm" onClick={handleBackToProject}>
+                        Back to Project
+                      </Button>
+                      <span className="truncate text-sm text-muted-foreground">
+                        {currentAgent.name}
+                      </span>
+                    </div>
+                    <div className="h-full w-full">
+                      <Page
+                        view
+                        enableViewportInteractions
+                        setIsLoading={setIsLoading}
+                      />
+                    </div>
                   </div>
                 </main>
-              </AgentSearchProvider>
-            </SidebarProvider>
+              </SidebarProvider>
+            ) : (
+              <SidebarProvider
+                width="17.5rem"
+                defaultOpen={!isMobile}
+                segmentedSidebar={ENABLE_NEW_SIDEBAR}
+              >
+                <AgentSearchProvider>
+                  <AgentSidebarComponent isLoading={isLoading} />
+                  <main className="flex w-full overflow-hidden">
+                    <div className="h-full w-full">
+                      <Page setIsLoading={setIsLoading} />
+                    </div>
+                  </main>
+                </AgentSearchProvider>
+              </SidebarProvider>
+            )}
           </div>
         )}
       </div>
-      {blocker.state === "blocked" && (
+      {!isReadOnlyMode && blocker.state === "blocked" && (
         <>
           {!isBuilding && currentSavedAgent && (
             <SaveChangesModal

@@ -24,6 +24,9 @@ from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
+from .mcp_approval_request import McpApprovalRequest
+from .model_approval_request import ModelApprovalRequest
+from .model_audit_log import ModelAuditLog
 from .orch_conversation import OrchConversationTable
 from .orch_transaction import OrchTransactionTable
 from .timeout_settings import TimeoutSettings
@@ -42,6 +45,9 @@ __all__ = [
     "AgentDeploymentUAT",
     "AgentRegistry",
     "ApprovalRequest",
+    "McpApprovalRequest",
+    "ModelApprovalRequest",
+    "ModelAuditLog",
     "ConversationProdTable",
     "ConversationTable",
     "ConversationProdTable",
@@ -50,6 +56,9 @@ __all__ = [
     "Project",
     "Permission",
     "ApprovalRequest",
+    "McpApprovalRequest",
+    "ModelApprovalRequest",
+    "ModelAuditLog",
     "ModelRegistry",
     "AgentBundle",
     "AgentDeploymentProd",

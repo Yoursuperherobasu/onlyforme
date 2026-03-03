@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -217,6 +218,30 @@ async def _validate_scope_refs(session: DbSession, org_id: UUID | None, dept_id:
         ).first()
         if not dept:
             raise HTTPException(status_code=400, detail="Invalid dept_id for org_id")
+
+
+async def _ensure_connector_name_available(
+    session: DbSession,
+    name: str,
+    org_id: UUID | None,
+    dept_id: UUID | None,
+    *,
+    exclude_id: UUID | None = None,
+) -> None:
+    stmt = select(ConnectorCatalogue.id).where(
+        func.lower(ConnectorCatalogue.name) == name.strip().lower(),
+    )
+    stmt = stmt.where(
+        ConnectorCatalogue.org_id.is_(None) if org_id is None else ConnectorCatalogue.org_id == org_id,
+    )
+    stmt = stmt.where(
+        ConnectorCatalogue.dept_id.is_(None) if dept_id is None else ConnectorCatalogue.dept_id == dept_id,
+    )
+    if exclude_id:
+        stmt = stmt.where(ConnectorCatalogue.id != exclude_id)
+    existing = (await session.exec(stmt)).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Connector name already exists for this scope")
 
 
 # ---------- Serialization ----------
@@ -639,6 +664,7 @@ async def create_connector(
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
         session, current_user, payload
     )
+    await _ensure_connector_name_available(session, payload.name, payload.org_id, payload.dept_id)
     now = datetime.now(timezone.utc)
     provider = payload.provider.lower()
 
@@ -736,6 +762,14 @@ async def update_connector(
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
         session, current_user, payload
     )
+    if payload.name is not None:
+        await _ensure_connector_name_available(
+            session,
+            payload.name,
+            payload.org_id,
+            payload.dept_id,
+            exclude_id=connector_id,
+        )
     now = datetime.now(timezone.utc)
 
     if payload.name is not None:

@@ -4,16 +4,56 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import select
+from sqlmodel import or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from agentcore.services.auth.permissions import normalize_role
 from agentcore.services.database.models.user.model import User, UserUpdate
 
 
+def _role_priority(role: str | None) -> int:
+    normalized = normalize_role(role or "consumer")
+    priorities = {
+        "root": 500,
+        "super_admin": 400,
+        "department_admin": 300,
+        "developer": 200,
+        "business_user": 200,
+        "consumer": 100,
+    }
+    return priorities.get(normalized, 0)
+
+
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
-    stmt = select(User).where(User.username == username)
-    return (await db.exec(stmt)).first()
+    identity = (username or "").strip()
+    if not identity:
+        return None
+    lowered = identity.lower()
+    stmt = select(User).where(
+        or_(
+            func.lower(User.username) == lowered,
+            func.lower(User.email) == lowered,
+        )
+    )
+    candidates = (await db.exec(stmt)).all()
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Prefer the strongest role row when legacy duplicate identities exist.
+    candidates.sort(
+        key=lambda user: (
+            _role_priority(getattr(user, "role", None)),
+            1 if getattr(user, "is_superuser", False) else 0,
+            1 if getattr(user, "created_by", None) else 0,
+            getattr(user, "updated_at", None) or getattr(user, "create_at", None),
+        ),
+        reverse=True,
+    )
+    return candidates[0]
 
 
 async def get_user_by_id(db: AsyncSession, user_id: UUID) -> User | None:
