@@ -85,17 +85,24 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
         #     upstream results are available.  Return {} to skip this
         #     premature invocation; LangGraph will invoke the node again
         #     once the remaining predecessors complete and fire their edges.
+        #
+        #     SKIP for cycle vertices — back-edge predecessors haven't run
+        #     yet on the first iteration, so the barrier would deadlock the
+        #     cycle.  Cycle execution order is managed by the routing
+        #     function (add_conditional_edges) instead.
         # ------------------------------------------------------------------
-        predecessors = state.get("predecessor_map", {}).get(vertex.id, [])
-        if predecessors:
-            vertices_results = state.get("vertices_results", {})
-            missing = [p for p in predecessors if p not in vertices_results]
-            if missing:
-                logger.debug(
-                    f"Vertex {vertex.id} ({vertex.display_name}) waiting for "
-                    f"predecessors: {missing} — skipping this invocation"
-                )
-                return {}
+        cycle_verts = state.get("cycle_vertices", [])
+        if vertex.id not in cycle_verts:
+            predecessors = state.get("predecessor_map", {}).get(vertex.id, [])
+            if predecessors:
+                vertices_results = state.get("vertices_results", {})
+                missing = [p for p in predecessors if p not in vertices_results]
+                if missing:
+                    logger.debug(
+                        f"Vertex {vertex.id} ({vertex.display_name}) waiting for "
+                        f"predecessors: {missing} — skipping this invocation"
+                    )
+                    return {}
 
         logger.debug(f"Executing node for vertex: {vertex.id} ({vertex.display_name})")
         start_time = time.time()
