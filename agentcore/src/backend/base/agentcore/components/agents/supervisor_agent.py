@@ -565,7 +565,7 @@ Respond with ONLY a JSON array — no explanation, no markdown:
     async def _invoke_worker(self, vertex_id: str, task: str) -> str:
         """Directly build a worker vertex with the given task and return its result text.
 
-        Works for any connected component — AgentNode, RunChildFlowComponent, or any
+        Works for any connected component — AgentNode, RunChildAgentComponent, or any
         custom node that accepts an ``input_value`` parameter.
         """
         vertex = self._vertex.graph.get_vertex(vertex_id)
@@ -575,7 +575,7 @@ Respond with ONLY a JSON array — no explanation, no markdown:
         # Pull the current LangGraph state stored by node_function just before build().
         lg_state: dict = getattr(self._vertex.graph, "_current_lg_state", {})
 
-        # Resolve the worker's upstream dependencies (LLM, tools, child_flow_name, etc.)
+        # Resolve the worker's upstream dependencies (LLM, tools, child_agent_name, etc.)
         # from vertices_results — these were already built before the supervisor ran.
         state_results: dict = lg_state.get("vertices_results", {})
         resolved = _resolve_vertex_dependencies(vertex, {"vertices_results": state_results})
@@ -590,8 +590,8 @@ Respond with ONLY a JSON array — no explanation, no markdown:
         vertex.built_object = None
         vertex.built_result = None
 
-        # Propagate user_id so RunChildFlowComponent (and similar components) can
-        # look up agents and execute child flows on behalf of the correct user.
+        # Propagate user_id so RunChildAgentComponent (and similar components) can
+        # look up agents and execute child agents on behalf of the correct user.
         user_id = lg_state.get("user_id")
 
         # CRITICAL: vertex.build() internally calls _resolve_params() which scans

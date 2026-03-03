@@ -1,7 +1,7 @@
-# TARGET PATH: src/backend/base/agentcore/base/child_flow/adapter.py
-"""Child Flow Adapter for executing flows as child flows with A2A protocol.
+# TARGET PATH: src/backend/base/agentcore/base/child_agent/adapter.py
+"""Child Agent Adapter for executing agents as child agents with A2A protocol.
 
-This module provides an adapter that wraps an agent/flow to be executed as a child flow,
+This module provides an adapter that wraps an agent to be executed as a child agent,
 using the A2A protocol for communication and logging.
 """
 
@@ -22,8 +22,8 @@ from agentcore.base.a2a.protocol import (
     MessageType,
     TaskStatus,
 )
-from agentcore.base.child_flow.guards import ChildFlowCallGuard, get_default_guard
-from agentcore.base.child_flow.registry import ChildFlowRegistry, FlowInfo
+from agentcore.base.child_agent.guards import ChildAgentCallGuard, get_default_guard
+from agentcore.base.child_agent.registry import ChildAgentRegistry, AgentInfo
 from agentcore.helpers.agent import load_agent, run_agent
 
 if TYPE_CHECKING:
@@ -31,11 +31,11 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class ParentFlowContext:
-    """Context passed from parent to child flow."""
+class ParentAgentContext:
+    """Context passed from parent to child agent."""
 
-    parent_flow_id: str
-    parent_flow_name: str
+    parent_agent_id: str
+    parent_agent_name: str
     session_id: str | None = None
     call_depth: int = 0
     a2a_task_id: str = field(default_factory=lambda: str(uuid4()))
@@ -43,8 +43,8 @@ class ParentFlowContext:
 
 
 @dataclass
-class ChildFlowResult:
-    """Result returned from child flow to parent."""
+class ChildAgentResult:
+    """Result returned from child agent to parent."""
 
     output: str
     status: str  # "success" or "error"
@@ -64,75 +64,75 @@ class ChildFlowResult:
         }
 
 
-class ChildFlowAdapter:
-    """Adapts an agent/flow to be called as a child flow with A2A protocol."""
+class ChildAgentAdapter:
+    """Adapts an agent to be called as a child agent with A2A protocol."""
 
     def __init__(
         self,
-        flow_info: FlowInfo,
+        agent_info: AgentInfo,
         user_id: str,
-        guard: ChildFlowCallGuard | None = None,
+        guard: ChildAgentCallGuard | None = None,
     ):
-        self.flow_info = flow_info
-        self.flow_id = flow_info.id
-        self.flow_name = flow_info.name
+        self.agent_info = agent_info
+        self.agent_id = agent_info.id
+        self.agent_name = agent_info.name
         self.user_id = user_id
         self.guard = guard or get_default_guard()
         self._a2a_protocol = A2AProtocol()
         self._agent_card = self._build_agent_card()
 
     @classmethod
-    async def from_flow_name(
+    async def from_agent_name(
         cls,
-        flow_name: str,
+        agent_name: str,
         user_id: str,
-        guard: ChildFlowCallGuard | None = None,
-    ) -> ChildFlowAdapter:
-        """Create an adapter from a flow name."""
-        flow_info = await ChildFlowRegistry.get_flow_by_name(flow_name, user_id)
-        if not flow_info:
-            msg = f"Agent/Flow '{flow_name}' not found"
+        guard: ChildAgentCallGuard | None = None,
+    ) -> ChildAgentAdapter:
+        """Create an adapter from an agent name."""
+        agent_info = await ChildAgentRegistry.get_agent_by_name(agent_name, user_id)
+        if not agent_info:
+            msg = f"Agent '{agent_name}' not found"
             raise ValueError(msg)
-        return cls(flow_info, user_id, guard)
+        return cls(agent_info, user_id, guard)
 
     @classmethod
-    async def from_flow_id(
+    async def from_agent_id(
         cls,
-        flow_id: str,
+        agent_id: str,
         user_id: str,
-        guard: ChildFlowCallGuard | None = None,
-    ) -> ChildFlowAdapter:
-        """Create an adapter from a flow ID."""
-        flow_info = await ChildFlowRegistry.get_flow_by_id(flow_id, user_id)
-        if not flow_info:
-            msg = f"Agent/Flow with ID '{flow_id}' not found"
+        guard: ChildAgentCallGuard | None = None,
+    ) -> ChildAgentAdapter:
+        """Create an adapter from an agent ID."""
+        agent_info = await ChildAgentRegistry.get_agent_by_id(agent_id, user_id)
+        if not agent_info:
+            msg = f"Agent with ID '{agent_id}' not found"
             raise ValueError(msg)
-        return cls(flow_info, user_id, guard)
+        return cls(agent_info, user_id, guard)
 
     def _build_agent_card(self) -> A2AAgentCard:
-        """Build an A2A Agent Card for this flow."""
+        """Build an A2A Agent Card for this agent."""
         return A2AAgentCard(
-            name=self.flow_name,
-            description=self.flow_info.description or f"Child flow: {self.flow_name}",
-            capabilities=["flow-execution", "child-flow"],
+            name=self.agent_name,
+            description=self.agent_info.description or f"Child agent: {self.agent_name}",
+            capabilities=["agent-execution", "child-agent"],
             metadata={
-                "agent_id": self.flow_id,
+                "agent_id": self.agent_id,
             },
         )
 
     @property
     def agent_card(self) -> A2AAgentCard:
-        """Get the A2A Agent Card for this flow."""
+        """Get the A2A Agent Card for this agent."""
         return self._agent_card
 
     async def execute(
         self,
         input_value: str,
-        parent_context: ParentFlowContext,
+        parent_context: ParentAgentContext,
         session_id: str | None = None,
         tweaks: dict | None = None,
-    ) -> ChildFlowResult:
-        """Execute this flow as a child flow."""
+    ) -> ChildAgentResult:
+        """Execute this agent as a child agent."""
         start_time = datetime.now()
         a2a_messages: list[A2AMessage] = []
 
@@ -141,41 +141,36 @@ class ChildFlowAdapter:
         # Create A2A task
         task = A2ATask(
             id=parent_context.a2a_task_id,
-            name=f"Child flow execution: {self.flow_name}",
+            name=f"Child agent execution: {self.agent_name}",
             input_data=input_value,
             metadata={
-                "parent_flow_id": parent_context.parent_flow_id,
-                "parent_flow_name": parent_context.parent_flow_name,
+                "parent_agent_id": parent_context.parent_agent_id,
+                "parent_agent_name": parent_context.parent_agent_name,
                 "call_depth": parent_context.call_depth,
             },
         )
 
-        # Log child flow invoke message
+        # Log child agent invoke message
         request_message = A2AMessage(
             task_id=task.id,
-            sender_id=parent_context.parent_flow_id,
-            receiver_id=self.flow_id,
+            sender_id=parent_context.parent_agent_id,
+            receiver_id=self.agent_id,
             content=input_value,
-            message_type=MessageType.CHILD_FLOW_INVOKE,
+            message_type=MessageType.CHILD_AGENT_INVOKE,
             artifacts={
-                "parent_flow_name": parent_context.parent_flow_name,
-                "child_flow_name": self.flow_name,
+                "parent_agent_name": parent_context.parent_agent_name,
+                "child_agent_name": self.agent_name,
                 "call_depth": parent_context.call_depth,
             },
         )
         a2a_messages.append(request_message)
 
         try:
-            with self.guard.guard(self.flow_id):
+            with self.guard.guard(self.agent_id):
                 task.status = TaskStatus.RUNNING
 
-                # Load the child flow graph and pre-build predecessor vertices
-                # so that output vertices can resolve their dependencies.
-                # Without this, arun() only builds output vertices while
-                # _resolve_params() skips unbuilt predecessors, causing
-                # AttributeError in ChatOutput.get_properties_from_source_component().
                 graph = await load_agent(
-                    self.user_id, agent_name=self.flow_name, tweaks=tweaks,
+                    self.user_id, agent_name=self.agent_name, tweaks=tweaks,
                 )
                 await self._prebuild_dependencies(graph, input_value)
 
@@ -191,8 +186,8 @@ class ChildFlowAdapter:
                 # Detect when graph execution failed (all outputs were None)
                 if not output_text:
                     error_msg = (
-                        f"Child flow '{self.flow_name}' executed but produced no output. "
-                        f"The child flow's graph may have encountered an error during execution."
+                        f"Child agent '{self.agent_name}' executed but produced no output. "
+                        f"The child agent's graph may have encountered an error during execution."
                     )
                     logger.error(error_msg)
 
@@ -202,8 +197,8 @@ class ChildFlowAdapter:
 
                     error_response = A2AMessage(
                         task_id=task.id,
-                        sender_id=self.flow_id,
-                        receiver_id=parent_context.parent_flow_id,
+                        sender_id=self.agent_id,
+                        receiver_id=parent_context.parent_agent_id,
                         content=error_msg,
                         message_type=MessageType.ERROR,
                     )
@@ -212,7 +207,7 @@ class ChildFlowAdapter:
                     end_time = datetime.now()
                     execution_time_ms = (end_time - start_time).total_seconds() * 1000
 
-                    return ChildFlowResult(
+                    return ChildAgentResult(
                         output="",
                         status="error",
                         a2a_messages=a2a_messages,
@@ -227,13 +222,13 @@ class ChildFlowAdapter:
 
                 response_message = A2AMessage(
                     task_id=task.id,
-                    sender_id=self.flow_id,
-                    receiver_id=parent_context.parent_flow_id,
+                    sender_id=self.agent_id,
+                    receiver_id=parent_context.parent_agent_id,
                     content=output_text,
-                    message_type=MessageType.CHILD_FLOW_RESULT,
+                    message_type=MessageType.CHILD_AGENT_RESULT,
                     artifacts={
-                        "parent_flow_name": parent_context.parent_flow_name,
-                        "child_flow_name": self.flow_name,
+                        "parent_agent_name": parent_context.parent_agent_name,
+                        "child_agent_name": self.agent_name,
                         "execution_status": "success",
                     },
                 )
@@ -242,7 +237,7 @@ class ChildFlowAdapter:
                 end_time = datetime.now()
                 execution_time_ms = (end_time - start_time).total_seconds() * 1000
 
-                return ChildFlowResult(
+                return ChildAgentResult(
                     output=output_text,
                     status="success",
                     a2a_messages=a2a_messages,
@@ -251,7 +246,7 @@ class ChildFlowAdapter:
                 )
 
         except Exception as e:
-            logger.exception(f"Error executing child flow '{self.flow_name}': {e}")
+            logger.exception(f"Error executing child agent '{self.agent_name}': {e}")
 
             task.status = TaskStatus.FAILED
             task.error = str(e)
@@ -259,8 +254,8 @@ class ChildFlowAdapter:
 
             error_message = A2AMessage(
                 task_id=task.id,
-                sender_id=self.flow_id,
-                receiver_id=parent_context.parent_flow_id,
+                sender_id=self.agent_id,
+                receiver_id=parent_context.parent_agent_id,
                 content=str(e),
                 message_type=MessageType.ERROR,
             )
@@ -269,7 +264,7 @@ class ChildFlowAdapter:
             end_time = datetime.now()
             execution_time_ms = (end_time - start_time).total_seconds() * 1000
 
-            return ChildFlowResult(
+            return ChildAgentResult(
                 output="",
                 status="error",
                 a2a_messages=a2a_messages,
@@ -280,10 +275,10 @@ class ChildFlowAdapter:
     async def execute_with_a2a(
         self,
         task: A2ATask,
-        parent_context: ParentFlowContext,
+        parent_context: ParentAgentContext,
         session_id: str | None = None,
         tweaks: dict | None = None,
-    ) -> ChildFlowResult:
+    ) -> ChildAgentResult:
         """Execute with an existing A2A task."""
         return await self.execute(
             input_value=task.input_data,
@@ -293,17 +288,7 @@ class ChildFlowAdapter:
         )
 
     async def _prebuild_dependencies(self, graph, input_value: str) -> None:
-        """Pre-build non-output vertices in topological order.
-
-        When a child flow graph is executed via run_agent() -> arun(), only
-        output vertices are built directly.  _resolve_params() skips
-        predecessors that have not been built yet, so components like
-        ChatOutput crash when they access source-component properties
-        (e.g. display_name) on an unbuilt predecessor.
-
-        This method builds all non-output vertices first so that when
-        arun() builds the output vertices, all dependencies are resolved.
-        """
+        """Pre-build non-output vertices in topological order."""
         from agentcore.schema.schema import INPUT_FIELD_NAME
         from agentcore.services.deps import get_chat_service, get_settings_service
 
@@ -371,10 +356,9 @@ class ChildFlowAdapter:
             first_output = run_outputs[0]
 
             if hasattr(first_output, "outputs") and first_output.outputs:
-                # All outputs None means graph vertex builds failed
                 if all(output is None for output in first_output.outputs):
                     logger.warning(
-                        f"Child flow graph execution produced all-null outputs "
+                        f"Child agent graph execution produced all-null outputs "
                         f"({len(first_output.outputs)} output(s) failed). "
                         f"Inputs were: {first_output.inputs}"
                     )

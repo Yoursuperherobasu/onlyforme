@@ -71,8 +71,8 @@ class A2AMessageSchema(BaseModel):
         "task_update",
         "error",
         "acknowledgment",
-        "child_flow_invoke",
-        "child_flow_result",
+        "child_agent_invoke",
+        "child_agent_result",
     ] = "task_request"
     timestamp: datetime = Field(default_factory=datetime.now)
     parent_message_id: str | None = None
