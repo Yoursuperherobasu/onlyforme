@@ -17,21 +17,17 @@ from agentcore.services.database.models.mcp_registry.model import (
     McpRegistryRead,
     McpRegistryUpdate,
 )
-from agentcore.utils.crypto import decrypt_api_key, encrypt_api_key
+from agentcore.utils.crypto import decrypt_api_key_with_fallback, derive_fernet_key, encrypt_api_key
 
 logger = logging.getLogger(__name__)
 
 
 def _encryption_key() -> str:
-    """Return the encryption key from environment."""
+    """Return the primary encryption key from environment."""
     key = os.getenv("MODEL_REGISTRY_ENCRYPTION_KEY", "")
     if not key:
         raw = os.getenv("WEBUI_SECRET_KEY", "default-agentcore-registry-key")
-        import base64
-        import hashlib
-
-        derived = hashlib.sha256(raw.encode()).digest()
-        key = base64.urlsafe_b64encode(derived).decode()
+        key = derive_fernet_key(raw)
     return key
 
 
@@ -42,7 +38,7 @@ def _encrypt_json(data: dict, enc_key: str) -> str:
 
 def _decrypt_json(encrypted: str, enc_key: str) -> dict:
     """Decrypt an encrypted JSON string back to dict."""
-    return json.loads(decrypt_api_key(encrypted, enc_key))
+    return json.loads(decrypt_api_key_with_fallback(encrypted, enc_key))
 
 
 async def create_server(
