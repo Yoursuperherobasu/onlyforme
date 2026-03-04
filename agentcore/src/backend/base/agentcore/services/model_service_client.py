@@ -19,7 +19,7 @@ import httpx
 from langchain_core.callbacks import CallbackManagerForLLMRun, AsyncCallbackManagerForLLMRun
 from langchain_core.embeddings import Embeddings as LCEmbeddings
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 if TYPE_CHECKING:
@@ -102,14 +102,35 @@ def _messages_to_dicts(messages: list[BaseMessage]) -> list[dict]:
     """Convert LangChain BaseMessage list to OpenAI-format dicts."""
     result = []
     for msg in messages:
-        if isinstance(msg, SystemMessage):
-            role = "system"
-        elif isinstance(msg, AIMessage):
-            role = "assistant"
-        else:
-            role = "user"
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
-        result.append({"role": role, "content": content})
+
+        if isinstance(msg, SystemMessage):
+            result.append({"role": "system", "content": content})
+        elif isinstance(msg, ToolMessage):
+            result.append({
+                "role": "tool",
+                "content": content,
+                "tool_call_id": msg.tool_call_id,
+            })
+        elif isinstance(msg, AIMessage):
+            entry: dict = {"role": "assistant", "content": content}
+            if msg.tool_calls:
+                entry["tool_calls"] = [
+                    {
+                        "id": tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", ""),
+                            "arguments": json.dumps(
+                                tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                            ),
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+            result.append(entry)
+        else:
+            result.append({"role": "user", "content": content})
     return result
 
 
@@ -542,6 +563,7 @@ class MicroserviceChatModel(BaseChatModel):
     temperature: float | None = None
     max_tokens: int | None = None
     streaming: bool = False
+    bound_tools: list[dict] | None = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -559,6 +581,24 @@ class MicroserviceChatModel(BaseChatModel):
             "registry_model_id": self.registry_model_id,
         }
 
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "MicroserviceChatModel":
+        """Return a copy of this model with tools bound for tool calling."""
+        from langchain_core.tools import BaseTool
+        from langchain_core.utils.function_calling import convert_to_openai_tool
+
+        openai_tools = []
+        for tool in tools:
+            if isinstance(tool, dict):
+                openai_tools.append(tool)
+            elif isinstance(tool, BaseTool):
+                openai_tools.append(convert_to_openai_tool(tool))
+            elif callable(tool):
+                openai_tools.append(convert_to_openai_tool(tool))
+            else:
+                openai_tools.append(convert_to_openai_tool(tool))
+
+        return self.model_copy(update={"bound_tools": openai_tools})
+
     def _build_payload(self, messages: list[BaseMessage], stream: bool = False) -> dict:
         config: dict = dict(self.provider_config)
         if self.registry_model_id:
@@ -575,15 +615,20 @@ class MicroserviceChatModel(BaseChatModel):
             payload["temperature"] = self.temperature
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
+        if self.bound_tools:
+            payload["tools"] = self.bound_tools
         return payload
 
     def _parse_response(self, data: dict) -> ChatResult:
         content = ""
         finish_reason = "stop"
+        tool_calls_raw: list[dict] | None = None
         if data.get("choices"):
             choice = data["choices"][0]
-            content = choice.get("message", {}).get("content", "")
+            msg_data = choice.get("message", {})
+            content = msg_data.get("content") or ""
             finish_reason = choice.get("finish_reason", "stop")
+            tool_calls_raw = msg_data.get("tool_calls")
 
         usage = data.get("usage", {})
         token_usage = {
@@ -598,7 +643,28 @@ class MicroserviceChatModel(BaseChatModel):
             "finish_reason": finish_reason,
         }
 
-        message = AIMessage(content=content, response_metadata=response_metadata)
+        # Build AIMessage with tool_calls if present
+        msg_kwargs: dict[str, Any] = {
+            "content": content,
+            "response_metadata": response_metadata,
+        }
+        if tool_calls_raw:
+            lc_tool_calls = []
+            for tc in tool_calls_raw:
+                func = tc.get("function", {})
+                args_str = func.get("arguments", "{}")
+                try:
+                    args = json.loads(args_str)
+                except (json.JSONDecodeError, TypeError):
+                    args = {"raw": args_str}
+                lc_tool_calls.append({
+                    "name": func.get("name", ""),
+                    "args": args,
+                    "id": tc.get("id", ""),
+                })
+            msg_kwargs["tool_calls"] = lc_tool_calls
+
+        message = AIMessage(**msg_kwargs)
         # llm_output is what LangChain callbacks (including Langfuse) read
         # for token usage when the model is used inside agents/chains.
         llm_output = {"token_usage": token_usage, "model_name": model_name}

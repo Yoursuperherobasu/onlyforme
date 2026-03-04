@@ -6,7 +6,7 @@ import warnings
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
-from multiprocess import cpu_count
+from multiprocessing import cpu_count
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 import builtins

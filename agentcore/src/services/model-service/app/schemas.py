@@ -24,9 +24,17 @@ class ProviderEnum(str, Enum):
 # ---------------------------------------------------------------------------
 
 
+class ChatMessageToolCall(BaseModel):
+    id: str = ""
+    type: str = "function"
+    function: dict = {}
+
+
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: str | None = ""
+    tool_call_id: str | None = None
+    tool_calls: list[ChatMessageToolCall] | None = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -43,6 +51,7 @@ class ChatCompletionRequest(BaseModel):
     seed: int | None = None
     json_mode: bool = False
     model_kwargs: dict | None = None
+    tools: list[dict] | None = None
 
 
 class UsageInfo(BaseModel):
@@ -51,9 +60,21 @@ class UsageInfo(BaseModel):
     total_tokens: int = 0
 
 
+class ToolCallFunction(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    type: str = "function"
+    function: ToolCallFunction
+
+
 class ChoiceMessage(BaseModel):
     role: str = "assistant"
-    content: str = ""
+    content: str | None = ""
+    tool_calls: list[ToolCall] | None = None
 
 
 class ChatCompletionChoice(BaseModel):

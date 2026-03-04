@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
+import json
+
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 PROVIDER_REGISTRY: dict[str, type["BaseProvider"]] = {}
 
@@ -63,11 +65,33 @@ class BaseProvider(ABC):
         lc_messages: list[BaseMessage] = []
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            content = msg.get("content") or ""
             if role == "system":
                 lc_messages.append(SystemMessage(content=content))
+            elif role == "tool":
+                lc_messages.append(ToolMessage(
+                    content=content,
+                    tool_call_id=msg.get("tool_call_id", ""),
+                ))
             elif role == "assistant":
-                lc_messages.append(AIMessage(content=content))
+                tool_calls_raw = msg.get("tool_calls")
+                if tool_calls_raw:
+                    lc_tool_calls = []
+                    for tc in tool_calls_raw:
+                        func = tc.get("function", {})
+                        args_str = func.get("arguments", "{}")
+                        try:
+                            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                        except (json.JSONDecodeError, TypeError):
+                            args = {"raw": args_str}
+                        lc_tool_calls.append({
+                            "name": func.get("name", ""),
+                            "args": args,
+                            "id": tc.get("id", ""),
+                        })
+                    lc_messages.append(AIMessage(content=content, tool_calls=lc_tool_calls))
+                else:
+                    lc_messages.append(AIMessage(content=content))
             else:
                 lc_messages.append(HumanMessage(content=content))
         return lc_messages
