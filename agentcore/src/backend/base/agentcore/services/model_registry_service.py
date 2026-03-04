@@ -16,26 +16,17 @@ from agentcore.services.database.models.model_registry.model import (
     ModelRegistryRead,
     ModelRegistryUpdate,
 )
-from agentcore.utils.crypto import decrypt_api_key, encrypt_api_key
+from agentcore.utils.crypto import decrypt_api_key, decrypt_api_key_with_fallback, derive_fernet_key, encrypt_api_key
 
 logger = logging.getLogger(__name__)
 
 
 def _encryption_key() -> str:
-    """Return the encryption key from environment."""
+    """Return the primary encryption key from environment."""
     key = os.getenv("MODEL_REGISTRY_ENCRYPTION_KEY", "")
     if not key:
-        # Fallback: derive a Fernet-compatible key from WEBUI_SECRET_KEY or use a default
-        # In production, MODEL_REGISTRY_ENCRYPTION_KEY should always be set
-        from cryptography.fernet import Fernet
-
         raw = os.getenv("WEBUI_SECRET_KEY", "default-agentcore-registry-key")
-        import base64
-        import hashlib
-
-        # Derive a 32-byte key from the secret and base64-encode it for Fernet
-        derived = hashlib.sha256(raw.encode()).digest()
-        key = base64.urlsafe_b64encode(derived).decode()
+        key = derive_fernet_key(raw)
     return key
 
 
@@ -177,7 +168,7 @@ async def get_decrypted_config(
     }
 
     if row.api_key_encrypted and enc_key:
-        config["api_key"] = decrypt_api_key(row.api_key_encrypted, enc_key)
+        config["api_key"] = decrypt_api_key_with_fallback(row.api_key_encrypted, enc_key)
     else:
         config["api_key"] = ""
 
