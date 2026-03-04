@@ -93,14 +93,18 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
 
     def _ensure_index_exists(self):
         if not self.auto_create_index:
+            logger.info(f"[Pinecone] Auto-create disabled, assuming index '{self.index_name}' exists")
             return
         pc = self._get_pinecone_client()
+        logger.info(f"[Pinecone] Checking if index '{self.index_name}' exists...")
         existing = pc.list_indexes()
         names = [idx.name for idx in existing] if existing else []
         if self.index_name in names:
+            logger.info(f"[Pinecone] Index '{self.index_name}' already exists")
             return
 
         from pinecone import ServerlessSpec
+        logger.info(f"[Pinecone] Creating index '{self.index_name}' (dim={self.embedding_dimension}, metric=dotproduct)...")
         pc.create_index(
             name=self.index_name,
             dimension=self.embedding_dimension,
@@ -108,10 +112,11 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             vector_type="dense",
             spec=ServerlessSpec(cloud=self.cloud_provider, region=self.cloud_region),
         )
-        for _ in range(30):
+        for attempt in range(30):
             try:
                 desc = pc.describe_index(self.index_name)
                 if desc.status and desc.status.get("ready", False):
+                    logger.info(f"[Pinecone] Index '{self.index_name}' ready after {(attempt+1)*2}s")
                     break
             except Exception:
                 pass
@@ -185,13 +190,18 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         pc = self._get_pinecone_client()
         index = pc.Index(self.index_name)
         texts = [doc.page_content for doc in documents]
-
+        logger.info(f"[Pinecone] Generating dense embeddings for {len(texts)} chunk(s)...")
+        t0 = time.time()
         dense_embeddings = embedder.embed_documents(texts)
+        logger.info(f"[Pinecone] Dense embeddings done in {time.time()-t0:.1f}s")
 
         sparse_vectors = None
         if self.use_hybrid_search:
             try:
+                logger.info(f"[Pinecone] Generating sparse vectors for {len(texts)} chunk(s)...")
+                t1 = time.time()
                 sparse_vectors = self._generate_sparse_vectors(texts, input_type="passage")
+                logger.info(f"[Pinecone] Sparse vectors done in {time.time()-t1:.1f}s")
             except Exception as e:
                 logger.warning(f"[Pinecone] Sparse embedding failed, ingesting dense-only: {e}")
 
@@ -207,17 +217,44 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
 
             vectors.append(vec_data)
 
-        for i in range(0, len(vectors), 100):
-            index.upsert(vectors=vectors[i:i+100], namespace=self.namespace or "")
+        batch_size = 50
+        total_batches = (len(vectors) + batch_size - 1) // batch_size
+        logger.info(
+            f"[Pinecone] Upserting {len(vectors)} vector(s) to namespace={self.namespace!r} "
+            f"in {total_batches} batch(es) of {batch_size}..."
+        )
+        t2 = time.time()
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            try:
+                index.upsert(vectors=batch, namespace=self.namespace or "")
+                logger.info(f"[Pinecone] Batch {batch_num}/{total_batches} done ({len(batch)} vectors)")
+            except Exception as e:
+                logger.error(f"[Pinecone] Batch {batch_num}/{total_batches} FAILED: {e}")
+                raise
+        logger.info(f"[Pinecone] Upsert complete: {len(vectors)} vectors in {time.time()-t2:.1f}s")
         return len(vectors)
 
     def _ingest_if_needed(self, wrapped_embeddings):
         self.ingest_data = self._prepare_ingest_data()
         if not self.ingest_data:
             return 0
+        from langchain_core.documents import Document as LCDocument
         documents = []
         for doc in self.ingest_data:
-            documents.append(doc.to_lc_document() if isinstance(doc, Data) else doc)
+            if isinstance(doc, Data):
+                documents.append(doc.to_lc_document())
+            elif isinstance(doc, LCDocument):
+                documents.append(doc)
+            elif isinstance(doc, str):
+                documents.append(LCDocument(page_content=doc))
+            elif isinstance(doc, dict):
+                text = doc.get("text", doc.get("page_content", ""))
+                metadata = {k: v for k, v in doc.items() if k not in ("text", "page_content")}
+                documents.append(LCDocument(page_content=str(text), metadata=metadata))
+            else:
+                documents.append(LCDocument(page_content=str(doc)))
         if not documents:
             return 0
         return self._ingest_documents(documents, wrapped_embeddings)
@@ -261,10 +298,10 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
 
     def search_documents(self) -> list[Data]:
         query = self._resolve_search_query()
-        if not query:
-            self.status = "No search query provided."
-            return []
 
+        # Resolve index / embeddings BEFORE checking for a query so that an
+        # ingest-only run (Ingest Data connected, Search Query empty) still
+        # persists documents to Pinecone.
         try:
             self._ensure_index_exists()
         except Exception as e:
@@ -273,12 +310,19 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         real_embedding = self._get_embedding_model()
         wrapped = Float32Embeddings(real_embedding)
 
+        count = 0
         try:
             count = self._ingest_if_needed(wrapped)
             if count > 0:
+                logger.info(f"[Pinecone] Ingested {count} document(s) into namespace={self.namespace!r}")
                 time.sleep(1)
         except Exception as e:
             raise ValueError(f"Error ingesting: {e}") from e
+
+        # Return early AFTER ingestion — documents are already in the index.
+        if not query:
+            self.status = f"Ingested {count} document(s). No search query provided."
+            return []
 
         # ── Determine retrieval method ─────────────────────
         retrieve_k = self.number_of_results

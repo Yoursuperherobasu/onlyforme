@@ -1,7 +1,5 @@
 import asyncio
-import json
 import time
-import traceback
 import uuid
 from collections.abc import AsyncIterator
 
@@ -16,27 +14,78 @@ from agentcore.api.utils import (
     EventDeliveryType,
     build_graph_from_data,
     build_graph_from_db,
-    format_elapsed_time,
-    format_exception_message,
     get_top_level_vertices,
-    parse_exception,
 )
 from agentcore.api.v1_schemas import (
     AgentDataRequest,
     InputValueRequest,
-    ResultDataResponse,
-    VertexBuildResponse,
 )
 from agentcore.events.event_manager import EventManager
-from agentcore.exceptions.component import ComponentBuildError
-from agentcore.graph_langgraph import Graph, LangGraphAdapter, log_vertex_build
-from agentcore.graph_langgraph.executor import LangGraphExecutor
+from agentcore.graph_langgraph import LangGraphAdapter
 from agentcore.schema.message import ErrorMessage
-from agentcore.schema.schema import OutputValue
 from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.deps import get_chat_service, get_telemetry_service, session_scope
 from agentcore.services.job_queue.service import JobQueueNotFoundError, JobQueueService
-from agentcore.services.telemetry.schema import ComponentPayload, PlaygroundPayload
+from agentcore.services.telemetry.schema import PlaygroundPayload
+
+
+async def _ensure_hitl_record(
+    *,
+    thread_id: str,
+    agent_id: str,
+    session_id: str,
+    user_id: str,
+    interrupt_data: dict,
+) -> None:
+    """Ensure an HITLRequest record exists for this interrupted thread.
+
+    If _persist_hitl_request() in nodes.py already created the record,
+    this is a no-op.  Otherwise it creates a new PENDING record so the
+    HITL Approvals page can find it.
+    """
+    try:
+        from agentcore.services.database.models.hitl_request.model import (
+            HITLRequest,
+            HITLStatus,
+        )
+        from sqlmodel import col
+
+        async with session_scope() as db:
+            # Check if a PENDING record already exists for this thread
+            existing = (
+                await db.exec(
+                    select(HITLRequest)
+                    .where(HITLRequest.thread_id == thread_id)
+                    .where(HITLRequest.status == HITLStatus.PENDING)
+                    .order_by(col(HITLRequest.requested_at).desc())
+                    .limit(1)
+                )
+            ).first()
+
+            if existing:
+                logger.debug(
+                    f"[HITL] HITLRequest already exists for thread_id={thread_id!r} "
+                    f"(id={existing.id})"
+                )
+                return
+
+            # Create a new PENDING record
+            hitl_req = HITLRequest(
+                thread_id=thread_id,
+                agent_id=uuid.UUID(agent_id),
+                session_id=session_id,
+                user_id=uuid.UUID(user_id) if user_id else None,
+                interrupt_data=interrupt_data,
+                status=HITLStatus.PENDING,
+            )
+            db.add(hitl_req)
+            await db.commit()
+            logger.info(
+                f"[HITL] Fallback: created HITLRequest for thread_id={thread_id!r} "
+                f"(id={hitl_req.id})"
+            )
+    except Exception as err:
+        logger.error(f"[HITL] Could not ensure HITLRequest record: {err}")
 
 
 async def start_agent_build(
@@ -61,6 +110,11 @@ async def start_agent_build(
     job_id = str(uuid.uuid4())
     try:
         _, event_manager = queue_service.create_queue(job_id)
+        # Gate that lets generate_agent_events() wait until the SSE consumer
+        # (GET /events) is connected before firing astream(). Prevents the
+        # first-message blank-chat issue caused by the fresh TCP connection
+        # delay (~100-400ms) on new browser sessions.
+        event_manager._consumer_ready = asyncio.Event()
         task_coro = generate_agent_events(
             agent_id=agent_id,
             background_tasks=background_tasks,
@@ -90,6 +144,14 @@ async def get_agent_events_response(
     """Get events for a specific build job, either as a stream or single event."""
     try:
         main_queue, event_manager, event_task, _ = queue_service.get_queue_data(job_id)
+
+        # Signal that a consumer has connected so generate_agent_events() can
+        # proceed past its wait gate and start astream().  This is done BEFORE
+        # the streaming/polling branch so both paths unblock the producer.
+        _consumer_ready_ev: asyncio.Event | None = event_manager.__dict__.get("_consumer_ready")
+        if _consumer_ready_ev is not None:
+            _consumer_ready_ev.set()
+
         if event_delivery in (EventDeliveryType.STREAMING, EventDeliveryType.DIRECT):
             if event_task is None:
                 logger.error(f"No event task found for job {job_id}")
@@ -208,7 +270,7 @@ async def generate_agent_events(
     if not inputs:
         inputs = InputValueRequest(session=str(agent_id))
 
-    async def build_graph_and_get_order() -> tuple[list[str], list[str], Graph | LangGraphAdapter]:
+    async def build_graph_and_get_order() -> tuple[list[str], list[str], LangGraphAdapter]:
         start_time = time.perf_counter()
         components_count = 0
         graph = None
@@ -255,7 +317,7 @@ async def generate_agent_events(
             ),
         )
 
-    async def create_graph(fresh_session, agent_id_str: str, agent_name: str | None) -> Graph | LangGraphAdapter:
+    async def create_graph(fresh_session, agent_id_str: str, agent_name: str | None) -> LangGraphAdapter:
         if inputs is not None and getattr(inputs, "session", None) is not None:
             effective_session_id = inputs.session
         else:
@@ -283,9 +345,8 @@ async def generate_agent_events(
             session_id=effective_session_id,
         )
 
-    def sort_vertices(graph: Graph | LangGraphAdapter) -> list[str]:
+    def sort_vertices(graph: LangGraphAdapter) -> list[str]:
         try:
-            # LangGraphAdapter uses its own sorting logic with stop/start component support
             if isinstance(graph, LangGraphAdapter):
                 # Call sort_vertices with stop/start component IDs for filtering
                 # This enables "Run Till Specific Component" functionality
@@ -303,175 +364,6 @@ async def generate_agent_events(
             else:
                 return graph.sort_vertices()
 
-    async def _build_vertex(vertex_id: str, graph: Graph, event_manager: EventManager) -> VertexBuildResponse:
-        agent_id_str = str(agent_id)
-        next_runnable_vertices = []
-        top_level_vertices = []
-        start_time = time.perf_counter()
-        error_message = None
-        try:
-            vertex = graph.get_vertex(vertex_id)
-            try:
-                lock = chat_service.async_cache_locks[agent_id_str]
-                vertex_build_result = await graph.build_vertex(
-                    vertex_id=vertex_id,
-                    user_id=str(current_user.id),
-                    inputs_dict=inputs.model_dump() if inputs else {},
-                    files=files,
-                    get_cache=chat_service.get_cache,
-                    set_cache=chat_service.set_cache,
-                    event_manager=event_manager,
-                )
-                result_dict = vertex_build_result.result_dict
-                params = vertex_build_result.params
-                valid = vertex_build_result.valid
-                artifacts = vertex_build_result.artifacts
-                next_runnable_vertices = await graph.get_next_runnable_vertices(lock, vertex=vertex, cache=False)
-                top_level_vertices = graph.get_top_level_vertices(next_runnable_vertices)
-
-                result_data_response = ResultDataResponse.model_validate(result_dict, from_attributes=True)
-            except Exception as exc:  # noqa: BLE001
-                if isinstance(exc, ComponentBuildError):
-                    params = exc.message
-                    tb = exc.formatted_traceback
-                else:
-                    tb = traceback.format_exc()
-                    logger.exception("Error building Component")
-                    params = format_exception_message(exc)
-                message = {"errorMessage": params, "stackTrace": tb}
-                valid = False
-                error_message = params
-                output_label = vertex.outputs[0]["name"] if vertex.outputs else "output"
-                outputs = {output_label: OutputValue(message=message, type="error")}
-                result_data_response = ResultDataResponse(results={}, outputs=outputs)
-                artifacts = {}
-                background_tasks.add_task(graph.end_all_traces_in_context(error=exc))
-
-            result_data_response.message = artifacts
-
-            # Log the vertex build
-            if not vertex.will_stream and log_builds:
-                background_tasks.add_task(
-                    log_vertex_build,
-                    agent_id=agent_id_str,
-                    vertex_id=vertex_id,
-                    valid=valid,
-                    params=params,
-                    data=result_data_response,
-                    artifacts=artifacts,
-                )
-            else:
-                await chat_service.set_cache(agent_id_str, graph)
-
-            timedelta = time.perf_counter() - start_time
-            duration = format_elapsed_time(timedelta)
-            result_data_response.duration = duration
-            result_data_response.timedelta = timedelta
-            vertex.add_build_time(timedelta)
-            inactivated_vertices = list(graph.inactivated_vertices)
-            graph.reset_inactivated_vertices()
-            graph.reset_activated_vertices()
-            # graph.stop_vertex tells us if the user asked
-            # to stop the build of the graph at a certain vertex
-            # if it is in next_vertices_ids, we need to remove other
-            # vertices from next_vertices_ids
-            if graph.stop_vertex and graph.stop_vertex in next_runnable_vertices:
-                next_runnable_vertices = [graph.stop_vertex]
-
-            if not graph.run_manager.vertices_being_run and not next_runnable_vertices:
-                background_tasks.add_task(graph.end_all_traces_in_context())
-
-            build_response = VertexBuildResponse(
-                inactivated_vertices=list(set(inactivated_vertices)),
-                next_vertices_ids=list(set(next_runnable_vertices)),
-                top_level_vertices=list(set(top_level_vertices)),
-                valid=valid,
-                params=params,
-                id=vertex.id,
-                data=result_data_response,
-            )
-            background_tasks.add_task(
-                telemetry_service.log_package_component,
-                ComponentPayload(
-                    component_name=vertex_id.split("-")[0],
-                    component_seconds=int(time.perf_counter() - start_time),
-                    component_success=valid,
-                    component_error_message=error_message,
-                ),
-            )
-        except Exception as exc:
-            background_tasks.add_task(
-                telemetry_service.log_package_component,
-                ComponentPayload(
-                    component_name=vertex_id.split("-")[0],
-                    component_seconds=int(time.perf_counter() - start_time),
-                    component_success=False,
-                    component_error_message=str(exc),
-                ),
-            )
-            logger.exception("Error building Component")
-            message = parse_exception(exc)
-            raise HTTPException(status_code=500, detail=message) from exc
-
-        return build_response
-
-
-     # Track completed vertices and use lock for thread-safe access
-    completed_vertices: set[str] = set()
-    completed_lock = asyncio.Lock()
-
-    async def build_vertices(
-        vertex_id: str,
-        graph: Graph,
-        event_manager: EventManager,
-    ) -> None:
-        """Build vertices and handle their events.
-
-        Args:
-            vertex_id: The ID of the vertex to build
-            graph: The graph instance
-            event_manager: Manager for handling events
-        """
-        try:
-            vertex_build_response: VertexBuildResponse = await _build_vertex(vertex_id, graph, event_manager)
-        except asyncio.CancelledError as exc:
-            logger.error(f"Build cancelled: {exc}")
-            raise
-
-        # Mark this vertex as completed
-        async with completed_lock:
-            completed_vertices.add(vertex_id)
-
-        # send built event or error event
-        try:
-            vertex_build_response_json = vertex_build_response.model_dump_json()
-            build_data = json.loads(vertex_build_response_json)
-        except Exception as exc:
-            msg = f"Error serializing vertex build response: {exc}"
-            raise ValueError(msg) from exc
-
-        event_manager.on_end_vertex(data={"build_data": build_data})
-
-        if vertex_build_response.valid and vertex_build_response.next_vertices_ids:
-            tasks = []
-            for next_vertex_id in vertex_build_response.next_vertices_ids:
-                # Check if all predecessors of next_vertex are completed
-                async with completed_lock:
-                    predecessors = graph.predecessor_map.get(next_vertex_id, [])
-                    all_predecessors_complete = all(pred in completed_vertices for pred in predecessors)
-
-                if all_predecessors_complete:
-                    task = asyncio.create_task(
-                        build_vertices(
-                            next_vertex_id,
-                            graph,
-                            event_manager,
-                        )
-                    )
-                    tasks.append(task)
-            if tasks:
-                await asyncio.gather(*tasks)
-
     try:
         ids, vertices_to_run, graph = await build_graph_and_get_order()
     except Exception as e:
@@ -484,40 +376,132 @@ async def generate_agent_events(
 
     event_manager.on_vertices_sorted(data={"ids": ids, "to_run": vertices_to_run})
 
-    # Separate input vertices from non-input vertices
-    # Input vertices (like ChatInput) must complete FIRST to ensure user message is stored
-    # before AI processing begins
-    input_ids = [vid for vid in ids if graph.get_vertex(vid) and graph.get_vertex(vid).is_input]
-    non_input_ids = [vid for vid in ids if vid not in input_ids]
-
-    # First, build input vertices SEQUENTIALLY (ensures user message is stored first)
-    # Using sequential instead of parallel to guarantee event ordering
-    for vertex_id in input_ids:
-        await build_vertices(vertex_id, graph, event_manager)
-
-    # Then, build non-input vertices in parallel
-    if non_input_ids:
-        tasks = []
-        for vertex_id in non_input_ids:
-            task = asyncio.create_task(build_vertices(vertex_id, graph, event_manager))
-            tasks.append(task)
+    # ── Wait for the SSE consumer to connect before starting astream() ──
+    # generate_agent_events() runs as a background task the moment POST /run
+    # returns.  The frontend then makes a SECOND request: GET /events.  On the
+    # first message of a new browser session this requires a fresh TCP
+    # connection (~100-400ms).  Without this gate, astream() fires all events
+    # before the consumer connects; they queue up and flush as a burst → the
+    # user sees a blank chat with no streaming.
+    #
+    # start_agent_build() attaches an asyncio.Event (_consumer_ready) to the
+    # event_manager.  get_agent_events_response() sets it at its very start
+    # (before the streaming/polling branch) so BOTH delivery modes unblock us.
+    # We check __dict__ directly because EventManager.__getattr__ never raises
+    # AttributeError — hasattr() would always return True there.
+    _consumer_ready_ev: asyncio.Event | None = event_manager.__dict__.get("_consumer_ready")
+    if _consumer_ready_ev is not None:
         try:
-            await asyncio.gather(*tasks)
-        except asyncio.CancelledError:
-            background_tasks.add_task(graph.end_all_traces_in_context())
-            raise
-        except Exception as e:
-            logger.error(f"Error building vertices: {e}")
-            custom_component = graph.get_vertex(vertex_id).custom_component
-            trace_name = getattr(custom_component, "trace_name", None)
-            error_message = ErrorMessage(
-                agent_id=agent_id,
-                exception=e,
-                session_id=graph.session_id,
-                trace_name=trace_name,
-            )
-            event_manager.on_error(data=error_message.data)
-            raise
+            await asyncio.wait_for(_consumer_ready_ev.wait(), timeout=5.0)
+            # Brief yield so consume_and_yield() can start iterating the queue
+            # before the first astream() event fires.
+            await asyncio.sleep(0.05)
+        except asyncio.TimeoutError:
+            logger.warning(f"[{run_id}] SSE consumer did not connect within 5 s, proceeding anyway")
+
+    # ── LangGraph compiled execution via astream() ──
+    # All graphs (including cyclic ones) execute through the compiled graph.
+    # Events (end_vertex) are emitted from inside create_node_function()
+    # via the event_manager, so the frontend receives the exact same
+    # NDJSON event stream. Zero frontend changes.
+    if not isinstance(graph, LangGraphAdapter) or graph.compiled_app is None:
+        msg = "LangGraph workflow not compiled. Check graph structure for errors."
+        logger.error(msg)
+        error_message = ErrorMessage(agent_id=agent_id, exception=ValueError(msg))
+        event_manager.on_error(data=error_message.data)
+        raise ValueError(msg)
+
+    logger.info("Executing graph via compiled astream")
+    try:
+        from agentcore.schema.schema import INPUT_FIELD_NAME
+
+        run_inputs = inputs.model_dump() if inputs else {}
+
+        # Store event_manager on adapter so node_function can access it
+        # via vertex.graph._event_manager (must NOT be in state — not serializable)
+        graph._event_manager = event_manager
+
+        initial_state = {
+            "vertices_results": {},
+            "artifacts": {},
+            "outputs_logs": {},
+            "current_vertex": "",
+            "completed_vertices": [],
+            "events": [],
+            "agent_id": str(agent_id),
+            "agent_name": agent_name or "",
+            "session_id": getattr(inputs, "session", str(agent_id)) if inputs else str(agent_id),
+            "user_id": str(current_user.id),
+            "input_data": run_inputs,
+            "files": files,
+            "fallback_to_env_vars": False,
+            "stop_component_id": stop_component_id,
+            "start_component_id": start_component_id,
+            "predecessor_map": dict(graph.predecessor_map),
+            "successor_map": dict(graph.successor_map),
+            "in_degree_map": dict(graph.in_degree_map),
+            "cycle_vertices": list(graph.cycle_vertices),
+            "is_cyclic": graph.is_cyclic,
+            "current_layer": 0,
+            "vertices_layers": graph.vertices_layers if hasattr(graph, "vertices_layers") else [],
+            "input_vertex_ids": list(graph._is_input_vertices),
+        }
+
+        _thread_id = initial_state.get("session_id") or str(agent_id)
+        _lg_config = {"configurable": {"thread_id": _thread_id}}
+        async for _state_update in graph.compiled_app.astream(initial_state, config=_lg_config):
+            pass  # end_vertex events already emitted by node_function
+
+        # After astream() returns normally: check if the graph was interrupted.
+        # Only applicable when a checkpointer is attached (HITL graphs).
+        # Non-HITL graphs (no checkpointer) skip this block entirely — calling
+        # aget_state() without a checkpointer raises "No checkpointer set".
+        try:
+            if getattr(graph.compiled_app, "checkpointer", None) is not None:
+                _graph_state = await graph.compiled_app.aget_state(_lg_config)
+            else:
+                _graph_state = None
+            if _graph_state is not None and _graph_state.next:
+                # Extract interrupt data from the graph state
+                _interrupt_data = {}
+                if _graph_state.tasks and _graph_state.tasks[0].interrupts:
+                    _interrupt_data = _graph_state.tasks[0].interrupts[0].value or {}
+
+                # Fallback: ensure HITLRequest record exists in DB.
+                # _persist_hitl_request() in nodes.py may have failed silently
+                # (e.g., DB session issue during LangGraph execution).  This
+                # fallback guarantees the HITL Approvals page can find the record.
+                await _ensure_hitl_record(
+                    thread_id=_thread_id,
+                    agent_id=str(agent_id),
+                    session_id=_thread_id,
+                    user_id=str(current_user.id),
+                    interrupt_data=_interrupt_data,
+                )
+
+                from agentcore.graph_langgraph.nodes import save_hitl_checkpoint_after_interrupt
+                await save_hitl_checkpoint_after_interrupt(_thread_id)
+        except Exception as _chk_err:
+            logger.warning(f"[HITL] Could not save checkpoint after interrupt: {_chk_err}")
+
+    except asyncio.CancelledError:
+        background_tasks.add_task(graph.end_all_traces_in_context())
+        raise
+    # NOTE: GraphInterrupt is NOT caught here.
+    # When interrupt() is called inside a LangGraph node, LangGraph catches the
+    # GraphInterrupt internally (saves checkpoint, marks graph interrupted) and
+    # astream() terminates *normally*.  All HITL work (frontend events + DB
+    # persistence) is done inside the except GraphInterrupt block in nodes.py,
+    # which is the only reliable execution point for interrupt handling.
+    except Exception as e:
+        logger.error(f"Error in LangGraph execution: {e}")
+        error_message = ErrorMessage(
+            agent_id=agent_id,
+            exception=e,
+            session_id=graph.session_id if hasattr(graph, "session_id") else None,
+        )
+        event_manager.on_error(data=error_message.data)
+        raise
 
     event_manager.on_end(data={})
     await graph.end_all_traces()

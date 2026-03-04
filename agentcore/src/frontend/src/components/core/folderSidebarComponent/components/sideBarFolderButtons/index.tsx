@@ -467,6 +467,22 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
+        {/* HITL Approvals */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="md"
+            isActive={pathname.startsWith("/hitl-approvals")}
+            onClick={() => _navigate("/hitl-approvals")}
+            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+          >
+            <ForwardedIconComponent
+              name="UserCheck"
+              className="h-4 w-4"
+            />
+            {t("HITL Approvals")}
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+
         {/* Agent Registry */}
         {can("view_published_agents") && (
           <SidebarMenuItem>

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 from loguru import logger
 from pydantic import BaseModel
 
-from agentcore.graph_langgraph import LangGraphVertex as Vertex
+from agentcore.graph_langgraph import LangGraphVertex
 from agentcore.processing.utils import validate_and_repair_json
 from agentcore.schema.graph import InputValue, Tweaks
 from agentcore.schema.schema import INPUT_FIELD_NAME
@@ -13,7 +13,7 @@ from agentcore.services.deps import get_settings_service
 
 if TYPE_CHECKING:
     from agentcore.api.v1_schemas import InputValueRequest
-    from agentcore.graph_langgraph import LangGraphAdapter as Graph, RunOutputs
+    from agentcore.graph_langgraph import LangGraphAdapter, RunOutputs
     from agentcore.services.event_manager import EventManager
 
 
@@ -23,7 +23,7 @@ class Result(BaseModel):
 
 
 async def run_graph_internal(
-    graph: Graph,
+    graph: LangGraphAdapter,
     agent_id: str,
     *,
     stream: bool = False,
@@ -58,11 +58,37 @@ async def run_graph_internal(
         fallback_to_env_vars=fallback_to_env_vars,
         event_manager=event_manager,
     )
+
+    # If the graph was interrupted (HITL node called interrupt()), save the
+    # MemorySaver checkpoint to the DB so resume works after server restarts.
+    # NOTE: The HITLRequest row itself is already created by nodes.py's
+    # _persist_hitl_request() inside the `except GraphInterrupt` block.
+    await _save_checkpoint_if_interrupted(run_outputs)
+
     return run_outputs, effective_session_id
 
 
+async def _save_checkpoint_if_interrupted(
+    run_outputs: list[RunOutputs],
+) -> None:
+    """If the graph was interrupted, serialize the checkpoint to the DB."""
+    for ro in run_outputs:
+        meta = getattr(ro, "metadata", {}) or {}
+        if meta.get("status") != "interrupted":
+            continue
+        thread_id = meta.get("thread_id", "")
+        if not thread_id:
+            continue
+        try:
+            from agentcore.graph_langgraph.nodes import save_hitl_checkpoint_after_interrupt
+
+            await save_hitl_checkpoint_after_interrupt(thread_id)
+        except Exception as exc:
+            logger.warning(f"[HITL] Could not save checkpoint in process.py: {exc}")
+
+
 async def run_graph(
-    graph: Graph,
+    graph: LangGraphAdapter,
     input_value: str,
     input_type: str,
     output_type: str,
@@ -75,7 +101,7 @@ async def run_graph(
     """Runs the given Agentcore Graph with the specified input and returns the outputs.
 
     Args:
-        graph (Graph): The graph to be executed.
+        graph (LangGraphAdapter): The graph to be executed.
         input_value (str): The input value to be passed to the graph.
         input_type (str): The type of the input value.
         output_type (str): The type of the desired output.
@@ -159,7 +185,7 @@ def apply_tweaks(node: dict[str, Any], node_tweaks: dict[str, Any]) -> None:
                 template_data[tweak_name][key] = tweak_value
 
 
-def apply_tweaks_on_vertex(vertex: Vertex, node_tweaks: dict[str, Any]) -> None:
+def apply_tweaks_on_vertex(vertex: LangGraphVertex, node_tweaks: dict[str, Any]) -> None:
     for tweak_name, tweak_value in node_tweaks.items():
         if tweak_name and tweak_value and tweak_name in vertex.params:
             vertex.params[tweak_name] = tweak_value
@@ -200,9 +226,9 @@ def process_tweaks(
     return graph_data
 
 
-def process_tweaks_on_graph(graph: Graph, tweaks: dict[str, dict[str, Any]]):
+def process_tweaks_on_graph(graph: LangGraphAdapter, tweaks: dict[str, dict[str, Any]]):
     for vertex in graph.vertices:
-        if isinstance(vertex, Vertex) and isinstance(vertex.id, str):
+        if isinstance(vertex, LangGraphVertex) and isinstance(vertex.id, str):
             node_id = vertex.id
             if node_tweaks := tweaks.get(node_id):
                 apply_tweaks_on_vertex(vertex, node_tweaks)

@@ -335,12 +335,16 @@ class SchedulerService(Service):
 
         # Empty input_value so the flow runs with its own configured node values.
         # The scheduler should NOT inject artificial text into the agent's inputs.
+        # Each scheduled execution gets a unique session_id so concurrent runs
+        # of the same agent don't share LangGraph checkpoints (critical for HITL).
+        from uuid import uuid4
+
         input_request = SimplifiedAPIRequest(
             input_value="",
             input_type="chat",
             output_type="chat",
             tweaks={},
-            session_id=None,
+            session_id=str(uuid4()),
         )
 
         return await simple_run_agent_task(

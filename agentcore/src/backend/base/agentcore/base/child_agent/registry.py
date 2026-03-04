@@ -1,8 +1,8 @@
-# TARGET PATH: src/backend/base/agentcore/base/child_flow/registry.py
-"""Child Flow Registry for discovering and managing child flows.
+# TARGET PATH: src/backend/base/agentcore/base/child_agent/registry.py
+"""Child Agent Registry for discovering and managing child agents.
 
 This module provides a registry for discovering available agents that can be
-called as child flows within a parent flow.
+called as child agents within a parent agent.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class FlowInfo:
-    """Information about a flow available as a child flow."""
+class AgentInfo:
+    """Information about an agent available as a child agent."""
 
     id: str
     name: str
@@ -41,21 +41,21 @@ class FlowInfo:
         }
 
 
-class ChildFlowRegistry:
-    """Registry for discovering available child flows.
+class ChildAgentRegistry:
+    """Registry for discovering available child agents.
 
-    This class provides methods for discovering agents/flows that can be called
-    as child flows, with support for filtering and validation.
+    This class provides methods for discovering agents that can be called
+    as child agents, with support for filtering and validation.
     """
 
     @classmethod
-    async def list_available_flows(
+    async def list_available_agents(
         cls,
         user_id: str,
-        exclude_flow_id: str | None = None,
+        exclude_agent_id: str | None = None,
         project_id: str | None = None,
-    ) -> list[FlowInfo]:
-        """List all agents available as child flows."""
+    ) -> list[AgentInfo]:
+        """List all agents available as child agents."""
         if not user_id:
             msg = "User ID is required"
             raise ValueError(msg)
@@ -75,11 +75,11 @@ class ChildFlowRegistry:
                 result = []
                 for agent in agents:
                     agent_id_str = str(agent.id)
-                    if exclude_flow_id and agent_id_str == exclude_flow_id:
+                    if exclude_agent_id and agent_id_str == exclude_agent_id:
                         continue
 
                     result.append(
-                        FlowInfo(
+                        AgentInfo(
                             id=agent_id_str,
                             name=agent.name,
                             description=agent.description,
@@ -96,11 +96,11 @@ class ChildFlowRegistry:
             raise ValueError(msg) from e
 
     @classmethod
-    async def get_flow_by_name(
+    async def get_agent_by_name(
         cls,
-        flow_name: str,
+        agent_name: str,
         user_id: str,
-    ) -> FlowInfo | None:
+    ) -> AgentInfo | None:
         """Get an agent by its name."""
         if not user_id:
             msg = "User ID is required"
@@ -112,13 +112,13 @@ class ChildFlowRegistry:
 
                 stmt = (
                     select(Agent)
-                    .where(Agent.name == flow_name)
+                    .where(Agent.name == agent_name)
                     .where(Agent.user_id == uuid_user_id)
                 )
                 agent = (await session.exec(stmt)).first()
 
                 if agent:
-                    return FlowInfo(
+                    return AgentInfo(
                         id=str(agent.id),
                         name=agent.name,
                         description=agent.description,
@@ -133,11 +133,11 @@ class ChildFlowRegistry:
             return None
 
     @classmethod
-    async def get_flow_by_id(
+    async def get_agent_by_id(
         cls,
-        flow_id: str,
+        agent_id: str,
         user_id: str,
-    ) -> FlowInfo | None:
+    ) -> AgentInfo | None:
         """Get an agent by its ID."""
         if not user_id:
             msg = "User ID is required"
@@ -145,11 +145,11 @@ class ChildFlowRegistry:
 
         try:
             async with session_scope() as session:
-                uuid_flow_id = UUID(flow_id) if isinstance(flow_id, str) else flow_id
-                agent = await session.get(Agent, uuid_flow_id)
+                uuid_agent_id = UUID(agent_id) if isinstance(agent_id, str) else agent_id
+                agent = await session.get(Agent, uuid_agent_id)
 
                 if agent and str(agent.user_id) == user_id:
-                    return FlowInfo(
+                    return AgentInfo(
                         id=str(agent.id),
                         name=agent.name,
                         description=agent.description,
@@ -164,25 +164,25 @@ class ChildFlowRegistry:
             return None
 
     @classmethod
-    async def validate_child_flow_call(
+    async def validate_child_agent_call(
         cls,
-        parent_flow_id: str,
-        child_flow_name: str,
+        parent_agent_id: str,
+        child_agent_name: str,
         user_id: str,
     ) -> tuple[bool, str | None]:
-        """Validate that a child flow call is allowed."""
-        child_flow = await cls.get_flow_by_name(child_flow_name, user_id)
+        """Validate that a child agent call is allowed."""
+        child_agent = await cls.get_agent_by_name(child_agent_name, user_id)
 
-        if not child_flow:
-            return False, f"Child flow '{child_flow_name}' not found"
+        if not child_agent:
+            return False, f"Child agent '{child_agent_name}' not found"
 
-        if child_flow.id == parent_flow_id:
-            return False, "A flow cannot call itself as a child flow"
+        if child_agent.id == parent_agent_id:
+            return False, "An agent cannot call itself as a child agent"
 
         return True, None
 
     @classmethod
-    async def get_flow_names(cls, user_id: str, exclude_flow_id: str | None = None) -> list[str]:
-        """Get list of agent names available as child flows."""
-        flows = await cls.list_available_flows(user_id, exclude_flow_id)
-        return [flow.name for flow in flows]
+    async def get_agent_names(cls, user_id: str, exclude_agent_id: str | None = None) -> list[str]:
+        """Get list of agent names available as child agents."""
+        agents = await cls.list_available_agents(user_id, exclude_agent_id)
+        return [agent.name for agent in agents]

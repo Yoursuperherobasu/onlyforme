@@ -23,8 +23,8 @@ from agentcore.utils.async_helpers import run_until_complete
 if TYPE_CHECKING:
     from langchain_core.callbacks import BaseCallbackHandler
 
-    from agentcore.graph_langgraph import LangGraphAdapter as Graph
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphAdapter
+    from agentcore.graph_langgraph import LangGraphVertex
     from agentcore.schema.dotdict import dotdict
     from agentcore.schema.schema import OutputValue
     from agentcore.services.storage.service import StorageService
@@ -79,7 +79,7 @@ class ExecutableNode(NodeBase):
         self.field_order: list[str] | None = None
         self.frozen: bool = False
         self.build_parameters: dict | None = None
-        self._vertex: Vertex | None = None
+        self._vertex: LangGraphVertex | None = None
         self.function: Callable | None = None
         self.repr_value: Any = ""
         self.status: Any | None = None
@@ -450,7 +450,7 @@ class ExecutableNode(NodeBase):
         """
         return validate.create_function(self._code, self._function_entrypoint_name)
 
-    async def load_agent(self, agent_id: str, tweaks: dict | None = None) -> Graph:
+    async def load_agent(self, agent_id: str, tweaks: dict | None = None) -> LangGraphAdapter:
         if not self.user_id:
             msg = "Session is invalid"
             raise ValueError(msg)

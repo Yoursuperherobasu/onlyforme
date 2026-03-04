@@ -160,6 +160,9 @@ class ChatOutput(ChatNode):
         # If we reuse the input message (which may have an ID from a previous store),
         # astore_message will UPDATE that existing record instead of creating a new one.
         message = Message(text=text)
+        # Preserve content_blocks from the input message (e.g. SupervisorAgent trace steps)
+        if isinstance(self.input_value, Message) and self.input_value.content_blocks:
+            message.content_blocks = self.input_value.content_blocks
 
         # Set message properties
         message.sender = self.sender

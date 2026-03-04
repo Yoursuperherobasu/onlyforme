@@ -39,6 +39,7 @@ from agentcore.api.a2a import router as a2a_router
 from agentcore.api.packages import router as packages_router
 from agentcore.api.teams import router as teams_router
 from agentcore.api.triggers import router as triggers_router
+from agentcore.api.human_in_loop import router as hitl_router
 from agentcore.api.mcp_registry import router as mcp_registry_router
 
 router = APIRouter(
@@ -83,4 +84,5 @@ router.include_router(a2a_router)
 router.include_router(packages_router)
 router.include_router(teams_router)
 router.include_router(triggers_router)
+router.include_router(hitl_router)
 router.include_router(mcp_registry_router)

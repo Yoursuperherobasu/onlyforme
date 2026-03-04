@@ -23,6 +23,11 @@ class Properties(BaseModel):
     state: Literal["partial", "complete"] = "complete"
     targets: list = []
 
+    # HITL metadata — set when a HumanApproval node pauses for human review
+    hitl: bool | None = None
+    thread_id: str | None = None
+    actions: list[str] | None = None
+
     @field_validator("source", mode="before")
     @classmethod
     def validate_source(cls, v):
