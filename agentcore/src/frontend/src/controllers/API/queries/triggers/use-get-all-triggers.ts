@@ -9,7 +9,7 @@ export interface TriggerInfo {
   agent_id: string;
   agent_name: string;
   deployment_id: string | null;
-  trigger_type: "schedule" | "folder_monitor";
+  trigger_type: "schedule" | "folder_monitor" | "email_monitor";
   trigger_config: Record<string, any>;
   is_active: boolean;
   environment: string;

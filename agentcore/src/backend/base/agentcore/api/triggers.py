@@ -232,8 +232,8 @@ async def run_trigger_now(
                     version=record.version,
                 )
             )
-        else:
-            # For folder monitors, re-register to trigger an immediate scan
+        elif record.trigger_type in (TriggerTypeEnum.FOLDER_MONITOR, TriggerTypeEnum.EMAIL_MONITOR):
+            # For folder/email monitors, re-register to trigger an immediate scan
             await _register_trigger(record)
     except Exception as e:
         logger.exception(f"Failed to manually fire trigger {trigger_id}")
@@ -271,6 +271,9 @@ async def _register_trigger(record) -> None:
         trigger_service = get_trigger_service()
         await trigger_service.register_folder_monitor(record)
 
+    elif trigger_type == TriggerTypeEnum.EMAIL_MONITOR:
+        trigger_service = get_trigger_service()
+        await trigger_service.register_email_monitor(record)
 
 
 async def _unregister_trigger(trigger_id: UUID, trigger_type: TriggerTypeEnum) -> None:

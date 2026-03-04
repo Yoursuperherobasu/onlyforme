@@ -22,6 +22,7 @@ router = APIRouter(prefix="/connector-catalogue", tags=["Connector Catalogue"])
 
 DB_PROVIDERS = {"postgresql", "oracle", "sqlserver", "mysql"}
 STORAGE_PROVIDERS = {"azure_blob", "sharepoint"}
+EMAIL_PROVIDERS = {"outlook"}
 
 
 # ---------- Encryption helpers ----------
@@ -76,6 +77,16 @@ def _encrypt_provider_config(provider: str, config: dict) -> dict:
         encrypted["connection_string"] = _encrypt_password(encrypted["connection_string"])
     elif provider == "sharepoint" and "client_secret" in encrypted:
         encrypted["client_secret"] = _encrypt_password(encrypted["client_secret"])
+    elif provider in EMAIL_PROVIDERS:
+        for key in ("client_secret", "access_token", "refresh_token"):
+            if key in encrypted:
+                encrypted[key] = _encrypt_password(encrypted[key])
+        if "linked_accounts" in encrypted:
+            encrypted["linked_accounts"] = [dict(acct) for acct in encrypted["linked_accounts"]]
+            for acct in encrypted["linked_accounts"]:
+                for key in ("access_token", "refresh_token"):
+                    if key in acct:
+                        acct[key] = _encrypt_password(acct[key])
     return encrypted
 
 
@@ -87,6 +98,22 @@ def _decrypt_provider_config(provider: str, config: dict) -> dict:
             decrypted["connection_string"] = _decrypt_password(decrypted["connection_string"])
         elif provider == "sharepoint" and "client_secret" in decrypted:
             decrypted["client_secret"] = _decrypt_password(decrypted["client_secret"])
+        elif provider in EMAIL_PROVIDERS:
+            for key in ("client_secret", "access_token", "refresh_token"):
+                if key in decrypted:
+                    try:
+                        decrypted[key] = _decrypt_password(decrypted[key])
+                    except Exception:
+                        pass
+            if "linked_accounts" in decrypted:
+                decrypted["linked_accounts"] = [dict(acct) for acct in decrypted["linked_accounts"]]
+                for acct in decrypted["linked_accounts"]:
+                    for key in ("access_token", "refresh_token"):
+                        if key in acct:
+                            try:
+                                acct[key] = _decrypt_password(acct[key])
+                            except Exception:
+                                pass
     except Exception:
         pass
     return decrypted
@@ -255,6 +282,16 @@ def _serialize_connector(row: ConnectorCatalogue) -> dict:
             safe_config["connection_string"] = "********"
         elif row.provider == "sharepoint" and "client_secret" in safe_config:
             safe_config["client_secret"] = "********"
+        elif row.provider in EMAIL_PROVIDERS:
+            for key in ("client_secret", "access_token", "refresh_token"):
+                if key in safe_config:
+                    safe_config[key] = "********"
+            if "linked_accounts" in safe_config:
+                safe_config["linked_accounts"] = [dict(acct) for acct in safe_config["linked_accounts"]]
+                for acct in safe_config["linked_accounts"]:
+                    for key in ("access_token", "refresh_token"):
+                        if key in acct:
+                            acct[key] = "********"
 
     return {
         "id": str(row.id),
@@ -572,6 +609,89 @@ def _test_sharepoint_connection(config: dict) -> dict:
     }
 
 
+async def _test_outlook_connection(config: dict) -> dict:
+    """Test an Outlook connection by calling Microsoft Graph /me endpoint.
+
+    Attempts a token refresh if the stored access_token is expired and a
+    refresh_token is available.  When a refresh occurs the *config* dict is
+    mutated in-place so the caller can persist the updated tokens.
+
+    Returns dict with ``_tokens_refreshed: True`` when tokens were updated.
+    """
+    import httpx
+
+    start = time.time()
+    tokens_refreshed = False
+
+    linked_accounts = config.get("linked_accounts", [])
+    if not linked_accounts:
+        raise HTTPException(
+            status_code=400,
+            detail="No linked mailbox accounts. Use the OAuth flow to link a mailbox first.",
+        )
+
+    acct = linked_accounts[0]
+    access_token = acct.get("access_token", "")
+    account_email = acct.get("email", "unknown")
+
+    if not access_token:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No access token for account '{account_email}'. Re-link the mailbox via OAuth.",
+        )
+
+    # If token looks expired, try to refresh before testing
+    expires_at = acct.get("token_expires_at", 0)
+    if expires_at and time.time() >= (expires_at - 60):
+        refresh_token = acct.get("refresh_token", "")
+        tenant_id = config.get("tenant_id", "")
+        client_id = config.get("client_id", "")
+        client_secret = config.get("client_secret", "")
+        if refresh_token and tenant_id and client_id and client_secret:
+            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+            async with httpx.AsyncClient(timeout=15) as client:
+                refresh_resp = await client.post(token_url, data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                    "scope": "Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access",
+                })
+            if refresh_resp.status_code == 200:
+                token_data = refresh_resp.json()
+                access_token = token_data["access_token"]
+                # Persist refreshed tokens back into config so caller can save
+                acct["access_token"] = access_token
+                acct["refresh_token"] = token_data.get("refresh_token", refresh_token)
+                acct["token_expires_at"] = time.time() + token_data.get("expires_in", 3600)
+                tokens_refreshed = True
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            "https://graph.microsoft.com/v1.0/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    latency_ms = round((time.time() - start) * 1000, 2)
+
+    if resp.status_code != 200:
+        detail = resp.text[:300] if resp.text else str(resp.status_code)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Microsoft Graph /me returned {resp.status_code}: {detail}",
+        )
+
+    data = resp.json()
+    display = data.get("displayName") or data.get("userPrincipalName") or "unknown"
+    return {
+        "success": True,
+        "message": f"Authenticated as {display} ({account_email})",
+        "latency_ms": latency_ms,
+        "tables_metadata": None,
+        "_tokens_refreshed": tokens_refreshed,
+    }
+
+
 # ---------- Endpoints ----------
 
 @router.get("")
@@ -668,8 +788,8 @@ async def create_connector(
     now = datetime.now(timezone.utc)
     provider = payload.provider.lower()
 
-    if provider in STORAGE_PROVIDERS:
-        # Azure Blob / SharePoint: credentials go into provider_config, not DB fields
+    if provider in STORAGE_PROVIDERS | EMAIL_PROVIDERS:
+        # Azure Blob / SharePoint / Outlook: credentials go into provider_config, not DB fields
         raw_config = payload.provider_config or {}
         encrypted_config = _encrypt_provider_config(provider, raw_config)
         row = ConnectorCatalogue(
@@ -781,10 +901,19 @@ async def update_connector(
 
     effective_provider = row.provider
 
-    if effective_provider in STORAGE_PROVIDERS:
-        # Storage provider: update provider_config, clear DB fields
+    if effective_provider in STORAGE_PROVIDERS | EMAIL_PROVIDERS:
+        # Storage / Email provider: update provider_config, clear DB fields
         if payload.provider_config is not None:
-            row.provider_config = _encrypt_provider_config(effective_provider, payload.provider_config)
+            if effective_provider in EMAIL_PROVIDERS and row.provider_config:
+                # Preserve linked_accounts (and tokens) when editing Outlook connectors
+                existing = _decrypt_provider_config(effective_provider, row.provider_config)
+                merged = {**existing, **payload.provider_config}
+                # Don't let an empty client_secret overwrite the stored one
+                if not payload.provider_config.get("client_secret") and existing.get("client_secret"):
+                    merged["client_secret"] = existing["client_secret"]
+                row.provider_config = _encrypt_provider_config(effective_provider, merged)
+            else:
+                row.provider_config = _encrypt_provider_config(effective_provider, payload.provider_config)
         row.host = None
         row.port = None
         row.database_name = None
@@ -877,6 +1006,15 @@ async def test_connector_connection(
                 result = _test_azure_blob_connection(config)
             else:  # sharepoint
                 result = _test_sharepoint_connection(config)
+        elif provider in EMAIL_PROVIDERS:
+            config = _decrypt_provider_config(provider, row.provider_config or {})
+            if override and override.provider_config:
+                # Merge override fields but preserve linked_accounts from stored config
+                linked = config.get("linked_accounts", [])
+                config.update(override.provider_config)
+                if linked and "linked_accounts" not in override.provider_config:
+                    config["linked_accounts"] = linked
+            result = await _test_outlook_connection(config)
         else:
             # DB provider
             host = override.host if override and override.host else row.host
@@ -890,6 +1028,11 @@ async def test_connector_connection(
             )
             ssl_enabled = override.ssl_enabled if override and override.ssl_enabled is not None else row.ssl_enabled
             result = _test_db_connection(provider, host, port, database_name, schema_name, username, password, ssl_enabled)
+
+        # If Outlook tokens were refreshed during the test, persist them
+        if result.get("_tokens_refreshed") and provider in EMAIL_PROVIDERS:
+            row.provider_config = _encrypt_provider_config(provider, config)
+            result.pop("_tokens_refreshed", None)
 
         now = datetime.now(timezone.utc)
         row.status = "connected"
@@ -934,6 +1077,12 @@ async def test_connector_connection_payload(
             if provider == "azure_blob":
                 return _test_azure_blob_connection(config)
             return _test_sharepoint_connection(config)
+
+        if provider in EMAIL_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail="Save the connector first, then link a mailbox via OAuth before testing.",
+            )
 
         if not payload.host or not payload.port or not payload.database_name or not payload.username:
             raise HTTPException(
