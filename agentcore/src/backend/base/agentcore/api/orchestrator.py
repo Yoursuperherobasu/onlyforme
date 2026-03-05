@@ -63,6 +63,7 @@ class OrchMessageResponse(BaseModel):
     deployment_id: UUID | None = None
     category: str = "message"
     properties: dict | None = None
+    content_blocks: list | None = None
 
 
 class OrchChatResponse(BaseModel):
@@ -211,6 +212,42 @@ async def _build_orch_graph(
     return graph, inputs, outputs
 
 
+def _serialize_content_blocks(content_blocks: list) -> list:
+    """Serialize ContentBlock objects to dicts for JSON storage."""
+    serialized = []
+    for block in content_blocks:
+        if hasattr(block, "model_dump"):
+            serialized.append(block.model_dump())
+        elif isinstance(block, dict):
+            serialized.append(block)
+    return serialized
+
+
+def _extract_content_blocks_from_graph(graph) -> list:
+    """Extract content_blocks from all built vertices in the graph.
+
+    After graph execution, intermediate vertices (like Agent/Worker Node)
+    may contain Messages with tool call content_blocks in their artifacts.
+    Output vertices (ChatOutput) typically only have text.
+    """
+    content_blocks: list = []
+    for vertex in graph.vertices:
+        if not getattr(vertex, "built", False):
+            continue
+        artifacts = getattr(vertex, "artifacts", None)
+        if artifacts is None:
+            continue
+        # Direct Message object with content_blocks
+        if hasattr(artifacts, "content_blocks") and artifacts.content_blocks:
+            content_blocks.extend(artifacts.content_blocks)
+        # Dict wrapping a Message
+        elif isinstance(artifacts, dict):
+            for val in artifacts.values():
+                if hasattr(val, "content_blocks") and val.content_blocks:
+                    content_blocks.extend(val.content_blocks)
+    return content_blocks
+
+
 async def _run_agent_from_snapshot(
     *,
     agent_id: str,
@@ -224,10 +261,10 @@ async def _run_agent_from_snapshot(
     deployment_id: str | None = None,
     org_id: str | None = None,
     dept_id: str | None = None,
-) -> tuple[str, str | None, bool]:
+) -> tuple[str, str | None, bool, list]:
     """Build a graph from a published snapshot and run it.
 
-    Returns (response_text, session_id, was_interrupted).
+    Returns (response_text, session_id, was_interrupted, content_blocks).
     """
     from agentcore.processing.process import run_graph_internal
 
@@ -262,7 +299,10 @@ async def _run_agent_from_snapshot(
     )
     if was_interrupted:
         logger.info(f"[ORCH] Graph interrupted (HITL) — no response text to extract")
-        return "", result_session_id, True
+        return "", result_session_id, True, []
+
+    # Extract content_blocks (tool calls, etc.) from all built vertices
+    content_blocks = _extract_content_blocks_from_graph(graph)
 
     run_response = RunResponse(outputs=task_result, session_id=result_session_id)
     encoded = jsonable_encoder(run_response)
@@ -270,7 +310,7 @@ async def _run_agent_from_snapshot(
     response_text = _extract_text(encoded)
     logger.info(f"[ORCH] Extracted response text: {response_text[:500] if response_text else '(empty)'}")
 
-    return response_text, result_session_id, False
+    return response_text, result_session_id, False, content_blocks
 
 
 
@@ -431,7 +471,7 @@ async def orch_chat(
 
         # -- 4. Run the agent from its frozen PROD snapshot ----------------
         logger.info(f"[ORCH] Agent={deployment.agent_name} | session={body.session_id} | input_value={body.input_value!r}")
-        agent_text, _, _was_hitl = await _run_agent_from_snapshot(
+        agent_text, _, _was_hitl, agent_content_blocks = await _run_agent_from_snapshot(
             agent_id=str(agent_id),
             agent_name=deployment.agent_name,
             snapshot=deployment.agent_snapshot,
@@ -445,6 +485,9 @@ async def orch_chat(
 
         if not agent_text or not agent_text.strip():
             agent_text = "Agent did not produce a response."
+
+        # Serialize content_blocks for storage
+        serialized_blocks = _serialize_content_blocks(agent_content_blocks)
 
         # -- 5. Persist agent reply ----------------------------------------
         reply_ts = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -461,7 +504,7 @@ async def orch_chat(
             files=[],
             properties={},
             category="message",
-            content_blocks=[],
+            content_blocks=serialized_blocks,
         )
         saved_agent_msg = await orch_add_message(agent_msg, session)
 
@@ -478,6 +521,7 @@ async def orch_chat(
                 text=agent_text,
                 agent_id=agent_id,
                 deployment_id=deployment_id,
+                content_blocks=serialized_blocks or None,
             ),
         )
 
@@ -556,7 +600,7 @@ async def orch_chat_stream(
     async def _run_and_persist():
         """Background coroutine: run the agent, persist reply, close the queue."""
         try:
-            agent_text, _result_sid, was_interrupted = await _run_agent_from_snapshot(
+            agent_text, _result_sid, was_interrupted, agent_content_blocks = await _run_agent_from_snapshot(
                 agent_id=agent_id_str,
                 agent_name=agent_name,
                 snapshot=snapshot,
@@ -643,6 +687,9 @@ async def orch_chat_stream(
             if not agent_text or not agent_text.strip():
                 agent_text = "Agent did not produce a response."
 
+            # Serialize content_blocks for storage
+            serialized_blocks = _serialize_content_blocks(agent_content_blocks)
+
             # Persist agent reply in orch tables (uses its own DB session)
             from agentcore.services.deps import session_scope
 
@@ -661,7 +708,7 @@ async def orch_chat_stream(
                     files=[],
                     properties={},
                     category="message",
-                    content_blocks=[],
+                    content_blocks=serialized_blocks,
                 )
                 await orch_add_message(agent_msg, db)
 
@@ -669,6 +716,7 @@ async def orch_chat_stream(
             event_manager.on_end(data={
                 "agent_text": agent_text,
                 "message_id": str(agent_msg.id),
+                "content_blocks": serialized_blocks,
             })
         except Exception as exc:
             logger.exception(f"[ORCH-STREAM] Error: {exc}")
@@ -763,6 +811,7 @@ async def get_orch_session_messages(
                 deployment_id=m.deployment_id,
                 category=m.category or "message",
                 properties=m.properties if isinstance(m.properties, dict) else None,
+                content_blocks=m.content_blocks if m.content_blocks else None,
             )
             for m in messages
         ]

@@ -69,8 +69,16 @@ async def load_agent(
 async def find_agent(agent_name: str, user_id: str) -> str | None:
     async with session_scope() as session:
         uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
+        # Try same-user match first
         stmt = select(Agent).where(Agent.name == agent_name).where(Agent.user_id == uuid_user_id)
         agent = (await session.exec(stmt)).first()
+        # Fallback: cross-user lookup (child agents may be owned by the agent creator)
+        if not agent:
+            logger.info(
+                f"Agent '{agent_name}' not found for user {user_id}, trying cross-user lookup"
+            )
+            stmt = select(Agent).where(Agent.name == agent_name)
+            agent = (await session.exec(stmt)).first()
         return agent.id if agent else None
 
 
