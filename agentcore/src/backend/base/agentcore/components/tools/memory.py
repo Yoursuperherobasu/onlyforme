@@ -44,7 +44,7 @@ class MemoryComponent(Node):
             name="memory",
             display_name="External Memory",
             input_types=["Memory"],
-            info="Retrieve messages from an external memory. If empty, it will use the Langbuilder tables.",
+            info="Retrieve messages from an external memory. If empty, it will use the AgentCore tables.",
             advanced=True,
         ),
         DropdownInput(

@@ -200,9 +200,6 @@ async def azure_sso_login(
     user_dict = user.model_dump(mode="json", exclude={"password"})
     await user_cache.set_user(user_dict)
 
-    # -----------------------------
-    # Issue LangBuilder Tokens
-    # -----------------------------
 
     tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
     

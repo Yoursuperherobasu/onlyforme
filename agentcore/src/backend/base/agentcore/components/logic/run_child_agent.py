@@ -1,4 +1,4 @@
-# TARGET PATH: src/backend/base/agentcore/components/logic/run_child_agent.py
+
 """Run a Child Agent component.
 
 This component enables one agent to call another agent as a "child agent",
@@ -56,7 +56,6 @@ class RunChildAgentComponent(Node):
         "Call another agent as a child agent. The child agent receives your input, "
         "executes, and returns its output. Communication uses A2A protocol for tracking."
     )
-    documentation = "https://docs.agentcore.org/components-logic#run-child-agent"
     icon = "GitBranch"
     name = "RunChildAgent"
     beta = False
@@ -357,6 +356,7 @@ class RunChildAgentComponent(Node):
             text=result.output,
             sender="RunChildAgent",
             sender_name=f"Child Agent: {self.child_agent_name}",
+            content_blocks=result.content_blocks or [],
         )
 
     async def run_child_agent_data(self) -> Data:
