@@ -1,8 +1,7 @@
-import { Cookies } from "react-cookie";
-import {  AGENTCORE_REFRESH_TOKEN } from "@/constants/constants";
+import { AGENTCORE_ACCESS_TOKEN } from "@/constants/constants";
 import useAuthStore from "@/stores/authStore";
 import type { useMutationFunctionType } from "@/types/api";
-import { setAuthCookie } from "@/utils/utils";
+import { setLocalStorage } from "@/utils/local-storage-util";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
@@ -22,8 +21,10 @@ export const useRefreshAccessToken: useMutationFunctionType<
 
   async function refreshAccess(): Promise<IRefreshAccessToken> {
     const res = await api.post<IRefreshAccessToken>(`${getURL("REFRESH")}`);
-    const cookies = new Cookies();
-    setAuthCookie(cookies, AGENTCORE_REFRESH_TOKEN, res.data.refresh_token);
+    // Cookies are owned by backend Set-Cookie headers.
+    // Avoid client-side cookie rewrites that can break Secure/SameSite behavior.
+    setLocalStorage(AGENTCORE_ACCESS_TOKEN, res.data.access_token);
+    useAuthStore.getState().setAccessToken(res.data.access_token);
 
     return res.data;
   }

@@ -10,8 +10,7 @@ from multiprocessing import cpu_count
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 import builtins
-from agentcore.services.auth.decorators import verify_permissions
-builtins.verify_permissions = verify_permissions
+
 import sys
 
 if sys.platform == 'win32':

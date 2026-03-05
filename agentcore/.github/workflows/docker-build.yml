@@ -352,7 +352,7 @@ jobs:
 
       - name: Restart HuggingFace Spaces Build
         run: |
-          uv run ./scripts/factory_restart_space.py --space "LangBuilder/LangBuilder" --token ${{ secrets.HUGGINGFACE_API_TOKEN }}
+          uv run ./scripts/factory_restart_space.py --space "AgentCore/AgentCore" --token ${{ secrets.HUGGINGFACE_API_TOKEN }}
 
 
 
