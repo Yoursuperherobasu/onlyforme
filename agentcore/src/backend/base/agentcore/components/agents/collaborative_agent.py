@@ -185,7 +185,7 @@ class CollaborativeAgent(Node):
         IntInput(
             name="max_turns",
             display_name="Max Turns",
-            value=3,
+            value=10,
             advanced=True,
             info="Maximum conversation turns before forcing completion.",
         ),
@@ -425,11 +425,16 @@ Your expertise: {agent_descriptions.get(agent_name, 'your role')}
 
 **YOUR DECISION — choose exactly ONE:**
 1. **CONTRIBUTE** — You have something useful to add. Write your response directly.
-   - Use {mentions_str} to address specific teammates.
+   - **MANDATORY**: Start your response by @mentioning the teammate you're handing off to or responding to. Example: "@Writer here's the research data you need" or "@Researcher can you look into X?"
+   - Available mentions: {mentions_str}
+   - You MUST include at least one @mention in every CONTRIBUTE response. This is how teammates know who should go next.
    - Build on what others have said. Don't repeat work already done.
    - Focus on YOUR expertise. Don't do other team members' jobs.
    - Completing YOUR part is a CONTRIBUTE, not a DONE. Other teammates may still need to do their part.
-2. **PASS** — You have nothing to add right now. Reply with exactly: PASS
+2. **PASS** — Reply with exactly: PASS
+   - PASS if the task does NOT need your specific expertise. Not every task requires every team member.
+   - PASS if your role is irrelevant to what was asked. Read the original task carefully — if it doesn't call for your skill, PASS.
+   - PASS if you have nothing new or useful to add beyond what's already been said.
 3. **DONE: [final answer]** — The ENTIRE TEAM's work is complete (not just yours). Write DONE: followed by the **complete** final deliverable.
    - DONE means every teammate has done their job. If anyone hasn't contributed yet, CONTRIBUTE your part instead.
    - Look at the conversation: has each team member played their role? If not, don't declare DONE.
@@ -488,13 +493,102 @@ Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
             return "PASS"
 
     # ------------------------------------------------------------------
+    # Intelligent routing — decide which agents to involve and in what order
+    # ------------------------------------------------------------------
+
+    async def _plan_agent_order(
+        self,
+        task: str,
+        agent_map: dict[str, str],
+        agent_descriptions: dict[str, str],
+    ) -> dict[str, str]:
+        """Use agent_llm to pick relevant agents and order them for the task.
+
+        Returns a reordered agent_map containing only agents the LLM deems
+        relevant.  Falls back to the original map if the LLM is not connected
+        or the response cannot be parsed.
+        """
+        llm = getattr(self, "agent_llm", None)
+        if llm is None:
+            return agent_map
+
+        agents_block = "\n".join(
+            f"- {name}: {agent_descriptions.get(name, 'No description')}"
+            for name in agent_map
+        )
+        prompt = (
+            f"Given the following task and available team members, decide which "
+            f"team members are needed and in what order they should work.\n\n"
+            f"Task: {task}\n\n"
+            f"Available team members:\n{agents_block}\n\n"
+            f"Reply with ONLY a JSON array of the team member names that are "
+            f"relevant, in the order they should execute. Example: "
+            f'["Researcher", "Writer"]\n'
+            f"If only one member is needed, return just that one. "
+            f"Do NOT include members whose expertise is irrelevant to the task."
+        )
+
+        try:
+            response = await asyncio.wait_for(
+                llm.ainvoke(prompt), timeout=15,
+            )
+            text = (
+                response.content if hasattr(response, "content") else str(response)
+            ).strip()
+
+            # Extract JSON array from response
+            match = re.search(r"\[.*?\]", text, re.DOTALL)
+            if not match:
+                logger.warning(f"{_LOG} _plan_agent_order: no JSON array in response — using all agents")
+                return agent_map
+
+            ordered_names: list[str] = json.loads(match.group())
+            if not ordered_names or not isinstance(ordered_names, list):
+                return agent_map
+
+            # Build reordered map with only the selected agents
+            ordered_map: dict[str, str] = {}
+            for name in ordered_names:
+                name = name.strip()
+                if name in agent_map:
+                    ordered_map[name] = agent_map[name]
+
+            if not ordered_map:
+                logger.warning(f"{_LOG} _plan_agent_order: no valid agents in LLM response — using all")
+                return agent_map
+
+            logger.info(
+                f"{_LOG} _plan_agent_order: selected {list(ordered_map.keys())} "
+                f"from {list(agent_map.keys())}"
+            )
+            return ordered_map
+
+        except Exception as e:
+            logger.warning(f"{_LOG} _plan_agent_order failed: {e} — using all agents")
+            return agent_map
+
+    # ------------------------------------------------------------------
     # Core collaborative loop
     # ------------------------------------------------------------------
 
     async def _run_agent_loop(self) -> Message:
         """Run the collaborative agent conversation loop."""
         original_task = self._extract_text(self.input_data)
-        agent_map = self._get_agent_map()
+        agent_map_all = self._get_agent_map()
+
+        # Build agent descriptions lookup (needed for planning)
+        agent_descriptions: dict[str, str] = {}
+        for row in self.agents or []:
+            if isinstance(row, dict):
+                name = (row.get("agent_name") or "").strip()
+                desc = (row.get("description") or "").strip()
+                if name:
+                    agent_descriptions[name] = desc
+
+        # Use LLM to determine which agents are relevant and their order
+        agent_map = await self._plan_agent_order(
+            original_task, agent_map_all, agent_descriptions,
+        )
         agent_names = list(agent_map.keys())
 
         logger.info(
@@ -529,6 +623,9 @@ Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
         # Track consecutive PASS counts per agent
         pass_counts: dict[str, int] = {name: 0 for name in agent_names}
         max_consecutive_pass = 5
+
+        # Track @mentions from each turn to drive next-turn invocation
+        mentioned_next_turn: set[str] = set()
 
         # Trace display
         steps: list[ToolContent] = []
@@ -592,11 +689,27 @@ Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
                 logger.info(f"{_LOG} DONE by {done_msg.sender} | {total_ms}ms")
                 return await _finish(final_answer)
 
-            # Determine which agents are active this turn
-            active_agents = {
-                name: vid for name, vid in agent_map.items()
-                if pass_counts.get(name, 0) < max_consecutive_pass
-            }
+            # Determine which agents are active this turn.
+            # Turn 1: only the FIRST agent (best suited, from planning step).
+            # Turn 2+: only @mentioned agents. Fallback to all if no mentions.
+            if turn == 1:
+                # Start with the best agent only — it will @mention the next
+                first_name = agent_names[0]
+                active_agents = {first_name: agent_map[first_name]}
+            elif mentioned_next_turn:
+                # Only invoke agents that were @mentioned last turn
+                active_agents = {
+                    name: vid for name, vid in agent_map.items()
+                    if name in mentioned_next_turn
+                    and pass_counts.get(name, 0) < max_consecutive_pass
+                }
+            else:
+                # No mentions — fallback to all agents
+                active_agents = {
+                    name: vid for name, vid in agent_map.items()
+                    if pass_counts.get(name, 0) < max_consecutive_pass
+                }
+            mentioned_next_turn = set()  # Reset for this turn
 
             if not active_agents:
                 break
@@ -635,8 +748,26 @@ Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
                 # Process this agent's response IMMEDIATELY so the next
                 # agent in the same turn sees it in the shared thread.
                 text = results[name].strip()
+
+                # Auto-inject @NextAgent if agent SPOKE without any @mention.
+                # This makes the thread look like real back-and-forth hand-offs.
+                if (
+                    text.upper() != "PASS"
+                    and not text.upper().startswith("DONE:")
+                    and not any(f"@{n}" in text for n in agent_names if n != name)
+                ):
+                    idx = agent_names.index(name) if name in agent_names else -1
+                    if idx >= 0 and idx + 1 < len(agent_names):
+                        next_agent = agent_names[idx + 1]
+                        text = f"@{next_agent} {text}"
+                        results[name] = text
+
                 if text.upper() != "PASS":
                     thread.add_agent_message(name, text, agent_names, turn=turn)
+
+                # If an agent declares DONE, skip remaining agents in this turn.
+                if text.upper().startswith("DONE:"):
+                    break
 
             collab_vertex.built = collab_was_built
 
@@ -649,7 +780,9 @@ Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
 
             # Process results for tracking, trace display, and DONE detection.
             # Messages were already added to the thread during sequential invoke.
-            for name in active_agents:
+            # Only iterate over agents that actually ran (skipped agents after
+            # early DONE won't be in results).
+            for name in results:
                 text = results[name].strip()
 
                 if text.upper() == "PASS":
@@ -667,11 +800,22 @@ Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
                     is_done = text.upper().startswith("DONE:")
                     action = "DONE" if is_done else "SPEAK"
 
-                    # Find mentions from the thread message we already added
+                    # Find mentions — these drive next-turn invocation
                     mentions = [
                         n for n in agent_names
                         if n != name and f"@{n}" in text
                     ]
+
+                    # Auto-mention: if agent SPOKE without @mentioning anyone,
+                    # route to the next agent in the planned order.
+                    if not mentions and not is_done:
+                        idx = agent_names.index(name) if name in agent_names else -1
+                        if idx >= 0 and idx + 1 < len(agent_names):
+                            next_agent = agent_names[idx + 1]
+                            mentions = [next_agent]
+                            logger.info(f"{_LOG} Auto-mention: {name} → @{next_agent}")
+
+                    mentioned_next_turn.update(mentions)
 
                     display_text = text[:500] + ("..." if len(text) > 500 else "")
                     mentions_str = (
