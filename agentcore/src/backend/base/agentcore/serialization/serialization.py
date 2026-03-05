@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from pydantic.v1 import BaseModel as BaseModelV1
 
 from agentcore.serialization.constants import MAX_ITEMS_LENGTH, MAX_TEXT_LENGTH
-from agentcore.services.deps import get_settings_service
 
 
 # Sentinel variable to signal a failed serialization.
@@ -30,12 +29,16 @@ UNSERIALIZABLE_SENTINEL = _UnserializableSentinel()
 @lru_cache(maxsize=1)
 def get_max_text_length() -> int:
     """Return the maximum allowed text length for serialization from the current settings."""
+    from agentcore.services.deps import get_settings_service
+
     return get_settings_service().settings.max_text_length
 
 
 @lru_cache(maxsize=1)
 def get_max_items_length() -> int:
     """Return the maximum allowed number of items for serialization, as defined in the current settings."""
+    from agentcore.services.deps import get_settings_service
+
     return get_settings_service().settings.max_items_length
 
 

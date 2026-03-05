@@ -8,6 +8,7 @@ from sqlalchemy import delete
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.deps import get_cache_service, get_settings_service
 from agentcore.services.database.models.timeout_settings.model import TimeoutSettings
 
 router = APIRouter(prefix="/timeout-settings", tags=["Timeout Settings"])
@@ -71,6 +72,45 @@ DEFAULT_ORDER = {item["id"]: idx for idx, item in enumerate(DEFAULT_TIMEOUT_SETT
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "root"
+
+
+def _parse_redis_ttl_seconds(value: str | None, unit: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        numeric_value = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+    if numeric_value <= 0:
+        return None
+
+    normalized_unit = (unit or "sec").strip().lower()
+    if normalized_unit in {"sec", "second", "seconds"}:
+        return numeric_value
+    if normalized_unit in {"min", "minute", "minutes"}:
+        return numeric_value * 60
+    return None
+
+
+def _apply_runtime_redis_ttl(redis_ttl_seconds: int) -> None:
+    settings_service = get_settings_service()
+    settings_service.settings.redis_cache_expire = redis_ttl_seconds
+    settings_service.settings.cache_expire = redis_ttl_seconds
+
+    cache_service = get_cache_service()
+    if hasattr(cache_service, "expiration_time"):
+        setattr(cache_service, "expiration_time", redis_ttl_seconds)
+
+    # Keep role-permission cache writes aligned with new TTL, if initialized.
+    try:
+        from agentcore.services.auth import permissions as permissions_module
+
+        if getattr(permissions_module, "permission_cache", None) is not None:
+            permissions_module.permission_cache.ttl = redis_ttl_seconds
+    except Exception:
+        # Optional runtime sync; failures here should not block config updates.
+        pass
 
 
 async def _ensure_defaults(session: DbSession, current_user: CurrentActiveUser) -> None:
@@ -184,4 +224,11 @@ async def update_timeout_settings(
         await session.exec(delete(TimeoutSettings).where(TimeoutSettings.setting_key.in_(list(stale_keys))))
 
     await session.commit()
+
+    redis_ttl_setting = next((item for item in payload if item.id == "redis_ttl"), None)
+    if redis_ttl_setting is not None:
+        redis_ttl_seconds = _parse_redis_ttl_seconds(redis_ttl_setting.value, redis_ttl_setting.unit)
+        if redis_ttl_seconds is not None:
+            _apply_runtime_redis_ttl(redis_ttl_seconds)
+
     return {"message": "Timeout settings updated successfully"}

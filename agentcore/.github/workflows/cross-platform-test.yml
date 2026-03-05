@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       agentcore-version:
-        description: "LangBuilder version to test from PyPI (leave empty to test from source)"
+        description: "AgentCore version to test from PyPI (leave empty to test from source)"
         required: false
         type: string
         default: ""
