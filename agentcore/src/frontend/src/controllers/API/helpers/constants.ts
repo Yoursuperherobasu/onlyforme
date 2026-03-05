@@ -44,6 +44,7 @@ export const URLs = {
   CONNECTOR_CATALOGUE: `connector-catalogue`,
   TRIGGERS: `triggers`,
   TEAMS: `teams`,
+  HITL: `v1/hitl`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

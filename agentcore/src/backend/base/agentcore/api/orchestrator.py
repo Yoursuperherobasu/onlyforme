@@ -62,6 +62,7 @@ class OrchMessageResponse(BaseModel):
     agent_id: UUID | None = None
     deployment_id: UUID | None = None
     category: str = "message"
+    properties: dict | None = None
 
 
 class OrchChatResponse(BaseModel):
@@ -223,10 +224,10 @@ async def _run_agent_from_snapshot(
     deployment_id: str | None = None,
     org_id: str | None = None,
     dept_id: str | None = None,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, bool]:
     """Build a graph from a published snapshot and run it.
 
-    Returns (response_text, session_id).
+    Returns (response_text, session_id, was_interrupted).
     """
     from agentcore.processing.process import run_graph_internal
 
@@ -254,6 +255,14 @@ async def _run_agent_from_snapshot(
         event_manager=event_manager,
     )
 
+    # Check if the graph was interrupted (HITL pause)
+    was_interrupted = any(
+        (getattr(ro, "metadata", None) or {}).get("status") == "interrupted"
+        for ro in task_result
+    )
+    if was_interrupted:
+        logger.info(f"[ORCH] Graph interrupted (HITL) — no response text to extract")
+        return "", result_session_id, True
 
     run_response = RunResponse(outputs=task_result, session_id=result_session_id)
     encoded = jsonable_encoder(run_response)
@@ -261,7 +270,7 @@ async def _run_agent_from_snapshot(
     response_text = _extract_text(encoded)
     logger.info(f"[ORCH] Extracted response text: {response_text[:500] if response_text else '(empty)'}")
 
-    return response_text, result_session_id
+    return response_text, result_session_id, False
 
 
 
@@ -422,7 +431,7 @@ async def orch_chat(
 
         # -- 4. Run the agent from its frozen PROD snapshot ----------------
         logger.info(f"[ORCH] Agent={deployment.agent_name} | session={body.session_id} | input_value={body.input_value!r}")
-        agent_text, _ = await _run_agent_from_snapshot(
+        agent_text, _, _was_hitl = await _run_agent_from_snapshot(
             agent_id=str(agent_id),
             agent_name=deployment.agent_name,
             snapshot=deployment.agent_snapshot,
@@ -547,7 +556,7 @@ async def orch_chat_stream(
     async def _run_and_persist():
         """Background coroutine: run the agent, persist reply, close the queue."""
         try:
-            agent_text, _ = await _run_agent_from_snapshot(
+            agent_text, _result_sid, was_interrupted = await _run_agent_from_snapshot(
                 agent_id=agent_id_str,
                 agent_name=agent_name,
                 snapshot=snapshot,
@@ -560,6 +569,77 @@ async def orch_chat_stream(
                 org_id=dep_org_id,
                 dept_id=dep_dept_id,
             )
+
+            # When interrupted (HITL pause), _emit_hitl_pause_event already
+            # emitted the add_message with HITL metadata to the frontend.
+            # Do NOT persist an agent reply or emit end with agent_text — that
+            # would overwrite the HITL action buttons on the frontend.
+            if was_interrupted:
+                logger.info(f"[ORCH-STREAM] Run interrupted (HITL) — persisting pause message")
+                # Persist the HITL pause message so it survives page navigation.
+                # The SSE `add_message` event (from _emit_hitl_pause_event) only
+                # lives in the active stream; when the user navigates away and
+                # comes back, messages are reloaded from DB.  This row ensures
+                # the HITL action buttons reappear for still-pending requests.
+                from agentcore.services.deps import session_scope
+
+                try:
+                    # Fetch the pending HITL request to get interrupt_data
+                    from agentcore.services.database.models.hitl_request.model import HITLRequest, HITLStatus
+                    from sqlmodel import col, select as _sel
+
+                    async with session_scope() as db:
+                        stmt = (
+                            _sel(HITLRequest)
+                            .where(HITLRequest.session_id == chat_session_id)
+                            .where(HITLRequest.status == HITLStatus.PENDING)
+                            .order_by(col(HITLRequest.requested_at).desc())
+                            .limit(1)
+                        )
+                        hitl_row = (await db.exec(stmt)).first()
+
+                    actions = []
+                    question = "Awaiting human review"
+                    if hitl_row and hitl_row.interrupt_data:
+                        idata = hitl_row.interrupt_data
+                        actions = idata.get("actions", [])
+                        question = idata.get("question", question)
+
+                    actions_display = "\n".join(f"• {a}" for a in actions) if actions else "—"
+                    hitl_text = (
+                        f"⏸ **Waiting for human review**\n\n"
+                        f"{question}\n\n"
+                        f"**Available actions:**\n{actions_display}"
+                    )
+
+                    hitl_ts = datetime.now(timezone.utc).replace(tzinfo=None)
+                    async with session_scope() as db:
+                        hitl_msg = OrchConversationTable(
+                            id=uuid4(),
+                            sender="agent",
+                            sender_name=agent_name,
+                            session_id=chat_session_id,
+                            text=hitl_text,
+                            agent_id=dep_agent_id,
+                            user_id=dep_user_id,
+                            deployment_id=dep_deployment_id,
+                            timestamp=hitl_ts,
+                            files=[],
+                            properties={
+                                "hitl": True,
+                                "thread_id": chat_session_id,
+                                "actions": actions,
+                            },
+                            category="message",
+                            content_blocks=[],
+                        )
+                        await orch_add_message(hitl_msg, db)
+                except Exception as _err:
+                    logger.warning(f"[ORCH-STREAM] Could not persist HITL message: {_err}")
+
+                event_manager.on_end(data={})
+                return
+
             if not agent_text or not agent_text.strip():
                 agent_text = "Agent did not produce a response."
 
@@ -682,6 +762,7 @@ async def get_orch_session_messages(
                 agent_id=m.agent_id,
                 deployment_id=m.deployment_id,
                 category=m.category or "message",
+                properties=m.properties if isinstance(m.properties, dict) else None,
             )
             for m in messages
         ]

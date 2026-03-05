@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from loguru import logger
 
@@ -57,17 +58,24 @@ class LangGraphExecutor:
         """
         logger.info(f"Starting LangGraph execution for agent {self.adapter.agent_id}")
         
-        # Update input vertices with the input data (like ChatInput's input_value)
+        # Update input vertices with the input data (like ChatInput's input_value).
+        # Only overwrite when the new input_value is non-empty so that
+        # TextInput's configured value is preserved when the Playground
+        # sends an empty chat message.
         if inputs:
+            from agentcore.schema.schema import INPUT_FIELD_NAME
 
-            print(inputs)
             for vertex_id in self.adapter._is_input_vertices:
                 vertex = self.adapter.get_vertex(vertex_id)
                 if vertex:
-                    logger.debug(f"Updating vertex {vertex_id} with inputs: {inputs}")
-                    vertex.update_raw_params(inputs, overwrite=True)
-                    logger.debug(f"Vertex {vertex_id} params after update: {vertex.raw_params}")
-        
+                    filtered = {
+                        k: v for k, v in inputs.items()
+                        if k != INPUT_FIELD_NAME or v
+                    }
+                    if filtered:
+                        logger.debug(f"Updating vertex {vertex_id} with inputs: {filtered}")
+                        vertex.update_raw_params(filtered, overwrite=True)
+
         # Prepare initial state
         initial_state = self._create_initial_state(
             inputs=inputs or {},
@@ -78,11 +86,17 @@ class LangGraphExecutor:
             stop_component_id=stop_component_id,
             start_component_id=start_component_id,
         )
-        
+
         try:
             # Execute the workflow
             logger.debug("Invoking LangGraph workflow")
-            final_state = await self.compiled_app.ainvoke(initial_state)
+            _thread_id = (
+                getattr(self.adapter, "_session_id", None)
+                or getattr(self.adapter, "session_id", None)
+                or str(uuid4())
+            )
+            _lg_config = {"configurable": {"thread_id": _thread_id}}
+            final_state = await self.compiled_app.ainvoke(initial_state, config=_lg_config)
             
             logger.info(
                 f"LangGraph execution completed. "
@@ -121,15 +135,23 @@ class LangGraphExecutor:
         """
         logger.info(f"Starting streaming LangGraph execution for agent {self.adapter.agent_id}")
         
-        # Update input vertices with the input data (like ChatInput's input_value)
+        # Update input vertices with the input data (like ChatInput's input_value).
+        # Only overwrite when the new input_value is non-empty so that
+        # TextInput's configured value is preserved.
         if inputs:
+            from agentcore.schema.schema import INPUT_FIELD_NAME
+
             logger.debug(f"Updating input vertices with data: {inputs}")
             for vertex_id in self.adapter._is_input_vertices:
                 vertex = self.adapter.get_vertex(vertex_id)
                 if vertex:
-                    logger.debug(f"Updating vertex {vertex_id} with inputs: {inputs}")
-                    vertex.update_raw_params(inputs, overwrite=True)
-                    logger.debug(f"Vertex {vertex_id} params after update: {vertex.raw_params}")
+                    filtered = {
+                        k: v for k, v in inputs.items()
+                        if k != INPUT_FIELD_NAME or v
+                    }
+                    if filtered:
+                        logger.debug(f"Updating vertex {vertex_id} with inputs: {filtered}")
+                        vertex.update_raw_params(filtered, overwrite=True)
         
         # Prepare initial state
         initial_state = self._create_initial_state(
@@ -144,7 +166,13 @@ class LangGraphExecutor:
         
         try:
             # Stream execution
-            async for state_update in self.compiled_app.astream(initial_state):
+            _thread_id = (
+                getattr(self.adapter, "_session_id", None)
+                or getattr(self.adapter, "session_id", None)
+                or str(uuid4())
+            )
+            _lg_config = {"configurable": {"thread_id": _thread_id}}
+            async for state_update in self.compiled_app.astream(initial_state, config=_lg_config):
                 logger.debug(f"State update: {state_update.keys() if isinstance(state_update, dict) else type(state_update)}")
                 yield state_update
                 
@@ -176,46 +204,51 @@ class LangGraphExecutor:
         Returns:
             Initial AgentCoreState
         """
+        # Store event_manager on adapter so node_function can access it
+        # via vertex.graph._event_manager (must NOT be in state — not serializable)
+        self.adapter._event_manager = event_manager
+
         return AgentCoreState(
             # Results storage
             vertices_results={},
             artifacts={},
             outputs_logs={},
-            
+
             # Execution tracking
             current_vertex="",
             completed_vertices=[],
             events=[],
-            
+
             # Agent metadata
             agent_id=self.adapter.agent_id or "",
             agent_name=self.adapter.agent_name,
             session_id=inputs.get("session_id") or self.adapter.session_id or self.adapter.agent_id or "",
             user_id=user_id,
-            
+
             # Context
-            event_manager=event_manager,
             input_data=inputs,
             files=files,
-            
+
             # Configuration
             fallback_to_env_vars=fallback_to_env_vars,
             stop_component_id=stop_component_id,
             start_component_id=start_component_id,
-            
+
             # Maps
-            vertex_objects=self.adapter.vertex_map,
             predecessor_map=self.adapter.predecessor_map,
             successor_map=self.adapter.successor_map,
             in_degree_map=self.adapter.in_degree_map,
-            
+
             # Cycles
-            cycle_vertices=self.adapter.cycle_vertices,
+            cycle_vertices=list(self.adapter.cycle_vertices),
             is_cyclic=self.adapter.is_cyclic,
-            
+
             # Layers
             current_layer=0,
             vertices_layers=self.adapter.vertices_layers,
+
+            # Input vertex tracking
+            input_vertex_ids=list(self.adapter._is_input_vertices),
         )
     
     def get_results(self, state: dict[str, Any]) -> list[Any]:

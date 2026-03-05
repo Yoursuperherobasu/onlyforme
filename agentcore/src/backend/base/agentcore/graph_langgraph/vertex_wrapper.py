@@ -276,7 +276,13 @@ class LangGraphVertex:
             )
         else:
             custom_params = loading.get_params(self.params)
-        
+            # Refresh the event_manager on the cached component.
+            # Each run creates a new asyncio.Queue + EventManager; if we don't
+            # update the component, send_message() will write to the previous
+            # run's dead queue and the frontend sees an empty response.
+            if event_manager is not None and hasattr(self.custom_component, "set_event_manager"):
+                self.custom_component.set_event_manager(event_manager)
+
         # Build the component
         result = await loading.get_instance_results(
             custom_component=self.custom_component,
@@ -393,14 +399,28 @@ class LangGraphVertex:
             # Fall back to built_object
             if result_value is None and source_vertex.built_object is not None:
                 if isinstance(source_vertex.built_object, dict) and source_output:
-                    result_value = source_vertex.built_object.get(source_output, source_vertex.built_object)
+                    result_value = source_vertex.built_object.get(source_output)
+                    # If key not found, try single-value unwrap before returning full dict
+                    if result_value is None and len(source_vertex.built_object) == 1:
+                        result_value = next(iter(source_vertex.built_object.values()))
                 elif isinstance(source_vertex.built_object, dict) and len(source_vertex.built_object) == 1:
                     result_value = list(source_vertex.built_object.values())[0]
-                else:
+                elif not isinstance(source_vertex.built_object, dict):
                     result_value = source_vertex.built_object
+                # If built_object is a multi-key dict and we have no source_output,
+                # leave result_value = None so we skip rather than pass a raw dict.
 
             if result_value is None:
+                logger.debug(
+                    f"[_resolve_params] {self.id}.{field_name}: "
+                    f"source={source_id}.{source_output}, result_value=None (skipping)"
+                )
                 continue
+
+            logger.debug(
+                f"[_resolve_params] {self.id}.{field_name} ← "
+                f"{source_id}.{source_output} (type={type(result_value).__name__})"
+            )
 
             # Check if this is a list parameter (like tools) - need to append/extend
             current_value = resolved_params.get(field_name)
@@ -443,6 +463,15 @@ class LangGraphVertex:
 
         # Update params with resolved values
         self.params = resolved_params
+
+        # Log final resolved input_value for diagnosis
+        if "input_value" in resolved_params:
+            iv = resolved_params["input_value"]
+            iv_text = getattr(iv, "text", None) if hasattr(iv, "text") else str(iv)[:100]
+            logger.debug(
+                f"[_resolve_params] {self.id} final input_value: "
+                f"type={type(iv).__name__}, text={iv_text!r:.100}"
+            )
 
     def built_object_repr(self) -> str:
         """Get string representation of build status."""

@@ -1,5 +1,6 @@
 import Convert from "ansi-to-html";
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
 import { useUpdateMessage } from "@/controllers/API/queries/messages";
 import { CustomMarkdownField } from "@/customization/components/custom-markdown-field";
@@ -7,6 +8,9 @@ import { CustomProfileIcon } from "@/customization/components/custom-profile-ico
 import { ENABLE_AGENTCORE } from "@/customization/feature-flags";
 import useAgentStore from "@/stores/agentStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
+import { useMessagesStore } from "@/stores/messagesStore";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import Robot from "../../../../../assets/robot.png";
 import IconComponent, {
   ForwardedIconComponent,
@@ -28,6 +32,8 @@ export default function ChatMessage({
   updateChat,
   closeChat,
   playgroundPage,
+  hitlDoneMap = {},
+  onHitlDone,
 }: chatMessagePropsType): JSX.Element {
   const convert = new Convert({ newline: true });
   const [hidden, setHidden] = useState(true);
@@ -46,6 +52,7 @@ export default function ChatMessage({
   const [editMessage, setEditMessage] = useState(false);
   const [showError, setShowError] = useState(false);
   const isBuilding = useAgentStore((state) => state.isBuilding);
+  const queryClient = useQueryClient();
 
   const isAudioMessage = chat.category === "audio";
 
@@ -155,6 +162,36 @@ export default function ChatMessage({
       },
     );
   };
+
+  // ── HITL approval ──────────────────────────────────────────────────────────
+  const isHitl = !chat.isSend && chat.properties?.hitl === true;
+  const hitlActions: string[] = isHitl ? (chat.properties?.actions ?? []) : [];
+  const hitlThreadId: string = isHitl ? (chat.properties?.thread_id ?? "") : "";
+  const chatId = String(chat.id ?? "");
+  const hitlDone = hitlDoneMap[chatId] ?? null;
+  const [hitlLoading, setHitlLoading] = useState<string | null>(null);
+
+  const handleHitlAction = async (action: string) => {
+    if (hitlDone || hitlLoading) return;
+    setHitlLoading(action);
+    try {
+      await api.post(`${getURL("HITL")}/${hitlThreadId}/resume`, {
+        action,
+        feedback: "",
+        edited_value: "",
+      });
+      onHitlDone?.(chatId, action);
+      // Clear the "agent running" spinner and re-fetch messages so the AI
+      // response from the resumed graph appears in chat automatically.
+      useMessagesStore.getState().setDisplayLoadingMessage(false);
+      queryClient.invalidateQueries({ queryKey: ["useGetMessagesQuery"] });
+    } catch (_err) {
+      // leave buttons enabled so user can retry
+    } finally {
+      setHitlLoading(null);
+    }
+  };
+  // ────────────────────────────────────────────────────────────────────────────
 
   const handleEvaluateAnswer = (evaluation: boolean | null) => {
     updateMessageMutation(
@@ -369,6 +406,51 @@ export default function ChatMessage({
                                 chatMessage={chatMessage}
                                 editedFlag={editedFlag}
                               />
+                            )}
+                            {isHitl && hitlActions.length > 0 && (
+                              <div className="mt-3 flex flex-col gap-2.5">
+                                <div className="flex flex-wrap gap-2">
+                                {hitlActions.map((action) => {
+                                  const isReject = action.toLowerCase().includes("reject");
+                                  return (
+                                  <button
+                                    key={action}
+                                    onClick={() => handleHitlAction(action)}
+                                    disabled={!!hitlDone || !!hitlLoading}
+                                    className={cn(
+                                      "inline-flex items-center gap-1.5 rounded-md border px-4 py-1.5 text-sm font-medium transition-colors",
+                                      hitlDone === action
+                                        ? isReject
+                                          ? "border-red-500 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                                          : "border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                                        : hitlDone
+                                          ? "cursor-not-allowed border-border bg-muted/30 text-muted-foreground opacity-50"
+                                          : hitlLoading === action
+                                            ? isReject
+                                              ? "cursor-wait border-red-400 bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
+                                              : "cursor-wait border-green-400 bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400"
+                                            : hitlLoading
+                                              ? "cursor-not-allowed border-border bg-muted/30 text-muted-foreground opacity-50"
+                                              : isReject
+                                                ? "cursor-pointer border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/30"
+                                                : "cursor-pointer border-border text-foreground hover:bg-muted",
+                                    )}
+                                  >
+                                    {hitlLoading === action
+                                      ? "Submitting..."
+                                      : hitlDone === action
+                                        ? `✓ ${action}`
+                                        : action}
+                                  </button>
+                                  );
+                                })}
+                                </div>
+                                {hitlDone && (
+                                  <span className="text-xs text-muted-foreground">
+                                    Decision submitted — agent continued.
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         )}

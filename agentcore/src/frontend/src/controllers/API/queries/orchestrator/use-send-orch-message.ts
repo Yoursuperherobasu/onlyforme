@@ -22,6 +22,12 @@ export interface OrchMessageResponse {
   agent_id: string | null;
   deployment_id: string | null;
   category?: string;
+  properties?: {
+    hitl?: boolean;
+    thread_id?: string;
+    actions?: string[];
+    [key: string]: unknown;
+  };
 }
 
 export interface OrchChatResponse {

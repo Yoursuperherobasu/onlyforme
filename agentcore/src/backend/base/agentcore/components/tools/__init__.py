@@ -11,5 +11,5 @@ __all__ = [
     "File",
     "FileTrigger",
     "WebSearch",
-    "CalculatorTool"
+    "CalculatorTool",
 ]

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
 import MothersonLogo from "@/assets/mothersonLogo.svg?react";
 import { TextEffectPerChar } from "@/components/ui/textAnimation";
@@ -28,7 +28,8 @@ const MemoizedChatMessage = memo(ChatMessage, (prevProps, nextProps) => {
     prevProps.chat.session === nextProps.chat.session &&
     prevProps.chat.content_blocks === nextProps.chat.content_blocks &&
     prevProps.chat.properties === nextProps.chat.properties &&
-    prevProps.lastMessage === nextProps.lastMessage
+    prevProps.lastMessage === nextProps.lastMessage &&
+    prevProps.hitlDoneMap === nextProps.hitlDoneMap
   );
 });
 
@@ -60,6 +61,15 @@ export default function ChatView({
   const updateAgentPool = useAgentStore((state) => state.updateAgentPool);
   const setChatValueStore = useUtilityStore((state) => state.setChatValueStore);
   const isTabHidden = useTabVisibility();
+
+  // HITL: track resolved decisions — both from callback and from chat history.
+  // Manual map captures the click immediately; derived map handles page refreshes.
+  const [manualHitlMap, setManualHitlMap] = useState<Record<string, string>>({});
+  const handleHitlDone = useCallback(
+    (chatId: string, action: string) =>
+      setManualHitlMap((prev) => ({ ...prev, [chatId]: action })),
+    [],
+  );
 
   //build chat history
   useEffect(() => {
@@ -113,6 +123,35 @@ export default function ChatView({
 
     setChatHistory(finalChatHistory);
   }, [messages, visibleSession]);
+
+  // Derive HITL resolved state from chat history: scan for "Human review
+  // completed" messages that follow an HITL message, then merge with the
+  // manual map (captures the click immediately before messages refetch).
+  const hitlDoneMap = useMemo(() => {
+    const derived: Record<string, string> = {};
+    if (chatHistory) {
+      // Find HITL messages and check if a resolution message follows them
+      const hitlMsgIds: string[] = [];
+      for (const msg of chatHistory) {
+        if (!msg.isSend && (msg.properties as any)?.hitl === true && msg.id) {
+          hitlMsgIds.push(String(msg.id));
+        }
+        // Check if this message is a "Human review completed" resolution
+        const text = String(msg.message ?? "");
+        const match = text.match(/^[✓✗]\s*(\S+)\s*—\s*Human review completed/);
+        if (match && hitlMsgIds.length > 0) {
+          // Resolve the most recent unresolved HITL message
+          for (const hid of [...hitlMsgIds].reverse()) {
+            if (!derived[hid]) {
+              derived[hid] = match[1];
+              break;
+            }
+          }
+        }
+      }
+    }
+    return { ...derived, ...manualHitlMap };
+  }, [chatHistory, manualHitlMap]);
 
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -189,6 +228,8 @@ export default function ChatView({
                   updateChat={updateChat}
                   closeChat={closeChat}
                   playgroundPage={playgroundPage}
+                  hitlDoneMap={hitlDoneMap}
+                  onHitlDone={handleHitlDone}
                 />
               ))
             ) : (

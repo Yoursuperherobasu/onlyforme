@@ -6,8 +6,8 @@ from typing_extensions import override
 
 from agentcore.src.backend.base.agentcore.custom.custom_node.node import Node, _get_component_toolkit
 from agentcore.field_typing import Tool
-from agentcore.graph_langgraph import LangGraphAdapter as Graph
-from agentcore.graph_langgraph import LangGraphVertex as Vertex
+from agentcore.graph_langgraph import LangGraphAdapter
+from agentcore.graph_langgraph import LangGraphVertex
 from agentcore.helpers.agent import get_agent_inputs
 from agentcore.inputs.inputs import (
     DropdownInput,
@@ -123,22 +123,22 @@ class RunAgentBaseNode(Node):
                 return agent_data
         return None
 
-    async def get_graph(self, agent_name_selected: str | None = None) -> Graph:
+    async def get_graph(self, agent_name_selected: str | None = None) -> LangGraphAdapter:
         if agent_name_selected:
             agent_data = await self.get_agent(agent_name_selected)
             if agent_data:
-                return Graph.from_payload(agent_data.data["data"])
+                return LangGraphAdapter.from_payload(agent_data.data["data"])
             msg = "agent not found"
             raise ValueError(msg)
         # Ensure a Graph is always returned or an exception is raised
         msg = "No valid agent JSON or agent name selected."
         raise ValueError(msg)
 
-    def get_new_fields_from_graph(self, graph: Graph) -> list[dotdict]:
+    def get_new_fields_from_graph(self, graph: LangGraphAdapter) -> list[dotdict]:
         inputs = get_agent_inputs(graph)
         return self.get_new_fields(inputs)
 
-    def update_build_config_from_graph(self, build_config: dotdict, graph: Graph):
+    def update_build_config_from_graph(self, build_config: dotdict, graph: LangGraphAdapter):
         try:
             # Get all inputs from the graph
             new_fields = self.get_new_fields_from_graph(graph)
@@ -151,7 +151,7 @@ class RunAgentBaseNode(Node):
             logger.exception(msg)
             raise RuntimeError(msg) from e
 
-    def get_new_fields(self, inputs_vertex: list[Vertex]) -> list[dotdict]:
+    def get_new_fields(self, inputs_vertex: list[LangGraphVertex]) -> list[dotdict]:
         new_fields: list[dotdict] = []
 
         for vertex in inputs_vertex:
@@ -198,7 +198,7 @@ class RunAgentBaseNode(Node):
         self.agent_data = await self.alist_agents()
         for agent_data in self.agent_data:
             if agent_data.data["name"] == agent_name_selected:
-                graph = Graph.from_payload(agent_data.data["data"])
+                graph = LangGraphAdapter.from_payload(agent_data.data["data"])
                 new_fields = self.get_new_fields_from_graph(graph)
                 new_fields = self.update_input_types(new_fields)
 

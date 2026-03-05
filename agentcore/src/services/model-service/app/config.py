@@ -2,8 +2,33 @@ import base64
 import hashlib
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Locate the project root .env so we can read WEBUI_SECRET_KEY even when
+# this microservice is started as an independent process.
+_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+
+
+def _read_root_env_key(name: str) -> str:
+    """Read a single key from the project-root .env file (no shell expansion)."""
+    if not _ROOT_ENV.exists():
+        return ""
+    try:
+        for line in _ROOT_ENV.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == name:
+                v = v.strip().strip("'\"")
+                return v
+    except Exception:
+        pass
+    return ""
 
 
 def _derive_encryption_key() -> str:
@@ -23,7 +48,13 @@ def _derive_encryption_key() -> str:
     if key:
         return key
 
-    raw = os.getenv("WEBUI_SECRET_KEY", "default-agentcore-registry-key")
+    # Try OS env first, then fall back to reading the root .env file directly.
+    raw = os.getenv("WEBUI_SECRET_KEY", "").strip()
+    if not raw:
+        raw = _read_root_env_key("WEBUI_SECRET_KEY")
+    if not raw:
+        raw = "default-agentcore-registry-key"
+
     derived = hashlib.sha256(raw.encode()).digest()
     return base64.urlsafe_b64encode(derived).decode()
 

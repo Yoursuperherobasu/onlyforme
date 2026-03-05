@@ -6,7 +6,7 @@ from aiofile import async_open
 from dotenv import dotenv_values
 from loguru import logger
 
-from agentcore.graph_langgraph import LangGraphAdapter as Graph, RunOutputs
+from agentcore.graph_langgraph import LangGraphAdapter, RunOutputs
 from agentcore.load.utils import replace_tweaks_with_env
 from agentcore.logging.logger import configure
 from agentcore.processing.process import process_tweaks, run_graph
@@ -24,7 +24,7 @@ async def aload_agent_from_json(
     env_file: str | None = None,
     cache: str | None = None,
     disable_logs: bool | None = True,
-) -> Graph:
+) -> LangGraphAdapter:
     """Load a agent graph from a JSON file or a JSON object.
 
     Args:
@@ -40,7 +40,7 @@ async def aload_agent_from_json(
             If log_level or log_file are set, disable_logs is not used.
 
     Returns:
-        Graph: The loaded agent graph as a Graph object.
+        LangGraphAdapter: The loaded agent graph.
 
     Raises:
         TypeError: If the input is neither a file path (str or Path object) nor a JSON object (dict).
@@ -77,7 +77,7 @@ async def aload_agent_from_json(
     if tweaks is not None:
         graph_data = process_tweaks(graph_data, tweaks)
 
-    return Graph.from_payload(graph_data)
+    return LangGraphAdapter.from_payload(graph_data)
 
 
 def load_agent_from_json(
@@ -90,7 +90,7 @@ def load_agent_from_json(
     env_file: str | None = None,
     cache: str | None = None,
     disable_logs: bool | None = True,
-) -> Graph:
+) -> LangGraphAdapter:
     """Load a agent graph from a JSON file or a JSON object.
 
     Args:
@@ -106,7 +106,7 @@ def load_agent_from_json(
             If log_level or log_file are set, disable_logs is not used.
 
     Returns:
-        Graph: The loaded agent graph as a Graph object.
+        LangGraphAdapter: The loaded agent graph.
 
     Raises:
         TypeError: If the input is neither a file path (str or Path object) nor a JSON object (dict).

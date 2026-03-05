@@ -15,6 +15,8 @@ from app.schemas import (
     ChoiceMessage,
     ChunkChoice,
     DeltaMessage,
+    ToolCall,
+    ToolCallFunction,
     UsageInfo,
 )
 
@@ -122,6 +124,7 @@ async def _resolve_registry_config(request: ChatCompletionRequest) -> ChatComple
         seed=request.seed,
         json_mode=request.json_mode,
         model_kwargs=request.model_kwargs or defaults.get("model_kwargs"),
+        tools=request.tools,
     )
 
 
@@ -144,6 +147,10 @@ async def chat_completion(request: ChatCompletionRequest) -> ChatCompletionRespo
         model_kwargs=request.model_kwargs,
     )
 
+    # Bind tools if provided
+    if request.tools:
+        model = model.bind_tools(request.tools)
+
     messages = provider.build_messages([m.model_dump() for m in request.messages])
 
     ai_message = await provider.invoke(model, messages)
@@ -152,12 +159,36 @@ async def chat_completion(request: ChatCompletionRequest) -> ChatCompletionRespo
     usage = _extract_usage(ai_message)
     finish_reason = _extract_finish_reason(ai_message)
 
+    # Extract tool calls from the AIMessage
+    tool_calls_out: list[ToolCall] | None = None
+    lc_tool_calls = getattr(ai_message, "tool_calls", None)
+    if lc_tool_calls:
+        tool_calls_out = []
+        for tc in lc_tool_calls:
+            tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
+            tc_name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
+            tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+            tool_calls_out.append(
+                ToolCall(
+                    id=tc_id,
+                    function=ToolCallFunction(
+                        name=tc_name,
+                        arguments=json.dumps(tc_args) if isinstance(tc_args, dict) else str(tc_args),
+                    ),
+                )
+            )
+        finish_reason = "tool_calls"
+
     return ChatCompletionResponse(
         model=request.model,
         choices=[
             ChatCompletionChoice(
                 index=0,
-                message=ChoiceMessage(role="assistant", content=content),
+                message=ChoiceMessage(
+                    role="assistant",
+                    content=content or "",
+                    tool_calls=tool_calls_out,
+                ),
                 finish_reason=finish_reason,
             )
         ],

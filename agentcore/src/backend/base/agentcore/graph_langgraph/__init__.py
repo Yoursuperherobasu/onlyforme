@@ -45,10 +45,6 @@ from agentcore.graph_langgraph.utils import (
 )
 from agentcore.graph_langgraph.vertex_wrapper import LangGraphVertex
 
-Graph = LangGraphAdapter
-Vertex = LangGraphVertex
-Edge = LangGraphEdge
-
 __all__ = [
     # Main classes
     "LangGraphAdapter",
@@ -57,9 +53,6 @@ __all__ = [
     "LangGraphEdge",
     "AgentCoreState",
     "RunnableVerticesManager",
-    "Graph",
-    "Vertex",
-    "Edge",
     "InterfaceComponentTypes",
     "VertexStates",
     "ResultData",

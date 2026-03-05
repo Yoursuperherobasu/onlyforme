@@ -39,7 +39,7 @@ from agentcore.api.v1_schemas import (
     VerticesOrderResponse,
 )
 from agentcore.exceptions.component import ComponentBuildError
-from agentcore.graph_langgraph import Graph, log_vertex_build
+from agentcore.graph_langgraph import log_vertex_build
 from agentcore.schema.schema import OutputValue
 from agentcore.services.cache.utils import CacheMiss
 from agentcore.services.chat.service import ChatService

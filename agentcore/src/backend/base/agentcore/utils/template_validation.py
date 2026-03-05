@@ -9,7 +9,7 @@ import json
 import uuid
 from typing import Any
 
-from agentcore.graph_langgraph import LangGraphAdapter as Graph
+from agentcore.graph_langgraph import LangGraphAdapter
 from agentcore.utils.validate import validate_code
 
 
@@ -67,7 +67,7 @@ def validate_agent_can_build(template_data: dict[str, Any], filename: str) -> li
         agent_name = filename.replace(".json", "")
 
         # Try to build the graph from the template data
-        graph = Graph.from_payload(template_data, agent_id, agent_name, user_id="test_user")
+        graph = LangGraphAdapter.from_payload(template_data, agent_id, agent_name, user_id="test_user")
 
         # Validate stream configuration
         graph.validate_stream()

@@ -16,7 +16,7 @@ from agentcore.serialization.serialization import serialize
 from agentcore.services.tracing.base import BaseTracer
 
 if TYPE_CHECKING:
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphVertex
     from agentcore.services.tracing.schema import Log
 
 
@@ -251,7 +251,7 @@ class LangFuseTracer(BaseTracer):
         trace_type: str,
         inputs: dict[str, Any],
         metadata: dict[str, Any] | None = None,
-        vertex: Vertex | None = None,
+        vertex: LangGraphVertex | None = None,
     ) -> None:
         """Add a new span using v3 start_as_current_observation with input passed directly."""
         if not self._ready:
