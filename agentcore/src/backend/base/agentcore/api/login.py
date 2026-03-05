@@ -293,7 +293,7 @@ async def azure_sso_login(
     await user_cache.set_user(user_dict)
 
     # -----------------------------
-    # Issue LangBuilder Tokens
+    # Issue AgentCore Tokens
     # -----------------------------
 
     tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)

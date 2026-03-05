@@ -8,7 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from langbuilder.services.database.models.user.model import User, UserUpdate
+from agentcore.services.database.models.user.model import User, UserUpdate
 
 
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
