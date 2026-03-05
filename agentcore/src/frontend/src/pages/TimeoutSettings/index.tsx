@@ -233,7 +233,7 @@ export default function TimeoutSettings() {
                   </p>
                   <p className="mt-1 text-blue-800 dark:text-blue-200">
                     {t(
-                      "Changes to timeout settings will affect new sessions only. Existing active sessions will maintain their current timeout values until they expire.",
+                      "Changes are global and are applied from the database at login and token refresh. Active users will pick up new values on their next token refresh cycle.",
                     )}
                   </p>
                 </div>

@@ -20,6 +20,7 @@ from agentcore.services.auth.utils import (
     authenticate_user,
     create_refresh_token,
     create_user_tokens,
+    get_runtime_auth_timeout_settings,
     get_password_hash,
 )
 from agentcore.services.database.models.user.crud import get_user_by_id
@@ -144,14 +145,33 @@ async def login_to_get_access_token(
         ) from exc
 
     if user:
-        tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
+        runtime_timeout_settings = await get_runtime_auth_timeout_settings(db)
+        access_token_expires_seconds = int(
+            runtime_timeout_settings["access_token_expires_seconds"]
+        )
+        refresh_token_expires_seconds = int(
+            runtime_timeout_settings["refresh_token_expires_seconds"]
+        )
+        refresh_cookie_expires = (
+            refresh_token_expires_seconds
+            if bool(runtime_timeout_settings["persistent_cookie"])
+            else None
+        )
+
+        tokens = await create_user_tokens(
+            user_id=user.id,
+            db=db,
+            update_last_login=True,
+            access_token_expires_seconds=access_token_expires_seconds,
+            refresh_token_expires_seconds=refresh_token_expires_seconds,
+        )
         response.set_cookie(
             "refresh_token_lf",
             tokens["refresh_token"],
             httponly=auth_settings.REFRESH_HTTPONLY,
             samesite=auth_settings.REFRESH_SAME_SITE,
             secure=auth_settings.REFRESH_SECURE,
-            expires=auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+            expires=refresh_cookie_expires,
             domain=auth_settings.COOKIE_DOMAIN,
         )
         response.set_cookie(
@@ -160,7 +180,7 @@ async def login_to_get_access_token(
             httponly=auth_settings.ACCESS_HTTPONLY,
             samesite=auth_settings.ACCESS_SAME_SITE,
             secure=auth_settings.ACCESS_SECURE,
-            expires=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+            expires=access_token_expires_seconds,
             domain=auth_settings.COOKIE_DOMAIN,
         )
         response.set_cookie(
@@ -296,7 +316,20 @@ async def azure_sso_login(
     # Issue AgentCore Tokens
     # -----------------------------
 
-    tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
+    runtime_timeout_settings = await get_runtime_auth_timeout_settings(db)
+    access_token_expires_seconds = int(runtime_timeout_settings["access_token_expires_seconds"])
+    refresh_token_expires_seconds = int(runtime_timeout_settings["refresh_token_expires_seconds"])
+    refresh_cookie_expires = (
+        refresh_token_expires_seconds if bool(runtime_timeout_settings["persistent_cookie"]) else None
+    )
+
+    tokens = await create_user_tokens(
+        user_id=user.id,
+        db=db,
+        update_last_login=True,
+        access_token_expires_seconds=access_token_expires_seconds,
+        refresh_token_expires_seconds=refresh_token_expires_seconds,
+    )
     
     response.set_cookie(
         "refresh_token_lf",
@@ -304,7 +337,7 @@ async def azure_sso_login(
         httponly=auth_settings.REFRESH_HTTPONLY,
         samesite=auth_settings.REFRESH_SAME_SITE,
         secure=auth_settings.REFRESH_SECURE,
-        expires=auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+        expires=refresh_cookie_expires,
         domain=auth_settings.COOKIE_DOMAIN,
     )
     response.set_cookie(
@@ -313,7 +346,7 @@ async def azure_sso_login(
         httponly=auth_settings.ACCESS_HTTPONLY,
         samesite=auth_settings.ACCESS_SAME_SITE,
         secure=auth_settings.ACCESS_SECURE,
-        expires=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+        expires=access_token_expires_seconds,
         domain=auth_settings.COOKIE_DOMAIN,
     )
     response.set_cookie(
@@ -342,7 +375,19 @@ async def refresh_token(
     token = request.cookies.get("refresh_token_lf")
 
     if token:
-        tokens = await create_refresh_token(token, db)
+        runtime_timeout_settings = await get_runtime_auth_timeout_settings(db)
+        access_token_expires_seconds = int(runtime_timeout_settings["access_token_expires_seconds"])
+        refresh_token_expires_seconds = int(runtime_timeout_settings["refresh_token_expires_seconds"])
+        refresh_cookie_expires = (
+            refresh_token_expires_seconds if bool(runtime_timeout_settings["persistent_cookie"]) else None
+        )
+
+        tokens = await create_refresh_token(
+            token,
+            db,
+            access_token_expires_seconds=access_token_expires_seconds,
+            refresh_token_expires_seconds=refresh_token_expires_seconds,
+        )
         user_id = tokens.get("user_id") 
         user = await get_user_by_id(db, user_id)
         if not user:
@@ -355,7 +400,7 @@ async def refresh_token(
             httponly=auth_settings.REFRESH_HTTPONLY,
             samesite=auth_settings.REFRESH_SAME_SITE,
             secure=auth_settings.REFRESH_SECURE,
-            expires=auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+            expires=refresh_cookie_expires,
             domain=auth_settings.COOKIE_DOMAIN,
         )
         response.set_cookie(
@@ -364,7 +409,7 @@ async def refresh_token(
             httponly=auth_settings.ACCESS_HTTPONLY,
             samesite=auth_settings.ACCESS_SAME_SITE,
             secure=auth_settings.ACCESS_SECURE,
-            expires=auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+            expires=access_token_expires_seconds,
             domain=auth_settings.COOKIE_DOMAIN,
         )
         return {

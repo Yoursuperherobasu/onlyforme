@@ -12,6 +12,7 @@ from fastapi.security import APIKeyHeader, APIKeyQuery,HTTPBearer, OAuth2Passwor
 from jose import JWTError, jwt
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.websockets import WebSocket
 
@@ -20,6 +21,7 @@ from agentcore.services.database.models.user.crud import (
     get_user_by_username,
     update_user_last_login_at,
 )
+from agentcore.services.database.models.timeout_settings.model import TimeoutSettings
 from agentcore.services.database.models.user.model import User, UserRead
 from agentcore.services.deps import get_db_service, get_session, get_settings_service
 from agentcore.services.settings.service import SettingsService
@@ -37,6 +39,84 @@ api_key_query = APIKeyQuery(name=API_KEY_NAME, scheme_name="API key query", auto
 api_key_header = APIKeyHeader(name=API_KEY_NAME, scheme_name="API key header", auto_error=False)
 
 MINIMUM_KEY_LENGTH = 32
+DEFAULT_SESSION_TIMEOUT_SECONDS = 60 * 60
+DEFAULT_COOKIE_TIMEOUT_SECONDS = 60 * 60 * 24 * 7
+DEFAULT_PERSISTENT_COOKIE = True
+
+
+def _parse_timeout_seconds(value: str | None, unit: str | None, default_seconds: int) -> int:
+    if value is None:
+        return default_seconds
+    try:
+        numeric_value = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default_seconds
+
+    if numeric_value <= 0:
+        return default_seconds
+
+    normalized_unit = (unit or "").strip().lower()
+    if normalized_unit in {"sec", "second", "seconds"}:
+        return numeric_value
+    if normalized_unit in {"min", "minute", "minutes"}:
+        return numeric_value * 60
+    if normalized_unit in {"hr", "hour", "hours"}:
+        return numeric_value * 60 * 60
+    if normalized_unit in {"day", "days"}:
+        return numeric_value * 60 * 60 * 24
+
+    return default_seconds
+
+
+async def get_runtime_auth_timeout_settings(db: AsyncSession) -> dict[str, int | bool]:
+    settings_service = get_settings_service()
+    defaults = {
+        "access_token_expires_seconds": int(
+            settings_service.auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS
+            or DEFAULT_SESSION_TIMEOUT_SECONDS
+        ),
+        "refresh_token_expires_seconds": int(
+            settings_service.auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS
+            or DEFAULT_COOKIE_TIMEOUT_SECONDS
+        ),
+        "persistent_cookie": DEFAULT_PERSISTENT_COOKIE,
+    }
+
+    try:
+        rows = (
+            await db.exec(
+                select(TimeoutSettings).where(
+                    TimeoutSettings.setting_key.in_(
+                        ["session_timeout", "cookie_timeout", "persistent_cookie"]
+                    )
+                )
+            )
+        ).all()
+    except Exception:
+        logger.debug("Falling back to static auth timeout settings; timeout_settings table unavailable.")
+        return defaults
+    if not rows:
+        return defaults
+
+    for row in rows:
+        if row.setting_key == "session_timeout":
+            defaults["access_token_expires_seconds"] = _parse_timeout_seconds(
+                row.value,
+                row.unit,
+                int(defaults["access_token_expires_seconds"]),
+            )
+        elif row.setting_key == "cookie_timeout":
+            defaults["refresh_token_expires_seconds"] = _parse_timeout_seconds(
+                row.value,
+                row.unit,
+                int(defaults["refresh_token_expires_seconds"]),
+            )
+        elif row.setting_key == "persistent_cookie":
+            defaults["persistent_cookie"] = (
+                DEFAULT_PERSISTENT_COOKIE if row.checked is None else bool(row.checked)
+            )
+
+    return defaults
 
 def require_permission(action: str):
     async def permission_dependency(current_user: User = Depends(get_current_active_user)):
@@ -304,16 +384,33 @@ def get_user_id_from_token(token: str) -> UUID:
         return UUID(int=0)
 
 
-async def create_user_tokens(user_id: UUID, db: AsyncSession, *, update_last_login: bool = False) -> dict:
-    settings_service = get_settings_service()
+async def create_user_tokens(
+    user_id: UUID,
+    db: AsyncSession,
+    *,
+    update_last_login: bool = False,
+    access_token_expires_seconds: int | None = None,
+    refresh_token_expires_seconds: int | None = None,
+) -> dict:
+    runtime_timeout_settings = await get_runtime_auth_timeout_settings(db)
+    access_expires_seconds = int(
+        access_token_expires_seconds
+        if access_token_expires_seconds is not None
+        else runtime_timeout_settings["access_token_expires_seconds"]
+    )
+    refresh_expires_seconds = int(
+        refresh_token_expires_seconds
+        if refresh_token_expires_seconds is not None
+        else runtime_timeout_settings["refresh_token_expires_seconds"]
+    )
 
-    access_token_expires = timedelta(seconds=settings_service.auth_settings.ACCESS_TOKEN_EXPIRE_SECONDS)
+    access_token_expires = timedelta(seconds=access_expires_seconds)
     access_token = create_token(
         data={"sub": str(user_id), "type": "access"},
         expires_delta=access_token_expires,
     )
 
-    refresh_token_expires = timedelta(seconds=settings_service.auth_settings.REFRESH_TOKEN_EXPIRE_SECONDS)
+    refresh_token_expires = timedelta(seconds=refresh_expires_seconds)
     refresh_token = create_token(
         data={"sub": str(user_id), "type": "refresh"},
         expires_delta=refresh_token_expires,
@@ -331,7 +428,13 @@ async def create_user_tokens(user_id: UUID, db: AsyncSession, *, update_last_log
     }
 
 
-async def create_refresh_token(refresh_token: str, db: AsyncSession):
+async def create_refresh_token(
+    refresh_token: str,
+    db: AsyncSession,
+    *,
+    access_token_expires_seconds: int | None = None,
+    refresh_token_expires_seconds: int | None = None,
+):
     settings_service = get_settings_service()
 
     try:
@@ -358,7 +461,12 @@ async def create_refresh_token(refresh_token: str, db: AsyncSession):
         if user_exists is None or not user_exists.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-        return await create_user_tokens(UUID(str(user_id)), db)
+        return await create_user_tokens(
+            UUID(str(user_id)),
+            db,
+            access_token_expires_seconds=access_token_expires_seconds,
+            refresh_token_expires_seconds=refresh_token_expires_seconds,
+        )
 
     except JWTError as e:
         logger.exception("JWT decoding error")
