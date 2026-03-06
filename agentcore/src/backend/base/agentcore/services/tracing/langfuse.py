@@ -116,6 +116,9 @@ class LangFuseTracer(BaseTracer):
         agent_name: str | None = None,
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
+        langfuse_host: str | None = None,
+        langfuse_public_key: str | None = None,
+        langfuse_secret_key: str | None = None,
     ) -> None:
         self.trace_name = trace_name
         self.trace_type = trace_type
@@ -127,6 +130,9 @@ class LangFuseTracer(BaseTracer):
         self.agent_name = agent_name
         self.observability_project_id = observability_project_id
         self.observability_project_name = observability_project_name
+        self.langfuse_host = langfuse_host
+        self.langfuse_public_key = langfuse_public_key
+        self.langfuse_secret_key = langfuse_secret_key
 
         # Span tracking
         self.spans: dict[str, Any] = {}
@@ -150,11 +156,18 @@ class LangFuseTracer(BaseTracer):
         try:
             from langfuse import Langfuse, propagate_attributes
 
-            # Ensure env vars are set (v3 reads from env)
-            if not os.getenv("LANGFUSE_BASE_URL"):
-                host = os.getenv("LANGFUSE_HOST", "")
-                if host:
-                    os.environ["LANGFUSE_BASE_URL"] = host
+            host = self.langfuse_host or os.getenv("LANGFUSE_BASE_URL") or os.getenv("LANGFUSE_HOST")
+            langfuse_kwargs: dict[str, Any] = {}
+            if host:
+                langfuse_kwargs["host"] = host
+            if self.langfuse_public_key:
+                langfuse_kwargs["public_key"] = self.langfuse_public_key
+            if self.langfuse_secret_key:
+                langfuse_kwargs["secret_key"] = self.langfuse_secret_key
+
+            # Fallback to env propagation only when explicit runtime host is not provided.
+            if not self.langfuse_host and host and not os.getenv("LANGFUSE_BASE_URL"):
+                os.environ["LANGFUSE_BASE_URL"] = str(host)
 
             # Block POST/HTTP spans from OTEL auto-instrumentation
             # These come from FastAPI, HTTP clients, etc.
@@ -180,11 +193,20 @@ class LangFuseTracer(BaseTracer):
             # Try to create Langfuse client with blocked_instrumentation_scopes
             # If not supported, fall back to regular client
             try:
-                self._client = Langfuse(blocked_instrumentation_scopes=blocked_scopes)
+                self._client = Langfuse(
+                    blocked_instrumentation_scopes=blocked_scopes,
+                    **langfuse_kwargs,
+                )
             except TypeError:
                 # blocked_instrumentation_scopes not supported in this version
-                from langfuse import get_client
-                self._client = get_client()
+                try:
+                    self._client = Langfuse(**langfuse_kwargs)
+                except TypeError:
+                    from langfuse import get_client
+
+                    if langfuse_kwargs:
+                        raise
+                    self._client = get_client()
 
             # Health check - log but continue if it fails
             # The auth_check can fail for various reasons (network, wrong credentials, etc.)
@@ -415,17 +437,43 @@ class LangFuseTracer(BaseTracer):
         if not self._ready:
             return None
 
+        callback_kwargs: dict[str, Any] = {}
+        if self.langfuse_host:
+            callback_kwargs["host"] = self.langfuse_host
+        if self.langfuse_public_key:
+            callback_kwargs["public_key"] = self.langfuse_public_key
+        if self.langfuse_secret_key:
+            callback_kwargs["secret_key"] = self.langfuse_secret_key
+
         try:
             # v3: Use langfuse.langchain.CallbackHandler
             from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 
-            callback = LangfuseCallbackHandler()
+            try:
+                callback = LangfuseCallbackHandler(**callback_kwargs)
+            except TypeError:
+                if callback_kwargs:
+                    logger.warning(
+                        "Langfuse callback handler does not accept explicit credentials; "
+                        "skipping callback to avoid cross-tenant leakage."
+                    )
+                    return None
+                callback = LangfuseCallbackHandler()
             return LangfuseCallbackWrapper(callback)
         except ImportError:
             try:
                 # Fallback import path
                 from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
-                callback = LangfuseCallbackHandler()
+                try:
+                    callback = LangfuseCallbackHandler(**callback_kwargs)
+                except TypeError:
+                    if callback_kwargs:
+                        logger.warning(
+                            "Langfuse callback handler does not accept explicit credentials; "
+                            "skipping callback to avoid cross-tenant leakage."
+                        )
+                        return None
+                    callback = LangfuseCallbackHandler()
                 return LangfuseCallbackWrapper(callback)
             except ImportError:
                 logger.debug("langfuse.langchain not available")

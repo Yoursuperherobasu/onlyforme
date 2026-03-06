@@ -37,6 +37,9 @@ from .teams_app import TeamsApp
 from .hitl_request import HITLRequest
 from .evaluator.model import Evaluator
 from .vertex_builds import VertexBuildTable
+from .langfuse_binding import LangfuseBinding
+from .observability_provision_job import ObservabilityProvisionJob
+from .observability_schema_lock import ObservabilitySchemaLock
 
 __all__ = [
     "Agent",
@@ -89,4 +92,7 @@ __all__ = [
     "HITLRequest",
     "Evaluator",
     "VertexBuildTable",
+    "LangfuseBinding",
+    "ObservabilityProvisionJob",
+    "ObservabilitySchemaLock",
 ]

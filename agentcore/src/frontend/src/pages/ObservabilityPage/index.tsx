@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,6 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { api } from "@/controllers/API/api";
+import useAuthStore from "@/stores/authStore";
 import {
   AlertCircle,
   ChevronRight,
@@ -131,6 +132,8 @@ interface Metrics {
   top_agents: Array<{ name: string; count: number; tokens: number; cost: number }>;
   truncated?: boolean;
   fetched_trace_count?: number;
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
 }
 
 interface SessionListItem {
@@ -197,6 +200,8 @@ interface TraceDetailResponse {
   latency_ms: number | null;
   observations: ObservationResponse[];
   scores?: ScoreItem[];
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
 }
 
 interface SessionDetailResponse {
@@ -208,6 +213,8 @@ interface SessionDetailResponse {
   last_trace_at: string | null;
   models_used: string[];
   traces: TraceListItem[];
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
 }
 
 interface AgentListItem {
@@ -241,6 +248,8 @@ interface AgentDetailResponse {
   models_used: Record<string, { tokens: number; cost: number; calls: number }>;
   sessions: SessionListItem[];
   by_date: DailyUsageItem[];
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
 }
 
 interface ProjectListItem {
@@ -271,6 +280,105 @@ interface ProjectDetailResponse {
   models_used: Record<string, { tokens: number; cost: number; calls: number }>;
   agents: AgentListItem[];
   by_date: DailyUsageItem[];
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
+}
+
+interface ScopeOptionItem {
+  id: string;
+  name: string;
+}
+
+interface DepartmentScopeOption {
+  id: string;
+  name: string;
+  org_id: string;
+}
+
+interface ScopeOptionsResponse {
+  role: string;
+  requires_filter_first: boolean;
+  organizations: ScopeOptionItem[];
+  departments: DepartmentScopeOption[];
+}
+
+interface SessionsResponse {
+  sessions: SessionListItem[];
+  total: number;
+  truncated?: boolean;
+  fetched_trace_count?: number;
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
+}
+
+interface AgentsResponse {
+  agents: AgentListItem[];
+  total_count: number;
+  truncated?: boolean;
+  fetched_trace_count?: number;
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
+}
+
+interface ProjectsResponse {
+  projects: ProjectListItem[];
+  total_count: number;
+  truncated?: boolean;
+  fetched_trace_count?: number;
+  scope_warning?: boolean;
+  scope_warning_message?: string | null;
+}
+
+interface ProvisionJobRead {
+  id: string;
+  idempotency_key: string;
+  scope_type: string;
+  org_id?: string | null;
+  dept_id?: string | null;
+  status: string;
+  retry_count?: number;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at: string;
+}
+
+interface BindingReadMasked {
+  id: string;
+  org_id: string;
+  dept_id?: string | null;
+  scope_type: string;
+  langfuse_host: string;
+  langfuse_org_id: string;
+  langfuse_project_id: string;
+  langfuse_project_name?: string | null;
+  public_key_masked: string;
+  secret_key_masked: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ProvisionResponse {
+  job: ProvisionJobRead;
+  binding?: BindingReadMasked | null;
+}
+
+interface ReconciliationItem {
+  binding_id: string;
+  org_id: string;
+  dept_id?: string | null;
+  scope_type: string;
+  status: string;
+  issues: string[];
+}
+
+interface ReconciliationResponse {
+  total: number;
+  healthy: number;
+  drifted: number;
+  failed: number;
+  items: ReconciliationItem[];
 }
 
 // =============================================================================
@@ -384,6 +492,13 @@ interface FetchMetricsParams {
   include_model_breakdown?: boolean;
   tz_offset?: number;
   fetch_all?: boolean;
+  org_id?: string;
+  dept_id?: string;
+}
+
+function applyScopeParams(searchParams: URLSearchParams, params: FetchMetricsParams): void {
+  if (params.org_id) searchParams.set("org_id", params.org_id);
+  if (params.dept_id) searchParams.set("dept_id", params.dept_id);
 }
 
 // Get user's timezone offset in minutes (positive for east of UTC, e.g., IST = 330)
@@ -398,6 +513,11 @@ async function fetchStatus(): Promise<LangfuseStatus> {
   return response.data;
 }
 
+async function fetchScopeOptions(): Promise<ScopeOptionsResponse> {
+  const response = await api.get<ScopeOptionsResponse>("/api/observability/scope-options");
+  return response.data;
+}
+
 async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   const searchParams = new URLSearchParams();
   if (params.from_date) searchParams.set("from_date", params.from_date);
@@ -405,6 +525,7 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   if (params.search) searchParams.set("search", params.search);
   if (params.models) searchParams.set("models", params.models);
   if (params.include_model_breakdown) searchParams.set("include_model_breakdown", "true");
+  applyScopeParams(searchParams, params);
   // Always send timezone offset for correct date grouping
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
@@ -415,15 +536,16 @@ async function fetchMetrics(params: FetchMetricsParams = {}): Promise<Metrics> {
   return response.data;
 }
 
-async function fetchSessions(params: FetchMetricsParams = {}): Promise<{ sessions: SessionListItem[]; total: number; truncated?: boolean; fetched_trace_count?: number }> {
+async function fetchSessions(params: FetchMetricsParams = {}): Promise<SessionsResponse> {
   const searchParams = new URLSearchParams();
   searchParams.set("limit", "50");
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  applyScopeParams(searchParams, params);
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
 
-  const response = await api.get(`/api/observability/sessions?${searchParams.toString()}`);
+  const response = await api.get<SessionsResponse>(`/api/observability/sessions?${searchParams.toString()}`);
   return response.data;
 }
 
@@ -431,28 +553,33 @@ async function fetchSessionDetail(sessionId: string, params: FetchMetricsParams 
   const searchParams = new URLSearchParams();
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  applyScopeParams(searchParams, params);
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   const query = searchParams.toString();
   const response = await api.get<SessionDetailResponse>(`/api/observability/sessions/${encodeURIComponent(sessionId)}${query ? `?${query}` : ''}`);
   return response.data;
 }
 
-async function fetchTraceDetail(traceId: string): Promise<TraceDetailResponse> {
-  const response = await api.get<TraceDetailResponse>(`/api/observability/traces/${traceId}`);
+async function fetchTraceDetail(traceId: string, params: FetchMetricsParams = {}): Promise<TraceDetailResponse> {
+  const searchParams = new URLSearchParams();
+  applyScopeParams(searchParams, params);
+  const query = searchParams.toString();
+  const response = await api.get<TraceDetailResponse>(`/api/observability/traces/${traceId}${query ? `?${query}` : ""}`);
   return response.data;
 }
 
-async function fetchAgents(params: FetchMetricsParams = {}): Promise<{ agents: AgentListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
+async function fetchAgents(params: FetchMetricsParams = {}): Promise<AgentsResponse> {
   const searchParams = new URLSearchParams();
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
   if (params.search) searchParams.set("search", params.search);
+  applyScopeParams(searchParams, params);
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const queryString = searchParams.toString();
   const url = queryString ? `/api/observability/agents?${queryString}` : "/api/observability/agents";
-  const response = await api.get(url);
+  const response = await api.get<AgentsResponse>(url);
   return response.data;
 }
 
@@ -461,21 +588,23 @@ async function fetchAgentDetail(agentId: string, params: FetchMetricsParams = {}
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  applyScopeParams(searchParams, params);
   if (params.fetch_all) searchParams.set("fetch_all", "true");
   const response = await api.get<AgentDetailResponse>(`/api/observability/agents/${agentId}?${searchParams.toString()}`);
   return response.data;
 }
 
-async function fetchProjects(params: FetchMetricsParams = {}): Promise<{ projects: ProjectListItem[]; total_count: number; truncated?: boolean; fetched_trace_count?: number }> {
+async function fetchProjects(params: FetchMetricsParams = {}): Promise<ProjectsResponse> {
   const searchParams = new URLSearchParams();
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  applyScopeParams(searchParams, params);
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.fetch_all) searchParams.set("fetch_all", "true");
 
   const queryString = searchParams.toString();
   const url = queryString ? `/api/observability/projects?${queryString}` : "/api/observability/projects";
-  const response = await api.get(url);
+  const response = await api.get<ProjectsResponse>(url);
   return response.data;
 }
 
@@ -484,8 +613,45 @@ async function fetchProjectDetail(projectId: string, params: FetchMetricsParams 
   searchParams.set("tz_offset", String(params.tz_offset ?? getUserTimezoneOffset()));
   if (params.from_date) searchParams.set("from_date", params.from_date);
   if (params.to_date) searchParams.set("to_date", params.to_date);
+  applyScopeParams(searchParams, params);
   if (params.fetch_all) searchParams.set("fetch_all", "true");
   const response = await api.get<ProjectDetailResponse>(`/api/observability/projects/${projectId}?${searchParams.toString()}`);
+  return response.data;
+}
+
+async function fetchObservabilityConfig(): Promise<BindingReadMasked[]> {
+  const response = await api.get<BindingReadMasked[]>("/api/observability/config");
+  return response.data ?? [];
+}
+
+async function provisionOrgAdminProject(orgId: string): Promise<ProvisionResponse> {
+  const response = await api.post<ProvisionResponse>(`/api/observability/provision/org/${orgId}`);
+  return response.data;
+}
+
+async function provisionDepartmentProject(deptId: string): Promise<ProvisionResponse> {
+  const response = await api.post<ProvisionResponse>(`/api/observability/provision/dept/${deptId}`);
+  return response.data;
+}
+
+async function retryProvisioningJob(jobId: string): Promise<ProvisionResponse> {
+  const response = await api.post<ProvisionResponse>(`/api/observability/provision/retry/${jobId}`);
+  return response.data;
+}
+
+async function fetchProvisioningStatus(jobId: string): Promise<ProvisionJobRead> {
+  const response = await api.get<ProvisionJobRead>(`/api/observability/provision/status/${jobId}`);
+  return response.data;
+}
+
+async function reconcileObservabilityBindings(orgId?: string | null): Promise<ReconciliationResponse> {
+  const searchParams = new URLSearchParams();
+  if (orgId) {
+    searchParams.set("org_id", orgId);
+  }
+  const query = searchParams.toString();
+  const url = query ? `/api/observability/provision/reconcile?${query}` : "/api/observability/provision/reconcile";
+  const response = await api.post<ReconciliationResponse>(url);
   return response.data;
 }
 
@@ -789,6 +955,9 @@ function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
 
 export default function ObservabilityPage(): JSX.Element {
   const queryClient = useQueryClient();
+  const currentRole = useAuthStore((state) => state.role);
+  const sessionRole = String(currentRole || "").toLowerCase();
+  const isProvisioningAdminSessionRole = sessionRole === "root" || sessionRole === "super_admin";
   // State
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
@@ -797,10 +966,17 @@ export default function ObservabilityPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState("overview");
   const [expandedObservation, setExpandedObservation] = useState<string | null>(null);
   const [fetchAllMode, setFetchAllMode] = useState(false);
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
+  const [lastProvisionResponse, setLastProvisionResponse] = useState<ProvisionResponse | null>(null);
+  const [lastProvisionStatus, setLastProvisionStatus] = useState<ProvisionJobRead | null>(null);
+  const [statusLookupJobId, setStatusLookupJobId] = useState("");
+  const [adminActionError, setAdminActionError] = useState<string | null>(null);
+  const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResponse | null>(null);
 
-  // Filter state — default to 7d so data is visible on first load
+  // Filter state — default to today for faster first-load queries
   const [filters, setFilters] = useState<Filters>({
-    dateRange: "7d",
+    dateRange: "today",
     search: "",
     models: [],
   });
@@ -871,17 +1047,154 @@ export default function ObservabilityPage(): JSX.Element {
     refetchOnWindowFocus: false,
   });
 
+  const { data: scopeOptions, isLoading: scopeOptionsLoading } = useQuery({
+    queryKey: ["observability-scope-options"],
+    queryFn: fetchScopeOptions,
+    enabled: true,
+    staleTime: 60000,
+    refetchOnWindowFocus: false,
+  });
+
+  const normalizedRole = String(scopeOptions?.role || currentRole || "").toLowerCase();
+  const roleKnown = normalizedRole.length > 0;
+  const requiresFilterFirst =
+    scopeOptions?.requires_filter_first ?? (normalizedRole === "root" || normalizedRole === "super_admin");
+  const scopeReady = !requiresFilterFirst || Boolean(selectedOrgId || selectedDeptId);
+
+  const availableScopeDepartments = useMemo(() => {
+    const departments = scopeOptions?.departments ?? [];
+    if (!selectedOrgId) return departments;
+    return departments.filter((dept) => dept.org_id === selectedOrgId);
+  }, [scopeOptions?.departments, selectedOrgId]);
+
+  useEffect(() => {
+    if (!selectedDeptId) return;
+    const selectedDepartment = (scopeOptions?.departments ?? []).find((dept) => dept.id === selectedDeptId);
+    if (!selectedDepartment) {
+      setSelectedDeptId(null);
+      return;
+    }
+    if (selectedOrgId && selectedDepartment.org_id !== selectedOrgId) {
+      setSelectedDeptId(null);
+    }
+  }, [scopeOptions?.departments, selectedDeptId, selectedOrgId]);
+
+  useEffect(() => {
+    if (!selectedDeptId) return;
+    const selectedDepartment = (scopeOptions?.departments ?? []).find((dept) => dept.id === selectedDeptId);
+    if (selectedDepartment && selectedDepartment.org_id !== selectedOrgId) {
+      setSelectedOrgId(selectedDepartment.org_id);
+    }
+  }, [scopeOptions?.departments, selectedDeptId, selectedOrgId]);
+
+  const scopeParams = useMemo(
+    () => ({
+      ...(selectedOrgId ? { org_id: selectedOrgId } : {}),
+      ...(selectedDeptId ? { dept_id: selectedDeptId } : {}),
+    }),
+    [selectedOrgId, selectedDeptId],
+  );
+  const canRunScopedQueries = !!status?.connected && roleKnown && scopeReady;
+  const isProvisioningAdmin = normalizedRole === "root" || normalizedRole === "super_admin";
+
+  const { data: provisioningConfig, isLoading: provisioningConfigLoading, refetch: refetchProvisioningConfig } = useQuery({
+    queryKey: ["observability-provisioning-config"],
+    queryFn: fetchObservabilityConfig,
+    enabled: roleKnown && isProvisioningAdmin,
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
+  });
+
+  const provisionOrgMutation = useMutation({
+    mutationFn: provisionOrgAdminProject,
+    onSuccess: async (data) => {
+      setAdminActionError(null);
+      setLastProvisionResponse(data);
+      setLastProvisionStatus(data.job);
+      setStatusLookupJobId(data.job.id);
+      await refetchProvisioningConfig();
+    },
+    onError: (error: any) => {
+      setAdminActionError(error?.response?.data?.detail || error?.message || "Organization provisioning failed.");
+    },
+  });
+
+  const provisionDeptMutation = useMutation({
+    mutationFn: provisionDepartmentProject,
+    onSuccess: async (data) => {
+      setAdminActionError(null);
+      setLastProvisionResponse(data);
+      setLastProvisionStatus(data.job);
+      setStatusLookupJobId(data.job.id);
+      await refetchProvisioningConfig();
+    },
+    onError: (error: any) => {
+      setAdminActionError(error?.response?.data?.detail || error?.message || "Department provisioning failed.");
+    },
+  });
+
+  const retryProvisionMutation = useMutation({
+    mutationFn: retryProvisioningJob,
+    onSuccess: async (data) => {
+      setAdminActionError(null);
+      setLastProvisionResponse(data);
+      setLastProvisionStatus(data.job);
+      setStatusLookupJobId(data.job.id);
+      await refetchProvisioningConfig();
+    },
+    onError: (error: any) => {
+      setAdminActionError(error?.response?.data?.detail || error?.message || "Provisioning retry failed.");
+    },
+  });
+
+  const statusLookupMutation = useMutation({
+    mutationFn: fetchProvisioningStatus,
+    onSuccess: (data) => {
+      setAdminActionError(null);
+      setLastProvisionStatus(data);
+    },
+    onError: (error: any) => {
+      setAdminActionError(error?.response?.data?.detail || error?.message || "Provisioning status lookup failed.");
+    },
+  });
+
+  const reconcileMutation = useMutation({
+    mutationFn: reconcileObservabilityBindings,
+    onSuccess: async (data) => {
+      setAdminActionError(null);
+      setReconciliationResult(data);
+      await refetchProvisioningConfig();
+    },
+    onError: (error: any) => {
+      setAdminActionError(error?.response?.data?.detail || error?.message || "Reconciliation failed.");
+    },
+  });
+
   const includeModelBreakdown = activeTab === "models";
+  const shouldFetchMetrics = activeTab === "overview" || activeTab === "models";
+  const shouldFetchSessions = activeTab === "sessions" || !!selectedSession;
+  const shouldFetchAgents = activeTab === "agents" || activeTab === "overview" || !!selectedAgent;
+  const shouldFetchProjects = activeTab === "projects" || !!selectedProject;
 
   const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching, dataUpdatedAt: metricsUpdatedAt } = useQuery({
-    queryKey: ["observability-metrics", filters.dateRange, filters.search, filters.models.join(","), fetchAllMode, includeModelBreakdown],
+    queryKey: [
+      "observability-metrics",
+      filters.dateRange,
+      filters.search,
+      filters.models.join(","),
+      fetchAllMode,
+      includeModelBreakdown,
+      selectedOrgId,
+      selectedDeptId,
+    ],
     queryFn: () => fetchMetrics({
       ...dateParams,
+      ...scopeParams,
       search: filters.search || undefined,
       models: filters.models.length > 0 ? filters.models.join(",") : undefined,
       include_model_breakdown: includeModelBreakdown,
     }),
-    enabled: !!status?.connected,
+    enabled: canRunScopedQueries && shouldFetchMetrics,
     refetchInterval: activeTab === "overview" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
@@ -889,9 +1202,9 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching, refetch: refetchSessions, dataUpdatedAt: sessionsUpdatedAt } = useQuery({
-    queryKey: ["observability-sessions", filters.dateRange, fetchAllMode],
-    queryFn: () => fetchSessions(dateParams),
-    enabled: !!status?.connected,
+    queryKey: ["observability-sessions", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
+    queryFn: () => fetchSessions({ ...dateParams, ...scopeParams }),
+    enabled: canRunScopedQueries && shouldFetchSessions,
     refetchInterval: activeTab === "sessions" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
@@ -899,11 +1212,12 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching, refetch: refetchAgents, dataUpdatedAt: agentsUpdatedAt } = useQuery({
-    queryKey: ["observability-agents", filters.dateRange, fetchAllMode],
+    queryKey: ["observability-agents", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchAgents({
       ...dateParams,
+      ...scopeParams,
     }),
-    enabled: !!status?.connected,
+    enabled: canRunScopedQueries && shouldFetchAgents,
     refetchInterval: activeTab === "agents" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
@@ -911,9 +1225,9 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching, refetch: refetchProjects, dataUpdatedAt: projectsUpdatedAt } = useQuery({
-    queryKey: ["observability-projects", filters.dateRange, fetchAllMode],
-    queryFn: () => fetchProjects(dateParams),
-    enabled: !!status?.connected,
+    queryKey: ["observability-projects", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
+    queryFn: () => fetchProjects({ ...dateParams, ...scopeParams }),
+    enabled: canRunScopedQueries && shouldFetchProjects,
     refetchInterval: activeTab === "projects" ? 60000 : false,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
@@ -921,18 +1235,18 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching } = useQuery({
-    queryKey: ["session-detail", selectedSession, filters.dateRange],
-    queryFn: () => fetchSessionDetail(selectedSession!, dateParams),
-    enabled: !!selectedSession,
+    queryKey: ["session-detail", selectedSession, filters.dateRange, selectedOrgId, selectedDeptId],
+    queryFn: () => fetchSessionDetail(selectedSession!, { ...dateParams, ...scopeParams }),
+    enabled: !!selectedSession && canRunScopedQueries,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
     refetchOnWindowFocus: false,
   });
 
   const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError } = useQuery({
-    queryKey: ["trace-detail", selectedTrace],
-    queryFn: () => fetchTraceDetail(selectedTrace!),
-    enabled: !!selectedTrace,
+    queryKey: ["trace-detail", selectedTrace, selectedOrgId, selectedDeptId],
+    queryFn: () => fetchTraceDetail(selectedTrace!, scopeParams),
+    enabled: !!selectedTrace && canRunScopedQueries,
     staleTime: 5000,
     retry: false,
     placeholderData: (previousData: any) => previousData,
@@ -940,24 +1254,25 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching } = useQuery({
-    queryKey: ["agent-detail", selectedAgent, filters.dateRange],
-    queryFn: () => fetchAgentDetail(selectedAgent!, dateParams),
-    enabled: !!selectedAgent,
+    queryKey: ["agent-detail", selectedAgent, filters.dateRange, selectedOrgId, selectedDeptId],
+    queryFn: () => fetchAgentDetail(selectedAgent!, { ...dateParams, ...scopeParams }),
+    enabled: !!selectedAgent && canRunScopedQueries,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
     refetchOnWindowFocus: false,
   });
 
   const { data: projectDetail, isLoading: projectDetailLoading, isFetching: projectDetailFetching } = useQuery({
-    queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode],
-    queryFn: () => fetchProjectDetail(selectedProject!, dateParams),
-    enabled: !!selectedProject,
+    queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
+    queryFn: () => fetchProjectDetail(selectedProject!, { ...dateParams, ...scopeParams }),
+    enabled: !!selectedProject && canRunScopedQueries,
     staleTime: 30000,
     placeholderData: (previousData: any) => previousData,
     refetchOnWindowFocus: false,
   });
 
   const isAnyPrimaryQueryLoading =
+    scopeOptionsLoading ||
     metricsLoading ||
     metricsFetching ||
     agentsLoading ||
@@ -1031,6 +1346,7 @@ export default function ObservabilityPage(): JSX.Element {
   ]);
 
   useEffect(() => {
+    if (!canRunScopedQueries) return;
     const hasOverviewTraces = (metrics?.total_traces ?? 0) > 0;
     if (!hasOverviewTraces) return;
 
@@ -1060,6 +1376,7 @@ export default function ObservabilityPage(): JSX.Element {
       }
     };
   }, [
+    canRunScopedQueries,
     metrics?.total_traces,
     agentsData?.agents?.length,
     projectsData?.projects?.length,
@@ -1154,6 +1471,40 @@ export default function ObservabilityPage(): JSX.Element {
   const sessionsTabLoading =
     sessionsLoading && !sessionsData;
 
+  const scopeWarningMessage = useMemo(() => {
+    const candidates = [
+      metrics?.scope_warning_message,
+      sessionsData?.scope_warning_message,
+      agentsData?.scope_warning_message,
+      projectsData?.scope_warning_message,
+      sessionDetail?.scope_warning_message,
+      traceDetail?.scope_warning_message,
+      agentDetail?.scope_warning_message,
+      projectDetail?.scope_warning_message,
+    ];
+    return candidates.find((value) => Boolean(value)) ?? null;
+  }, [
+    metrics?.scope_warning_message,
+    sessionsData?.scope_warning_message,
+    agentsData?.scope_warning_message,
+    projectsData?.scope_warning_message,
+    sessionDetail?.scope_warning_message,
+    traceDetail?.scope_warning_message,
+    agentDetail?.scope_warning_message,
+    projectDetail?.scope_warning_message,
+  ]);
+
+  const showScopeWarning = Boolean(
+    metrics?.scope_warning ||
+      sessionsData?.scope_warning ||
+      agentsData?.scope_warning ||
+      projectsData?.scope_warning ||
+      sessionDetail?.scope_warning ||
+      traceDetail?.scope_warning ||
+      agentDetail?.scope_warning ||
+      projectDetail?.scope_warning,
+  );
+
   // Handle search submit
   const handleSearch = useCallback(() => {
     markFiltersApplying();
@@ -1175,7 +1526,7 @@ export default function ObservabilityPage(): JSX.Element {
   }
 
   // Not connected state
-  if (!status?.connected) {
+  if (!status?.connected && !isProvisioningAdminSessionRole) {
     return (
       <div className="flex h-full w-full flex-col overflow-auto bg-gray-50 p-6">
         <h1 className="text-2xl font-bold mb-6" style={{ color: THEME.textMain }}>Observability</h1>
@@ -1211,6 +1562,16 @@ export default function ObservabilityPage(): JSX.Element {
 
       {/* Main Content */}
       <div className="flex-1 overflow-auto p-6 space-y-6">
+        {!status?.connected && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Langfuse Not Connected</AlertTitle>
+            <AlertDescription>
+              {status?.message || "Unable to connect to Langfuse for the selected scope. You can still use provisioning tools below to create bindings."}
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Filter Bar */}
         <div className="flex flex-wrap items-center gap-3 p-4 bg-white rounded-xl border shadow-sm">
           {/* Date Range Filter */}
@@ -1230,6 +1591,78 @@ export default function ObservabilityPage(): JSX.Element {
               </SelectContent>
             </Select>
           </div>
+
+          {(scopeOptions?.organizations?.length ?? 0) > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide" style={{ color: THEME.textSecondary }}>
+                Org
+              </span>
+              <Select
+                value={selectedOrgId ?? undefined}
+                onValueChange={(value) => {
+                  markFiltersApplying();
+                  setFetchAllMode(false);
+                  setSelectedOrgId(value);
+                  if (selectedDeptId) {
+                    const selectedDepartment = (scopeOptions?.departments ?? []).find((dept) => dept.id === selectedDeptId);
+                    if (selectedDepartment && selectedDepartment.org_id !== value) {
+                      setSelectedDeptId(null);
+                    }
+                  }
+                  setSelectedSession(null);
+                  setSelectedTrace(null);
+                  setSelectedAgent(null);
+                  setSelectedProject(null);
+                }}
+              >
+                <SelectTrigger className="w-[210px] h-9 bg-gray-50 border-gray-200">
+                  <SelectValue placeholder="Organization scope" />
+                </SelectTrigger>
+                <SelectContent>
+                  {scopeOptions?.organizations.map((org) => (
+                    <SelectItem key={org.id} value={org.id}>
+                      {org.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {(scopeOptions?.departments?.length ?? 0) > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide" style={{ color: THEME.textSecondary }}>
+                Dept
+              </span>
+              <Select
+                value={selectedDeptId ?? undefined}
+                onValueChange={(value) => {
+                  markFiltersApplying();
+                  setFetchAllMode(false);
+                  setSelectedDeptId(value);
+                  const selectedDepartment = (scopeOptions?.departments ?? []).find((dept) => dept.id === value);
+                  if (selectedDepartment && selectedDepartment.org_id !== selectedOrgId) {
+                    setSelectedOrgId(selectedDepartment.org_id);
+                  }
+                  setSelectedSession(null);
+                  setSelectedTrace(null);
+                  setSelectedAgent(null);
+                  setSelectedProject(null);
+                }}
+              >
+                <SelectTrigger className="w-[220px] h-9 bg-gray-50 border-gray-200">
+                  <SelectValue placeholder="Department scope" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableScopeDepartments.map((dept) => (
+                    <SelectItem key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {/* Search Input */}
           <div className="flex items-center gap-2 flex-1 min-w-[200px] max-w-[400px]">
@@ -1284,13 +1717,13 @@ export default function ObservabilityPage(): JSX.Element {
           )}
 
           {/* Clear Filters */}
-          {(filters.search || filters.models.length > 0 || filters.dateRange !== "7d") && (
+          {(filters.search || filters.models.length > 0 || filters.dateRange !== "today") && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => {
                 markFiltersApplying();
-                setFilters({ dateRange: "7d", search: "", models: [] });
+                setFilters({ dateRange: "today", search: "", models: [] });
                 setSearchInput("");
                 setFetchAllMode(false);
               }}
@@ -1299,6 +1732,28 @@ export default function ObservabilityPage(): JSX.Element {
             >
               <X className="h-4 w-4 mr-1" />
               Clear
+            </Button>
+          )}
+
+          {(selectedOrgId || selectedDeptId) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                markFiltersApplying();
+                setSelectedOrgId(null);
+                setSelectedDeptId(null);
+                setSelectedSession(null);
+                setSelectedTrace(null);
+                setSelectedAgent(null);
+                setSelectedProject(null);
+                setFetchAllMode(false);
+              }}
+              className="h-9"
+              style={{ color: THEME.textSecondary }}
+            >
+              <X className="h-4 w-4 mr-1" />
+              Clear Scope
             </Button>
           )}
 
@@ -1325,10 +1780,239 @@ export default function ObservabilityPage(): JSX.Element {
               </button>
             </Badge>
           )}
+          {selectedOrgId && (
+            <Badge variant="secondary" className="bg-gray-100">
+              Org: {(scopeOptions?.organizations ?? []).find((org) => org.id === selectedOrgId)?.name || selectedOrgId}
+            </Badge>
+          )}
+          {selectedDeptId && (
+            <Badge variant="secondary" className="bg-gray-100">
+              Dept: {(scopeOptions?.departments ?? []).find((dept) => dept.id === selectedDeptId)?.name || selectedDeptId}
+            </Badge>
+          )}
         </div>
 
+        {isProvisioningAdmin && (
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-base" style={{ color: THEME.textMain }}>
+                Observability Provisioning Admin
+              </CardTitle>
+              <CardDescription style={{ color: THEME.textSecondary }}>
+                Provision Langfuse org-admin and department projects, retry failed jobs, and reconcile binding drift.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setAdminActionError(null);
+                    if (!selectedOrgId) {
+                      setAdminActionError("Select organization scope before provisioning org-admin project.");
+                      return;
+                    }
+                    provisionOrgMutation.mutate(selectedOrgId);
+                  }}
+                  disabled={!selectedOrgId || provisionOrgMutation.isPending}
+                  style={{ backgroundColor: THEME.primary }}
+                >
+                  {provisionOrgMutation.isPending ? "Provisioning Org..." : "Provision Org Admin Project"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAdminActionError(null);
+                    if (!selectedDeptId) {
+                      setAdminActionError("Select department scope before provisioning department project.");
+                      return;
+                    }
+                    provisionDeptMutation.mutate(selectedDeptId);
+                  }}
+                  disabled={!selectedDeptId || provisionDeptMutation.isPending}
+                >
+                  {provisionDeptMutation.isPending ? "Provisioning Dept..." : "Provision Department Project"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAdminActionError(null);
+                    reconcileMutation.mutate(selectedOrgId || undefined);
+                  }}
+                  disabled={reconcileMutation.isPending}
+                >
+                  {reconcileMutation.isPending ? "Reconciling..." : "Reconcile Bindings"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    void refetchProvisioningConfig();
+                  }}
+                >
+                  Refresh Config
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  value={statusLookupJobId}
+                  onChange={(event) => setStatusLookupJobId(event.target.value)}
+                  placeholder="Provision job ID"
+                  className="h-9 max-w-md bg-gray-50 border-gray-200"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAdminActionError(null);
+                    const trimmed = statusLookupJobId.trim();
+                    if (!trimmed) {
+                      setAdminActionError("Enter provisioning job ID for status lookup.");
+                      return;
+                    }
+                    statusLookupMutation.mutate(trimmed);
+                  }}
+                  disabled={statusLookupMutation.isPending}
+                >
+                  {statusLookupMutation.isPending ? "Loading..." : "Get Job Status"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAdminActionError(null);
+                    const trimmed = statusLookupJobId.trim();
+                    if (!trimmed) {
+                      setAdminActionError("Enter provisioning job ID before retry.");
+                      return;
+                    }
+                    retryProvisionMutation.mutate(trimmed);
+                  }}
+                  disabled={retryProvisionMutation.isPending}
+                >
+                  {retryProvisionMutation.isPending ? "Retrying..." : "Retry Job"}
+                </Button>
+              </div>
+
+              {adminActionError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Provisioning Action Failed</AlertTitle>
+                  <AlertDescription>{adminActionError}</AlertDescription>
+                </Alert>
+              )}
+
+              {lastProvisionStatus && (
+                <Alert className="border-gray-200 bg-gray-50">
+                  <AlertTitle style={{ color: THEME.textMain }}>
+                    Last Job: {lastProvisionStatus.id}
+                  </AlertTitle>
+                  <AlertDescription style={{ color: THEME.textSecondary }}>
+                    Status: {lastProvisionStatus.status} | Scope: {lastProvisionStatus.scope_type}
+                    {lastProvisionStatus.error_message ? ` | Error: ${lastProvisionStatus.error_message}` : ""}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {lastProvisionResponse?.binding && (
+                <Alert className="border-gray-200 bg-gray-50">
+                  <AlertTitle style={{ color: THEME.textMain }}>
+                    Latest Binding Updated
+                  </AlertTitle>
+                  <AlertDescription style={{ color: THEME.textSecondary }}>
+                    Project: {lastProvisionResponse.binding.langfuse_project_name || lastProvisionResponse.binding.langfuse_project_id} | Public Key: {lastProvisionResponse.binding.public_key_masked}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {reconciliationResult && (
+                <Alert className="border-gray-200 bg-gray-50">
+                  <AlertTitle style={{ color: THEME.textMain }}>
+                    Reconciliation Summary
+                  </AlertTitle>
+                  <AlertDescription style={{ color: THEME.textSecondary }}>
+                    Total: {reconciliationResult.total} | Healthy: {reconciliationResult.healthy} | Drifted: {reconciliationResult.drifted} | Failed: {reconciliationResult.failed}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div>
+                <p className="text-sm font-medium mb-2" style={{ color: THEME.textMain }}>
+                  Active Binding Configuration
+                </p>
+                {provisioningConfigLoading ? (
+                  <Skeleton className="h-28 w-full" />
+                ) : provisioningConfig && provisioningConfig.length > 0 ? (
+                  <div className="rounded-md border overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Scope</TableHead>
+                          <TableHead>Org</TableHead>
+                          <TableHead>Dept</TableHead>
+                          <TableHead>Project</TableHead>
+                          <TableHead>Public Key</TableHead>
+                          <TableHead>Updated</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {provisioningConfig.map((binding) => (
+                          <TableRow key={binding.id}>
+                            <TableCell>{binding.scope_type}</TableCell>
+                            <TableCell>{(scopeOptions?.organizations ?? []).find((org) => org.id === binding.org_id)?.name || binding.org_id}</TableCell>
+                            <TableCell>
+                              {binding.dept_id
+                                ? ((scopeOptions?.departments ?? []).find((dept) => dept.id === binding.dept_id)?.name || binding.dept_id)
+                                : "-"}
+                            </TableCell>
+                            <TableCell>{binding.langfuse_project_name || binding.langfuse_project_id}</TableCell>
+                            <TableCell>{binding.public_key_masked}</TableCell>
+                            <TableCell>{formatDate(binding.updated_at)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <p className="text-sm" style={{ color: THEME.textSecondary }}>
+                    No active Langfuse bindings found yet.
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {requiresFilterFirst && !scopeReady && (
+          <Alert className="border-blue-200 bg-blue-50">
+            <AlertCircle className="h-4 w-4" style={{ color: THEME.info }} />
+            <AlertTitle style={{ color: THEME.textMain }}>Scope Required</AlertTitle>
+            <AlertDescription style={{ color: THEME.textSecondary }}>
+              Select an organization or department scope to load observability data.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {showScopeWarning && scopeWarningMessage && (
+          <Alert className="border-amber-200 bg-amber-50">
+            <AlertCircle className="h-4 w-4" style={{ color: THEME.warning }} />
+            <AlertTitle style={{ color: THEME.textMain }}>Observability Scope Warning</AlertTitle>
+            <AlertDescription style={{ color: THEME.textSecondary }}>
+              {scopeWarningMessage}
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        {canRunScopedQueries && (
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="space-y-6"
+          >
           <TabsList className="bg-white border shadow-sm p-1 rounded-lg">
             {[
               { value: "overview", label: "Overview", icon: BarChart3 },
@@ -1601,7 +2285,7 @@ export default function ObservabilityPage(): JSX.Element {
                               ))}
                             </Pie>
                             <Tooltip
-                              formatter={(value: number) => formatTokens(value)}
+                              formatter={((value: number | string) => formatTokens(Number(value))) as any}
                               contentStyle={{
                                 backgroundColor: 'white',
                                 border: '1px solid #e5e7eb',
@@ -2355,7 +3039,8 @@ export default function ObservabilityPage(): JSX.Element {
               </>
             )}
           </TabsContent>
-        </Tabs>
+          </Tabs>
+        )}
       </div>
 
       {/* Session Detail Dialog */}
@@ -2542,7 +3227,7 @@ export default function ObservabilityPage(): JSX.Element {
                       </div>
                       {expandedObservation === obs.id && (
                         <div className="mt-3 pt-3 border-t border-gray-200 space-y-2">
-                          {obs.input && (
+                          {Boolean(obs.input) && (
                             <div>
                               <p className="text-sm font-medium mb-1" style={{ color: THEME.textMain }}>Input</p>
                               <pre className="text-xs bg-white p-3 rounded border overflow-auto max-h-32" style={{ color: THEME.textSecondary }}>
@@ -2550,7 +3235,7 @@ export default function ObservabilityPage(): JSX.Element {
                               </pre>
                             </div>
                           )}
-                          {obs.output && (
+                          {Boolean(obs.output) && (
                             <div>
                               <p className="text-sm font-medium mb-1" style={{ color: THEME.textMain }}>Output</p>
                               <pre className="text-xs bg-white p-3 rounded border overflow-auto max-h-32" style={{ color: THEME.textSecondary }}>
