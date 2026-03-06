@@ -307,6 +307,25 @@ class SupervisorAgent(Node):
                 "title": f"**{worker_name}** finished ({duration_ms / 1000:.1f}s)",
                 "icon": "bot",
             }
+
+            # Nest the worker's tool steps (ToolContent items from its Agent Steps
+            # content_block) inside calling_content.children so they appear
+            # indented under the worker's trace entry in the Supervisor bubble.
+            w_vertex = self._vertex.graph.get_vertex(worker_id)
+            w_built = getattr(w_vertex, "built_result", None) if w_vertex else None
+            # built_result can be a bare Message or a dict {"output_name": Message}
+            if isinstance(w_built, dict):
+                w_msgs = [v for v in w_built.values() if isinstance(v, Message)]
+            elif isinstance(w_built, Message):
+                w_msgs = [w_built]
+            else:
+                w_msgs = []
+            for w_msg in w_msgs:
+                for cb in (w_msg.content_blocks or []):
+                    for item in (cb.contents or []):
+                        if isinstance(item, ToolContent):
+                            calling_content.children.append(item)
+
             await _push_update()
             return result
 
@@ -445,10 +464,15 @@ class SupervisorAgent(Node):
         )
 
         try:
-            response = await self.supervisor_llm.ainvoke(prompt)
+            response = await asyncio.wait_for(
+                self.supervisor_llm.ainvoke(prompt), timeout=60
+            )
             response_text = (
                 response.content if hasattr(response, "content") else str(response)
             )
+        except asyncio.TimeoutError:
+            logger.error("[SupervisorAgent] LLM call timed out after 60s")
+            raise
         except Exception as e:
             logger.error(f"[SupervisorAgent] LLM call failed: {e}")
             # Smart fallback: if all workers have already produced output (or all have
@@ -544,7 +568,9 @@ Respond with ONLY a JSON array — no explanation, no markdown:
 "worker" must be exactly one of: {json.dumps(worker_names)}"""
 
         try:
-            response = await self.supervisor_llm.ainvoke(prompt)
+            response = await asyncio.wait_for(
+                self.supervisor_llm.ainvoke(prompt), timeout=60
+            )
             text = response.content if hasattr(response, "content") else str(response)
 
             clean = text.strip()
@@ -736,16 +762,40 @@ Respond with ONLY a JSON array — no explanation, no markdown:
             )
             return result
 
+        # ── Strategy 4: vertex scan (edges missing entirely) ──────────────────
+        # Last resort when the Supervisor→Worker canvas connections are missing
+        # from the graph (e.g. component refresh reset the static output handles
+        # and the UI dropped the connections).  Finds AgentNode-type vertices by
+        # scanning all graph vertices and matches them positionally to the workers
+        # table sorted by canvas x-position.
+        result = self._build_worker_map_from_vertex_scan(graph)
+        if result:
+            logger.warning(
+                "[SupervisorAgent] Using vertex-scan fallback to build worker map "
+                "(no Supervisor→Worker edges found). "
+                "Please reconnect worker agents in the canvas for reliable routing."
+            )
+            return result
+
         # All strategies failed — log diagnostic info so the next run is debuggable.
         all_edges = getattr(graph, "edges", [])
         my_edges = [e for e in all_edges if e.get("source") == my_id]
+        raw_my_edges = [
+            e for e in (graph.raw_graph_data.get("edges", []) if hasattr(graph, "raw_graph_data") else [])
+            if e.get("source") == my_id
+        ]
+        vertex_ids = [v.id for v in getattr(graph, "vertices", [])]
         logger.error(
             f"[SupervisorAgent] _get_worker_map() returned empty.\n"
-            f"  supervisor vertex id : {my_id!r}\n"
-            f"  total edges in graph : {len(all_edges)}\n"
-            f"  edges from supervisor: {len(my_edges)}\n"
-            f"  first 3 sup-edges    : {my_edges[:3]}\n"
-            f"  successor_map entry  : {getattr(graph, 'successor_map', {}).get(my_id, [])}"
+            f"  supervisor vertex id      : {my_id!r}\n"
+            f"  total edges in graph      : {len(all_edges)}\n"
+            f"  edges from supervisor     : {len(my_edges)}\n"
+            f"  raw edges from supervisor : {len(raw_my_edges)}\n"
+            f"  first 3 sup-edges         : {my_edges[:3]}\n"
+            f"  first 3 raw sup-edges     : {raw_my_edges[:3]}\n"
+            f"  all vertex ids            : {vertex_ids}\n"
+            f"  workers table             : {self.workers}\n"
+            f"  successor_map entry       : {getattr(graph, 'successor_map', {}).get(my_id, [])}"
         )
         return {}
 
@@ -810,6 +860,67 @@ Respond with ONLY a JSON array — no explanation, no markdown:
             if i >= len(ordered_worker_targets):
                 break
             result[name] = ordered_worker_targets[i]
+        return result
+
+    def _build_worker_map_from_vertex_scan(self, graph: Any) -> dict[str, str]:
+        """Strategy 4: find worker vertices by scanning all graph vertices.
+
+        Used when Supervisor→Worker edges are completely absent (e.g. the canvas
+        connections were dropped after a component refresh changed the static
+        output handles).  Candidates are vertices that:
+          * are not the supervisor itself
+          * are not interface components (ChatInput/ChatOutput)
+          * are not pure input/output nodes
+          * have ``input_value`` in their template (task-accepting agents)
+          OR whose base_name is "AgentNode" / "RunChildAgentComponent"
+
+        Candidates are sorted by canvas x-position so that the left-to-right
+        ordering on the canvas matches the top-to-bottom order in the workers table.
+        """
+        worker_names: list[str] = [
+            (r.get("worker_name") or "").strip()
+            for r in (self.workers or [])
+            if isinstance(r, dict) and (r.get("worker_name") or "").strip()
+        ]
+        if not worker_names:
+            return {}
+
+        my_id = self._vertex.id
+        _supervisor_types = {"SupervisorAgent", "CollaborativeAgent"}
+        _agent_base_names = {"AgentNode", "RunChildAgentComponent"}
+
+        candidates = []
+        for vertex in getattr(graph, "vertices", []):
+            if vertex.id == my_id:
+                continue
+            if getattr(vertex, "is_interface_component", False):
+                continue
+            if getattr(vertex, "is_input", False) or getattr(vertex, "is_output", False):
+                continue
+            if vertex.base_name in _supervisor_types or getattr(vertex, "vertex_type", "") in _supervisor_types:
+                continue
+            # Accept vertices that look like task-accepting agents
+            has_input_value = "input_value" in getattr(vertex, "template", {})
+            is_agent_type = vertex.base_name in _agent_base_names
+            if not (has_input_value or is_agent_type):
+                continue
+            candidates.append(vertex)
+
+        if not candidates:
+            return {}
+
+        # Sort by canvas x-position (preserves left-to-right worker order)
+        def _sort_key(v: Any) -> tuple:
+            pos = v.full_data.get("position", {}) if hasattr(v, "full_data") else {}
+            return (pos.get("x", 0), pos.get("y", 0), v.id)
+
+        candidates.sort(key=_sort_key)
+
+        result: dict[str, str] = {}
+        for i, name in enumerate(worker_names):
+            if i >= len(candidates):
+                break
+            result[name] = candidates[i].id
         return result
 
     def _build_supervisor_prompt(

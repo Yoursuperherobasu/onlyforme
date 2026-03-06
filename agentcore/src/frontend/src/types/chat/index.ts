@@ -114,6 +114,7 @@ export interface ToolContent extends BaseContent {
   tool_input: Record<string, any>;
   output?: any;
   error?: any;
+  children?: ToolContent[];
 }
 
 // Union type for all content types

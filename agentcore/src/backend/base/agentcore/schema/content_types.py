@@ -89,3 +89,7 @@ class ToolContent(BaseContent):
     output: Any | None = None
     error: Any | None = None
     duration: int | None = None
+    children: list["ToolContent"] = Field(default_factory=list)
+
+
+ToolContent.model_rebuild()

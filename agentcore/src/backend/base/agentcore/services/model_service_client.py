@@ -759,6 +759,38 @@ class MicroserviceChatModel(BaseChatModel):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
+        # When tools are bound, fall back to non-streaming so tool_calls in the
+        # response are fully parsed before the ToolsAgentOutputParser sees them.
+        # Streaming tool-call deltas require schema changes not yet implemented.
+        if self.bound_tools:
+            result = await self._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            for gen in result.generations:
+                msg = gen.message
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                # Build tool_call_chunks so the LCEL pipeline accumulates them
+                # into tool_calls on the final AIMessage that ToolsAgentOutputParser reads.
+                tool_call_chunks = [
+                    {
+                        "name": tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", ""),
+                        "args": json.dumps(
+                            tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                        ),
+                        "id": tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", ""),
+                        "index": i,
+                        "type": "tool_call_chunk",
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ]
+                chunk_msg = AIMessageChunk(
+                    content=msg.content or "",
+                    tool_call_chunks=tool_call_chunks,
+                )
+                gen_chunk = ChatGenerationChunk(message=chunk_msg)
+                if run_manager and msg.content:
+                    await run_manager.on_llm_new_token(msg.content)
+                yield gen_chunk
+            return
+
         payload = self._build_payload(messages, stream=True)
         if stop:
             payload["stop"] = stop

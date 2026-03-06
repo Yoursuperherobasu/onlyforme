@@ -485,7 +485,7 @@ async def generate_agent_events(
             logger.warning(f"[HITL] Could not save checkpoint after interrupt: {_chk_err}")
 
     except asyncio.CancelledError:
-        background_tasks.add_task(graph.end_all_traces_in_context())
+        background_tasks.add_task(graph.end_all_traces_in_context)
         raise
     # NOTE: GraphInterrupt is NOT caught here.
     # When interrupt() is called inside a LangGraph node, LangGraph catches the
