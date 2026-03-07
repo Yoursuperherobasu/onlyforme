@@ -130,3 +130,6 @@ class UserUpdate(SQLModel):
     department_admin: UUID | None = None
     created_by: UUID | None = None
     country: str | None = None
+    department_id: UUID | None = None
+    organization_name: str | None = None
+    organization_description: str | None = None

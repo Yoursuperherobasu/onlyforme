@@ -757,6 +757,59 @@ async def patch_user(
         user_update.is_superuser = user_update.role in {"super_admin", "department_admin", "root"}
 
     if user_db := await get_user_by_id(session, user_id):
+        # Root promoting/editing a super admin must also ensure org membership mapping.
+        if normalize_role(user.role) == "root" and user_update.role == "super_admin":
+            organization_name = _strip_or_none(user_update.organization_name)
+            organization_description = _strip_or_none(user_update.organization_description)
+
+            if not organization_name:
+                existing_super_admin_org = (
+                    await session.exec(
+                        select(UserOrganizationMembership).where(
+                            UserOrganizationMembership.user_id == user_db.id,
+                            UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+                        )
+                    )
+                ).first()
+                if not existing_super_admin_org:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Organization name is required for super admin.",
+                    )
+            else:
+                organization = (
+                    await session.exec(select(Organization).where(Organization.name == organization_name))
+                ).first()
+                if not organization:
+                    organization = Organization(
+                        name=organization_name,
+                        description=organization_description,
+                        status="active",
+                        owner_user_id=user_db.id,
+                        created_by=user.id,
+                        updated_by=user.id,
+                    )
+                    session.add(organization)
+                    await session.flush()
+
+                super_admin_role = await _get_role_entity(session, "super_admin")
+                await _ensure_org_membership(
+                    session,
+                    user_id=user_db.id,
+                    org_id=organization.id,
+                    role_id=super_admin_role.id,
+                    actor_user_id=user.id,
+                )
+
+                root_role = await _get_role_entity(session, "root")
+                await _ensure_org_membership(
+                    session,
+                    user_id=user.id,
+                    org_id=organization.id,
+                    role_id=root_role.id,
+                    actor_user_id=user.id,
+                )
+
         if not update_password:
             user_update.password = user_db.password
         return await update_user(user_db, user_update, session)
