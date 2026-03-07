@@ -52,6 +52,7 @@ class ChildAgentResult:
     execution_time_ms: float = 0.0
     error: str | None = None
     raw_outputs: list[Any] | None = None
+    content_blocks: list[Any] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format."""
@@ -172,6 +173,9 @@ class ChildAgentAdapter:
                 graph = await load_agent(
                     self.user_id, agent_name=self.agent_name, tweaks=tweaks,
                 )
+                # Set session_id on graph before pre-building so Agent
+                # vertices can persist messages (tool call content blocks).
+                graph.session_id = effective_session_id
                 await self._prebuild_dependencies(graph, input_value)
 
                 run_outputs = await run_agent(
@@ -181,7 +185,7 @@ class ChildAgentAdapter:
                     session_id=effective_session_id,
                 )
 
-                output_text = self._extract_output(run_outputs)
+                output_text, content_blocks = self._extract_output(run_outputs)
 
                 # Detect when graph execution failed (all outputs were None)
                 if not output_text:
@@ -243,6 +247,7 @@ class ChildAgentAdapter:
                     a2a_messages=a2a_messages,
                     execution_time_ms=execution_time_ms,
                     raw_outputs=run_outputs,
+                    content_blocks=content_blocks,
                 )
 
         except Exception as e:
@@ -347,13 +352,18 @@ class ChildAgentAdapter:
 
         return result
 
-    def _extract_output(self, run_outputs: list[RunOutputs]) -> str:
-        """Extract text output from run_outputs."""
+    def _extract_output(self, run_outputs: list[RunOutputs]) -> tuple[str, list[Any]]:
+        """Extract text output and content_blocks from run_outputs.
+
+        Returns:
+            Tuple of (output_text, content_blocks).
+        """
         if not run_outputs:
-            return ""
+            return "", []
 
         try:
             first_output = run_outputs[0]
+            content_blocks: list[Any] = []
 
             if hasattr(first_output, "outputs") and first_output.outputs:
                 if all(output is None for output in first_output.outputs):
@@ -362,7 +372,19 @@ class ChildAgentAdapter:
                         f"({len(first_output.outputs)} output(s) failed). "
                         f"Inputs were: {first_output.inputs}"
                     )
-                    return ""
+                    return "", []
+
+                for output in first_output.outputs:
+                    if output and hasattr(output, "results"):
+                        for result_key, result_value in output.results.items():
+                            # Extract content_blocks from Message objects
+                            if hasattr(result_value, "content_blocks") and result_value.content_blocks:
+                                content_blocks.extend(result_value.content_blocks)
+                            # Also check inside .data dict for nested Messages
+                            if hasattr(result_value, "data") and isinstance(result_value.data, dict):
+                                nested = result_value.data.get("message")
+                                if hasattr(nested, "content_blocks") and nested.content_blocks:
+                                    content_blocks.extend(nested.content_blocks)
 
                 for output in first_output.outputs:
                     if output and hasattr(output, "results"):
@@ -370,16 +392,16 @@ class ChildAgentAdapter:
                             if hasattr(result_value, "data"):
                                 data = result_value.data
                                 if isinstance(data, dict) and "text" in data:
-                                    return data["text"]
+                                    return data["text"], content_blocks
                                 if isinstance(data, str):
-                                    return data
+                                    return data, content_blocks
                             if hasattr(result_value, "text"):
-                                return result_value.text
+                                return result_value.text, content_blocks
                             if isinstance(result_value, str):
-                                return result_value
+                                return result_value, content_blocks
 
-            return str(first_output)
+            return str(first_output), content_blocks
 
         except Exception as e:
             logger.warning(f"Error extracting output: {e}")
-            return str(run_outputs)
+            return str(run_outputs), []

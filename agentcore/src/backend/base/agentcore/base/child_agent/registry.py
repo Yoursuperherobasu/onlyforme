@@ -101,7 +101,12 @@ class ChildAgentRegistry:
         agent_name: str,
         user_id: str,
     ) -> AgentInfo | None:
-        """Get an agent by its name."""
+        """Get an agent by its name.
+
+        First tries to find the agent owned by the given user.  If not found,
+        falls back to a cross-user lookup so that published/orchestrated agents
+        can call child agents owned by a different user (e.g. the agent creator).
+        """
         if not user_id:
             msg = "User ID is required"
             raise ValueError(msg)
@@ -110,12 +115,22 @@ class ChildAgentRegistry:
             async with session_scope() as session:
                 uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
 
+                # 1. Try exact match (same user)
                 stmt = (
                     select(Agent)
                     .where(Agent.name == agent_name)
                     .where(Agent.user_id == uuid_user_id)
                 )
                 agent = (await session.exec(stmt)).first()
+
+                # 2. Fallback: search across all users
+                if not agent:
+                    logger.info(
+                        f"Child agent '{agent_name}' not found for user {user_id}, "
+                        f"trying cross-user lookup"
+                    )
+                    stmt = select(Agent).where(Agent.name == agent_name)
+                    agent = (await session.exec(stmt)).first()
 
                 if agent:
                     return AgentInfo(
@@ -138,7 +153,12 @@ class ChildAgentRegistry:
         agent_id: str,
         user_id: str,
     ) -> AgentInfo | None:
-        """Get an agent by its ID."""
+        """Get an agent by its ID.
+
+        Returns the agent if it exists.  The user_id check is relaxed so that
+        orchestrated / published agents can invoke child agents owned by the
+        agent creator (who may differ from the runtime user).
+        """
         if not user_id:
             msg = "User ID is required"
             raise ValueError(msg)
@@ -148,7 +168,12 @@ class ChildAgentRegistry:
                 uuid_agent_id = UUID(agent_id) if isinstance(agent_id, str) else agent_id
                 agent = await session.get(Agent, uuid_agent_id)
 
-                if agent and str(agent.user_id) == user_id:
+                if agent:
+                    if str(agent.user_id) != user_id:
+                        logger.info(
+                            f"Child agent '{agent_id}' found via cross-user lookup "
+                            f"(owner={agent.user_id}, caller={user_id})"
+                        )
                     return AgentInfo(
                         id=str(agent.id),
                         name=agent.name,

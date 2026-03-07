@@ -24,6 +24,10 @@ from agentcore.services.database.models.user.model import User, UserCreate, User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.deps import get_settings_service
+from agentcore.services.observability import (
+    LangfuseProvisioningError,
+    get_langfuse_provisioning_service,
+)
 
 router = APIRouter(tags=["Users"], prefix="/users")
 
@@ -407,9 +411,24 @@ async def add_user(
                 role_id=root_role.id,
                 actor_user_id=current_user.id,
             )
+            try:
+                provisioning_service = get_langfuse_provisioning_service()
+                await provisioning_service.provision_org_admin_project(
+                    session,
+                    org=org,
+                    actor=current_user,
+                )
+            except LangfuseProvisioningError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Langfuse provisioning failed; organization creation rolled back: {exc}",
+                ) from exc
 
         elif creator_role == "super_admin":
             org_id = await _resolve_creator_org(session, current_user, organization_name)
+            org = await session.get(Organization, org_id)
+            if not org:
+                raise HTTPException(status_code=400, detail="Invalid organization mapping.")
             await _ensure_org_membership(
                 session,
                 user_id=new_user.id,
@@ -441,6 +460,19 @@ async def add_user(
                     role_id=role_entity.id,
                     actor_user_id=current_user.id,
                 )
+                try:
+                    provisioning_service = get_langfuse_provisioning_service()
+                    await provisioning_service.provision_department_project(
+                        session,
+                        org=org,
+                        department=department,
+                        actor=current_user,
+                    )
+                except LangfuseProvisioningError as exc:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Langfuse provisioning failed; department creation rolled back: {exc}",
+                    ) from exc
             else:
                 if target_role not in {"developer", "business_user"}:
                     raise HTTPException(status_code=400, detail="Invalid target role for super admin.")
