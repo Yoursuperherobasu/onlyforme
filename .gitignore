@@ -9,7 +9,7 @@ yarn-error.log*
 lerna-debug.log*
 qdrant_storage
 
-
+.venvmodel
 # VSCode
 .vscode/settings.json
 .chroma
