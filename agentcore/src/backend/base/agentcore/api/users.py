@@ -413,11 +413,12 @@ async def add_user(
             )
             try:
                 provisioning_service = get_langfuse_provisioning_service()
-                await provisioning_service.provision_org_admin_project(
-                    session,
-                    org=org,
-                    actor=current_user,
-                )
+                if provisioning_service.enabled:
+                    await provisioning_service.provision_org_admin_project(
+                        session,
+                        org=org,
+                        actor=current_user,
+                    )
             except LangfuseProvisioningError as exc:
                 raise HTTPException(
                     status_code=500,
@@ -462,12 +463,13 @@ async def add_user(
                 )
                 try:
                     provisioning_service = get_langfuse_provisioning_service()
-                    await provisioning_service.provision_department_project(
-                        session,
-                        org=org,
-                        department=department,
-                        actor=current_user,
-                    )
+                    if provisioning_service.enabled:
+                        await provisioning_service.provision_department_project(
+                            session,
+                            org=org,
+                            department=department,
+                            actor=current_user,
+                        )
                 except LangfuseProvisioningError as exc:
                     raise HTTPException(
                         status_code=500,
