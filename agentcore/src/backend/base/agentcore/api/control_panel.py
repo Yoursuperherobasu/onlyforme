@@ -35,7 +35,7 @@ from agentcore.services.database.models.agent_deployment_uat.model import (
     DeploymentVisibilityEnum,
     DeploymentUATStatusEnum,
 )
-from agentcore.services.database.models.agent_registry.model import RegistryDeploymentEnvEnum
+from agentcore.services.database.models.agent_registry.model import AgentRegistry, RegistryDeploymentEnvEnum
 from agentcore.services.database.models.transaction_uat.model import TransactionUATTable
 from agentcore.services.database.models.transaction_prod.model import TransactionProdTable
 from agentcore.services.database.models.user.model import User
@@ -447,7 +447,35 @@ async def toggle_agent_field(
             else RegistryDeploymentEnvEnum.UAT
         )
         registry_synced = False
+
+        def _should_be_listed() -> bool:
+            if body.env == ControlPanelEnv.PROD:
+                return (
+                    dep.is_active
+                    and dep.is_enabled
+                    and dep.status == DeploymentPRODStatusEnum.PUBLISHED
+                    and dep.visibility == ProdDeploymentVisibilityEnum.PUBLIC
+                )
+            return (
+                dep.is_active
+                and dep.is_enabled
+                and dep.status == DeploymentUATStatusEnum.PUBLISHED
+                and dep.visibility == DeploymentVisibilityEnum.PUBLIC
+            )
+
+        async def _has_registry_row() -> bool:
+            row = (
+                await session.exec(
+                    select(AgentRegistry).where(
+                        AgentRegistry.agent_deployment_id == dep.id,
+                        AgentRegistry.deployment_env == registry_env,
+                    )
+                )
+            ).first()
+            return row is not None
+
         try:
+            # First pass sync
             await sync_agent_registry(
                 session=session,
                 agent_id=dep.agent_id,
@@ -455,10 +483,32 @@ async def toggle_agent_field(
                 acted_by=current_user.id,
                 deployment_env=registry_env,
             )
+            await session.commit()
+
+            # Verify expected registry state. If mismatched, run one more sync pass.
+            should_be_listed = _should_be_listed()
+            is_listed = await _has_registry_row()
+            if should_be_listed != is_listed:
+                await sync_agent_registry(
+                    session=session,
+                    agent_id=dep.agent_id,
+                    org_id=dep.org_id,
+                    acted_by=current_user.id,
+                    deployment_env=registry_env,
+                )
+                await session.commit()
+                is_listed = await _has_registry_row()
+
+            if should_be_listed != is_listed:
+                raise RuntimeError(
+                    f"Registry state mismatch after toggle for deployment {dep.id}: "
+                    f"should_be_listed={should_be_listed}, is_listed={is_listed}"
+                )
+
             registry_synced = True
         except Exception as sync_err:
+            await session.rollback()
             logger.warning(f"Registry sync after toggle failed: {sync_err}")
-
         logger.info(
             f"Control-panel toggle: deploy_id={deploy_id} "
             f"field={body.field.value} → {body.value} (env={body.env.value}, "

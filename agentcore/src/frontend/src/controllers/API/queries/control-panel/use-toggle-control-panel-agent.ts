@@ -37,6 +37,7 @@ export const useToggleControlPanelAgent = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["useGetControlPanelAgents"] });
+      queryClient.invalidateQueries({ queryKey: ["useGetRegistry"] });
     },
   });
 };
