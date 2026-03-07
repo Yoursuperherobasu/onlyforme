@@ -62,7 +62,7 @@ def upgrade() -> None:
             sa.text(
                 "DO $$ BEGIN "
                 "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'lifecycle_status_enum') THEN "
-                "CREATE TYPE lifecycle_status_enum AS ENUM ('DRAFT', 'PUBLISHED', 'DEPRECATED', 'ARCHIVED'); "
+                "CREATE TYPE lifecycle_status_enum AS ENUM ('DRAFT', 'PENDING_APPROVAL', 'PUBLISHED', 'DEPRECATED', 'ARCHIVED'); "
                 "END IF; "
                 "END $$;"
             )
@@ -73,7 +73,7 @@ def upgrade() -> None:
             "agent",
             sa.Column(
                 "lifecycle_status",
-                sa.Enum("DRAFT", "PUBLISHED", "DEPRECATED", "ARCHIVED", name="lifecycle_status_enum"),
+                sa.Enum("DRAFT", "PENDING_APPROVAL", "PUBLISHED", "DEPRECATED", "ARCHIVED", name="lifecycle_status_enum"),
                 nullable=False,
                 server_default=sa.text("'DRAFT'"),
             ),

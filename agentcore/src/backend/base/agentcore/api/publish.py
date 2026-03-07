@@ -32,7 +32,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
-from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.agent.model import Agent, LifecycleStatusEnum
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.approval_request.model import (
     ApprovalRequest,
@@ -52,6 +52,12 @@ from agentcore.services.database.models.agent_deployment_uat.model import (
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.agent_registry.model import RegistryDeploymentEnvEnum
 from agentcore.services.database.registry_service import sync_agent_registry
+from agentcore.services.database.models.agent_bundle.model import (
+    AgentBundle,
+    AgentBundleRead,
+    BundleTypeEnum,
+    DeploymentEnvEnum,
+)
 
 router = APIRouter(prefix="/publish", tags=["Publish"])
 
@@ -586,6 +592,222 @@ async def _get_next_version_number(
         return 1
 
     return max(results) + 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bundle extraction — creates AgentBundle rows from a frozen snapshot
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Node type → (BundleTypeEnum, template field that holds the resource value)
+_NODE_TYPE_TO_BUNDLE: dict[str, tuple[BundleTypeEnum, str]] = {
+    "RegistryModelComponent": (BundleTypeEnum.MODEL, "registry_model"),
+    "RegistryEmbeddingsComponent": (BundleTypeEnum.MODEL, "registry_model"),
+    "MCPTools": (BundleTypeEnum.MCP_SERVER, "mcp_server"),
+    "NemoGuardrails": (BundleTypeEnum.GUARDRAIL, "guardrail_id"),
+    "DatabaseConnector": (BundleTypeEnum.CONNECTOR, "connector"),
+    "Chroma": (BundleTypeEnum.VECTOR_DB, "collection_name"),
+    "Pinecone": (BundleTypeEnum.VECTOR_DB, "index_name"),
+    "CustomComponent": (BundleTypeEnum.CUSTOM_COMPONENT, "code"),
+}
+
+# Node types that are considered built-in tools
+_TOOL_NODE_TYPES: set[str] = {
+    "APIRequest",
+    "CalculatorTool",
+    "WebSearchNoAPI",
+    "DataVisualizer",
+    "DataVisualizerTool",
+    "File",
+    "Directory",
+    "DocumentOCRExtractor",
+    "Memory",
+    "FileTrigger",
+    "FolderMonitor",
+    "SmartRouter",
+    "NLtoSQL",
+    "TalkToDataTool",
+    "HumanApproval",
+}
+
+
+def _extract_field_value(template: dict, field_name: str) -> str | None:
+    """Safely pull the display value from a node template field."""
+    field = template.get(field_name)
+    if field is None:
+        return None
+    if isinstance(field, dict):
+        val = field.get("value", "")
+    else:
+        val = field
+    if isinstance(val, dict):
+        return val.get("name") or val.get("display_name") or str(val)
+    return str(val).strip() if val else None
+
+
+def _extract_resource_config(template: dict, field_name: str, node_type: str) -> dict | None:
+    """Build a frozen config dict from the node template for the bundled resource."""
+    field = template.get(field_name)
+    if not field:
+        return None
+    value = field.get("value") if isinstance(field, dict) else field
+
+    if node_type in ("RegistryModelComponent", "RegistryEmbeddingsComponent"):
+        # value is "display_name | model_name | uuid"
+        config: dict = {"raw_value": value}
+        if isinstance(value, str) and "|" in value:
+            parts = [p.strip() for p in value.split("|")]
+            if len(parts) >= 3:
+                config = {"display_name": parts[0], "model_name": parts[1], "model_id": parts[2]}
+        # Capture temperature / max_tokens if present
+        for extra in ("temperature", "max_tokens", "provider"):
+            extra_field = template.get(extra)
+            if extra_field and isinstance(extra_field, dict) and extra_field.get("value") is not None:
+                config[extra] = extra_field["value"]
+        return config
+
+    if node_type == "NemoGuardrails":
+        config = {"raw_value": value}
+        if isinstance(value, str) and "|" in value:
+            parts = [p.strip() for p in value.split("|")]
+            if len(parts) >= 2:
+                config = {"guardrail_name": parts[0], "guardrail_id": parts[1]}
+        for extra in ("enabled", "fail_open"):
+            extra_field = template.get(extra)
+            if extra_field and isinstance(extra_field, dict) and extra_field.get("value") is not None:
+                config[extra] = extra_field["value"]
+        return config
+
+    if node_type == "MCPTools":
+        if isinstance(value, dict):
+            return {"server_name": value.get("name", ""), **{k: v for k, v in value.items() if k != "name"}}
+        return {"server_name": str(value)} if value else None
+
+    if node_type == "DatabaseConnector":
+        config = {"raw_value": value}
+        if isinstance(value, str) and "|" in value:
+            parts = [p.strip() for p in value.split("|")]
+            if len(parts) >= 4:
+                config = {"connector_name": parts[0], "provider": parts[1], "host": parts[2], "connector_id": parts[3]}
+        return config
+
+    if node_type in ("Chroma", "Pinecone"):
+        config = {"name": value}
+        for extra in ("persist_directory", "chroma_server_host", "namespace", "cloud_provider", "cloud_region"):
+            extra_field = template.get(extra)
+            if extra_field and isinstance(extra_field, dict) and extra_field.get("value"):
+                config[extra] = extra_field["value"]
+        return config
+
+    return {"value": value} if value else None
+
+
+def _derive_resource_name(value: str | None, node_type: str) -> str:
+    """Derive a human-readable resource_name from the field value."""
+    if not value:
+        return node_type
+    # For "display_name | model_name | uuid" format, use display_name
+    if "|" in value:
+        return value.split("|")[0].strip()
+    return value
+
+
+async def _extract_and_create_bundles(
+    session: AsyncSession,
+    *,
+    snapshot: dict,
+    agent_id: UUID,
+    org_id: UUID | None,
+    dept_id: UUID | None,
+    deployment_id: UUID,
+    deployment_env: DeploymentEnvEnum,
+    created_by: UUID,
+) -> list[AgentBundle]:
+    """Parse the frozen snapshot and create AgentBundle rows for every external resource.
+
+    Extracts all 8 resource types:
+        MODEL, MCP_SERVER, GUARDRAIL, KNOWLEDGE_BASE, VECTOR_DB,
+        CONNECTOR, TOOL, CUSTOM_COMPONENT
+    """
+    bundles: list[AgentBundle] = []
+    seen: set[tuple[str, str]] = set()  # (bundle_type, resource_name) dedup
+
+    for node in snapshot.get("nodes", []):
+        node_data = node.get("data", {})
+        node_type = node_data.get("type", "")
+        template = node_data.get("node", {}).get("template", {})
+
+        if not node_type or not template:
+            continue
+
+        # ── Known component types (Model, MCP, Guardrail, Connector, VectorDB, CustomComponent) ──
+        if node_type in _NODE_TYPE_TO_BUNDLE:
+            bundle_type, field_name = _NODE_TYPE_TO_BUNDLE[node_type]
+            raw_value = _extract_field_value(template, field_name)
+            if not raw_value:
+                continue
+            resource_name = _derive_resource_name(raw_value, node_type)
+            dedup_key = (bundle_type.value, resource_name)
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+
+            bundles.append(AgentBundle(
+                agent_id=agent_id,
+                org_id=org_id,
+                dept_id=dept_id,
+                deployment_id=deployment_id,
+                deployment_env=deployment_env,
+                bundle_type=bundle_type,
+                resource_name=resource_name,
+                resource_config=_extract_resource_config(template, field_name, node_type),
+                created_by=created_by,
+            ))
+
+        # ── Built-in tools ──
+        elif node_type in _TOOL_NODE_TYPES:
+            dedup_key = (BundleTypeEnum.TOOL.value, node_type)
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+
+            display = node_data.get("node", {}).get("display_name", node_type)
+            bundles.append(AgentBundle(
+                agent_id=agent_id,
+                org_id=org_id,
+                dept_id=dept_id,
+                deployment_id=deployment_id,
+                deployment_env=deployment_env,
+                bundle_type=BundleTypeEnum.TOOL,
+                resource_name=display,
+                resource_config={"component_type": node_type},
+                created_by=created_by,
+            ))
+
+        # ── Knowledge Base (any node referencing a KB field) ──
+        kb_field = template.get("knowledge_base") or template.get("knowledge_base_id")
+        if kb_field:
+            kb_value = _extract_field_value(template, "knowledge_base") or _extract_field_value(template, "knowledge_base_id")
+            if kb_value:
+                dedup_key = (BundleTypeEnum.KNOWLEDGE_BASE.value, kb_value)
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    bundles.append(AgentBundle(
+                        agent_id=agent_id,
+                        org_id=org_id,
+                        dept_id=dept_id,
+                        deployment_id=deployment_id,
+                        deployment_env=deployment_env,
+                        bundle_type=BundleTypeEnum.KNOWLEDGE_BASE,
+                        resource_name=_derive_resource_name(kb_value, "KnowledgeBase"),
+                        resource_config={"raw_value": kb_value},
+                        created_by=created_by,
+                    ))
+
+    # Persist all bundles
+    for bundle in bundles:
+        session.add(bundle)
+
+    return bundles
 
 
 async def _get_agent_or_404(
@@ -1172,6 +1394,24 @@ async def publish_agent(
                 f"by user {current_user.id} [dept={resolved_department_id}]"
             )
 
+            # ─── Create agent bundle rows from snapshot ──
+            try:
+                bundles = await _extract_and_create_bundles(
+                    session,
+                    snapshot=snapshot,
+                    agent_id=agent_id,
+                    org_id=agent.org_id,
+                    dept_id=resolved_department_id,
+                    deployment_id=new_record.id,
+                    deployment_env=DeploymentEnvEnum.UAT,
+                    created_by=current_user.id,
+                )
+                if bundles:
+                    await session.commit()
+                    logger.info(f"Created {len(bundles)} bundle(s) for UAT deploy {new_record.id}")
+            except Exception as bundle_err:
+                logger.warning(f"Bundle extraction failed for UAT deploy of {agent_id}: {bundle_err}")
+
             # Sync FileTrigger nodes → auto-create trigger_config entries
             try:
                 from agentcore.services.deps import get_trigger_service
@@ -1239,6 +1479,10 @@ async def publish_agent(
                 )
                 session.add(new_record)
 
+                # Update agent lifecycle_status to PUBLISHED
+                agent.lifecycle_status = LifecycleStatusEnum.PUBLISHED
+                session.add(agent)
+
                 # Shadow deployment: keep previous versions active so
                 # multiple versions can run side-by-side.
 
@@ -1249,6 +1493,24 @@ async def publish_agent(
                     f"Admin direct-deployed agent '{agent.name}' ({agent_id}) to PROD "
                     f"as v{next_version} by {current_user.id} [dept={resolved_department_id}]"
                 )
+
+                # ─── Create agent bundle rows from snapshot ──
+                try:
+                    bundles = await _extract_and_create_bundles(
+                        session,
+                        snapshot=snapshot,
+                        agent_id=agent_id,
+                        org_id=agent.org_id,
+                        dept_id=resolved_department_id,
+                        deployment_id=new_record.id,
+                        deployment_env=DeploymentEnvEnum.PROD,
+                        created_by=current_user.id,
+                    )
+                    if bundles:
+                        await session.commit()
+                        logger.info(f"Created {len(bundles)} bundle(s) for PROD deploy {new_record.id}")
+                except Exception as bundle_err:
+                    logger.warning(f"Bundle extraction failed for PROD deploy of {agent_id}: {bundle_err}")
 
                 # ─── Sync agent registry after PROD admin publish ──
                 try:
@@ -1308,6 +1570,11 @@ async def publish_agent(
                     visibility=visibility_enum,
                 )
                 session.add(new_record)
+
+                # Update agent lifecycle_status to PENDING_APPROVAL
+                agent.lifecycle_status = LifecycleStatusEnum.PENDING_APPROVAL
+                session.add(agent)
+
                 await session.flush()  # get new_record.id
 
                 # Create approval_request targeting the supplied department admin
@@ -1339,6 +1606,24 @@ async def publish_agent(
                     f"for PROD approval as v{next_version}. "
                     f"Approval sent to dept admin {resolved_department_admin_id} [dept={resolved_department_id}]"
                 )
+
+                # ─── Create agent bundle rows from snapshot ──
+                try:
+                    bundles = await _extract_and_create_bundles(
+                        session,
+                        snapshot=snapshot,
+                        agent_id=agent_id,
+                        org_id=agent.org_id,
+                        dept_id=resolved_department_id,
+                        deployment_id=new_record.id,
+                        deployment_env=DeploymentEnvEnum.PROD,
+                        created_by=current_user.id,
+                    )
+                    if bundles:
+                        await session.commit()
+                        logger.info(f"Created {len(bundles)} bundle(s) for PROD pending-approval deploy {new_record.id}")
+                except Exception as bundle_err:
+                    logger.warning(f"Bundle extraction failed for PROD deploy of {agent_id}: {bundle_err}")
 
                 return PublishActionResponse(
                     success=True,
@@ -1679,4 +1964,100 @@ async def clone_from_publish(
         raise
     except Exception as e:
         logger.error(f"Error cloning from deployment {deploy_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bundle endpoints
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@router.get("/{deploy_id}/bundles", response_model=list[AgentBundleRead], status_code=200)
+async def get_deployment_bundles(
+    *,
+    session: DbSession,
+    deploy_id: UUID,
+    current_user: CurrentActiveUser,
+):
+    """Get all bundled resources for a specific deployment version.
+
+    Returns the frozen snapshot of every external resource (model, MCP server,
+    guardrail, knowledge base, vector DB, connector, tool, custom component)
+    that was captured when this deployment was published.
+
+    Args:
+        session: Async database session.
+        deploy_id: UUID of the deployment record (UAT or PROD).
+        current_user: The authenticated user.
+
+    Returns:
+        List of AgentBundleRead objects for the deployment.
+    """
+    try:
+        bundles = (await session.exec(
+            select(AgentBundle)
+            .where(AgentBundle.deployment_id == deploy_id)
+            .order_by(AgentBundle.bundle_type, AgentBundle.resource_name)
+        )).all()
+
+        return [AgentBundleRead.model_validate(b) for b in bundles]
+
+    except Exception as e:
+        logger.error(f"Error fetching bundles for deployment {deploy_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/{agent_id}/bundles/latest", response_model=list[AgentBundleRead], status_code=200)
+async def get_latest_bundles(
+    *,
+    session: DbSession,
+    agent_id: UUID,
+    env: str = Query(default="uat", description="Environment: 'uat' or 'prod'"),
+    current_user: CurrentActiveUser,
+):
+    """Get bundles for the latest active deployment of an agent.
+
+    Finds the most recent active deployment in the given environment and returns
+    its bundled resources. Useful for the frontend sidebar to show what the
+    currently running version of an agent uses.
+
+    Args:
+        session: Async database session.
+        agent_id: UUID of the agent.
+        env: Environment — 'uat' or 'prod'.
+        current_user: The authenticated user.
+
+    Returns:
+        List of AgentBundleRead objects for the latest active deployment.
+    """
+    try:
+        if env not in ("uat", "prod"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid environment '{env}'. Must be 'uat' or 'prod'.",
+            )
+
+        table_class = AgentDeploymentUAT if env == "uat" else AgentDeploymentProd
+        latest = (await session.exec(
+            select(table_class)
+            .where(table_class.agent_id == agent_id, table_class.is_active == True)  # noqa: E712
+            .order_by(col(table_class.deployed_at).desc())
+            .limit(1)
+        )).first()
+
+        if not latest:
+            return []
+
+        bundles = (await session.exec(
+            select(AgentBundle)
+            .where(AgentBundle.deployment_id == latest.id)
+            .order_by(AgentBundle.bundle_type, AgentBundle.resource_name)
+        )).all()
+
+        return [AgentBundleRead.model_validate(b) for b in bundles]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching latest bundles for agent {agent_id} in {env}: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
