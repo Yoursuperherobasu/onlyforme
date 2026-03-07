@@ -290,7 +290,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v9"  # bump when permissions change
+PERMISSION_VERSION = "v10"  # bump when permissions change
 
 
 class PermissionCacheService:
