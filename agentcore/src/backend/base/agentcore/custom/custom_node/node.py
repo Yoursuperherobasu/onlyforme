@@ -24,6 +24,7 @@ from agentcore.base.tools.constants import (
 )
 from agentcore.custom.tree_visitor import FieldRequirementChecker
 from agentcore.exceptions.component import StreamingError
+from langgraph.errors import GraphInterrupt
 from agentcore.field_typing import Tool  # noqa: TC001 Needed by _add_toolkit_output
 
 from agentcore.helpers.custom import format_type
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
     from agentcore.base.tools.component_tool import ComponentToolkit
     from agentcore.events.event_manager import EventManager
     from agentcore.graph_langgraph import EdgeData
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphVertex
     from agentcore.inputs.inputs import InputTypes
     from agentcore.schema.dataframe import DataFrame
     from agentcore.schema.log import LoggableType
@@ -379,11 +380,11 @@ class Node(ExecutableNode):
         """
         return await self._run()
 
-    def set_vertex(self, vertex: Vertex) -> None:
+    def set_vertex(self, vertex: LangGraphVertex) -> None:
         """Sets the vertex for the component.
 
         Args:
-            vertex (Vertex): The vertex to set.
+            vertex (LangGraphVertex): The vertex to set.
 
         Returns:
             None
@@ -1045,11 +1046,19 @@ class Node(ExecutableNode):
             session_id = self._session_id
         else:
             session_id = None
+        import time as _time_mod
+        _build_start = _time_mod.perf_counter()
         try:
             if self._tracing_service:
-                return await self._build_with_tracing()
-            return await self._build_without_tracing()
+                result = await self._build_with_tracing()
+            else:
+                result = await self._build_without_tracing()
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "success", (_time_mod.perf_counter() - _build_start) * 1000)
+            return result
         except StreamingError as e:
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "error", (_time_mod.perf_counter() - _build_start) * 1000)
             await self.send_error(
                 exception=e.cause,
                 session_id=session_id,
@@ -1057,7 +1066,11 @@ class Node(ExecutableNode):
                 source=e.source,
             )
             raise e.cause  # noqa: B904
+        except GraphInterrupt:
+            raise
         except Exception as e:
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "error", (_time_mod.perf_counter() - _build_start) * 1000)
             await self.send_error(
                 exception=e,
                 session_id=session_id,
@@ -1488,6 +1501,21 @@ class Node(ExecutableNode):
             and message is not None
             and isinstance(message.text, AsyncIterator | Iterator)
         )
+        # Fallback: consume iterator when no event_manager is available
+        # (e.g., during HITL resume where ainvoke bypasses astream/event_manager setup).
+        # Without this, _store_message receives an AsyncIterator which can't be serialized.
+        if not is_streaming and message is not None and isinstance(message.text, AsyncIterator | Iterator):
+            complete = ""
+            if isinstance(message.text, AsyncIterator):
+                async for chunk in message.text:
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    complete += content
+            else:
+                for chunk in message.text:
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    complete += content
+            message.text = complete
+
         if is_streaming:
             # OPTIMIZATION: For streaming messages, generate ID upfront and write to DB only ONCE at the end
             # This reduces DB writes from 100+ (one per chunk) to just 1

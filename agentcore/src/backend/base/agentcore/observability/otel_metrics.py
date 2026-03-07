@@ -84,6 +84,9 @@ def setup_otel_metrics(app) -> None:
         description="HTTP request duration in milliseconds",
     )
 
+    from agentcore.observability.metrics_registry import init_instruments
+    init_instruments(meter)
+
     provider.get_meter("http.server", "0.0.0")
 
     @app.get("/metrics", include_in_schema=False)
@@ -114,6 +117,9 @@ def setup_otel_metrics(app) -> None:
                 _request_duration_histogram.record(duration_ms, labels)
             except Exception:
                 pass
+            if response.status_code >= 400:
+                from agentcore.observability.metrics_registry import record_api_error
+                record_api_error(status_code, path)
             return response
 
     app.add_middleware(MetricsMiddleware)

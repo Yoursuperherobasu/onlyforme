@@ -7,12 +7,11 @@ import warnings
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
-from multiprocess import cpu_count
+from multiprocessing import cpu_count
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 import builtins
-from agentcore.services.auth.decorators import verify_permissions
-builtins.verify_permissions = verify_permissions
+
 import sys
 
 if sys.platform == 'win32':
@@ -188,15 +187,6 @@ def get_lifespan(*, fix_migration=True, version=None):
             try:
                 # Stopping Server
                 logger.debug("Stopping server gracefully...")
-
-                # Shut down MCP sessions first (STDIO subprocesses block if left to GC)
-                try:
-                    from agentcore.base.mcp.util import cleanup_all_mcp_sessions
-                    await asyncio.wait_for(cleanup_all_mcp_sessions(), timeout=5)
-                except asyncio.TimeoutError:
-                    logger.warning("MCP session cleanup timed out.")
-                except Exception as e:  # noqa: BLE001
-                    logger.debug(f"MCP session cleanup error: {e}")
 
                 # Cleaning Up Services
                 try:
@@ -466,6 +456,8 @@ def create_app():
                 status_code=exc.status_code,
                 content={"message": str(exc.detail)},
             )
+        from agentcore.observability.metrics_registry import record_error
+        record_error(type(exc).__name__, "api")
         logger.error(f"unhandled error: {exc}", exc_info=exc)
         return JSONResponse(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
