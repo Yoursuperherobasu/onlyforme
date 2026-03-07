@@ -477,7 +477,7 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* HITL Approvals */}
-        {!isRootAdmin && (
+        {can("view_hitl_approvals_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
@@ -549,7 +549,7 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* Automations */}
-        {!isRootAdmin && (
+        {can("view_agent_scheduler_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
