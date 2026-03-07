@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -62,7 +63,7 @@ class TriggerService(Service):
 
     def __init__(self) -> None:
         self._monitors: dict[str, asyncio.Task] = {}
-        self._seen_files: dict[str, set[str]] = {}  # trigger_id -> set of seen file keys
+        self._seen_files: dict[str, OrderedDict] = {}  # trigger_id -> OrderedDict of seen file keys
         self._started = False
 
     def start(self) -> None:
@@ -337,10 +338,10 @@ class TriggerService(Service):
                 if record and record.trigger_config:
                     keys = record.trigger_config.get("_seen_keys", [])
                     if isinstance(keys, list):
-                        return set(keys)
+                        return OrderedDict.fromkeys(keys)
         except Exception as e:
             logger.warning(f"TriggerService: failed to load seen files for {trigger_config_id}: {e}")
-        return set()
+        return OrderedDict()
 
     async def _persist_seen_files(self, trigger_config_id: UUID) -> None:
         """Save the in-memory seen-file keys to the trigger_config JSON.
@@ -358,8 +359,8 @@ class TriggerService(Service):
                 get_trigger_config_by_id,
             )
 
-            # Keep only last 500 to prevent JSON bloat
-            keys_list = list(seen)[-500:]
+            # Keep only last 10,000 to prevent JSON bloat
+            keys_list = list(seen)[-10_000:]
 
             db_service = get_db_service()
             async with db_service.with_session() as session:
@@ -453,7 +454,7 @@ class TriggerService(Service):
             logger.warning(f"Folder monitor {task_id}: path '{folder_path}' does not exist")
             return []
 
-        seen = self._seen_files.get(task_id, set())
+        seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
         for entry in os.scandir(folder_path):
@@ -477,7 +478,7 @@ class TriggerService(Service):
                     "size": entry.stat().st_size,
                     "modified": datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc).isoformat(),
                 })
-                seen.add(file_key)
+                seen[file_key] = None
             elif trigger_on in ("Modified Files", "Both") and file_key not in seen:
                 new_files.append({
                     "name": entry.name,
@@ -485,7 +486,7 @@ class TriggerService(Service):
                     "size": entry.stat().st_size,
                     "modified": datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc).isoformat(),
                 })
-                seen.add(file_key)
+                seen[file_key] = None
 
         self._seen_files[task_id] = seen
         return new_files
@@ -524,7 +525,7 @@ class TriggerService(Service):
             logger.warning(f"TriggerService: Azure Blob trigger {task_id} missing connection_string or container_name")
             return []
 
-        seen = self._seen_files.get(task_id, set())
+        seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
         async with BlobServiceClient.from_connection_string(connection_string) as client:
@@ -544,7 +545,7 @@ class TriggerService(Service):
                         "size": blob.size,
                         "modified": blob.last_modified.isoformat() if blob.last_modified else None,
                     })
-                    seen.add(blob_key)
+                    seen[blob_key] = None
 
         self._seen_files[task_id] = seen
         return new_files
@@ -591,7 +592,7 @@ class TriggerService(Service):
             logger.warning(f"TriggerService: SharePoint trigger {task_id} missing site_url, client_id, or client_secret")
             return []
 
-        seen = self._seen_files.get(task_id, set())
+        seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
         try:
@@ -621,7 +622,7 @@ class TriggerService(Service):
                         "size": sp_file.length if hasattr(sp_file, "length") else 0,
                         "modified": str(modified),
                     })
-                    seen.add(file_key)
+                    seen[file_key] = None
 
         except Exception:
             logger.exception(f"Error scanning SharePoint for trigger {task_id}")
@@ -803,7 +804,7 @@ class TriggerService(Service):
                         m_sender = m.get("from", {}).get("emailAddress", {}).get("address", "").lower()
                         m_subject = (m.get("subject") or "").lower()
                         m_body = (m.get("bodyPreview") or "").lower()
-                        if filter_sender and filter_sender.lower() not in m_sender:
+                        if filter_sender and filter_sender.lower() != m_sender:
                             continue
                         if filter_subject and filter_subject.lower() not in m_subject:
                             continue
@@ -813,21 +814,19 @@ class TriggerService(Service):
                     messages = filtered
 
                 # 5. Filter to unseen messages only
-                seen = self._seen_files.get(task_id, set())
+                seen = self._seen_files.get(task_id, OrderedDict())
                 new_messages = []
                 for msg in messages:
                     msg_id = msg.get("id", "")
                     if msg_id and msg_id not in seen:
                         new_messages.append(msg)
-                        seen.add(msg_id)
+                        seen[msg_id] = None  # OrderedDict append (preserves insertion order)
                 # Cap seen set to prevent unbounded memory growth
                 _MAX_SEEN = 10_000
                 if len(seen) > _MAX_SEEN:
-                    # Keep most recent entries (set is unordered, but trimming
-                    # any subset prevents OOM — IDs are unique per poll anyway)
                     excess = len(seen) - _MAX_SEEN
                     for _ in range(excess):
-                        seen.pop()
+                        seen.popitem(last=False)  # evicts OLDEST, not random
                 self._seen_files[task_id] = seen
 
                 if not new_messages:

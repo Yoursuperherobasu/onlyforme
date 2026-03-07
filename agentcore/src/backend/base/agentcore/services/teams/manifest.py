@@ -39,6 +39,13 @@ def generate_manifest(
         or f"Interact with the {agent.name} agent built on AgentCore."
     )[:4000]
 
+    # Developer URLs must be HTTPS for Microsoft validation.
+    # For local dev, use placeholder URLs; in production, use the real base_url.
+    if base_url.startswith("http://"):
+        developer_url = "https://agentcore.dev"
+    else:
+        developer_url = base_url
+
     return {
         "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
         "manifestVersion": "1.17",
@@ -46,9 +53,9 @@ def generate_manifest(
         "id": manifest_id,
         "developer": {
             "name": "AgentCore",
-            "websiteUrl": base_url,
-            "privacyUrl": f"{base_url}/privacy",
-            "termsOfUseUrl": f"{base_url}/terms",
+            "websiteUrl": developer_url,
+            "privacyUrl": f"{developer_url}/privacy",
+            "termsOfUseUrl": f"{developer_url}/terms",
         },
         "name": {
             "short": display_name[:30],
@@ -84,7 +91,7 @@ def generate_manifest(
         ],
         "permissions": ["identity", "messageTeamMembers"],
         "validDomains": [
-            base_url.replace("https://", "").replace("http://", "").split("/")[0],
+            developer_url.replace("https://", "").replace("http://", "").split("/")[0],
         ],
         "webApplicationInfo": {
             "id": bot_app_id,

@@ -593,7 +593,7 @@ class OutlookMailComponent(Node):
             for msg in messages_raw:
                 msg_sender = msg.get("from", {}).get("emailAddress", {}).get("address", "").lower()
                 msg_subject = (msg.get("subject") or "").lower()
-                if sender and sender.lower() not in msg_sender:
+                if sender and sender.lower() != msg_sender:
                     continue
                 if subject and subject.lower() not in msg_subject:
                     continue

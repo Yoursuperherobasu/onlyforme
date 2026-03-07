@@ -556,7 +556,7 @@ async def read_mail(
         for msg in messages_raw:
             msg_sender = msg.get("from", {}).get("emailAddress", {}).get("address", "").lower()
             msg_subject = (msg.get("subject") or "").lower()
-            if req.filter_sender and req.filter_sender.lower() not in msg_sender:
+            if req.filter_sender and req.filter_sender.lower() != msg_sender:
                 continue
             if req.filter_subject and req.filter_subject.lower() not in msg_subject:
                 continue

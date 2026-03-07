@@ -911,6 +911,10 @@ async def update_connector(
                 # Don't let an empty client_secret overwrite the stored one
                 if not payload.provider_config.get("client_secret") and existing.get("client_secret"):
                     merged["client_secret"] = existing["client_secret"]
+                # Preserve linked_accounts, tokens if incoming payload has them empty/null/missing
+                for guard_key in ("linked_accounts", "access_token", "refresh_token"):
+                    if not merged.get(guard_key) and existing.get(guard_key):
+                        merged[guard_key] = existing[guard_key]
                 row.provider_config = _encrypt_provider_config(effective_provider, merged)
             else:
                 row.provider_config = _encrypt_provider_config(effective_provider, payload.provider_config)
