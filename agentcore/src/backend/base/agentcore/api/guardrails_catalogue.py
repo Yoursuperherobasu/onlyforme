@@ -7,19 +7,24 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 from agentcore.services.database.models.department.model import Department
-from agentcore.services.database.models.guardrail_catalogue.model import GuardrailCatalogue
 from agentcore.services.database.models.model_registry.model import ModelRegistry
 from agentcore.services.database.models.organization.model import Organization
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
-from agentcore.services.guardrails import invalidate_nemo_guardrail_cache, is_nemo_runtime_config_ready
+from agentcore.services.guardrail_service_client import (
+    create_guardrail_via_service,
+    delete_guardrail_via_service,
+    fetch_guardrails_async,
+    get_guardrail_via_service,
+    invalidate_guardrail_cache_via_service,
+    update_guardrail_via_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -154,30 +159,6 @@ async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, 
         raise HTTPException(status_code=400, detail="One or more public_dept_ids are invalid for org_id")
 
 
-async def _ensure_guardrail_name_available(
-    session: DbSession,
-    name: str,
-    org_id: UUID | None,
-    dept_id: UUID | None,
-    *,
-    exclude_id: UUID | None = None,
-) -> None:
-    stmt = select(GuardrailCatalogue.id).where(
-        func.lower(GuardrailCatalogue.name) == name.strip().lower(),
-    )
-    stmt = stmt.where(
-        GuardrailCatalogue.org_id.is_(None) if org_id is None else GuardrailCatalogue.org_id == org_id,
-    )
-    stmt = stmt.where(
-        GuardrailCatalogue.dept_id.is_(None) if dept_id is None else GuardrailCatalogue.dept_id == dept_id,
-    )
-    if exclude_id:
-        stmt = stmt.where(GuardrailCatalogue.id != exclude_id)
-    existing = (await session.exec(stmt)).first()
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="Guardrail name already exists for this scope")
-
-
 async def _enforce_creation_scope(
     session: DbSession,
     current_user: CurrentActiveUser,
@@ -262,34 +243,41 @@ async def _enforce_creation_scope(
 
 
 def _can_access_guardrail(
-    row: GuardrailCatalogue,
+    row: dict[str, Any],
     current_user: CurrentActiveUser,
     org_ids: set[UUID],
     dept_pairs: list[tuple[UUID, UUID]],
 ) -> bool:
+    row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
+    row_dept_id = UUID(row["dept_id"]) if row.get("dept_id") else None
+    row_created_by = row.get("created_by")
+    row_shared_user_ids = row.get("shared_user_ids") or []
+    row_visibility = (row.get("visibility") or "private").strip().lower()
+    row_public_scope = row.get("public_scope")
+    row_public_dept_ids = row.get("public_dept_ids") or []
+
     if _is_root_user(current_user):
         return (
-            str(getattr(row, "created_by", "")) == str(current_user.id)
-            and row.org_id is None
-            and row.dept_id is None
+            str(row_created_by) == str(current_user.id)
+            and row_org_id is None
+            and row_dept_id is None
         )
 
     role = normalize_role(str(current_user.role))
-    if role == "super_admin" and row.org_id and row.org_id in org_ids:
+    if role == "super_admin" and row_org_id and row_org_id in org_ids:
         return True
 
-    visibility = _normalize_visibility(getattr(row, "visibility", "private"))
     user_id = str(current_user.id)
     dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
 
-    if visibility == "private":
-        return str(row.created_by) == user_id or user_id in set(row.shared_user_ids or [])
-    if getattr(row, "public_scope", None) == "organization":
-        return bool(row.org_id and row.org_id in org_ids)
-    if getattr(row, "public_scope", None) == "department":
-        dept_candidates = set(row.public_dept_ids or [])
-        if row.dept_id:
-            dept_candidates.add(str(row.dept_id))
+    if row_visibility == "private":
+        return str(row_created_by) == user_id or user_id in set(row_shared_user_ids)
+    if row_public_scope == "organization":
+        return bool(row_org_id and row_org_id in org_ids)
+    if row_public_scope == "department":
+        dept_candidates = set(row_public_dept_ids)
+        if row_dept_id:
+            dept_candidates.add(str(row_dept_id))
         return bool(dept_candidates.intersection(dept_id_set))
     return False
 
@@ -375,43 +363,59 @@ def _normalize_runtime_config_payload(runtime_config: dict[str, Any] | None) -> 
     return normalized or None
 
 
-def _serialize_guardrail(row: GuardrailCatalogue, model_row: ModelRegistry | None = None) -> dict:
-    model_provider = row.provider
+def _is_nemo_runtime_config_ready(
+    runtime_config: dict[str, Any] | None,
+    model_registry_id: UUID | None,
+) -> bool:
+    """Check locally (without calling the microservice) whether a runtime config is complete."""
+    if not model_registry_id:
+        return False
+    if not isinstance(runtime_config, dict):
+        return False
+    for key in ("config_yml", "configYml", "config.yml"):
+        value = runtime_config.get(key)
+        if isinstance(value, str) and value.strip() and value.strip() not in {".", "..."}:
+            return True
+    return False
+
+
+def _serialize_guardrail(row: dict[str, Any], model_row: ModelRegistry | None = None) -> dict:
+    model_provider = row.get("provider")
     model_name: str | None = None
     model_display_name: str | None = None
     if model_row:
-        model_provider = model_row.provider or row.provider
+        model_provider = model_row.provider or row.get("provider")
         model_name = model_row.model_name
         model_display_name = model_row.display_name
 
-    model_registry_ready_id = row.model_registry_id
+    model_registry_id = row.get("model_registry_id")
+    runtime_config = row.get("runtime_config")
 
     serialized = {
-        "id": str(row.id),
-        "name": row.name,
-        "description": row.description or "",
-        "framework": row.framework or "nemo",
+        "id": row.get("id"),
+        "name": row.get("name"),
+        "description": row.get("description") or "",
+        "framework": row.get("framework") or "nemo",
         "provider": model_provider,
-        "modelRegistryId": str(row.model_registry_id) if row.model_registry_id else None,
+        "modelRegistryId": str(model_registry_id) if model_registry_id else None,
         "modelName": model_name,
         "modelDisplayName": model_display_name,
-        "category": row.category,
-        "status": row.status,
-        "rulesCount": int(row.rules_count or 0),
-        "isCustom": bool(row.is_custom),
-        "runtimeConfig": row.runtime_config,
-        "runtimeReady": is_nemo_runtime_config_ready(row.runtime_config, model_registry_ready_id),
-        "org_id": str(row.org_id) if row.org_id else None,
-        "dept_id": str(row.dept_id) if row.dept_id else None,
-        "visibility": row.visibility,
-        "public_scope": row.public_scope,
-        "public_dept_ids": row.public_dept_ids or [],
-        "shared_user_ids": row.shared_user_ids or [],
+        "category": row.get("category"),
+        "status": row.get("status"),
+        "rulesCount": int(row.get("rules_count") or 0),
+        "isCustom": bool(row.get("is_custom")),
+        "runtimeConfig": runtime_config,
+        "runtimeReady": _is_nemo_runtime_config_ready(
+            runtime_config,
+            UUID(model_registry_id) if model_registry_id else None,
+        ),
+        "org_id": row.get("org_id"),
+        "dept_id": row.get("dept_id"),
+        "visibility": row.get("visibility"),
+        "public_scope": row.get("public_scope"),
+        "public_dept_ids": row.get("public_dept_ids") or [],
+        "shared_user_ids": row.get("shared_user_ids") or [],
     }
-    logger.debug(
-        f"Serialized guardrail {row.name}: row.model_registry_id={row.model_registry_id}, "
-        f"modelRegistryId={serialized['modelRegistryId']}, model_row={'present' if model_row else 'missing'}"
-    )
     return serialized
 
 
@@ -438,23 +442,22 @@ async def list_guardrails_catalogue(
     framework: str | None = None,
 ) -> list[dict]:
     await _require_guardrail_permission(current_user, "view_guardrail_page")
-    query = select(GuardrailCatalogue).order_by(GuardrailCatalogue.name.asc())
 
-    rows = (await session.exec(query)).all()
-    if framework is not None:
-        normalized_framework = _normalize_guardrail_framework(framework)
-        rows = [row for row in rows if (row.framework or "nemo") == normalized_framework]
+    rows = await fetch_guardrails_async(framework=framework)
+
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     rows = [row for row in rows if _can_access_guardrail(row, current_user, org_ids, dept_pairs)]
-    model_ids = {row.model_registry_id for row in rows if row.model_registry_id}
+
+    model_ids = {UUID(row["model_registry_id"]) for row in rows if row.get("model_registry_id")}
     model_by_id: dict[str, ModelRegistry] = {}
     if model_ids:
+        from sqlmodel import select as sql_select
         model_rows = (
-            await session.exec(select(ModelRegistry).where(ModelRegistry.id.in_(list(model_ids))))
+            await session.exec(sql_select(ModelRegistry).where(ModelRegistry.id.in_(list(model_ids))))
         ).all()
         model_by_id = {str(model.id): model for model in model_rows}
 
-    return [_serialize_guardrail(row, model_by_id.get(str(row.model_registry_id))) for row in rows]
+    return [_serialize_guardrail(row, model_by_id.get(str(row.get("model_registry_id")))) for row in rows]
 
 
 @router.get("/visibility-options")
@@ -533,7 +536,6 @@ async def create_guardrail_catalogue(
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
         session, current_user, payload
     )
-    await _ensure_guardrail_name_available(session, payload.name, payload.org_id, payload.dept_id)
     framework = _normalize_guardrail_framework(payload.framework)
     model_row = await _resolve_guardrail_model_registry(session, payload.modelRegistryId)
     _validate_runtime_config_shape(payload)
@@ -543,46 +545,46 @@ async def create_guardrail_catalogue(
             status_code=400,
             detail="Active guardrails require runtimeConfig with at least config_yml.",
         )
-    if payload.status == "active" and not is_nemo_runtime_config_ready(normalized_runtime_config, model_row.id):
+    if payload.status == "active" and not _is_nemo_runtime_config_ready(normalized_runtime_config, model_row.id):
         raise HTTPException(
             status_code=400,
             detail="runtimeConfig is incomplete. Provide a valid config_yml (rails_co is optional).",
         )
+
     now = datetime.now(timezone.utc)
-    row = GuardrailCatalogue(
-        name=payload.name,
-        description=payload.description,
-        framework=framework,
-        provider=model_row.provider,
-        model_registry_id=model_row.id,
-        category=payload.category,
-        status=payload.status,
-        rules_count=payload.rulesCount or 0,
-        is_custom=payload.isCustom,
-        runtime_config=normalized_runtime_config,
-        org_id=payload.org_id,
-        dept_id=payload.dept_id,
-        visibility=visibility,
-        public_scope=public_scope,
-        public_dept_ids=public_dept_ids,
-        shared_user_ids=shared_user_ids,
-        created_by=current_user.id,
-        updated_by=current_user.id,
-        created_at=now,
-        updated_at=now,
-        published_by=current_user.id if payload.status == "active" else None,
-        published_at=now if payload.status == "active" else None,
-    )
+    service_payload = {
+        "name": payload.name,
+        "description": payload.description,
+        "framework": framework,
+        "provider": model_row.provider,
+        "model_registry_id": str(model_row.id),
+        "category": payload.category,
+        "status": payload.status,
+        "rules_count": payload.rulesCount or 0,
+        "is_custom": payload.isCustom,
+        "runtime_config": normalized_runtime_config,
+        "org_id": str(payload.org_id) if payload.org_id else None,
+        "dept_id": str(payload.dept_id) if payload.dept_id else None,
+        "visibility": visibility,
+        "public_scope": public_scope,
+        "public_dept_ids": public_dept_ids,
+        "shared_user_ids": shared_user_ids,
+        "created_by": str(current_user.id),
+        "updated_by": str(current_user.id),
+        "published_by": str(current_user.id) if payload.status == "active" else None,
+        "published_at": now.isoformat() if payload.status == "active" else None,
+    }
+
     logger.info(
-        f"Creating guardrail '{payload.name}': model_registry_id={model_row.id}, modelRegistryId from payload={payload.modelRegistryId}"
+        f"Creating guardrail '{payload.name}' via service: model_registry_id={model_row.id}"
     )
-    session.add(row)
-    await session.commit()
-    await session.refresh(row)
-    logger.info(
-        f"Created guardrail '{row.name}' (id={row.id}): persisted model_registry_id={row.model_registry_id}"
-    )
-    invalidate_nemo_guardrail_cache(row.id)
+    try:
+        row = await create_guardrail_via_service(service_payload)
+    except Exception as exc:
+        logger.exception(f"Guardrail creation via service failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"Guardrails service error: {exc}") from exc
+
+    await invalidate_guardrail_cache_via_service(row["id"])
     return _serialize_guardrail(row, model_row)
 
 
@@ -596,30 +598,25 @@ async def update_guardrail_catalogue(
     await _require_guardrail_permission(current_user, "view_guardrail_page")
     await _require_guardrail_permission(current_user, "add_guardrails")
 
-    row = await session.get(GuardrailCatalogue, guardrail_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Guardrail not found")
+    try:
+        row = await get_guardrail_via_service(guardrail_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Guardrail not found") from exc
+
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
 
     if payload.org_id is None:
-        payload.org_id = row.org_id
+        payload.org_id = UUID(row["org_id"]) if row.get("org_id") else None
     if payload.public_scope is None:
-        payload.public_scope = row.public_scope
+        payload.public_scope = row.get("public_scope")
     if payload.dept_id is None and payload.public_scope != "organization":
-        payload.dept_id = row.dept_id
-    framework = _normalize_guardrail_framework(payload.framework or row.framework)
+        payload.dept_id = UUID(row["dept_id"]) if row.get("dept_id") else None
+    framework = _normalize_guardrail_framework(payload.framework or row.get("framework"))
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
         session, current_user, payload
-    )
-    await _ensure_guardrail_name_available(
-        session,
-        payload.name,
-        payload.org_id,
-        payload.dept_id,
-        exclude_id=guardrail_id,
     )
     model_row = await _resolve_guardrail_model_registry(session, payload.modelRegistryId)
     _validate_runtime_config_shape(payload)
@@ -629,48 +626,47 @@ async def update_guardrail_catalogue(
             status_code=400,
             detail="Active guardrails require runtimeConfig with at least config_yml.",
         )
-    if payload.status == "active" and not is_nemo_runtime_config_ready(normalized_runtime_config, model_row.id):
+    if payload.status == "active" and not _is_nemo_runtime_config_ready(normalized_runtime_config, model_row.id):
         raise HTTPException(
             status_code=400,
             detail="runtimeConfig is incomplete. Provide a valid config_yml (rails_co is optional).",
         )
+
     now = datetime.now(timezone.utc)
+    service_payload = {
+        "name": payload.name,
+        "description": payload.description,
+        "framework": framework,
+        "provider": model_row.provider,
+        "model_registry_id": str(model_row.id),
+        "category": payload.category,
+        "status": payload.status,
+        "rules_count": payload.rulesCount if payload.rulesCount is not None else row.get("rules_count"),
+        "is_custom": payload.isCustom,
+        "runtime_config": normalized_runtime_config,
+        "org_id": str(payload.org_id) if payload.org_id else None,
+        "dept_id": str(payload.dept_id) if payload.dept_id else None,
+        "visibility": visibility,
+        "public_scope": public_scope,
+        "public_dept_ids": public_dept_ids,
+        "shared_user_ids": shared_user_ids,
+        "updated_by": str(current_user.id),
+        "published_by": str(current_user.id) if payload.status == "active" else row.get("published_by"),
+        "published_at": now.isoformat() if payload.status == "active" else row.get("published_at"),
+    }
 
     logger.info(
-        f"Updating guardrail '{row.name}' (id={guardrail_id}): old model_registry_id={row.model_registry_id}, "
-        f"new model_registry_id={model_row.id}, modelRegistryId from payload={payload.modelRegistryId}"
+        f"Updating guardrail '{row.get('name')}' (id={guardrail_id}) via service: "
+        f"new model_registry_id={model_row.id}"
     )
+    try:
+        updated_row = await update_guardrail_via_service(guardrail_id, service_payload)
+    except Exception as exc:
+        logger.exception(f"Guardrail update via service failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"Guardrails service error: {exc}") from exc
 
-    row.name = payload.name
-    row.description = payload.description
-    row.framework = framework
-    row.provider = model_row.provider
-    row.model_registry_id = model_row.id
-    row.category = payload.category
-    row.status = payload.status
-    if payload.rulesCount is not None:
-        row.rules_count = payload.rulesCount
-    row.is_custom = payload.isCustom
-    row.runtime_config = normalized_runtime_config
-    row.org_id = payload.org_id
-    row.dept_id = payload.dept_id
-    row.visibility = visibility
-    row.public_scope = public_scope
-    row.public_dept_ids = public_dept_ids
-    row.shared_user_ids = shared_user_ids
-    row.updated_by = current_user.id
-    row.updated_at = now
-    if payload.status == "active":
-        row.published_by = current_user.id
-        row.published_at = now
-
-    await session.commit()
-    await session.refresh(row)
-    logger.info(
-        f"Updated guardrail '{row.name}' (id={row.id}): persisted model_registry_id={row.model_registry_id}"
-    )
-    invalidate_nemo_guardrail_cache(row.id)
-    return _serialize_guardrail(row, model_row)
+    await invalidate_guardrail_cache_via_service(guardrail_id)
+    return _serialize_guardrail(updated_row, model_row)
 
 
 @router.delete("/{guardrail_id}")
@@ -682,14 +678,20 @@ async def delete_guardrail_catalogue(
     await _require_guardrail_permission(current_user, "view_guardrail_page")
     await _require_guardrail_permission(current_user, "retire_guardrails")
 
-    row = await session.get(GuardrailCatalogue, guardrail_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Guardrail not found")
+    try:
+        row = await get_guardrail_via_service(guardrail_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Guardrail not found") from exc
+
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
 
-    await session.delete(row)
-    await session.commit()
-    invalidate_nemo_guardrail_cache(guardrail_id)
+    try:
+        await delete_guardrail_via_service(guardrail_id)
+    except Exception as exc:
+        logger.exception(f"Guardrail deletion via service failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"Guardrails service error: {exc}") from exc
+
+    await invalidate_guardrail_cache_via_service(guardrail_id)
     return {"message": "Guardrail deleted successfully"}

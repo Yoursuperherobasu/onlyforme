@@ -235,6 +235,13 @@ class Settings(BaseSettings):
     mcp_service_api_key: str = ""
     """API key for authenticating with the MCP microservice (sent as x-api-key header)."""
 
+    # Guardrails Microservice
+    guardrails_service_url: str = ""
+    """Base URL of the Guardrails microservice (e.g. http://localhost:8003).
+    When set, guardrail catalogue CRUD and NeMo guardrail execution are proxied through the microservice."""
+    guardrails_service_api_key: str = ""
+    """API key for authenticating with the Guardrails microservice (sent as x-api-key header)."""
+
     # Public Agent Settings
     public_agent_cleanup_interval: int = Field(default=3600, gt=600)
     """The interval in seconds at which public temporary agents will be cleaned up.
