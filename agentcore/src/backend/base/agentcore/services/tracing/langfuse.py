@@ -145,6 +145,12 @@ class LangFuseTracer(BaseTracer):
         self._root_context = None
         self._propagate_context = None
 
+        # Accumulate token usage from child spans so the root span carries
+        # trace-level totals — prevents needing per-trace observation API calls
+        # in Langfuse list views (v3 OTEL does not auto-roll-up span tokens).
+        self._accumulated_tokens: dict[str, int] = {"input": 0, "output": 0, "total": 0}
+        self._accumulated_model: str | None = None
+
         self._setup_langfuse()
 
     @property
@@ -371,8 +377,16 @@ class LangFuseTracer(BaseTracer):
                     update_payload["usage_details"] = usage_payload
                     # Backward compatibility for some SDK paths
                     update_payload["usage"] = usage_payload
+                    # Roll up to tracer-level accumulator so the root span can
+                    # carry trace-level token totals for Langfuse list views.
+                    self._accumulated_tokens["input"] += usage_payload.get("input", 0)
+                    self._accumulated_tokens["output"] += usage_payload.get("output", 0)
+                    self._accumulated_tokens["total"] += usage_payload.get("total", 0)
                 if model_name:
                     update_payload["model"] = str(model_name)
+                    # Capture the first model used for root span attribution.
+                    if not self._accumulated_model:
+                        self._accumulated_model = model_name
                 span.update(**update_payload)
 
             # Exit the span context
@@ -402,13 +416,22 @@ class LangFuseTracer(BaseTracer):
             return
 
         try:
-            # v3: Use update on root span (which is now a trace) to set trace-level input/output
+            # v3: Use update on root span (which is now a trace) to set trace-level input/output.
+            # Also propagate accumulated token totals and model so Langfuse stores them at
+            # the trace level — this way list-API responses include token counts and observation
+            # fallback fetches are unnecessary for aggregated views.
             if self._root_span and hasattr(self._root_span, 'update'):
-                self._root_span.update(
-                    input=serialize(inputs),
-                    output=serialize(outputs),
-                    metadata=metadata,
-                )
+                root_update: dict[str, Any] = {
+                    "input": serialize(inputs),
+                    "output": serialize(outputs),
+                    "metadata": metadata,
+                }
+                if self._accumulated_tokens["total"] > 0 or self._accumulated_tokens["input"] > 0:
+                    root_update["usage_details"] = dict(self._accumulated_tokens)
+                    root_update["usage"] = dict(self._accumulated_tokens)
+                if self._accumulated_model:
+                    root_update["model"] = self._accumulated_model
+                self._root_span.update(**root_update)
 
             # Exit propagate_attributes context
             if self._propagate_context:

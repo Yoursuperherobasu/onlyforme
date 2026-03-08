@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -38,6 +38,7 @@ import {
   ArrowDownRight,
   XCircle,
   Timer,
+  RefreshCw,
 } from "lucide-react";
 import {
   LineChart,
@@ -954,7 +955,9 @@ function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
 // =============================================================================
 
 export default function ObservabilityPage(): JSX.Element {
-  const queryClient = useQueryClient();
+  const OBSERVABILITY_LIST_STALE_MS = 5 * 60 * 1000;   // 5 min — avoid churn on tab switches
+  const OBSERVABILITY_DETAIL_STALE_MS = 2 * 60 * 1000; // 2 min — detail pages refresh sooner
+  const OBSERVABILITY_GC_MS = 15 * 60 * 1000;           // 15 min — keep cache warm longer
   const currentRole = useAuthStore((state) => state.role);
   const sessionRole = String(currentRole || "").toLowerCase();
   const isProvisioningAdminSessionRole = sessionRole === "root" || sessionRole === "super_admin";
@@ -973,6 +976,7 @@ export default function ObservabilityPage(): JSX.Element {
   const [statusLookupJobId, setStatusLookupJobId] = useState("");
   const [adminActionError, setAdminActionError] = useState<string | null>(null);
   const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResponse | null>(null);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
   // Filter state — default to today for faster first-load queries
   const [filters, setFilters] = useState<Filters>({
@@ -991,8 +995,6 @@ export default function ObservabilityPage(): JSX.Element {
   const [isFilterApplying, setIsFilterApplying] = useState(false);
   const filterApplyStartedAtRef = useRef<number | null>(null);
   const filterApplyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const filterFollowupRefetchTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const emptyListsRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const filterApplyBaselineUpdatedAtRef = useRef<{ metrics: number; sessions: number; agents: number; projects: number } | null>(null);
 
   const markFiltersApplying = useCallback(() => {
@@ -1008,23 +1010,7 @@ export default function ObservabilityPage(): JSX.Element {
       filterApplyStartedAtRef.current = null;
       filterApplyTimeoutRef.current = null;
     }, 30000);
-
-    if (filterFollowupRefetchTimeoutsRef.current.length > 0) {
-      filterFollowupRefetchTimeoutsRef.current.forEach(clearTimeout);
-      filterFollowupRefetchTimeoutsRef.current = [];
-    }
-
-    // Trigger follow-up refetches so backend SWR-updated aggregates are picked up quickly.
-    [1200, 3200].forEach((delay) => {
-      const timeoutId = setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["observability-metrics"] });
-        queryClient.invalidateQueries({ queryKey: ["observability-sessions"] });
-        queryClient.invalidateQueries({ queryKey: ["observability-agents"] });
-        queryClient.invalidateQueries({ queryKey: ["observability-projects"] });
-      }, delay);
-      filterFollowupRefetchTimeoutsRef.current.push(timeoutId);
-    });
-  }, [queryClient]);
+  }, []);
 
   // Compute date params from filter
   const dateParams = useMemo(() => ({
@@ -1040,18 +1026,22 @@ export default function ObservabilityPage(): JSX.Element {
   }, [markFiltersApplying]);
 
   // Queries
-  const { data: status, isLoading: statusLoading } = useQuery({
+  const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery({
     queryKey: ["langfuse-status"],
     queryFn: fetchStatus,
-    refetchInterval: 60000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: scopeOptions, isLoading: scopeOptionsLoading } = useQuery({
+  const { data: scopeOptions, isLoading: scopeOptionsLoading, refetch: refetchScopeOptions } = useQuery({
     queryKey: ["observability-scope-options"],
     queryFn: fetchScopeOptions,
     enabled: true,
-    staleTime: 60000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1101,7 +1091,9 @@ export default function ObservabilityPage(): JSX.Element {
     queryKey: ["observability-provisioning-config"],
     queryFn: fetchObservabilityConfig,
     enabled: roleKnown && isProvisioningAdmin,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1173,10 +1165,10 @@ export default function ObservabilityPage(): JSX.Element {
   const includeModelBreakdown = activeTab === "models";
   const shouldFetchMetrics = activeTab === "overview" || activeTab === "models";
   const shouldFetchSessions = activeTab === "sessions" || !!selectedSession;
-  const shouldFetchAgents = activeTab === "agents" || activeTab === "overview" || !!selectedAgent;
+  const shouldFetchAgents = activeTab === "agents" || !!selectedAgent;
   const shouldFetchProjects = activeTab === "projects" || !!selectedProject;
 
-  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching, dataUpdatedAt: metricsUpdatedAt } = useQuery({
+  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching, dataUpdatedAt: metricsUpdatedAt, refetch: refetchMetrics } = useQuery({
     queryKey: [
       "observability-metrics",
       filters.dateRange,
@@ -1195,79 +1187,87 @@ export default function ObservabilityPage(): JSX.Element {
       include_model_breakdown: includeModelBreakdown,
     }),
     enabled: canRunScopedQueries && shouldFetchMetrics,
-    refetchInterval: activeTab === "overview" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching, refetch: refetchSessions, dataUpdatedAt: sessionsUpdatedAt } = useQuery({
+  const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching, dataUpdatedAt: sessionsUpdatedAt, refetch: refetchSessions } = useQuery({
     queryKey: ["observability-sessions", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchSessions({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchSessions,
-    refetchInterval: activeTab === "sessions" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching, refetch: refetchAgents, dataUpdatedAt: agentsUpdatedAt } = useQuery({
+  const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching, dataUpdatedAt: agentsUpdatedAt, refetch: refetchAgents } = useQuery({
     queryKey: ["observability-agents", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchAgents({
       ...dateParams,
       ...scopeParams,
     }),
     enabled: canRunScopedQueries && shouldFetchAgents,
-    refetchInterval: activeTab === "agents" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching, refetch: refetchProjects, dataUpdatedAt: projectsUpdatedAt } = useQuery({
+  const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching, dataUpdatedAt: projectsUpdatedAt, refetch: refetchProjects } = useQuery({
     queryKey: ["observability-projects", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchProjects({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchProjects,
-    refetchInterval: activeTab === "projects" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching } = useQuery({
+  const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching, refetch: refetchSessionDetail } = useQuery({
     queryKey: ["session-detail", selectedSession, filters.dateRange, selectedOrgId, selectedDeptId],
     queryFn: () => fetchSessionDetail(selectedSession!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedSession && canRunScopedQueries,
-    staleTime: 30000,
-    placeholderData: (previousData: any) => previousData,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError } = useQuery({
+  const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError, refetch: refetchTraceDetail } = useQuery({
     queryKey: ["trace-detail", selectedTrace, selectedOrgId, selectedDeptId],
     queryFn: () => fetchTraceDetail(selectedTrace!, scopeParams),
     enabled: !!selectedTrace && canRunScopedQueries,
-    staleTime: 5000,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     retry: false,
-    placeholderData: (previousData: any) => previousData,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching } = useQuery({
+  const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching, refetch: refetchAgentDetail } = useQuery({
     queryKey: ["agent-detail", selectedAgent, filters.dateRange, selectedOrgId, selectedDeptId],
     queryFn: () => fetchAgentDetail(selectedAgent!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedAgent && canRunScopedQueries,
-    staleTime: 30000,
-    placeholderData: (previousData: any) => previousData,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: projectDetail, isLoading: projectDetailLoading, isFetching: projectDetailFetching } = useQuery({
+  const { data: projectDetail, isLoading: projectDetailLoading, isFetching: projectDetailFetching, refetch: refetchProjectDetail } = useQuery({
     queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchProjectDetail(selectedProject!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedProject && canRunScopedQueries,
-    staleTime: 30000,
-    placeholderData: (previousData: any) => previousData,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1311,11 +1311,11 @@ export default function ObservabilityPage(): JSX.Element {
 
     const baseline = filterApplyBaselineUpdatedAtRef.current;
     if (!baseline) return;
-    const allCoreQueriesUpdated =
-      metricsUpdatedAt > baseline.metrics &&
-      sessionsUpdatedAt > baseline.sessions &&
-      agentsUpdatedAt > baseline.agents &&
-      projectsUpdatedAt > baseline.projects;
+    const metricsUpdated = !shouldFetchMetrics || metricsUpdatedAt > baseline.metrics;
+    const sessionsUpdated = !shouldFetchSessions || sessionsUpdatedAt > baseline.sessions;
+    const agentsUpdated = !shouldFetchAgents || agentsUpdatedAt > baseline.agents;
+    const projectsUpdated = !shouldFetchProjects || projectsUpdatedAt > baseline.projects;
+    const allCoreQueriesUpdated = metricsUpdated && sessionsUpdated && agentsUpdated && projectsUpdated;
 
     if (!allCoreQueriesUpdated) return;
     if (isAnyPrimaryQueryLoading) return;
@@ -1343,62 +1343,16 @@ export default function ObservabilityPage(): JSX.Element {
     sessionsUpdatedAt,
     agentsUpdatedAt,
     projectsUpdatedAt,
-  ]);
-
-  useEffect(() => {
-    if (!canRunScopedQueries) return;
-    const hasOverviewTraces = (metrics?.total_traces ?? 0) > 0;
-    if (!hasOverviewTraces) return;
-
-    const agentsEmpty = (agentsData?.agents?.length ?? 0) === 0;
-    const projectsEmpty = (projectsData?.projects?.length ?? 0) === 0;
-    const sessionsEmpty = (sessionsData?.sessions?.length ?? 0) === 0;
-    const shouldRecover = agentsEmpty || projectsEmpty || sessionsEmpty;
-
-    if (!shouldRecover) return;
-    if (agentsFetching || projectsFetching || sessionsFetching) return;
-
-    if (emptyListsRecoveryTimeoutRef.current) {
-      clearTimeout(emptyListsRecoveryTimeoutRef.current);
-    }
-
-    emptyListsRecoveryTimeoutRef.current = setTimeout(() => {
-      if (agentsEmpty) void refetchAgents();
-      if (projectsEmpty) void refetchProjects();
-      if (sessionsEmpty) void refetchSessions();
-      emptyListsRecoveryTimeoutRef.current = null;
-    }, 900);
-
-    return () => {
-      if (emptyListsRecoveryTimeoutRef.current) {
-        clearTimeout(emptyListsRecoveryTimeoutRef.current);
-        emptyListsRecoveryTimeoutRef.current = null;
-      }
-    };
-  }, [
-    canRunScopedQueries,
-    metrics?.total_traces,
-    agentsData?.agents?.length,
-    projectsData?.projects?.length,
-    sessionsData?.sessions?.length,
-    agentsFetching,
-    projectsFetching,
-    sessionsFetching,
-    refetchAgents,
-    refetchProjects,
-    refetchSessions,
+    shouldFetchMetrics,
+    shouldFetchSessions,
+    shouldFetchAgents,
+    shouldFetchProjects,
   ]);
 
   useEffect(() => {
     return () => {
       if (filterApplyTimeoutRef.current) {
         clearTimeout(filterApplyTimeoutRef.current);
-      }
-      if (filterFollowupRefetchTimeoutsRef.current.length > 0) {
-        filterFollowupRefetchTimeoutsRef.current.forEach(clearTimeout);
-      }
-      if (emptyListsRecoveryTimeoutRef.current) {
-        clearTimeout(emptyListsRecoveryTimeoutRef.current);
       }
     };
   }, []);
@@ -1504,6 +1458,48 @@ export default function ObservabilityPage(): JSX.Element {
       agentDetail?.scope_warning ||
       projectDetail?.scope_warning,
   );
+
+  const handleManualRefresh = useCallback(async () => {
+    setIsManualRefreshing(true);
+    try {
+      const refreshTasks: Promise<unknown>[] = [refetchStatus(), refetchScopeOptions()];
+      if (shouldFetchMetrics && canRunScopedQueries) refreshTasks.push(refetchMetrics());
+      if (shouldFetchSessions && canRunScopedQueries) refreshTasks.push(refetchSessions());
+      if (shouldFetchAgents && canRunScopedQueries) refreshTasks.push(refetchAgents());
+      if (shouldFetchProjects && canRunScopedQueries) refreshTasks.push(refetchProjects());
+      if (selectedSession && canRunScopedQueries) refreshTasks.push(refetchSessionDetail());
+      if (selectedTrace && canRunScopedQueries) refreshTasks.push(refetchTraceDetail());
+      if (selectedAgent && canRunScopedQueries) refreshTasks.push(refetchAgentDetail());
+      if (selectedProject && canRunScopedQueries) refreshTasks.push(refetchProjectDetail());
+      if (roleKnown && isProvisioningAdmin) refreshTasks.push(refetchProvisioningConfig());
+      await Promise.all(refreshTasks);
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  }, [
+    canRunScopedQueries,
+    isProvisioningAdmin,
+    refetchAgentDetail,
+    refetchAgents,
+    refetchMetrics,
+    refetchProjectDetail,
+    refetchProjects,
+    refetchProvisioningConfig,
+    refetchScopeOptions,
+    refetchSessionDetail,
+    refetchSessions,
+    refetchStatus,
+    refetchTraceDetail,
+    roleKnown,
+    selectedAgent,
+    selectedProject,
+    selectedSession,
+    selectedTrace,
+    shouldFetchAgents,
+    shouldFetchMetrics,
+    shouldFetchProjects,
+    shouldFetchSessions,
+  ]);
 
   // Handle search submit
   const handleSearch = useCallback(() => {
@@ -1757,9 +1753,20 @@ export default function ObservabilityPage(): JSX.Element {
             </Button>
           )}
 
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleManualRefresh()}
+            disabled={isManualRefreshing || isAnyPrimaryQueryLoading || statusLoading || scopeOptionsLoading}
+            className="h-9 ml-auto"
+          >
+            <RefreshCw className={`h-4 w-4 mr-1.5 ${isManualRefreshing ? "animate-spin" : ""}`} />
+            {isManualRefreshing ? "Refreshing..." : "Refresh"}
+          </Button>
+
           {/* Global refreshing indicator — shows a subtle spinner whenever any query is background-fetching */}
           {(isAnyPrimaryQueryLoading || isFilterApplying) && (
-            <div className="flex items-center gap-1.5 ml-auto">
+            <div className="flex items-center gap-1.5">
               <div className="h-3.5 w-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: THEME.primary, borderTopColor: 'transparent' }} />
               <span className="text-xs" style={{ color: THEME.textSecondary }}>Updating…</span>
             </div>
