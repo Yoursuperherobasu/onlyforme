@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -330,58 +330,6 @@ interface ProjectsResponse {
   scope_warning_message?: string | null;
 }
 
-interface ProvisionJobRead {
-  id: string;
-  idempotency_key: string;
-  scope_type: string;
-  org_id?: string | null;
-  dept_id?: string | null;
-  status: string;
-  retry_count?: number;
-  error_message?: string | null;
-  started_at?: string | null;
-  finished_at?: string | null;
-  updated_at: string;
-}
-
-interface BindingReadMasked {
-  id: string;
-  org_id: string;
-  dept_id?: string | null;
-  scope_type: string;
-  langfuse_host: string;
-  langfuse_org_id: string;
-  langfuse_project_id: string;
-  langfuse_project_name?: string | null;
-  public_key_masked: string;
-  secret_key_masked: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-interface ProvisionResponse {
-  job: ProvisionJobRead;
-  binding?: BindingReadMasked | null;
-}
-
-interface ReconciliationItem {
-  binding_id: string;
-  org_id: string;
-  dept_id?: string | null;
-  scope_type: string;
-  status: string;
-  issues: string[];
-}
-
-interface ReconciliationResponse {
-  total: number;
-  healthy: number;
-  drifted: number;
-  failed: number;
-  items: ReconciliationItem[];
-}
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -617,42 +565,6 @@ async function fetchProjectDetail(projectId: string, params: FetchMetricsParams 
   applyScopeParams(searchParams, params);
   if (params.fetch_all) searchParams.set("fetch_all", "true");
   const response = await api.get<ProjectDetailResponse>(`/api/observability/projects/${projectId}?${searchParams.toString()}`);
-  return response.data;
-}
-
-async function fetchObservabilityConfig(): Promise<BindingReadMasked[]> {
-  const response = await api.get<BindingReadMasked[]>("/api/observability/config");
-  return response.data ?? [];
-}
-
-async function provisionOrgAdminProject(orgId: string): Promise<ProvisionResponse> {
-  const response = await api.post<ProvisionResponse>(`/api/observability/provision/org/${orgId}`);
-  return response.data;
-}
-
-async function provisionDepartmentProject(deptId: string): Promise<ProvisionResponse> {
-  const response = await api.post<ProvisionResponse>(`/api/observability/provision/dept/${deptId}`);
-  return response.data;
-}
-
-async function retryProvisioningJob(jobId: string): Promise<ProvisionResponse> {
-  const response = await api.post<ProvisionResponse>(`/api/observability/provision/retry/${jobId}`);
-  return response.data;
-}
-
-async function fetchProvisioningStatus(jobId: string): Promise<ProvisionJobRead> {
-  const response = await api.get<ProvisionJobRead>(`/api/observability/provision/status/${jobId}`);
-  return response.data;
-}
-
-async function reconcileObservabilityBindings(orgId?: string | null): Promise<ReconciliationResponse> {
-  const searchParams = new URLSearchParams();
-  if (orgId) {
-    searchParams.set("org_id", orgId);
-  }
-  const query = searchParams.toString();
-  const url = query ? `/api/observability/provision/reconcile?${query}` : "/api/observability/provision/reconcile";
-  const response = await api.post<ReconciliationResponse>(url);
   return response.data;
 }
 
@@ -971,11 +883,6 @@ export default function ObservabilityPage(): JSX.Element {
   const [fetchAllMode, setFetchAllMode] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
-  const [lastProvisionResponse, setLastProvisionResponse] = useState<ProvisionResponse | null>(null);
-  const [lastProvisionStatus, setLastProvisionStatus] = useState<ProvisionJobRead | null>(null);
-  const [statusLookupJobId, setStatusLookupJobId] = useState("");
-  const [adminActionError, setAdminActionError] = useState<string | null>(null);
-  const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResponse | null>(null);
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
   // Filter state — default to today for faster first-load queries
@@ -1085,82 +992,6 @@ export default function ObservabilityPage(): JSX.Element {
     [selectedOrgId, selectedDeptId],
   );
   const canRunScopedQueries = !!status?.connected && roleKnown && scopeReady;
-  const isProvisioningAdmin = normalizedRole === "root" || normalizedRole === "super_admin";
-
-  const { data: provisioningConfig, isLoading: provisioningConfigLoading, refetch: refetchProvisioningConfig } = useQuery({
-    queryKey: ["observability-provisioning-config"],
-    queryFn: fetchObservabilityConfig,
-    enabled: roleKnown && isProvisioningAdmin,
-    staleTime: OBSERVABILITY_LIST_STALE_MS,
-    gcTime: OBSERVABILITY_GC_MS,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-  });
-
-  const provisionOrgMutation = useMutation({
-    mutationFn: provisionOrgAdminProject,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setLastProvisionResponse(data);
-      setLastProvisionStatus(data.job);
-      setStatusLookupJobId(data.job.id);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Organization provisioning failed.");
-    },
-  });
-
-  const provisionDeptMutation = useMutation({
-    mutationFn: provisionDepartmentProject,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setLastProvisionResponse(data);
-      setLastProvisionStatus(data.job);
-      setStatusLookupJobId(data.job.id);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Department provisioning failed.");
-    },
-  });
-
-  const retryProvisionMutation = useMutation({
-    mutationFn: retryProvisioningJob,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setLastProvisionResponse(data);
-      setLastProvisionStatus(data.job);
-      setStatusLookupJobId(data.job.id);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Provisioning retry failed.");
-    },
-  });
-
-  const statusLookupMutation = useMutation({
-    mutationFn: fetchProvisioningStatus,
-    onSuccess: (data) => {
-      setAdminActionError(null);
-      setLastProvisionStatus(data);
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Provisioning status lookup failed.");
-    },
-  });
-
-  const reconcileMutation = useMutation({
-    mutationFn: reconcileObservabilityBindings,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setReconciliationResult(data);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Reconciliation failed.");
-    },
-  });
 
   const includeModelBreakdown = activeTab === "models";
   const shouldFetchMetrics = activeTab === "overview" || activeTab === "models";
@@ -1473,26 +1304,22 @@ export default function ObservabilityPage(): JSX.Element {
       if (selectedTrace && canRunScopedQueries) refreshTasks.push(refetchTraceDetail());
       if (selectedAgent && canRunScopedQueries) refreshTasks.push(refetchAgentDetail());
       if (selectedProject && canRunScopedQueries) refreshTasks.push(refetchProjectDetail());
-      if (roleKnown && isProvisioningAdmin) refreshTasks.push(refetchProvisioningConfig());
       await Promise.all(refreshTasks);
     } finally {
       setIsManualRefreshing(false);
     }
   }, [
     canRunScopedQueries,
-    isProvisioningAdmin,
     refetchAgentDetail,
     refetchAgents,
     refetchMetrics,
     refetchProjectDetail,
     refetchProjects,
-    refetchProvisioningConfig,
     refetchScopeOptions,
     refetchSessionDetail,
     refetchSessions,
     refetchStatus,
     refetchTraceDetail,
-    roleKnown,
     selectedAgent,
     selectedProject,
     selectedSession,
@@ -1800,200 +1627,6 @@ export default function ObservabilityPage(): JSX.Element {
             </Badge>
           )}
         </div>
-
-        {isProvisioningAdmin && (
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base" style={{ color: THEME.textMain }}>
-                Observability Provisioning Admin
-              </CardTitle>
-              <CardDescription style={{ color: THEME.textSecondary }}>
-                Provision Langfuse org-admin and department projects, retry failed jobs, and reconcile binding drift.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    if (!selectedOrgId) {
-                      setAdminActionError("Select organization scope before provisioning org-admin project.");
-                      return;
-                    }
-                    provisionOrgMutation.mutate(selectedOrgId);
-                  }}
-                  disabled={!selectedOrgId || provisionOrgMutation.isPending}
-                  style={{ backgroundColor: THEME.primary }}
-                >
-                  {provisionOrgMutation.isPending ? "Provisioning Org..." : "Provision Org Admin Project"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    if (!selectedDeptId) {
-                      setAdminActionError("Select department scope before provisioning department project.");
-                      return;
-                    }
-                    provisionDeptMutation.mutate(selectedDeptId);
-                  }}
-                  disabled={!selectedDeptId || provisionDeptMutation.isPending}
-                >
-                  {provisionDeptMutation.isPending ? "Provisioning Dept..." : "Provision Department Project"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    reconcileMutation.mutate(selectedOrgId || undefined);
-                  }}
-                  disabled={reconcileMutation.isPending}
-                >
-                  {reconcileMutation.isPending ? "Reconciling..." : "Reconcile Bindings"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    void refetchProvisioningConfig();
-                  }}
-                >
-                  Refresh Config
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  value={statusLookupJobId}
-                  onChange={(event) => setStatusLookupJobId(event.target.value)}
-                  placeholder="Provision job ID"
-                  className="h-9 max-w-md bg-gray-50 border-gray-200"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    const trimmed = statusLookupJobId.trim();
-                    if (!trimmed) {
-                      setAdminActionError("Enter provisioning job ID for status lookup.");
-                      return;
-                    }
-                    statusLookupMutation.mutate(trimmed);
-                  }}
-                  disabled={statusLookupMutation.isPending}
-                >
-                  {statusLookupMutation.isPending ? "Loading..." : "Get Job Status"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    const trimmed = statusLookupJobId.trim();
-                    if (!trimmed) {
-                      setAdminActionError("Enter provisioning job ID before retry.");
-                      return;
-                    }
-                    retryProvisionMutation.mutate(trimmed);
-                  }}
-                  disabled={retryProvisionMutation.isPending}
-                >
-                  {retryProvisionMutation.isPending ? "Retrying..." : "Retry Job"}
-                </Button>
-              </div>
-
-              {adminActionError && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Provisioning Action Failed</AlertTitle>
-                  <AlertDescription>{adminActionError}</AlertDescription>
-                </Alert>
-              )}
-
-              {lastProvisionStatus && (
-                <Alert className="border-gray-200 bg-gray-50">
-                  <AlertTitle style={{ color: THEME.textMain }}>
-                    Last Job: {lastProvisionStatus.id}
-                  </AlertTitle>
-                  <AlertDescription style={{ color: THEME.textSecondary }}>
-                    Status: {lastProvisionStatus.status} | Scope: {lastProvisionStatus.scope_type}
-                    {lastProvisionStatus.error_message ? ` | Error: ${lastProvisionStatus.error_message}` : ""}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {lastProvisionResponse?.binding && (
-                <Alert className="border-gray-200 bg-gray-50">
-                  <AlertTitle style={{ color: THEME.textMain }}>
-                    Latest Binding Updated
-                  </AlertTitle>
-                  <AlertDescription style={{ color: THEME.textSecondary }}>
-                    Project: {lastProvisionResponse.binding.langfuse_project_name || lastProvisionResponse.binding.langfuse_project_id} | Public Key: {lastProvisionResponse.binding.public_key_masked}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {reconciliationResult && (
-                <Alert className="border-gray-200 bg-gray-50">
-                  <AlertTitle style={{ color: THEME.textMain }}>
-                    Reconciliation Summary
-                  </AlertTitle>
-                  <AlertDescription style={{ color: THEME.textSecondary }}>
-                    Total: {reconciliationResult.total} | Healthy: {reconciliationResult.healthy} | Drifted: {reconciliationResult.drifted} | Failed: {reconciliationResult.failed}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              <div>
-                <p className="text-sm font-medium mb-2" style={{ color: THEME.textMain }}>
-                  Active Binding Configuration
-                </p>
-                {provisioningConfigLoading ? (
-                  <Skeleton className="h-28 w-full" />
-                ) : provisioningConfig && provisioningConfig.length > 0 ? (
-                  <div className="rounded-md border overflow-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Scope</TableHead>
-                          <TableHead>Org</TableHead>
-                          <TableHead>Dept</TableHead>
-                          <TableHead>Project</TableHead>
-                          <TableHead>Public Key</TableHead>
-                          <TableHead>Updated</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {provisioningConfig.map((binding) => (
-                          <TableRow key={binding.id}>
-                            <TableCell>{binding.scope_type}</TableCell>
-                            <TableCell>{(scopeOptions?.organizations ?? []).find((org) => org.id === binding.org_id)?.name || binding.org_id}</TableCell>
-                            <TableCell>
-                              {binding.dept_id
-                                ? ((scopeOptions?.departments ?? []).find((dept) => dept.id === binding.dept_id)?.name || binding.dept_id)
-                                : "-"}
-                            </TableCell>
-                            <TableCell>{binding.langfuse_project_name || binding.langfuse_project_id}</TableCell>
-                            <TableCell>{binding.public_key_masked}</TableCell>
-                            <TableCell>{formatDate(binding.updated_at)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <p className="text-sm" style={{ color: THEME.textSecondary }}>
-                    No active Langfuse bindings found yet.
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {requiresFilterFirst && !scopeReady && (
           <Alert className="border-blue-200 bg-blue-50">
