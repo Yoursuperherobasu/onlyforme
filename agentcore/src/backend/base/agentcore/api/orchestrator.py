@@ -167,6 +167,7 @@ async def _build_orch_graph(
     Returns (graph, inputs, outputs).
     """
     from agentcore.processing.process import process_tweaks
+    from agentcore.services.deps import get_chat_service
 
     graph_data = snapshot.copy()
     graph_data = process_tweaks(graph_data, {}, stream=stream)
@@ -176,6 +177,7 @@ async def _build_orch_graph(
         payload=graph_data,
         user_id=user_id,
         agent_name=agent_name,
+        chat_service=get_chat_service(),
     )
 
     if stream:
