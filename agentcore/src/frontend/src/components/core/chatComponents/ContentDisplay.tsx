@@ -201,17 +201,21 @@ export default function ContentDisplay({
       const children = content.children || [];
       contentData = (
         <div className="flex flex-col gap-2">
-          <Markdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeMathjax]}
-            className="markdown prose max-w-full text-sm font-normal dark:prose-invert"
-          >
-            **Input:**
-          </Markdown>
-          <SimplifiedCodeTabComponent
-            language="json"
-            code={JSON.stringify(content.tool_input, null, 2)}
-          />
+          {content.tool_input != null && (
+            <>
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeMathjax]}
+                className="markdown prose max-w-full text-sm font-normal dark:prose-invert"
+              >
+                **Input:**
+              </Markdown>
+              <SimplifiedCodeTabComponent
+                language="json"
+                code={JSON.stringify(content.tool_input, null, 2)}
+              />
+            </>
+          )}
           {content.output && (
             <>
               <Markdown

@@ -111,7 +111,7 @@ export interface CodeContent extends BaseContent {
 export interface ToolContent extends BaseContent {
   type: "tool_use";
   name?: string;
-  tool_input: Record<string, any>;
+  tool_input?: Record<string, any> | null;
   output?: any;
   error?: any;
   children?: ToolContent[];
