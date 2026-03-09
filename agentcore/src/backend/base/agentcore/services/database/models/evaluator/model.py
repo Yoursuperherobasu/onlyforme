@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Text
+from sqlalchemy import String, Text
 from sqlmodel import Field, SQLModel, Column, JSON
 
 
@@ -24,6 +24,13 @@ class EvaluatorBase(SQLModel):
     project_name: Optional[str] = None
     ts_from: Optional[datetime] = None
     ts_to: Optional[datetime] = None
+    visibility: str = Field(
+        default="private",
+        sa_column=Column(String(20), nullable=False, default="private"),
+    )
+    public_scope: Optional[str] = Field(default=None, sa_column=Column(String(20), nullable=True))
+    shared_user_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    public_dept_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
 
 class Evaluator(EvaluatorBase, table=True):
@@ -57,4 +64,8 @@ class Evaluator(EvaluatorBase, table=True):
             "ts_from": self.ts_from.isoformat() if self.ts_from else None,
             "ts_to": self.ts_to.isoformat() if self.ts_to else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "visibility": self.visibility or "private",
+            "public_scope": self.public_scope,
+            "shared_user_ids": self.shared_user_ids,
+            "public_dept_ids": self.public_dept_ids,
         }

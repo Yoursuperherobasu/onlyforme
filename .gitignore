@@ -203,3 +203,4 @@ myenv/
 
 .DS_Store
 nohup.outagentcore/pii_masking_templates/
+agentcore/docs/

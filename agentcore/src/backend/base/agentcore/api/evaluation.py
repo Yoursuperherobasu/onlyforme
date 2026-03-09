@@ -33,9 +33,15 @@ from agentcore.services.deps import session_scope
 from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent as agent
 
 from agentcore.services.auth.utils import get_current_active_user
+from agentcore.services.auth.permissions import normalize_role
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.department.model import Department
+from agentcore.services.database.models.organization.model import Organization
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.api.utils import DbSession
 from agentcore.api.observability import fetch_traces_from_langfuse, fetch_scores_for_trace
+from agentcore.services.observability.rbac import resolve_observability_scope
 
 # Try importing litellm for the judge
 try:
@@ -97,6 +103,262 @@ async def _resolve_model_from_registry(model_registry_id: str) -> tuple[str, str
     except Exception as e:
         logger.opt(exception=True).error("Failed to resolve model from registry id={}: {}", model_registry_id, str(e))
         raise HTTPException(status_code=400, detail=f"Failed to resolve model from registry: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+#  RBAC helpers for evaluator configs (mirrors guardrails_catalogue.py)
+# ---------------------------------------------------------------------------
+
+def _is_root_user(current_user) -> bool:
+    return str(getattr(current_user, "role", "")).lower() == "root"
+
+
+def _normalize_visibility(value: str | None) -> str:
+    normalized = (value or "private").strip().lower()
+    if normalized not in {"private", "public"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported visibility '{value}'")
+    return normalized
+
+
+def _normalize_public_scope(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized not in {"organization", "department"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported public_scope '{value}'")
+    return normalized
+
+
+def _string_ids(values: list | None) -> list[str]:
+    return [str(v) for v in (values or [])]
+
+
+async def _get_eval_scope_memberships(session, user_id: UUID) -> tuple[set[UUID], list[tuple[UUID, UUID]]]:
+    """Return (org_ids, dept_pairs) for the given user."""
+    org_rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+            )
+        )
+    ).all()
+
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.org_id, UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
+    return org_ids, [(row[0], row[1]) for row in dept_rows]
+
+
+async def _validate_eval_scope_refs(session, org_id: UUID | None, dept_id: UUID | None) -> None:
+    if dept_id and not org_id:
+        raise HTTPException(status_code=400, detail="dept_id requires org_id")
+    if org_id:
+        org = await session.get(Organization, org_id)
+        if not org:
+            raise HTTPException(status_code=400, detail="Invalid org_id")
+    if dept_id:
+        dept = (
+            await session.exec(
+                select(Department).where(Department.id == dept_id, Department.org_id == org_id)
+            )
+        ).first()
+        if not dept:
+            raise HTTPException(status_code=400, detail="Invalid dept_id for org_id")
+
+
+async def _resolve_user_ids_by_emails(session, emails: list[str]) -> list[str]:
+    if not emails:
+        return []
+    normalized = [e.strip().lower() for e in emails if e and e.strip()]
+    if not normalized:
+        return []
+    rows = (
+        await session.exec(select(User.id, User.email).where(User.email.in_(normalized)))
+    ).all()
+    found = {str(r[1]).lower(): str(r[0]) for r in rows}
+    missing = [e for e in normalized if e not in found]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Invalid shared_user_emails: {', '.join(missing)}")
+    return [found[e] for e in normalized]
+
+
+async def _validate_departments_exist_for_org(session, org_id: UUID, dept_ids: list[UUID]) -> None:
+    if not dept_ids:
+        return
+    rows = (
+        await session.exec(
+            select(Department.id).where(Department.org_id == org_id, Department.id.in_(dept_ids))
+        )
+    ).all()
+    if len({str(r if isinstance(r, UUID) else r[0]) for r in rows}) != len({str(d) for d in dept_ids}):
+        raise HTTPException(status_code=400, detail="One or more public_dept_ids are invalid for org_id")
+
+
+async def _enforce_evaluator_creation_scope(
+    session,
+    current_user,
+    payload,
+) -> tuple[str, str | None, list[str], list[str], UUID | None, UUID | None]:
+    """Validate and resolve visibility/scope fields for evaluator creation.
+
+    Returns (visibility, public_scope, public_dept_ids, shared_user_ids, org_id, dept_id).
+    """
+    user_role = normalize_role(str(current_user.role))
+    visibility = _normalize_visibility(getattr(payload, "visibility", None))
+    public_scope = _normalize_public_scope(getattr(payload, "public_scope", None))
+    public_dept_ids = _string_ids(getattr(payload, "public_dept_ids", None))
+    shared_user_ids: list[str] = []
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+
+    p_org_id: UUID | None = getattr(payload, "org_id", None)
+    p_dept_id: UUID | None = getattr(payload, "dept_id", None)
+
+    if visibility == "private":
+        public_scope = None
+        public_dept_ids = []
+        if user_role == "department_admin":
+            if not dept_pairs:
+                raise HTTPException(status_code=403, detail="No active department scope found")
+            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+            p_org_id = current_org_id
+            p_dept_id = current_dept_id
+            shared_user_ids = await _resolve_user_ids_by_emails(
+                session, getattr(payload, "shared_user_emails", None) or []
+            )
+        elif user_role in {"developer", "business_user"} and dept_pairs:
+            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+            p_org_id = current_org_id
+            p_dept_id = current_dept_id
+        else:
+            # root / super_admin: keep explicit org_id/dept_id or leave null
+            pass
+    else:
+        if public_scope is None:
+            raise HTTPException(status_code=400, detail="public_scope is required when visibility is public")
+        if public_scope == "organization":
+            if not p_org_id:
+                raise HTTPException(status_code=400, detail="org_id is required for public organization visibility")
+            if user_role != "root" and p_org_id not in org_ids:
+                raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+            p_dept_id = None
+            public_dept_ids = []
+        else:
+            # department scope
+            if user_role in {"super_admin", "root"}:
+                if not p_org_id:
+                    raise HTTPException(status_code=400, detail="org_id is required for department visibility")
+                if user_role != "root" and p_org_id not in org_ids:
+                    raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+                if not public_dept_ids and p_dept_id:
+                    public_dept_ids = [str(p_dept_id)]
+                if not public_dept_ids:
+                    raise HTTPException(status_code=400, detail="Select at least one department")
+                await _validate_departments_exist_for_org(session, p_org_id, [UUID(v) for v in public_dept_ids])
+                p_dept_id = UUID(public_dept_ids[0]) if len(public_dept_ids) == 1 else None
+            else:
+                if not dept_pairs:
+                    raise HTTPException(status_code=403, detail="No active department scope found")
+                current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+                p_org_id = current_org_id
+                p_dept_id = current_dept_id
+                public_dept_ids = [str(current_dept_id)]
+        shared_user_ids = []
+
+    await _validate_eval_scope_refs(session, p_org_id, p_dept_id)
+    return visibility, public_scope, public_dept_ids, shared_user_ids, p_org_id, p_dept_id
+
+
+def _can_access_evaluator(
+    evaluator: Evaluator,
+    current_user,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    """Check if the current user can access the given evaluator."""
+    row_org_id = evaluator.org_id
+    row_dept_id = evaluator.dept_id
+    row_user_id = str(evaluator.user_id) if evaluator.user_id else None
+    row_shared_user_ids = evaluator.shared_user_ids or []
+    row_visibility = (evaluator.visibility or "private").strip().lower()
+    row_public_scope = evaluator.public_scope
+    row_public_dept_ids = evaluator.public_dept_ids or []
+
+    if _is_root_user(current_user):
+        if row_visibility == "public":
+            return True
+        return (
+            row_user_id == str(current_user.id)
+            and row_org_id is None
+            and row_dept_id is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    if role == "super_admin" and row_org_id and row_org_id in org_ids:
+        return True
+
+    user_id = str(current_user.id)
+    dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
+
+    if row_visibility == "private":
+        return row_user_id == user_id or user_id in set(row_shared_user_ids)
+    if row_public_scope == "organization":
+        return bool(row_org_id and row_org_id in org_ids)
+    if row_public_scope == "department":
+        dept_candidates = set(row_public_dept_ids)
+        if row_dept_id:
+            dept_candidates.add(str(row_dept_id))
+        return bool(dept_candidates.intersection(dept_id_set))
+    return False
+
+
+async def _get_scoped_langfuse_for_evaluation(
+    session,
+    current_user,
+    org_id: UUID | None = None,
+    dept_id: UUID | None = None,
+) -> tuple[set[str], Any]:
+    """Resolve allowed_user_ids and langfuse client for evaluation endpoints.
+
+    Returns (allowed_user_ids, langfuse_client). Falls back to env-var client
+    when no bindings are configured.
+    """
+    from agentcore.api.observability import get_langfuse_client, _get_langfuse_client_for_binding
+
+    try:
+        scope = await resolve_observability_scope(
+            session,
+            current_user=current_user,
+            org_id=org_id,
+            dept_id=dept_id,
+            enforce_filter_for_admin=False,
+        )
+        allowed_user_ids = scope.allowed_user_ids
+
+        # Try to get a client from bindings first, fall back to env-var client
+        lf_client = None
+        for binding in scope.bindings:
+            try:
+                lf_client = _get_langfuse_client_for_binding(binding)
+                if lf_client:
+                    break
+            except Exception:
+                continue
+
+        if not lf_client:
+            lf_client = get_langfuse_client()
+
+        return allowed_user_ids, lf_client
+    except Exception:
+        # Fall back to single-user scope with env-var client
+        lf_client = get_langfuse_client()
+        return {str(current_user.id)}, lf_client
 
 
 # =============================================================================
@@ -165,6 +427,13 @@ class EvaluatorCreateRequest(BaseModel):
     project_name: Optional[str] = None
     ts_from: Optional[str] = None  # ISO timestamp
     ts_to: Optional[str] = None
+    # Visibility / RBAC fields
+    org_id: Optional[UUID] = None
+    dept_id: Optional[UUID] = None
+    visibility: str = "private"  # private | public
+    public_scope: Optional[str] = None  # organization | department
+    public_dept_ids: Optional[List[UUID]] = None
+    shared_user_emails: Optional[List[str]] = None
 
 
 class EvaluatorResponse(BaseModel):
@@ -174,6 +443,8 @@ class EvaluatorResponse(BaseModel):
     model: str
     model_registry_id: Optional[str] = None
     user_id: str | None = None
+    org_id: str | None = None
+    dept_id: str | None = None
     preset_id: Optional[str] = None
     agent_ids: Optional[List[str]] = None
     target: Optional[List[str]] = None
@@ -186,6 +457,10 @@ class EvaluatorResponse(BaseModel):
     ts_from: Optional[str] = None
     ts_to: Optional[str] = None
     created_at: Optional[str] = None
+    visibility: str = "private"
+    public_scope: Optional[str] = None
+    shared_user_ids: Optional[List[str]] = None
+    public_dept_ids: Optional[List[str]] = None
 
 
 class TraceForReview(BaseModel):
@@ -210,6 +485,12 @@ class DatasetResponse(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     item_count: int | None = None
+    visibility: str = "private"
+    public_scope: str | None = None
+    owner_user_id: str | None = None
+    org_id: str | None = None
+    dept_id: str | None = None
+    public_dept_ids: list[str] | None = None
 
 
 class CreateDatasetRequest(BaseModel):
@@ -217,6 +498,11 @@ class CreateDatasetRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
     metadata: Any | None = None
+    visibility: str = "private"
+    public_scope: str | None = None
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    public_dept_ids: list[UUID] | None = None
 
 
 class DatasetItemResponse(BaseModel):
@@ -529,6 +815,59 @@ def _dataset_owned_by_user(dataset_obj: Any, user_id: str) -> bool:
     return str(owner) == str(user_id)
 
 
+def _dataset_accessible_by_users(
+    dataset_obj: Any,
+    allowed_user_ids: set[str],
+    *,
+    current_user: Any | None = None,
+    org_ids: set[UUID] | None = None,
+    dept_pairs: list[tuple[UUID, UUID]] | None = None,
+) -> bool:
+    """Check if dataset is accessible by any of the allowed user IDs or visibility rules."""
+    metadata = get_attr(dataset_obj, "metadata", default=None)
+    if not isinstance(metadata, dict):
+        return True
+    owner = (
+        metadata.get("app_user_id")
+        or metadata.get("user_id")
+        or metadata.get("owner_user_id")
+        or metadata.get("created_by_user_id")
+    )
+
+    # Owner always has access
+    if owner is not None and str(owner) in allowed_user_ids:
+        return True
+
+    # Check visibility-based access
+    visibility = metadata.get("visibility", "private")
+    if visibility == "public":
+        public_scope = metadata.get("public_scope")
+        ds_org_id = metadata.get("org_id")
+        ds_dept_id = metadata.get("dept_id")
+        ds_public_dept_ids = metadata.get("public_dept_ids") or []
+
+        if current_user and _is_root_user(current_user):
+            return True
+
+        if public_scope == "organization" and ds_org_id and org_ids:
+            if UUID(ds_org_id) in org_ids:
+                return True
+        elif public_scope == "department":
+            if dept_pairs and ds_public_dept_ids:
+                user_dept_ids = {str(d) for d, _ in dept_pairs}
+                if any(did in user_dept_ids for did in ds_public_dept_ids):
+                    return True
+            elif dept_pairs and ds_dept_id:
+                user_dept_ids = {str(d) for d, _ in dept_pairs}
+                if ds_dept_id in user_dept_ids:
+                    return True
+
+    # Fall back to allowed_user_ids check (for non-visibility-aware callers)
+    if owner is None:
+        return True
+    return str(owner) in allowed_user_ids
+
+
 def _dataset_item_owned_by_user(item_obj: Any, user_id: str) -> bool:
     """Best-effort user scoping for dataset items via metadata."""
     metadata = get_attr(item_obj, "metadata", default=None)
@@ -545,12 +884,60 @@ def _dataset_item_owned_by_user(item_obj: Any, user_id: str) -> bool:
     return str(owner) == str(user_id)
 
 
-def _merge_dataset_metadata(metadata: Any, *, user_id: str) -> dict[str, Any]:
+def _dataset_item_accessible_by_users(item_obj: Any, allowed_user_ids: set[str]) -> bool:
+    """Check if dataset item is accessible by any of the allowed user IDs."""
+    metadata = get_attr(item_obj, "metadata", default=None)
+    if not isinstance(metadata, dict):
+        return True
+    owner = (
+        metadata.get("app_user_id")
+        or metadata.get("user_id")
+        or metadata.get("owner_user_id")
+        or metadata.get("created_by_user_id")
+    )
+    if owner is None:
+        return True
+    return str(owner) in allowed_user_ids
+
+
+async def _check_dataset_access(
+    dataset_obj: Any,
+    allowed_user_ids: set[str],
+    current_user: Any,
+    session: Any,
+) -> bool:
+    """Async helper: checks dataset access using full visibility + scope."""
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    return _dataset_accessible_by_users(
+        dataset_obj, allowed_user_ids,
+        current_user=current_user, org_ids=org_ids, dept_pairs=dept_pairs,
+    )
+
+
+def _merge_dataset_metadata(
+    metadata: Any,
+    *,
+    user_id: str,
+    visibility: str = "private",
+    public_scope: str | None = None,
+    org_id: str | None = None,
+    dept_id: str | None = None,
+    public_dept_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Attach app metadata while preserving user-provided fields."""
     base = _as_dict(metadata)
     base.setdefault("app_user_id", str(user_id))
     base.setdefault("created_by_user_id", str(user_id))
     base.setdefault("created_via", "agentcore-evaluation")
+    base["visibility"] = visibility or "private"
+    if public_scope:
+        base["public_scope"] = public_scope
+    if org_id:
+        base["org_id"] = str(org_id)
+    if dept_id:
+        base["dept_id"] = str(dept_id)
+    if public_dept_ids:
+        base["public_dept_ids"] = [str(d) for d in public_dept_ids]
     return base
 
 
@@ -696,14 +1083,22 @@ def _csv_row_to_dataset_item_request(row: dict[str, Any]) -> CreateDatasetItemRe
 
 def _dataset_to_response(dataset_obj: Any, *, item_count: int | None = None) -> DatasetResponse:
     """Serialize Langfuse dataset object to API response."""
+    metadata = get_attr(dataset_obj, "metadata", default=None)
+    meta_dict = metadata if isinstance(metadata, dict) else {}
     return DatasetResponse(
         id=str(get_attr(dataset_obj, "id", default="") or ""),
         name=str(get_attr(dataset_obj, "name", default="") or ""),
         description=get_attr(dataset_obj, "description", default=None),
-        metadata=get_attr(dataset_obj, "metadata", default=None),
+        metadata=metadata,
         created_at=get_attr(dataset_obj, "created_at", "createdAt", default=None),
         updated_at=get_attr(dataset_obj, "updated_at", "updatedAt", default=None),
         item_count=item_count,
+        visibility=meta_dict.get("visibility", "private"),
+        public_scope=meta_dict.get("public_scope"),
+        owner_user_id=meta_dict.get("app_user_id") or meta_dict.get("created_by_user_id"),
+        org_id=meta_dict.get("org_id"),
+        dept_id=meta_dict.get("dept_id"),
+        public_dept_ids=meta_dict.get("public_dept_ids"),
     )
 
 
@@ -1340,6 +1735,49 @@ def _list_all_datasets_for_user(client: Any, user_id: str, *, max_rows: int = 50
             page += 1
 
     filtered = [dataset for dataset in collected if _dataset_owned_by_user(dataset, user_id)]
+    filtered.sort(
+        key=lambda dataset: _parse_trace_timestamp(get_attr(dataset, "created_at", "createdAt", default=None))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return filtered[:max_rows]
+
+
+def _list_all_datasets_for_scope(
+    client: Any,
+    allowed_user_ids: set[str],
+    *,
+    max_rows: int = 500,
+    current_user: Any | None = None,
+    org_ids: set[UUID] | None = None,
+    dept_pairs: list[tuple[UUID, UUID]] | None = None,
+) -> list[Any]:
+    """Fetch datasets and apply scope-based user + visibility filtering."""
+    collected: list[Any] = []
+    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "list"):
+        page = 1
+        page_size = min(100, max_rows)
+        while len(collected) < max_rows:
+            try:
+                response = client.api.datasets.list(page=page, limit=page_size)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Dataset list via api.datasets.list failed at page {}: {}", page, str(exc))
+                break
+            rows, _ = _parse_paginated_response(response)
+            if not rows:
+                break
+            collected.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+
+    filtered = [
+        dataset for dataset in collected
+        if _dataset_accessible_by_users(
+            dataset, allowed_user_ids,
+            current_user=current_user, org_ids=org_ids, dept_pairs=dept_pairs,
+        )
+    ]
     filtered.sort(
         key=lambda dataset: _parse_trace_timestamp(get_attr(dataset, "created_at", "createdAt", default=None))
         or datetime.min.replace(tzinfo=timezone.utc),
@@ -3091,12 +3529,37 @@ async def _run_dataset_experiment_job(
 @router.get("/status")
 async def get_status(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
 ) -> Dict[str, Any]:
     """Check if evaluation features are available."""
+    from agentcore.api.observability import _get_langfuse_client_for_binding
+
+    # Check env-var client first
     client = get_langfuse_client()
-    
+    langfuse_available = client is not None
+
+    # If no env-var client, check if user has any active Langfuse bindings
+    if not langfuse_available:
+        try:
+            scope = await resolve_observability_scope(
+                session,
+                current_user=current_user,
+                enforce_filter_for_admin=False,
+            )
+            if scope.bindings:
+                for binding in scope.bindings:
+                    try:
+                        binding_client = _get_langfuse_client_for_binding(binding)
+                        if binding_client:
+                            langfuse_available = True
+                            break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
     return {
-        "langfuse_available": client is not None,
+        "langfuse_available": langfuse_available,
         "llm_judge_available": LITELLM_AVAILABLE or OPENAI_AVAILABLE,
         "user_id": str(current_user.id)
     }
@@ -3105,17 +3568,22 @@ async def get_status(
 @router.get("/scores")
 async def get_scores(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     page: Annotated[int, Query(ge=1)] = 1,
     trace_id: Annotated[str | None, Query()] = None,
     name: Annotated[str | None, Query()] = None,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> Dict[str, Any]:
     """
-    List evaluation scores for the current user.
-    Uses user_id when available, with trace-based fallback for providers that do not
-    persist score-level user_id.
+    List evaluation scores visible to the current user (scope-aware).
+    Uses allowed_user_ids from RBAC scope resolution.
     """
-    client = get_langfuse_client()
+    # Resolve scope-aware langfuse client and allowed user IDs
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -3123,7 +3591,8 @@ async def get_scores(
         user_id = str(current_user.id)
         trace_id = str(trace_id).strip() if trace_id and str(trace_id).strip() else None
         name = str(name).strip() if name and str(name).strip() else None
-        score_cache_key = f"{user_id}|{page}|{limit}|{trace_id or ''}|{(name or '').lower()}"
+        scope_key = f"{user_id}|{str(org_id) if org_id else ''}|{str(dept_id) if dept_id else ''}"
+        score_cache_key = f"{scope_key}|{page}|{limit}|{trace_id or ''}|{(name or '').lower()}"
         now_mono = time.monotonic()
         cached_score_payload: dict[str, Any] | None = None
         cached_score_entry = _SCORE_LIST_CACHE.get(score_cache_key)
@@ -3153,18 +3622,23 @@ async def get_scores(
             user_traces_prefetched = True
             try:
                 prefetch_limit = 2000 if not trace_id else 200
-                user_traces = fetch_traces_from_langfuse(
-                    client,
-                    user_id=user_id,
-                    limit=prefetch_limit,
-                )
-                for raw_trace in user_traces or []:
-                    trace_dict = parse_trace_data(raw_trace)
-                    trace_key = str(trace_dict.get("id") or "")
-                    if not trace_key:
+                # Fetch traces for all allowed users in scope
+                for uid in allowed_user_ids:
+                    try:
+                        user_traces = fetch_traces_from_langfuse(
+                            client,
+                            user_id=uid,
+                            limit=prefetch_limit,
+                        )
+                        for raw_trace in user_traces or []:
+                            trace_dict = parse_trace_data(raw_trace)
+                            trace_key = str(trace_dict.get("id") or "")
+                            if not trace_key:
+                                continue
+                            trace_lookup[trace_key] = trace_dict
+                            user_trace_ids.add(trace_key)
+                    except Exception:
                         continue
-                    trace_lookup[trace_key] = trace_dict
-                    user_trace_ids.add(trace_key)
             except Exception as trace_error:
                 logger.debug(
                     "Failed to prefetch user traces for score listing: {}",
@@ -3294,7 +3768,7 @@ async def get_scores(
         def _score_belongs_to_user(score_row: Any) -> bool:
             score_user_id = get_attr(score_row, "user_id", "userId")
             if score_user_id is not None:
-                return str(score_user_id) == user_id
+                return str(score_user_id) in allowed_user_ids
 
             score_trace_id = str(get_attr(score_row, "trace_id", "traceId", default="") or "")
             if not score_trace_id:
@@ -3315,7 +3789,7 @@ async def get_scores(
                     trace_lookup[score_trace_id] = trace_dict
                     trace_user_id = str(_extract_trace_user_id(trace_dict) or "")
                     if trace_user_id:
-                        is_owner = trace_user_id == user_id
+                        is_owner = trace_user_id in allowed_user_ids
                     else:
                         # Some deployments don't populate user_id on traces/scores.
                         # If we cannot establish ownership via user metadata at all,
@@ -3758,12 +4232,17 @@ async def get_pending_reviews(
     ts_from: Annotated[Optional[str], Query()] = None,
     ts_to: Annotated[Optional[str], Query()] = None,
     limit: int = 20,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> List[TraceForReview]:
     """
     Get recent traces that might need review (Annotation Queue).
-    Returns traces belonging to user with score status.
+    Returns traces visible within the user's RBAC scope.
     """
-    client = get_langfuse_client()
+    # Resolve scope-aware langfuse client and allowed user IDs
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -3773,7 +4252,8 @@ async def get_pending_reviews(
         # Fast-path: serve cached pending reviews within TTL.
         # Filters bust the cache so only unfiltered requests are cached.
         _use_pending_cache = not any([trace_id, agent_name, session_id, user_id_filter, ts_from, ts_to])
-        _pending_cache_key = f"{user_id}|{limit}"
+        scope_key = f"{user_id}|{str(org_id) if org_id else ''}|{str(dept_id) if dept_id else ''}"
+        _pending_cache_key = f"{scope_key}|{limit}"
         _now_mono = time.monotonic()
         if _use_pending_cache:
             _pending_entry = _PENDING_REVIEWS_CACHE.get(_pending_cache_key)
@@ -3782,31 +4262,35 @@ async def get_pending_reviews(
                 if _age <= _PENDING_REVIEWS_CACHE_TTL_SECONDS:
                     return _pending_entry["payload"]
 
-        # Fetch recent traces for this user via shared helper (observability)
+        # Fetch recent traces for all allowed users in scope
         fetch_limit = max(limit * 5, 100)
-        try:
-            traces_data = fetch_traces_from_langfuse(client, user_id=user_id, limit=fetch_limit)
-            logger.info(f"Fetched {len(traces_data or [])} traces for user_id={user_id} (limit={fetch_limit})")
-            sample_ids = [str(get_attr(t, 'id') or get_attr(t, 'trace_id') or '') for t in (traces_data or [])[:5]]
-            logger.debug(f"Sample trace ids: {sample_ids}")
-        except Exception as e:
-            logger.warning("fetch_traces_from_langfuse failed: {}", str(e))
-            traces_data = []
+        traces_data = []
+        for uid in allowed_user_ids:
+            try:
+                uid_traces = fetch_traces_from_langfuse(client, user_id=uid, limit=fetch_limit)
+                traces_data.extend(uid_traces or [])
+            except Exception as e:
+                logger.warning("fetch_traces_from_langfuse failed for user_id={}: {}", uid, str(e))
+        logger.info(f"Fetched {len(traces_data)} traces for {len(allowed_user_ids)} allowed user(s) (limit={fetch_limit})")
 
         # Fetch all scores for these traces
         score_counts = defaultdict(int)
         if hasattr(client, 'client') and hasattr(client.client, 'scores'):
-            scores_response = client.client.scores.list(user_id=user_id, limit=1000)
-            scores_data = []
-            if hasattr(scores_response, 'data'):
-                scores_data = scores_response.data
-            elif isinstance(scores_response, list):
-                scores_data = scores_response
-            
-            for score in scores_data:
-                trace_id = get_attr(score, 'trace_id', 'traceId')
-                if trace_id:
-                    score_counts[trace_id] += 1
+            # Fetch scores for all allowed users
+            for uid in allowed_user_ids:
+                try:
+                    scores_response = client.client.scores.list(user_id=uid, limit=1000)
+                    uid_scores = []
+                    if hasattr(scores_response, 'data'):
+                        uid_scores = scores_response.data
+                    elif isinstance(scores_response, list):
+                        uid_scores = scores_response
+                    for score in uid_scores:
+                        s_trace_id = get_attr(score, 'trace_id', 'traceId')
+                        if s_trace_id:
+                            score_counts[s_trace_id] += 1
+                except Exception:
+                    continue
 
         # Get agent names from database for better context
         agent_query = select(agent).where(agent.user_id == current_user.id)
@@ -3914,12 +4398,18 @@ async def get_pending_reviews(
 @router.get("/datasets")
 async def list_datasets(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     page: Annotated[int, Query(ge=1)] = 1,
     search: Annotated[str | None, Query()] = None,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> Dict[str, Any]:
-    """List Langfuse datasets visible to the current user."""
-    client = get_langfuse_client()
+    """List Langfuse datasets visible within the user's RBAC scope."""
+    # Resolve scope-aware langfuse client and allowed user IDs
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -3927,7 +4417,8 @@ async def list_datasets(
         user_id = str(current_user.id)
 
         # Fast-path: serve from cache for unfiltered requests.
-        _datasets_cache_key = f"{user_id}|{page}|{limit}|{(search or '').lower()}"
+        scope_key = f"{user_id}|{str(org_id) if org_id else ''}|{str(dept_id) if dept_id else ''}"
+        _datasets_cache_key = f"{scope_key}|{page}|{limit}|{(search or '').lower()}"
         _now_mono = time.monotonic()
         _datasets_entry = _DATASETS_LIST_CACHE.get(_datasets_cache_key)
         if _datasets_entry:
@@ -3936,7 +4427,11 @@ async def list_datasets(
                 return _datasets_entry["payload"]
 
         max_rows = max(page * limit, 200)
-        rows = _list_all_datasets_for_user(client, user_id=user_id, max_rows=max_rows)
+        _scope_org_ids, _scope_dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+        rows = _list_all_datasets_for_scope(
+            client, allowed_user_ids=allowed_user_ids, max_rows=max_rows,
+            current_user=current_user, org_ids=_scope_org_ids, dept_pairs=_scope_dept_pairs,
+        )
 
         if search:
             normalized_search = search.lower().strip()
@@ -3978,8 +4473,9 @@ async def list_datasets(
 async def create_dataset(
     payload: CreateDatasetRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
 ) -> DatasetResponse:
-    """Create a Langfuse dataset."""
+    """Create a Langfuse dataset with optional visibility settings."""
     client = get_langfuse_client()
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
@@ -3988,15 +4484,62 @@ async def create_dataset(
     if not dataset_name:
         raise HTTPException(status_code=400, detail="Dataset name is required")
 
+    # Resolve visibility / scope
+    visibility = _normalize_visibility(payload.visibility)
+    public_scope = _normalize_public_scope(payload.public_scope) if visibility == "public" else None
+    resolved_org_id: str | None = None
+    resolved_dept_id: str | None = None
+    resolved_public_dept_ids: list[str] | None = None
+
+    if visibility == "public":
+        role = normalize_role(current_user.role)
+        org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+
+        if public_scope == "organization":
+            if payload.org_id:
+                if not _is_root_user(current_user) and payload.org_id not in org_ids:
+                    raise HTTPException(status_code=403, detail="Organization not in your scope.")
+                resolved_org_id = str(payload.org_id)
+            elif org_ids:
+                resolved_org_id = str(sorted(org_ids, key=str)[0])
+        elif public_scope == "department":
+            if payload.org_id:
+                resolved_org_id = str(payload.org_id)
+            elif org_ids:
+                resolved_org_id = str(sorted(org_ids, key=str)[0])
+
+            if payload.public_dept_ids:
+                if not _is_root_user(current_user) and role != "super_admin":
+                    user_dept_ids = {d for d, _ in dept_pairs}
+                    for did in payload.public_dept_ids:
+                        if did not in user_dept_ids:
+                            raise HTTPException(status_code=403, detail=f"Department {did} is not in your scope.")
+                resolved_public_dept_ids = [str(d) for d in payload.public_dept_ids]
+            elif payload.dept_id:
+                resolved_dept_id = str(payload.dept_id)
+                resolved_public_dept_ids = [str(payload.dept_id)]
+            elif dept_pairs:
+                first_dept = sorted((d for d, _ in dept_pairs), key=str)[0]
+                resolved_dept_id = str(first_dept)
+                resolved_public_dept_ids = [str(first_dept)]
+
     try:
         dataset = client.create_dataset(
             name=dataset_name,
             description=payload.description,
-            metadata=_merge_dataset_metadata(payload.metadata, user_id=str(current_user.id)),
+            metadata=_merge_dataset_metadata(
+                payload.metadata,
+                user_id=str(current_user.id),
+                visibility=visibility,
+                public_scope=public_scope,
+                org_id=resolved_org_id,
+                dept_id=resolved_dept_id,
+                public_dept_ids=resolved_public_dept_ids,
+            ),
         )
         if hasattr(client, "flush"):
             client.flush()
-        # Invalidate dataset list cache for this user so the new entry appears immediately.
+        # Invalidate dataset list cache so the new entry appears immediately.
         _user_id = str(current_user.id)
         keys_to_drop = [k for k in list(_DATASETS_LIST_CACHE) if k.startswith(_user_id + "|")]
         for _k in keys_to_drop:
@@ -4014,9 +4557,14 @@ async def create_dataset(
 async def delete_dataset(
     dataset_name: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> Dict[str, Any]:
-    """Delete/purge a dataset for the current user."""
-    client = get_langfuse_client()
+    """Delete/purge a dataset (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4025,7 +4573,7 @@ async def delete_dataset(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     runs_deleted = 0
@@ -4088,12 +4636,17 @@ async def delete_dataset(
 async def list_dataset_items(
     dataset_name: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     page: Annotated[int, Query(ge=1)] = 1,
     source_trace_id: Annotated[str | None, Query()] = None,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> Dict[str, Any]:
-    """List items in a dataset."""
-    client = get_langfuse_client()
+    """List items in a dataset (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4102,7 +4655,7 @@ async def list_dataset_items(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     try:
@@ -4129,9 +4682,14 @@ async def create_dataset_item(
     dataset_name: str,
     payload: CreateDatasetItemRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> DatasetItemResponse:
-    """Create one dataset item from manual input or a trace."""
-    client = get_langfuse_client()
+    """Create one dataset item (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4140,7 +4698,7 @@ async def create_dataset_item(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     try:
@@ -4163,9 +4721,14 @@ async def upload_dataset_items_csv(
     dataset_name: str,
     csv_file: Annotated[UploadFile, File(...)],
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> DatasetCsvImportResponse:
-    """Bulk-create dataset items from CSV rows."""
-    client = get_langfuse_client()
+    """Bulk-create dataset items from CSV rows (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4174,7 +4737,7 @@ async def upload_dataset_items_csv(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     filename = (csv_file.filename or "").strip()
@@ -4281,9 +4844,14 @@ async def delete_dataset_item(
     dataset_name: str,
     item_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> Dict[str, Any]:
-    """Delete one dataset item."""
-    client = get_langfuse_client()
+    """Delete one dataset item (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4292,7 +4860,7 @@ async def delete_dataset_item(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     item_obj = _fetch_dataset_item_by_id(client, item_id)
@@ -4310,7 +4878,7 @@ async def delete_dataset_item(
     if item_dataset_name and item_dataset_name != dataset_name:
         raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found in dataset '{dataset_name}'")
 
-    if not _dataset_item_owned_by_user(item_obj, str(current_user.id)):
+    if not _dataset_item_accessible_by_users(item_obj, allowed_user_ids):
         raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found")
 
     try:
@@ -4331,11 +4899,16 @@ async def delete_dataset_item(
 async def list_dataset_runs(
     dataset_name: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     page: Annotated[int, Query(ge=1)] = 1,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> Dict[str, Any]:
-    """List experiment runs for a dataset."""
-    client = get_langfuse_client()
+    """List experiment runs for a dataset (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4344,7 +4917,7 @@ async def list_dataset_runs(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     try:
@@ -4365,11 +4938,16 @@ async def get_dataset_run_detail(
     dataset_name: str,
     run_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
     item_limit: Annotated[int, Query(ge=1, le=200)] = 50,
     score_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> DatasetRunDetailResponse:
-    """Return a dataset run with item-level trace and score details."""
-    client = get_langfuse_client()
+    """Return a dataset run with item-level trace and score details (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4378,7 +4956,7 @@ async def get_dataset_run_detail(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     run_obj = _find_dataset_run_by_id(client, dataset_name=dataset_name, run_id=run_id, max_scan=1000)
@@ -4460,9 +5038,14 @@ async def delete_dataset_run(
     dataset_name: str,
     run_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> Dict[str, Any]:
-    """Delete one dataset run by id."""
-    client = get_langfuse_client()
+    """Delete one dataset run by id (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4471,7 +5054,7 @@ async def delete_dataset_run(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     run_obj = _find_dataset_run_by_id(client, dataset_name=dataset_name, run_id=run_id, max_scan=1000)
@@ -4503,9 +5086,14 @@ async def run_dataset_experiment(
     payload: RunDatasetExperimentRequest,
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    org_id: Annotated[UUID | None, Query()] = None,
+    dept_id: Annotated[UUID | None, Query()] = None,
 ) -> DatasetExperimentEnqueueResponse:
-    """Queue an experiment run against a dataset."""
-    client = get_langfuse_client()
+    """Queue an experiment run against a dataset (scope-aware)."""
+    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id
+    )
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4514,7 +5102,7 @@ async def run_dataset_experiment(
     except Exception:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
-    if not _dataset_owned_by_user(dataset, str(current_user.id)):
+    if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
 
     agent_payload = await _resolve_agent_payload_for_experiment(
@@ -4986,6 +5574,69 @@ async def _enqueue_existing_trace_evaluations(
     return enqueued
 
 
+@router.get("/visibility-options")
+async def get_evaluation_visibility_options(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+) -> Dict[str, Any]:
+    """Return organisations, departments, and shareable users for visibility selectors."""
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    role = normalize_role(str(current_user.role))
+
+    organizations: list[dict] = []
+    if role == "root":
+        org_rows = (await session.exec(select(Organization.id, Organization.name))).all()
+        organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
+    elif org_ids:
+        org_rows = (
+            await session.exec(select(Organization.id, Organization.name).where(Organization.id.in_(list(org_ids))))
+        ).all()
+        organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
+
+    dept_ids = {dept_id for _, dept_id in dept_pairs}
+    departments: list[dict] = []
+    if role == "root":
+        dept_rows = (await session.exec(select(Department.id, Department.name, Department.org_id))).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+    elif role == "super_admin" and org_ids:
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(Department.org_id.in_(list(org_ids)))
+            )
+        ).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+    elif dept_ids:
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(Department.id.in_(list(dept_ids)))
+            )
+        ).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+
+    private_share_users: list[dict] = []
+    if role == "department_admin" and dept_ids:
+        primary_dept = sorted(dept_ids, key=str)[0]
+        user_rows = (
+            await session.exec(
+                select(User.id, User.email)
+                .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
+                .where(
+                    UserDepartmentMembership.department_id == primary_dept,
+                    UserDepartmentMembership.status == "active",
+                    User.email.is_not(None),
+                )
+            )
+        ).all()
+        private_share_users = [{"id": str(r[0]), "email": r[1]} for r in user_rows if r[1]]
+
+    return {
+        "organizations": organizations,
+        "departments": departments,
+        "private_share_users": private_share_users,
+        "role": role,
+    }
+
+
 @router.post("/configs")
 async def create_evaluator_config(
     payload: EvaluatorCreateRequest,
@@ -5009,6 +5660,11 @@ async def create_evaluator_config(
         effective_model, effective_api_key = await _resolve_model_from_registry(payload.model_registry_id)
 
         async with session_scope() as session:
+            # Enforce RBAC scope for creation
+            visibility, public_scope, public_dept_ids, shared_user_ids, resolved_org_id, resolved_dept_id = (
+                await _enforce_evaluator_creation_scope(session, current_user, payload)
+            )
+
             evaluator = Evaluator(
                 name=payload.name,
                 criteria=payload.criteria,
@@ -5026,6 +5682,12 @@ async def create_evaluator_config(
                 ts_from=from_ts,
                 ts_to=to_ts,
                 user_id=current_user.id,
+                org_id=resolved_org_id,
+                dept_id=resolved_dept_id,
+                visibility=visibility,
+                public_scope=public_scope,
+                public_dept_ids=public_dept_ids or None,
+                shared_user_ids=shared_user_ids or None,
             )
             session.add(evaluator)
             await session.commit()
@@ -5079,7 +5741,10 @@ async def run_evaluator_config(
                 eval_obj = await session.get(Evaluator, UUID(config_id))
             except Exception:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
-            if not eval_obj or str(current_user.id) != str(eval_obj.user_id):
+            if not eval_obj:
+                raise HTTPException(status_code=404, detail="Evaluator not found")
+            org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+            if not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
         normalized_target = _normalize_targets(eval_obj.target)
@@ -5146,13 +5811,18 @@ async def run_evaluator_config(
 async def list_evaluator_configs(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> List[EvaluatorResponse]:
-    """List evaluator configs for the current user."""
+    """List evaluator configs accessible to the current user (visibility-aware)."""
     try:
         async with session_scope() as session:
-            stmt = select(Evaluator).where(Evaluator.user_id == current_user.id)
+            org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+            stmt = select(Evaluator)
             res = await session.exec(stmt)
-            evaluators = res.all()
-        return [EvaluatorResponse(**e.to_response()) for e in evaluators]
+            all_evaluators = res.all()
+        accessible = [
+            e for e in all_evaluators
+            if _can_access_evaluator(e, current_user, org_ids, dept_pairs)
+        ]
+        return [EvaluatorResponse(**e.to_response()) for e in accessible]
     except Exception as e:
         logger.opt(exception=True).error("Error listing evaluator configs: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -5182,11 +5852,25 @@ async def update_evaluator_config(
                 eval_obj = await session.get(Evaluator, UUID(config_id))
             except Exception:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
-            if not eval_obj or str(current_user.id) != str(eval_obj.user_id):
+            if not eval_obj:
+                raise HTTPException(status_code=404, detail="Evaluator not found")
+
+            # Only owner or admin with org scope can update
+            org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+            is_owner = str(current_user.id) == str(eval_obj.user_id)
+            role = normalize_role(str(current_user.role))
+            if not is_owner and role not in {"root", "super_admin"}:
+                raise HTTPException(status_code=403, detail="Only the owner can update this evaluator")
+            if not is_owner and not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
             # Resolve model from registry
             effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id)
+
+            # Re-validate scope if visibility fields are provided
+            visibility, public_scope, public_dept_ids, shared_user_ids, resolved_org_id, resolved_dept_id = (
+                await _enforce_evaluator_creation_scope(session, current_user, payload)
+            )
 
             eval_obj.name = payload.name
             eval_obj.criteria = payload.criteria
@@ -5203,6 +5887,12 @@ async def update_evaluator_config(
             eval_obj.project_name = payload.project_name
             eval_obj.ts_from = from_ts
             eval_obj.ts_to = to_ts
+            eval_obj.org_id = resolved_org_id
+            eval_obj.dept_id = resolved_dept_id
+            eval_obj.visibility = visibility
+            eval_obj.public_scope = public_scope
+            eval_obj.public_dept_ids = public_dept_ids or None
+            eval_obj.shared_user_ids = shared_user_ids or None
 
             session.add(eval_obj)
             await session.commit()
@@ -5228,8 +5918,18 @@ async def delete_evaluator_config(
                 eval_obj = await session.get(Evaluator, UUID(config_id))
             except Exception:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
-            if not eval_obj or str(current_user.id) != str(eval_obj.user_id):
+            if not eval_obj:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
+
+            # Only owner or admin with org scope can delete
+            org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+            is_owner = str(current_user.id) == str(eval_obj.user_id)
+            role = normalize_role(str(current_user.role))
+            if not is_owner and role not in {"root", "super_admin"}:
+                raise HTTPException(status_code=403, detail="Only the owner can delete this evaluator")
+            if not is_owner and not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
+                raise HTTPException(status_code=404, detail="Evaluator not found")
+
             await session.delete(eval_obj)
             await session.commit()
         return {"status": "deleted"}
