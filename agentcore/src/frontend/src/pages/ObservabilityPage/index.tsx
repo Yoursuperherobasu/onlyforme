@@ -955,9 +955,9 @@ function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
 // =============================================================================
 
 export default function ObservabilityPage(): JSX.Element {
-  const OBSERVABILITY_LIST_STALE_MS = 5 * 60 * 1000;   // 5 min — avoid churn on tab switches
-  const OBSERVABILITY_DETAIL_STALE_MS = 2 * 60 * 1000; // 2 min — detail pages refresh sooner
-  const OBSERVABILITY_GC_MS = 15 * 60 * 1000;           // 15 min — keep cache warm longer
+  const OBSERVABILITY_LIST_STALE_MS = 60 * 1000;        // 60s — match backend SWR fresh window
+  const OBSERVABILITY_DETAIL_STALE_MS = 30 * 1000;      // 30s — detail pages refresh sooner
+  const OBSERVABILITY_GC_MS = 5 * 60 * 1000;            // 5 min — keep cache warm between tab switches
   const currentRole = useAuthStore((state) => state.role);
   const sessionRole = String(currentRole || "").toLowerCase();
   const isProvisioningAdminSessionRole = sessionRole === "root" || sessionRole === "super_admin";
@@ -1164,7 +1164,7 @@ export default function ObservabilityPage(): JSX.Element {
 
   const includeModelBreakdown = activeTab === "models";
   const shouldFetchMetrics = activeTab === "overview" || activeTab === "models";
-  const shouldFetchSessions = activeTab === "sessions" || !!selectedSession;
+  const shouldFetchSessions = activeTab === "overview" || activeTab === "sessions" || !!selectedSession;
   const shouldFetchAgents = activeTab === "agents" || !!selectedAgent;
   const shouldFetchProjects = activeTab === "projects" || !!selectedProject;
 
@@ -1190,7 +1190,6 @@ export default function ObservabilityPage(): JSX.Element {
     staleTime: OBSERVABILITY_LIST_STALE_MS,
     gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
-    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1201,7 +1200,6 @@ export default function ObservabilityPage(): JSX.Element {
     staleTime: OBSERVABILITY_LIST_STALE_MS,
     gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
-    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1215,7 +1213,6 @@ export default function ObservabilityPage(): JSX.Element {
     staleTime: OBSERVABILITY_LIST_STALE_MS,
     gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
-    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1226,7 +1223,6 @@ export default function ObservabilityPage(): JSX.Element {
     staleTime: OBSERVABILITY_LIST_STALE_MS,
     gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
-    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1271,21 +1267,27 @@ export default function ObservabilityPage(): JSX.Element {
     refetchOnWindowFocus: false,
   });
 
+  // True only on the initial (no-data) load — used for skeleton/spinner gating.
+  // Background SWR re-fetches (isFetching without isLoading) do NOT trigger this
+  // so the UI doesn't show a spinner on every stale-while-revalidate refresh.
   const isAnyPrimaryQueryLoading =
     scopeOptionsLoading ||
     metricsLoading ||
-    metricsFetching ||
     agentsLoading ||
-    agentsFetching ||
     sessionsLoading ||
-    sessionsFetching ||
     projectsLoading ||
-    projectsFetching ||
     sessionDetailLoading ||
-    sessionDetailFetching ||
     agentDetailLoading ||
+    projectDetailLoading;
+
+  // Separate lightweight indicator for background SWR refreshes.
+  const isAnyPrimaryQueryFetching =
+    metricsFetching ||
+    agentsFetching ||
+    sessionsFetching ||
+    projectsFetching ||
+    sessionDetailFetching ||
     agentDetailFetching ||
-    projectDetailLoading ||
     projectDetailFetching;
 
   useEffect(() => {
@@ -1322,7 +1324,7 @@ export default function ObservabilityPage(): JSX.Element {
 
     const startedAt = filterApplyStartedAtRef.current ?? Date.now();
     const elapsed = Date.now() - startedAt;
-    const minVisibleMs = 1200;
+    const minVisibleMs = 400;
     const remaining = Math.max(0, minVisibleMs - elapsed);
 
     const timer = setTimeout(() => {
@@ -1764,8 +1766,8 @@ export default function ObservabilityPage(): JSX.Element {
             {isManualRefreshing ? "Refreshing..." : "Refresh"}
           </Button>
 
-          {/* Global refreshing indicator — shows a subtle spinner whenever any query is background-fetching */}
-          {(isAnyPrimaryQueryLoading || isFilterApplying) && (
+          {/* Global refreshing indicator — shows a subtle spinner during background SWR re-fetches */}
+          {(isAnyPrimaryQueryFetching || isFilterApplying) && (
             <div className="flex items-center gap-1.5">
               <div className="h-3.5 w-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: THEME.primary, borderTopColor: 'transparent' }} />
               <span className="text-xs" style={{ color: THEME.textSecondary }}>Updating…</span>

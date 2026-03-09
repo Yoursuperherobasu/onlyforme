@@ -68,6 +68,10 @@ _SESSIONS_CACHE: dict[str, dict[str, Any]] = {}
 _PROJECTS_CACHE: dict[str, dict[str, Any]] = {}
 _OBSERVATIONS_CACHE_TTL_SECONDS = 60.0
 
+# Tracks which list-endpoint cache keys have already been force-recomputed once due to zero-token
+# cache poisoning. Prevents infinite recompute loops when data genuinely has 0 tokens.
+_ZERO_TOKEN_RECOMPUTED: set[str] = set()
+
 # Request-scoped observation cache (cleared per API request) to deduplicate within-request observation fetches
 _REQUEST_OBSERVATIONS_CACHE: dict[str, list] = {}
 _REQUEST_METRICS_CACHE: dict[str, dict[str, Any]] = {}
@@ -78,6 +82,16 @@ def _clear_request_caches() -> None:
     global _REQUEST_OBSERVATIONS_CACHE, _REQUEST_METRICS_CACHE
     _REQUEST_OBSERVATIONS_CACHE.clear()
     _REQUEST_METRICS_CACHE.clear()
+
+
+def _list_cache_needs_recompute(cached_items: list, token_attr: str, trace_attr: str) -> bool:
+    """Return True if the cached list has traces but zero tokens — indicating stale/incomplete enrichment.
+
+    Uses getattr so it works with both Pydantic model instances and plain dicts.
+    """
+    total_traces = sum(getattr(item, trace_attr, 0) or 0 for item in cached_items)
+    total_tokens = sum(getattr(item, token_attr, 0) or 0 for item in cached_items)
+    return total_traces > 0 and total_tokens == 0
 
 
 def _make_fallback_budget(total_traces: int, cap: int = 200) -> dict[str, int]:
@@ -1680,6 +1694,13 @@ def _build_metrics_from_traces(
             fallback_budget=fallback_budget,
             all_clients=list(clients or []),
         )
+        trace_tokens = int(trace_metrics["total_tokens"])
+        trace_input_tokens = int(trace_metrics["input_tokens"])
+        trace_output_tokens = int(trace_metrics["output_tokens"])
+        trace_cost = float(trace_metrics["total_cost"])
+        trace_latency_ms = trace_metrics["latency_ms"]
+        trace_models = list(trace_metrics["models"])
+        total_tokens += trace_tokens
         input_tokens += trace_input_tokens
         output_tokens += trace_output_tokens
         total_cost += trace_cost
@@ -2027,6 +2048,7 @@ def fetch_traces_from_langfuse(
     tags: list[str] | None = None,
     session_id: str | None = None,
     fetch_all: bool = False,
+    _date_fallback_depth: int = 0,
 ) -> list:
     """
     Fetch traces from Langfuse using the appropriate SDK method.
@@ -2304,8 +2326,9 @@ def fetch_traces_from_langfuse(
 
     # Date-filter fallback: some SDK/API combinations return intermittent empty
     # results for date-filtered list calls. Retry without date filter and
-    # apply the date window client-side.
-    if not trace_data and (from_timestamp or to_timestamp):
+    # apply the date window client-side.  Guard against infinite recursion by
+    # only attempting this fallback once (depth=0 → allowed, depth≥1 → skip).
+    if not trace_data and (from_timestamp or to_timestamp) and _date_fallback_depth == 0:
         try:
             # Use a broader unfiltered fetch on fallback to avoid false-empty
             # windows (notably for narrow ranges like "today") when server-side
@@ -2321,6 +2344,7 @@ def fetch_traces_from_langfuse(
                 tags=tags,
                 session_id=session_id,
                 fetch_all=True,
+                _date_fallback_depth=_date_fallback_depth + 1,
             )
             if unfiltered:
                 filtered: list[Any] = []
@@ -3604,15 +3628,22 @@ async def get_trace_detail(
             if start_times and end_times:
                 latency_ms = (max(end_times) - min(start_times)).total_seconds() * 1000
         else:
-            # Fallback to trace-level metrics if observations are unavailable
-            trace_metrics = _get_trace_metrics(trace_client, trace, allow_observation_fallback=False, all_clients=scoped_clients)
-            total_tokens = int(trace_metrics["total_tokens"])
-            input_tokens = int(trace_metrics["input_tokens"])
-            output_tokens = int(trace_metrics["output_tokens"])
-            total_cost = float(trace_metrics["total_cost"])
-            latency_ms = trace_metrics["latency_ms"]
+            # No observations — pull latency/models from trace-level fields only.
+            # Do NOT re-fetch observations here (allow_observation_fallback=False) to avoid
+            # duplicating the fallback call already made above (allow_observation_fallback=True).
+            # IMPORTANT: do not overwrite total_tokens / input_tokens / output_tokens / total_cost
+            # that were already computed by the observation-fallback call above.
+            trace_latency_metrics = _get_trace_metrics(trace_client, trace, allow_observation_fallback=False, all_clients=scoped_clients)
+            latency_ms = trace_latency_metrics["latency_ms"]
             if not models_used:
-                models_used = list(trace_metrics["models"])
+                models_used = list(trace_latency_metrics["models"])
+            # Fill tokens/cost only if the observation fallback above returned nothing
+            if total_tokens == 0:
+                total_tokens = int(trace_latency_metrics["total_tokens"])
+                input_tokens = int(trace_latency_metrics["input_tokens"])
+                output_tokens = int(trace_latency_metrics["output_tokens"])
+            if total_cost == 0.0:
+                total_cost = float(trace_latency_metrics["total_cost"])
 
         # Merge and de-duplicate scores by id
         scores: list[ScoreItem] = []
@@ -3737,15 +3768,32 @@ async def get_user_sessions(
     
     # Cache checking logic (only if SWR enabled)
     if SWR_CONFIG["ENABLE_SWR"]:
-        # === FRESH CACHE: Return immediately, no refresh ===
+        # === FRESH CACHE: Return immediately unless data looks incomplete ===
         if cache_meta["is_fresh"] and cache_key in _SESSIONS_CACHE:
-            logger.debug(f"Sessions cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
             cached = _SESSIONS_CACHE[cache_key]
-            return SessionsListResponse(
-                **cached["data"],
-                fetched_trace_count=cached.get("fetched_trace_count", 0),
-                **_scope_warning_payload(scope_warnings),
-            )
+            cached_sessions = cached["data"].get("sessions", [])
+            # If all sessions have 0 tokens but non-zero trace counts, the cache was
+            # populated before observation enrichment completed. Invalidate once per key
+            # to force a fresh computation; the guard prevents infinite recompute loops
+            # when data genuinely has 0 tokens (e.g. tracing-only workloads).
+            if (
+                cache_key not in _ZERO_TOKEN_RECOMPUTED
+                and _list_cache_needs_recompute(cached_sessions, "total_tokens", "trace_count")
+            ):
+                logger.warning(
+                    f"Sessions cache {cache_key} has zero tokens with traces present — "
+                    "invalidating to force recompute (once)"
+                )
+                _SESSIONS_CACHE.pop(cache_key, None)
+                _ZERO_TOKEN_RECOMPUTED.add(cache_key)
+                # Fall through to fresh computation below
+            else:
+                logger.debug(f"Sessions cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
+                return SessionsListResponse(
+                    **cached["data"],
+                    fetched_trace_count=cached.get("fetched_trace_count", 0),
+                    **_scope_warning_payload(scope_warnings),
+                )
         
         # === STALE CACHE: fetch fresh synchronously ===
         # We currently don't have a dedicated sessions background fetch task,
@@ -3870,10 +3918,14 @@ async def get_user_sessions(
             "truncated": is_truncated,
         }
 
-        # Cache the result, but avoid caching empty date-filter windows to reduce
-        # sticky false-empty UI states from intermittent upstream filtering issues.
+        # Cache the result, but avoid caching empty date-filter windows or zero-token
+        # data when sessions exist (zero-token cache poisons downstream fresh paths).
+        _sessions_have_tokens = any(getattr(s, "total_tokens", 0) > 0 for s in sessions)
+        _sessions_have_traces = any(getattr(s, "trace_count", 0) > 0 for s in sessions)
         should_cache_response = not (
             total_count == 0 and (from_date or to_date)
+        ) and not (
+            _sessions_have_traces and not _sessions_have_tokens
         )
         if should_cache_response:
             cache_key = f"sessions:{user_id}:{scope_key}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
@@ -3934,20 +3986,42 @@ async def get_session_detail(
             default_days=None,
         )
 
-        # Fetch traces by date window and filter by session_id client-side.
-        # Relying on SDK/server-side session_id filtering can under-return traces
-        # (often only root traces), which causes mismatch with session/agent tabs.
-        raw_traces = _fetch_scoped_traces(
-            clients=scoped_clients,
-            allowed_user_ids=allowed_user_ids,
-            limit=500,
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            fetch_all=False,
-        )
+        # Fast path: query each scoped client directly with session_id filter.
+        # The SDK/API may only return root traces for session_id queries, but it's
+        # much faster than fetching 500 traces and filtering client-side.
+        # We then verify client-side and fall back to the broad scan if needed.
+        session_traces: list[Any] = []
+        _seen_trace_ids: set[str] = set()
+        for _sc in scoped_clients:
+            for _uid in list(allowed_user_ids)[:20]:  # cap to avoid explosion
+                try:
+                    _r = fetch_traces_from_langfuse(
+                        _sc, user_id=_uid, limit=100,
+                        from_timestamp=from_timestamp, to_timestamp=to_timestamp,
+                        session_id=session_id,
+                    )
+                    for _t in _r:
+                        if get_attr(_t, 'session_id', 'sessionId') != session_id:
+                            continue
+                        _tid = _get_trace_id(_t)
+                        if _tid and _tid not in _seen_trace_ids:
+                            _seen_trace_ids.add(_tid)
+                            session_traces.append(_t)
+                except Exception:
+                    pass
 
-        # Filter to the requested session using the same semantics as list endpoints.
-        session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
+        if not session_traces:
+            # Fallback: broad fetch, filter by session_id client-side.
+            # Slower but catches cases where SDK session_id filter under-returns.
+            raw_traces = _fetch_scoped_traces(
+                clients=scoped_clients,
+                allowed_user_ids=allowed_user_ids,
+                limit=500,
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+                fetch_all=False,
+            )
+            session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
 
         if not session_traces:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -4131,15 +4205,13 @@ async def get_user_metrics(
     cache_meta = _get_cache_metadata(cache_key)
 
     def _endpoint_cache_is_complete(cached_entry: dict) -> bool:
-        """Return False when the cached result has traces+observations but no tokens
-        — indicates incomplete enrichment from a previous request.  We must
-        recompute in that case rather than serve stale zeros."""
+        """Return False when the cached result has traces but zero tokens
+        — indicates incomplete enrichment from a previous request that must
+        be recomputed rather than served as stale zeros."""
         m = cached_entry.get("metrics") or {}
-        return not (
-            int(m.get("total_traces") or 0) > 0
-            and int(m.get("total_observations") or 0) > 0
-            and int(m.get("total_tokens") or 0) == 0
-        )
+        has_traces = int(m.get("total_traces") or 0) > 0
+        has_tokens = int(m.get("total_tokens") or 0) > 0
+        return not has_traces or has_tokens
 
     # === FRESH CACHE: Return immediately, no refresh ===
     if cache_meta["is_fresh"] and cache_key in _TRACE_METRICS_CACHE:
@@ -4866,12 +4938,19 @@ async def get_user_agents(
     
     if cache_meta["is_fresh"] and cache_key in _AGENTS_CACHE:
         cached = _AGENTS_CACHE[cache_key]
-        agents_payload = cached.get("data") or {}
-        _agents_complete = not (
-            int(agents_payload.get("total_traces") or 0) > 0
-            and int(sum(a.get("token_count", 0) for a in (agents_payload.get("agents") or []))) == 0
-        )
-        if _agents_complete:
+        cached_agents = cached["data"].get("agents", [])
+        if (
+            cache_key not in _ZERO_TOKEN_RECOMPUTED
+            and _list_cache_needs_recompute(cached_agents, "total_tokens", "trace_count")
+        ):
+            logger.warning(
+                f"Agents cache {cache_key} has zero tokens with traces present — "
+                "invalidating to force recompute (once)"
+            )
+            _AGENTS_CACHE.pop(cache_key, None)
+            _ZERO_TOKEN_RECOMPUTED.add(cache_key)
+            # Fall through to fresh computation below
+        else:
             logger.debug(f"Agents cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
             return AgentListResponse(
                 **cached["data"],
@@ -5068,10 +5147,14 @@ async def get_user_agents(
             "truncated": is_truncated,
         }
 
-        # Cache the result, but avoid caching empty date-filter windows to reduce
-        # sticky false-empty UI states from intermittent upstream filtering issues.
+        # Cache the result, but avoid caching empty date-filter windows or zero-token
+        # data when agents exist (zero-token cache poisons downstream fresh paths).
+        _agents_have_tokens = any(getattr(a, "total_tokens", 0) > 0 for a in agents)
+        _agents_have_traces = any(getattr(a, "trace_count", 0) > 0 for a in agents)
         should_cache_response = not (
             total_count == 0 and (from_date or to_date)
+        ) and not (
+            _agents_have_traces and not _agents_have_tokens
         )
         if should_cache_response:
             cache_key = f"agents:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
@@ -5427,12 +5510,19 @@ async def get_user_projects(
     
     if cache_meta["is_fresh"] and cache_key in _PROJECTS_CACHE:
         cached = _PROJECTS_CACHE[cache_key]
-        projects_payload = cached.get("data") or {}
-        _projects_complete = not (
-            int(projects_payload.get("total_traces") or 0) > 0
-            and int(sum(p.get("total_tokens", 0) for p in (projects_payload.get("projects") or []))) == 0
-        )
-        if _projects_complete:
+        cached_projects = cached["data"].get("projects", [])
+        if (
+            cache_key not in _ZERO_TOKEN_RECOMPUTED
+            and _list_cache_needs_recompute(cached_projects, "total_tokens", "trace_count")
+        ):
+            logger.warning(
+                f"Projects cache {cache_key} has zero tokens with traces present — "
+                "invalidating to force recompute (once)"
+            )
+            _PROJECTS_CACHE.pop(cache_key, None)
+            _ZERO_TOKEN_RECOMPUTED.add(cache_key)
+            # Fall through to fresh computation below
+        else:
             logger.debug(f"Projects cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
             return ProjectListResponse(
                 **cached["data"],
@@ -5583,10 +5673,14 @@ async def get_user_projects(
             "truncated": is_truncated,
         }
 
-        # Cache the result, but avoid caching empty date-filter windows to reduce
-        # sticky false-empty UI states from intermittent upstream filtering issues.
+        # Cache the result, but avoid caching empty date-filter windows or zero-token
+        # data when projects exist (zero-token cache poisons downstream fresh paths).
+        _projects_have_tokens = any(getattr(p, "total_tokens", 0) > 0 for p in projects)
+        _projects_have_traces = any(getattr(p, "trace_count", 0) > 0 for p in projects)
         should_cache_response = not (
             total_count == 0 and (from_date or to_date)
+        ) and not (
+            _projects_have_traces and not _projects_have_tokens
         )
         if should_cache_response:
             cache_key = f"projects:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
