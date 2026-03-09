@@ -329,14 +329,12 @@ export const runEvaluationDatasetExperiment = async (
     experiment_name: string;
     description?: string;
     agent_id?: string;
-    generation_model?: string;
-    generation_model_api_key?: string;
+    generation_model_registry_id?: string;
     evaluator_config_id?: string;
     preset_id?: string;
     evaluator_name?: string;
     criteria?: string;
-    judge_model?: string;
-    judge_model_api_key?: string;
+    judge_model_registry_id?: string;
   },
 ) => {
   const response = await api.post(
@@ -363,6 +361,7 @@ export interface EvaluatorConfig {
   name: string;
   criteria: string;
   model: string;
+  model_registry_id?: string;
   preset_id?: string;
   target?: string[];
   ground_truth?: string;

@@ -70,6 +70,33 @@ _DATASETS_LIST_CACHE_TTL_SECONDS = 60.0
 
 # Persistent evaluator configs stored in the database (see Evaluator model)
 from agentcore.services.database.models.evaluator.model import Evaluator  # noqa: E402
+from agentcore.services.model_registry_service import get_decrypted_config as get_model_decrypted_config  # noqa: E402
+
+
+async def _resolve_model_from_registry(model_registry_id: str) -> tuple[str, str | None]:
+    """Resolve model_name and decrypted api_key from the model registry.
+
+    Returns (model_name, api_key) or raises HTTPException if not found.
+    """
+    try:
+        async with session_scope() as session:
+            config = await get_model_decrypted_config(session, UUID(model_registry_id))
+        if not config:
+            raise HTTPException(status_code=404, detail=f"Model registry entry not found: {model_registry_id}")
+        provider = config.get("provider", "")
+        model_name = config.get("model_name", "")
+        api_key = config.get("api_key") or None
+        # Build a provider-prefixed model string for LiteLLM (e.g. "openai/gpt-4o")
+        if provider and model_name and not model_name.startswith(f"{provider}/"):
+            resolved_model = f"{provider}/{model_name}"
+        else:
+            resolved_model = model_name
+        return resolved_model, api_key
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.opt(exception=True).error("Failed to resolve model from registry id={}: {}", model_registry_id, str(e))
+        raise HTTPException(status_code=400, detail=f"Failed to resolve model from registry: {str(e)}")
 
 
 # =============================================================================
@@ -123,7 +150,7 @@ class JudgeConfig(BaseModel):
 class EvaluatorCreateRequest(BaseModel):
     name: str
     criteria: str
-    model: str = "gpt-4o"
+    model_registry_id: str  # ID from model registry (required)
     preset_id: Optional[str] = None
     # target may be a single string ('existing'|'new') or a list like ['existing','new']
     target: Optional[Union[str, List[str]]] = Field(default="existing")
@@ -138,7 +165,6 @@ class EvaluatorCreateRequest(BaseModel):
     project_name: Optional[str] = None
     ts_from: Optional[str] = None  # ISO timestamp
     ts_to: Optional[str] = None
-    model_api_key: Optional[str] = None
 
 
 class EvaluatorResponse(BaseModel):
@@ -146,6 +172,7 @@ class EvaluatorResponse(BaseModel):
     name: str
     criteria: str
     model: str
+    model_registry_id: Optional[str] = None
     user_id: str | None = None
     preset_id: Optional[str] = None
     agent_ids: Optional[List[str]] = None
@@ -282,17 +309,12 @@ class RunDatasetExperimentRequest(BaseModel):
     experiment_name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
     agent_id: str | None = None
-    generation_model: str | None = None
-    generation_model_api_key: str | None = None
+    generation_model_registry_id: str | None = None  # Model registry ID for generation model
     evaluator_config_id: str | None = None
     preset_id: str | None = None
     evaluator_name: str | None = None
     criteria: str | None = None
-    judge_model: str | None = None
-    judge_model_api_key: str | None = None
-    # Deprecated compatibility aliases
-    model: str | None = None
-    model_api_key: str | None = None
+    judge_model_registry_id: str | None = None  # Model registry ID for judge model
 
 
 class DatasetExperimentEnqueueResponse(BaseModel):
@@ -2764,6 +2786,7 @@ async def _resolve_experiment_judge_config(
     criteria: str | None,
     judge_model: str | None,
     judge_model_api_key: str | None,
+    judge_model_registry_id: str | None = None,
 ) -> dict[str, Any]:
     """Resolve dataset experiment judge settings from optional saved evaluator."""
     judge_name = (evaluator_name or "").strip() or "Dataset LLM Judge"
@@ -2771,6 +2794,14 @@ async def _resolve_experiment_judge_config(
     resolved_model = (judge_model or "").strip() or None
     resolved_api_key = (judge_model_api_key or "").strip() or None
     resolved_preset_id = (preset_id or "").strip() or None
+
+    # Resolve judge model from registry if provided
+    if judge_model_registry_id:
+        reg_model, reg_key = await _resolve_model_from_registry(judge_model_registry_id)
+        if not resolved_model:
+            resolved_model = reg_model
+        if not resolved_api_key:
+            resolved_api_key = reg_key
 
     if evaluator_config_id:
         try:
@@ -2786,10 +2817,13 @@ async def _resolve_experiment_judge_config(
         judge_name = evaluator.name or judge_name
         if not resolved_criteria:
             resolved_criteria = (evaluator.criteria or "").strip() or None
-        if not resolved_model:
+        if not resolved_model and evaluator.model_registry_id:
+            reg_model, reg_key = await _resolve_model_from_registry(evaluator.model_registry_id)
+            resolved_model = reg_model
+            if not resolved_api_key:
+                resolved_api_key = reg_key
+        elif not resolved_model:
             resolved_model = (evaluator.model or "").strip() or None
-        if not resolved_api_key:
-            resolved_api_key = (evaluator.model_api_key or "").strip() or None
         if not resolved_preset_id:
             resolved_preset_id = str(evaluator.preset_id) if evaluator.preset_id else None
 
@@ -4487,18 +4521,18 @@ async def run_dataset_experiment(
         agent_id=payload.agent_id,
         current_user=current_user,
     )
-    generation_model = (payload.generation_model or "").strip() or None
-    generation_model_api_key = (payload.generation_model_api_key or "").strip() or None
+    # Resolve generation model from registry
+    generation_model: str | None = None
+    generation_model_api_key: str | None = None
+    if payload.generation_model_registry_id:
+        generation_model, generation_model_api_key = await _resolve_model_from_registry(
+            payload.generation_model_registry_id
+        )
 
     if not agent_payload and not generation_model:
         raise HTTPException(
             status_code=400,
-            detail="Select an agent or provide a generation model.",
-        )
-    if not agent_payload and not generation_model_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Generation model API key is required when no agent is selected.",
+            detail="Select an agent or provide a generation model from the registry.",
         )
 
     judge_cfg = await _resolve_experiment_judge_config(
@@ -4507,8 +4541,9 @@ async def run_dataset_experiment(
         preset_id=payload.preset_id,
         evaluator_name=payload.evaluator_name,
         criteria=payload.criteria,
-        judge_model=payload.judge_model or payload.model,
-        judge_model_api_key=payload.judge_model_api_key or payload.model_api_key,
+        judge_model=None,
+        judge_model_api_key=None,
+        judge_model_registry_id=payload.judge_model_registry_id,
     )
     if judge_cfg["criteria"] and not judge_cfg["model"]:
         judge_cfg["model"] = "gpt-4o"
@@ -4970,11 +5005,15 @@ async def create_evaluator_config(
         from_ts = _parse_iso_datetime_or_400(payload.ts_from, "ts_from")
         to_ts = _parse_iso_datetime_or_400(payload.ts_to, "ts_to")
 
+        # Resolve model from registry
+        effective_model, effective_api_key = await _resolve_model_from_registry(payload.model_registry_id)
+
         async with session_scope() as session:
             evaluator = Evaluator(
                 name=payload.name,
                 criteria=payload.criteria,
-                model=payload.model,
+                model=effective_model,
+                model_registry_id=payload.model_registry_id,
                 preset_id=payload.preset_id,
                 ground_truth=payload.ground_truth,
                 target=normalized_target,
@@ -4986,7 +5025,6 @@ async def create_evaluator_config(
                 project_name=payload.project_name,
                 ts_from=from_ts,
                 ts_to=to_ts,
-                model_api_key=payload.model_api_key,
                 user_id=current_user.id,
             )
             session.add(evaluator)
@@ -5005,7 +5043,7 @@ async def create_evaluator_config(
                 user_id=str(current_user.id),
                 evaluator_name=payload.name,
                 criteria=payload.criteria,
-                model=payload.model,
+                model=effective_model,
                 trace_id=payload.trace_id,
                 agent_id=normalized_agent_id,
                 agent_ids=normalized_agent_ids,
@@ -5014,7 +5052,7 @@ async def create_evaluator_config(
                 project_name=payload.project_name,
                 ts_from=from_ts,
                 ts_to=to_ts,
-                model_api_key=payload.model_api_key,
+                model_api_key=effective_api_key,
                 preset_id=payload.preset_id,
                 ground_truth=payload.ground_truth,
             )
@@ -5060,12 +5098,19 @@ async def run_evaluator_config(
                 "message": "Evaluator is configured for new traces only. It will run automatically on new traces.",
             }
 
+        # Resolve model from registry at runtime
+        if eval_obj.model_registry_id:
+            effective_model, effective_api_key = await _resolve_model_from_registry(eval_obj.model_registry_id)
+        else:
+            effective_model = eval_obj.model or "gpt-4o"
+            effective_api_key = None
+
         enqueued = await _enqueue_existing_trace_evaluations(
             background_tasks=background_tasks,
             user_id=str(current_user.id),
             evaluator_name=eval_obj.name,
             criteria=eval_obj.criteria,
-            model=eval_obj.model,
+            model=effective_model,
             trace_id=eval_obj.trace_id,
             agent_id=eval_obj.agent_id,
             agent_ids=eval_obj.agent_ids,
@@ -5074,7 +5119,7 @@ async def run_evaluator_config(
             project_name=eval_obj.project_name,
             ts_from=eval_obj.ts_from,
             ts_to=eval_obj.ts_to,
-            model_api_key=eval_obj.model_api_key,
+            model_api_key=effective_api_key,
             preset_id=eval_obj.preset_id,
             ground_truth=eval_obj.ground_truth,
         )
@@ -5140,9 +5185,13 @@ async def update_evaluator_config(
             if not eval_obj or str(current_user.id) != str(eval_obj.user_id):
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
+            # Resolve model from registry
+            effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id)
+
             eval_obj.name = payload.name
             eval_obj.criteria = payload.criteria
-            eval_obj.model = payload.model
+            eval_obj.model = effective_model
+            eval_obj.model_registry_id = payload.model_registry_id
             eval_obj.preset_id = payload.preset_id
             eval_obj.ground_truth = payload.ground_truth
             eval_obj.target = normalized_target
@@ -5154,7 +5203,6 @@ async def update_evaluator_config(
             eval_obj.project_name = payload.project_name
             eval_obj.ts_from = from_ts
             eval_obj.ts_to = to_ts
-            eval_obj.model_api_key = payload.model_api_key
 
             session.add(eval_obj)
             await session.commit()

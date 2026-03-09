@@ -10,6 +10,7 @@ class EvaluatorBase(SQLModel):
     name: str
     criteria: str = Field(sa_column=Column(Text, nullable=False))
     model: str | None = "gpt-4o"
+    model_registry_id: Optional[str] = Field(default=None, index=True)
     preset_id: Optional[str] = None
     ground_truth: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     target: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
@@ -23,7 +24,6 @@ class EvaluatorBase(SQLModel):
     project_name: Optional[str] = None
     ts_from: Optional[datetime] = None
     ts_to: Optional[datetime] = None
-    model_api_key: Optional[str] = None
 
 
 class Evaluator(EvaluatorBase, table=True):
@@ -39,6 +39,7 @@ class Evaluator(EvaluatorBase, table=True):
             "name": self.name,
             "criteria": self.criteria,
             "model": self.model,
+            "model_registry_id": self.model_registry_id,
             "user_id": str(self.user_id) if self.user_id else None,
             "org_id": str(self.org_id) if self.org_id else None,
             "dept_id": str(self.dept_id) if self.dept_id else None,

@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { useTranslation } from "react-i18next";
 import useAlertStore from "@/stores/alertStore";
-import { useModelStore } from "@/stores/modelStore";
+import { useGetRegistryModels } from "@/controllers/API/queries/models/use-get-models";
 import {
   createEvaluationDataset,
   createEvaluationDatasetItem,
@@ -131,13 +131,13 @@ export default function EvaluationPage() {
     description: "",
     agent_id: "",
     generation_model: "",
-    generation_model_api_key: "",
+    generation_model_registry_id: "",
     evaluator_config_id: "",
     preset_id: "",
     evaluator_name: "",
     criteria: "",
     judge_model: "",
-    judge_model_api_key: "",
+    judge_model_registry_id: "",
   });
 
   // Dialog States
@@ -149,36 +149,12 @@ export default function EvaluationPage() {
   );
   const fetchSeqRef = useRef(0);
 
-  const [modelApiKey, setModelApiKey] = useState<string>("");
   const [agentList, setAgentList] = useState<any[]>([]);
-  const storeModels = useModelStore((s) => s.models);
-  const [savedModelKeys, setSavedModelKeys] = useState<Record<string, string>>(
-    {},
-  );
+  const { data: registryModels = [] } = useGetRegistryModels({ model_type: "llm", active_only: true });
 
   // Per-tab fetch guards — prevent redundant refetches on every tab revisit
   const hasFetchedScoresRef = useRef(false);
   const hasFetchedDatasetsRef = useRef(false);
-  const loadSavedModelKeys = () => {
-    try {
-      const raw = localStorage.getItem("evaluation_model_keys");
-      if (!raw) return {} as Record<string, string>;
-      const parsed = JSON.parse(raw || "{}");
-      setSavedModelKeys(parsed || {});
-      return parsed || {};
-    } catch (e) {
-      return {} as Record<string, string>;
-    }
-  };
-  const saveModelKey = (modelId: string, key: string) => {
-    const next = { ...(savedModelKeys || {}), [modelId]: key };
-    setSavedModelKeys(next);
-    try {
-      localStorage.setItem("evaluation_model_keys", JSON.stringify(next));
-    } catch {
-      // ignore storage errors
-    }
-  };
 
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [filterSessionId, setFilterSessionId] = useState<string>("");
@@ -194,11 +170,11 @@ export default function EvaluationPage() {
   const [judgeForm, setJudgeForm] = useState({
     trace_id: "",
     criteria: "",
-    model: "gpt-4o",
+    model: "",
     name: "",
     preset_id: "",
     saved_evaluator_id: "",
-    model_name: "",
+    model_registry_id: "",
   });
   const [groundTruth, setGroundTruth] = useState("");
   const [scoreForm, setScoreForm] = useState({
@@ -222,11 +198,11 @@ export default function EvaluationPage() {
     setJudgeForm({
       trace_id: "",
       criteria: "",
-      model: "gpt-4o",
+      model: "",
       name: "",
       preset_id: "",
       saved_evaluator_id: "",
-      model_name: "",
+      model_registry_id: "",
     });
     setGroundTruth("");
     setSelectedAgentIds([]);
@@ -419,18 +395,6 @@ export default function EvaluationPage() {
         } else {
           setPendingTraces([]);
         }
-        // load saved model API keys and prefill if available
-        try {
-          const keys = loadSavedModelKeys();
-          const modelName =
-            (judgeForm.model_name && judgeForm.model_name.trim()) ||
-            judgeForm.model;
-          if (keys && modelName && keys[modelName]) {
-            setModelApiKey(keys[modelName]);
-          }
-        } catch (e) {
-          /* ignore */
-        }
       } catch (e) {
         console.error("Failed fetching pending traces:", e);
         setPendingTraces([]);
@@ -598,36 +562,30 @@ export default function EvaluationPage() {
       });
       return;
     }
+    if (!judgeForm.model_registry_id) {
+      setErrorData({ title: "Select a judge model from the registry." });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      // If both selected, create evaluator targeting both (backend should accept array or handle 'both')
       const targets: string[] = [];
       if (runOnExisting) targets.push("existing");
       if (runOnNew) targets.push("new");
 
-      const modelName =
-        (judgeForm.model_name && judgeForm.model_name.trim()) ||
-        judgeForm.model;
       const payload: any = {
         name:
           judgeForm.name?.trim() || `LLM Judge - ${new Date().toISOString()}`,
         criteria: judgeForm.criteria || "",
-        model: modelName,
+        model_registry_id: judgeForm.model_registry_id,
         preset_id: judgeForm.preset_id || undefined,
         target: targets.length === 1 ? targets[0] : targets,
       };
       if (groundTruth.trim()) payload.ground_truth = groundTruth.trim();
-      if (modelApiKey) {
-        payload.model_api_key = modelApiKey;
-        // persist locally under the chosen model name
-        if (modelName) saveModelKey(modelName, modelApiKey);
-      }
       if (selectedAgentIds && selectedAgentIds.length)
         payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
 
-      // optional filters are currently not exposed in this simplified dialog
       await createEvaluator(payload);
       setIsJudgeDialogOpen(false);
       resetForms();
@@ -666,6 +624,10 @@ export default function EvaluationPage() {
       setErrorData({ title: "Provide a name and criteria to save evaluator" });
       return;
     }
+    if (!judgeForm.model_registry_id) {
+      setErrorData({ title: "Select a judge model from the registry." });
+      return;
+    }
     if (requiresGroundTruth && !groundTruth.trim()) {
       setErrorData({
         title: "Ground truth is required for the selected preset.",
@@ -676,13 +638,10 @@ export default function EvaluationPage() {
       const targets: string[] = [];
       if (runOnExisting) targets.push("existing");
       if (runOnNew) targets.push("new");
-      const modelName =
-        (judgeForm.model_name && judgeForm.model_name.trim()) ||
-        judgeForm.model;
       const payload: any = {
         name: judgeForm.name,
         criteria: judgeForm.criteria,
-        model: modelName,
+        model_registry_id: judgeForm.model_registry_id,
       };
       if (targets.length === 1) payload.target = targets[0];
       else if (targets.length > 1) payload.target = targets;
@@ -692,10 +651,6 @@ export default function EvaluationPage() {
         payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
-      if (modelApiKey && modelName) {
-        payload.model_api_key = modelApiKey;
-        saveModelKey(modelName, modelApiKey);
-      }
 
       if (editingEvaluator) {
         const updated = await updateEvaluator(editingEvaluator, payload);
@@ -733,7 +688,7 @@ export default function EvaluationPage() {
       criteria: s.criteria,
       name: s.name,
       model: s.model,
-      model_name: s.model,
+      model_registry_id: s.model_registry_id || "",
       preset_id: s.preset_id || "",
     });
     setGroundTruth(s.ground_truth || "");
@@ -749,12 +704,6 @@ export default function EvaluationPage() {
     setSelectedAgentIds(agentIds);
     setFilterSessionId(s.session_id || "");
     setFilterTraceId(s.trace_id || "");
-    try {
-      const keys = loadSavedModelKeys();
-      setModelApiKey((s.model && keys[s.model]) || "");
-    } catch {
-      setModelApiKey("");
-    }
     setEditingEvaluator(id);
     setIsJudgeDialogOpen(true);
   };
@@ -994,20 +943,11 @@ export default function EvaluationPage() {
       return;
     }
     const hasAgent = Boolean(datasetExperimentForm.agent_id);
-    const generationModel = datasetExperimentForm.generation_model.trim();
-    const generationModelApiKey =
-      datasetExperimentForm.generation_model_api_key.trim();
-    if (!hasAgent && !generationModel) {
+    const hasRegistryModel = Boolean(datasetExperimentForm.generation_model_registry_id);
+    if (!hasAgent && !hasRegistryModel) {
       setErrorData({
         title:
-          "Select an agent or provide a generation model to run the dataset.",
-      });
-      return;
-    }
-    if (!hasAgent && !generationModelApiKey) {
-      setErrorData({
-        title:
-          "Generation model API key is required when running without an agent.",
+          "Select an agent or choose a generation model from the registry.",
       });
       return;
     }
@@ -1018,10 +958,9 @@ export default function EvaluationPage() {
         experiment_name: datasetExperimentForm.experiment_name.trim(),
         description: datasetExperimentForm.description.trim() || undefined,
         agent_id: datasetExperimentForm.agent_id || undefined,
-        generation_model: hasAgent ? undefined : generationModel || undefined,
-        generation_model_api_key: hasAgent
+        generation_model_registry_id: hasAgent
           ? undefined
-          : generationModelApiKey || undefined,
+          : datasetExperimentForm.generation_model_registry_id || undefined,
         evaluator_config_id:
           datasetExperimentForm.evaluator_config_id || undefined,
         preset_id: datasetExperimentForm.preset_id || undefined,
@@ -1030,9 +969,8 @@ export default function EvaluationPage() {
         criteria: datasetExperimentForm.criteria.trim()
           ? ensureDatasetPromptTemplate(datasetExperimentForm.criteria.trim())
           : undefined,
-        judge_model: datasetExperimentForm.judge_model.trim() || undefined,
-        judge_model_api_key:
-          datasetExperimentForm.judge_model_api_key.trim() || undefined,
+        judge_model_registry_id:
+          datasetExperimentForm.judge_model_registry_id || undefined,
       });
 
       setDatasetExperimentJob({
@@ -1484,38 +1422,38 @@ export default function EvaluationPage() {
               </Select>
             </div>
             {!datasetExperimentForm.agent_id ? (
-              <>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    Generation Model
-                  </label>
-                  <Input
-                    placeholder="e.g. gpt-4o-mini"
-                    value={datasetExperimentForm.generation_model}
-                    onChange={(e) =>
-                      setDatasetExperimentForm({
-                        ...datasetExperimentForm,
-                        generation_model: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    Generation Model API Key
-                  </label>
-                  <Input
-                    placeholder="sk-..."
-                    value={datasetExperimentForm.generation_model_api_key}
-                    onChange={(e) =>
-                      setDatasetExperimentForm({
-                        ...datasetExperimentForm,
-                        generation_model_api_key: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  Generation Model
+                </label>
+                <Select
+                  value={datasetExperimentForm.generation_model_registry_id || ""}
+                  onValueChange={(val) => {
+                    const selected = registryModels.find((m) => m.id === val);
+                    setDatasetExperimentForm({
+                      ...datasetExperimentForm,
+                      generation_model_registry_id: val,
+                      generation_model: selected ? selected.model_name : "",
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select from registry" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {registryModels.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.display_name} ({m.provider}/{m.model_name})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {registryModels.length === 0 && (
+                  <p className="text-xs text-amber-600">
+                    No models available. Add models in the Model Registry first.
+                  </p>
+                )}
+              </div>
             ) : null}
             <div className="space-y-2">
               <label className="text-sm font-medium">Use Saved Evaluator</label>
@@ -1604,16 +1542,28 @@ export default function EvaluationPage() {
               <label className="text-sm font-medium">
                 Judge Model (Optional)
               </label>
-              <Input
-                placeholder="e.g. gpt-4o"
-                value={datasetExperimentForm.judge_model}
-                onChange={(e) =>
+              <Select
+                value={datasetExperimentForm.judge_model_registry_id || ""}
+                onValueChange={(val) => {
+                  const selected = registryModels.find((m) => m.id === val);
                   setDatasetExperimentForm({
                     ...datasetExperimentForm,
-                    judge_model: e.target.value,
-                  })
-                }
-              />
+                    judge_model_registry_id: val,
+                    judge_model: selected ? selected.model_name : "",
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select from registry" />
+                </SelectTrigger>
+                <SelectContent>
+                  {registryModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.display_name} ({m.provider}/{m.model_name})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium">
@@ -1635,21 +1585,6 @@ export default function EvaluationPage() {
                 <code>{"{{generation}}"}</code>,{" "}
                 <code>{"{{ground_truth}}"}</code>.
               </p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">
-                Judge Model API Key (Optional)
-              </label>
-              <Input
-                placeholder="sk-..."
-                value={datasetExperimentForm.judge_model_api_key}
-                onChange={(e) =>
-                  setDatasetExperimentForm({
-                    ...datasetExperimentForm,
-                    judge_model_api_key: e.target.value,
-                  })
-                }
-              />
             </div>
             <div className="space-y-2 md:col-span-3">
               <label className="text-sm font-medium">
@@ -2192,38 +2127,38 @@ export default function EvaluationPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Judge Model Name</label>
-                <Input
-                  placeholder="e.g. gpt-4o or custom"
-                  value={judgeForm.model_name}
-                  onChange={(e) =>
-                    setJudgeForm({ ...judgeForm, model_name: e.target.value })
-                  }
-                />
-                <p className="text-xs text-gray-500">
-                  Name of the LLM to use as judge. If empty, a default model
-                  will be used.
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Judge Model</label>
+              <Select
+                value={judgeForm.model_registry_id || ""}
+                onValueChange={(val) => {
+                  const selected = registryModels.find((m) => m.id === val);
+                  setJudgeForm({
+                    ...judgeForm,
+                    model_registry_id: val,
+                    model: selected ? selected.model_name : judgeForm.model,
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a model from registry" />
+                </SelectTrigger>
+                <SelectContent>
+                  {registryModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.display_name} ({m.provider}/{m.model_name})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {registryModels.length === 0 && (
+                <p className="text-xs text-amber-600">
+                  No models available. Add models in the Model Registry first.
                 </p>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Model API Key (optional)
-                </label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="sk-..."
-                    value={modelApiKey}
-                    onChange={(e) => setModelApiKey(e.target.value)}
-                  />
-                </div>
-                <p className="text-xs text-gray-500">
-                  API key is stored locally in your browser only and will be
-                  saved when you Save or Run the evaluator.
-                </p>
-              </div>
+              )}
+              <p className="text-xs text-gray-500">
+                Model and API key are resolved from the registry.
+              </p>
             </div>
 
             <div className="space-y-2">
