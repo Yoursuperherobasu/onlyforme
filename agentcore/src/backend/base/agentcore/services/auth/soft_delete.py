@@ -91,11 +91,16 @@ async def soft_delete_user_hierarchy(
     target_user_id: UUID,
     *,
     actor_user_id: UUID | None = None,
-) -> tuple[int, list[UUID]]:
+) -> tuple[int, list[UUID], list[UUID], list[UUID]]:
+    """Soft-delete a user and its hierarchy.
+
+    Returns:
+        (deleted_count, deleted_user_ids, affected_dept_ids, affected_org_ids)
+    """
     now = datetime.now(timezone.utc)
     cascade_ids = await _collect_cascade_user_ids(db, target_user_id)
     if not cascade_ids:
-        return 0, []
+        return 0, [], [], []
 
     users = (
         await db.exec(
@@ -125,7 +130,7 @@ async def soft_delete_user_hierarchy(
         deleted_ids.append(user.id)
 
     if not deleted_ids:
-        return 0, []
+        return 0, [], [], []
 
     await db.exec(
         update(UserOrganizationMembership)
@@ -137,6 +142,29 @@ async def soft_delete_user_hierarchy(
         .where(UserDepartmentMembership.user_id.in_(deleted_ids))
         .values(status="inactive", updated_at=now)
     )
+
+    # Collect dept/org IDs that will be affected BEFORE updating their status.
+    affected_dept_ids: list[UUID] = list(
+        (
+            await db.exec(
+                select(Department.id).where(
+                    Department.admin_user_id.in_(deleted_ids),
+                    Department.status == DeptStatusEnum.ACTIVE,
+                )
+            )
+        ).all()
+    )
+    affected_org_ids: list[UUID] = list(
+        (
+            await db.exec(
+                select(Organization.id).where(
+                    Organization.owner_user_id.in_(deleted_ids),
+                    Organization.status == OrgStatusEnum.ACTIVE,
+                )
+            )
+        ).all()
+    )
+
     await db.exec(
         update(Department)
         .where(
@@ -154,4 +182,4 @@ async def soft_delete_user_hierarchy(
         .values(status=OrgStatusEnum.SUSPENDED, updated_at=now, updated_by=actor_user_id)
     )
 
-    return len(deleted_ids), deleted_ids
+    return len(deleted_ids), deleted_ids, affected_dept_ids, affected_org_ids

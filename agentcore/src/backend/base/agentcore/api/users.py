@@ -902,13 +902,25 @@ async def delete_user(
                 raise HTTPException(status_code=403, detail="Permission denied")
         if normalize_role(user_db.role) == "root":
             raise HTTPException(status_code=403, detail="Root users cannot be deleted.")
-        deleted_count, _ = await soft_delete_user_hierarchy(
+        deleted_count, _, affected_dept_ids, affected_org_ids = await soft_delete_user_hierarchy(
             session,
             user_id,
             actor_user_id=current_user.id,
         )
         if deleted_count == 0:
             raise HTTPException(status_code=409, detail="No eligible users found to delete.")
+
+        # Langfuse cleanup: delete projects/orgs that were just archived/suspended in DB.
+        try:
+            provisioning_service = get_langfuse_provisioning_service()
+            if provisioning_service.enabled:
+                for dept_id in affected_dept_ids:
+                    await provisioning_service.cleanup_department_langfuse(session, dept_id=dept_id)
+                for org_id in affected_org_ids:
+                    await provisioning_service.cleanup_org_admin_langfuse(session, org_id=org_id)
+        except LangfuseProvisioningError:
+            pass  # logged inside the service; do not block the delete
+
         await session.commit()
     except HTTPException:
         await session.rollback()

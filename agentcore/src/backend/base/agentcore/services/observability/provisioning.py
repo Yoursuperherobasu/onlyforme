@@ -841,6 +841,259 @@ class LangfuseProvisioningService:
             if not ok:
                 raise LangfuseProvisioningError("Generated Langfuse key verification failed (auth_check=false).")
 
+    # ── Langfuse delete helpers ───────────────────────────────────────
+
+    async def cleanup_department_langfuse(
+        self,
+        session: AsyncSession,
+        *,
+        dept_id: UUID,
+    ) -> None:
+        """Delete the Langfuse project mapped to a department and deactivate its binding."""
+        if not self.enabled or not self.langfuse_db_url:
+            return
+        binding = (
+            await session.exec(
+                select(LangfuseBinding).where(
+                    LangfuseBinding.dept_id == dept_id,
+                    LangfuseBinding.scope_type == "department",
+                    LangfuseBinding.is_active.is_(True),
+                )
+            )
+        ).first()
+        if not binding:
+            return
+        try:
+            await asyncio.to_thread(
+                self._delete_langfuse_project_sync,
+                langfuse_project_id=binding.langfuse_project_id,
+                langfuse_org_id=binding.langfuse_org_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to delete Langfuse project for dept_id={}", dept_id,
+            )
+        binding.is_active = False
+        binding.updated_at = _utc_now()
+        session.add(binding)
+
+    async def cleanup_org_admin_langfuse(
+        self,
+        session: AsyncSession,
+        *,
+        org_id: UUID,
+    ) -> None:
+        """Delete the Langfuse org-admin project and (if empty) the org itself; deactivate binding."""
+        if not self.enabled or not self.langfuse_db_url:
+            return
+        binding = (
+            await session.exec(
+                select(LangfuseBinding).where(
+                    LangfuseBinding.org_id == org_id,
+                    LangfuseBinding.scope_type == "org_admin",
+                    LangfuseBinding.dept_id.is_(None),
+                    LangfuseBinding.is_active.is_(True),
+                )
+            )
+        ).first()
+        if not binding:
+            return
+        try:
+            await asyncio.to_thread(
+                self._delete_langfuse_project_sync,
+                langfuse_project_id=binding.langfuse_project_id,
+                langfuse_org_id=binding.langfuse_org_id,
+            )
+            await asyncio.to_thread(
+                self._delete_langfuse_org_sync,
+                langfuse_org_id=binding.langfuse_org_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to delete Langfuse org-admin artefacts for org_id={}", org_id,
+            )
+        binding.is_active = False
+        binding.updated_at = _utc_now()
+        session.add(binding)
+
+    def _delete_langfuse_project_sync(
+        self,
+        *,
+        langfuse_project_id: str,
+        langfuse_org_id: str,
+    ) -> None:
+        sync_db_url = self._to_sync_db_url(self.langfuse_db_url)
+        engine = create_engine(sync_db_url, future=True)
+        try:
+            with engine.begin() as conn:
+                table_columns = self._get_table_columns(conn)
+                if "api_keys" in table_columns:
+                    conn.execute(
+                        text("DELETE FROM api_keys WHERE project_id = :project_id"),
+                        {"project_id": langfuse_project_id},
+                    )
+                if "project_memberships" in table_columns:
+                    conn.execute(
+                        text("DELETE FROM project_memberships WHERE project_id = :project_id"),
+                        {"project_id": langfuse_project_id},
+                    )
+                if "projects" in table_columns:
+                    conn.execute(
+                        text("DELETE FROM projects WHERE id = :id"),
+                        {"id": langfuse_project_id},
+                    )
+        finally:
+            engine.dispose()
+
+    def _delete_langfuse_org_sync(self, *, langfuse_org_id: str) -> None:
+        """Delete a Langfuse organization only when it has no remaining projects."""
+        sync_db_url = self._to_sync_db_url(self.langfuse_db_url)
+        engine = create_engine(sync_db_url, future=True)
+        try:
+            with engine.begin() as conn:
+                table_columns = self._get_table_columns(conn)
+                projects_cols = table_columns.get("projects", set())
+                project_org_col = self._first_column_match(
+                    projects_cols, ("organization_id", "org_id"),
+                )
+                if not project_org_col:
+                    return
+                if "organization_memberships" in table_columns:
+                    org_membership_cols = table_columns.get("organization_memberships", set())
+                    membership_org_col = self._first_column_match(
+                        org_membership_cols, ("organization_id", "org_id"),
+                    )
+                    if membership_org_col:
+                        conn.execute(
+                            text(
+                                f"DELETE FROM organization_memberships "
+                                f"WHERE {membership_org_col} = :org_id "
+                                f"AND NOT EXISTS ("
+                                f"  SELECT 1 FROM projects WHERE {project_org_col} = :org_id"
+                                f")"
+                            ),
+                            {"org_id": langfuse_org_id},
+                        )
+                conn.execute(
+                    text(
+                        f"DELETE FROM organizations WHERE id = :id "
+                        f"AND NOT EXISTS (SELECT 1 FROM projects WHERE {project_org_col} = :id)"
+                    ),
+                    {"id": langfuse_org_id},
+                )
+        finally:
+            engine.dispose()
+
+    # ── Langfuse rename helpers ───────────────────────────────────────
+
+    async def rename_org_in_langfuse(
+        self,
+        session: AsyncSession,
+        *,
+        org_id: UUID,
+        new_name: str,
+    ) -> None:
+        """Rename the Langfuse organization and its org-admin project."""
+        if not self.enabled or not self.langfuse_db_url:
+            return
+        binding = (
+            await session.exec(
+                select(LangfuseBinding).where(
+                    LangfuseBinding.org_id == org_id,
+                    LangfuseBinding.scope_type == "org_admin",
+                    LangfuseBinding.dept_id.is_(None),
+                    LangfuseBinding.is_active.is_(True),
+                )
+            )
+        ).first()
+        if not binding:
+            return
+        new_project_name = f"{new_name}-admin-observability"
+        try:
+            await asyncio.to_thread(
+                self._rename_langfuse_org_sync,
+                langfuse_org_id=binding.langfuse_org_id,
+                new_org_name=new_name,
+            )
+            await asyncio.to_thread(
+                self._rename_langfuse_project_sync,
+                langfuse_project_id=binding.langfuse_project_id,
+                new_project_name=new_project_name,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to rename Langfuse artefacts for org_id={}", org_id,
+            )
+            raise LangfuseProvisioningError(
+                f"Failed to rename Langfuse organization/project for org_id={org_id}"
+            )
+        binding.langfuse_project_name = new_project_name
+        binding.updated_at = _utc_now()
+        session.add(binding)
+
+    async def rename_department_in_langfuse(
+        self,
+        session: AsyncSession,
+        *,
+        dept_id: UUID,
+        new_name: str,
+    ) -> None:
+        """Rename the Langfuse project mapped to a department."""
+        if not self.enabled or not self.langfuse_db_url:
+            return
+        binding = (
+            await session.exec(
+                select(LangfuseBinding).where(
+                    LangfuseBinding.dept_id == dept_id,
+                    LangfuseBinding.scope_type == "department",
+                    LangfuseBinding.is_active.is_(True),
+                )
+            )
+        ).first()
+        if not binding:
+            return
+        new_project_name = f"{new_name}-observability"
+        try:
+            await asyncio.to_thread(
+                self._rename_langfuse_project_sync,
+                langfuse_project_id=binding.langfuse_project_id,
+                new_project_name=new_project_name,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to rename Langfuse project for dept_id={}", dept_id,
+            )
+            raise LangfuseProvisioningError(
+                f"Failed to rename Langfuse project for dept_id={dept_id}"
+            )
+        binding.langfuse_project_name = new_project_name
+        binding.updated_at = _utc_now()
+        session.add(binding)
+
+    def _rename_langfuse_org_sync(self, *, langfuse_org_id: str, new_org_name: str) -> None:
+        sync_db_url = self._to_sync_db_url(self.langfuse_db_url)
+        engine = create_engine(sync_db_url, future=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("UPDATE organizations SET name = :name, updated_at = :now WHERE id = :id"),
+                    {"name": new_org_name, "now": _utc_now(), "id": langfuse_org_id},
+                )
+        finally:
+            engine.dispose()
+
+    def _rename_langfuse_project_sync(self, *, langfuse_project_id: str, new_project_name: str) -> None:
+        sync_db_url = self._to_sync_db_url(self.langfuse_db_url)
+        engine = create_engine(sync_db_url, future=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("UPDATE projects SET name = :name, updated_at = :now WHERE id = :id"),
+                    {"name": new_project_name, "now": _utc_now(), "id": langfuse_project_id},
+                )
+        finally:
+            engine.dispose()
+
     def reconcile_bindings(self, bindings: list[LangfuseBinding]) -> list[BindingReconciliationResult]:
         """Detect drift between Agentcore bindings and Langfuse DB rows."""
         if not self.langfuse_db_url:
