@@ -125,7 +125,9 @@ dependencies = [
     "cryptography", 
     "psycopg2-binary",
     "nemoguardrails",
-    "apscheduler>=3.10"
+    "apscheduler>=3.10",
+    "annoy",
+    "tabulate"
 ]
 
 [tool.hatch.build.targets.wheel]
