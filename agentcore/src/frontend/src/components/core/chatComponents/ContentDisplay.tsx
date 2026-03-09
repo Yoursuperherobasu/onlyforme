@@ -198,19 +198,24 @@ export default function ContentDisplay({
         }
       };
 
+      const children = content.children || [];
       contentData = (
         <div className="flex flex-col gap-2">
-          <Markdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeMathjax]}
-            className="markdown prose max-w-full text-sm font-normal dark:prose-invert"
-          >
-            **Input:**
-          </Markdown>
-          <SimplifiedCodeTabComponent
-            language="json"
-            code={JSON.stringify(content.tool_input, null, 2)}
-          />
+          {content.tool_input != null && (
+            <>
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeMathjax]}
+                className="markdown prose max-w-full text-sm font-normal dark:prose-invert"
+              >
+                **Input:**
+              </Markdown>
+              <SimplifiedCodeTabComponent
+                language="json"
+                code={JSON.stringify(content.tool_input, null, 2)}
+              />
+            </>
+          )}
           {content.output && (
             <>
               <Markdown
@@ -236,6 +241,20 @@ export default function ContentDisplay({
                 language="json"
                 code={JSON.stringify(content.error, null, 2)}
               />
+            </div>
+          )}
+          {children.length > 0 && (
+            <div className="mt-2 flex flex-col gap-0 border-l-2 border-border pl-3">
+              {children.map((child, idx) => (
+                <div key={idx} className="relative">
+                  {idx !== 0 && <div className="border-t border-border" />}
+                  <ContentDisplay
+                    content={child}
+                    chatId={`${chatId}-child-${idx}`}
+                    playgroundPage={playgroundPage}
+                  />
+                </div>
+              ))}
             </div>
           )}
         </div>

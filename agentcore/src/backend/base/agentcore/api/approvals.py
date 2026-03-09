@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.agent.model import Agent, LifecycleStatusEnum
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
     DeploymentPRODStatusEnum,
@@ -814,6 +814,12 @@ async def approve_agent(
     deployment.updated_at = now
     session.add(deployment)
 
+    # Update agent lifecycle_status to PUBLISHED
+    agent = await session.get(Agent, deployment.agent_id)
+    if agent:
+        agent.lifecycle_status = LifecycleStatusEnum.PUBLISHED
+        session.add(agent)
+
     # Shadow deployment: keep previous versions active so
     # multiple versions can run side-by-side.
 
@@ -1033,6 +1039,12 @@ async def reject_agent(
     deployment.is_active = False
     deployment.updated_at = now
     session.add(deployment)
+
+    # Reset agent lifecycle_status back to DRAFT on rejection
+    agent = await session.get(Agent, req.agent_id)
+    if agent:
+        agent.lifecycle_status = LifecycleStatusEnum.DRAFT
+        session.add(agent)
 
     await session.commit()
 

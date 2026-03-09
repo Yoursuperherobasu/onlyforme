@@ -215,6 +215,10 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
         model_kwargs=request.model_kwargs,
     )
 
+    # Bind tools if provided (mirrors the non-streaming path)
+    if request.tools:
+        model = model.bind_tools(request.tools)
+
     messages = provider.build_messages([m.model_dump() for m in request.messages])
 
     # Send initial chunk with role
