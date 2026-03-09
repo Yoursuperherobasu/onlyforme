@@ -136,8 +136,13 @@ class LCAgentNode(Node):
                 verbose=verbose,
                 max_iterations=max_iterations,
             )
+        if isinstance(self.input_value, Message):
+            lc_message = self.input_value.to_lc_message()
+            input_raw = lc_message.content if hasattr(lc_message, "content") else str(lc_message)
+        else:
+            input_raw = self.input_value
         input_dict: dict[str, str | list[BaseMessage]] = {
-            "input": self.input_value.to_lc_message() if isinstance(self.input_value, Message) else self.input_value
+            "input": input_raw
         }
         if hasattr(self, "system_prompt"):
             input_dict["system_prompt"] = self.system_prompt
@@ -146,11 +151,11 @@ class LCAgentNode(Node):
                 input_dict["chat_history"] = data_to_messages(self.chat_history)
             if all(isinstance(m, Message) for m in self.chat_history):
                 input_dict["chat_history"] = data_to_messages([m.to_data() for m in self.chat_history])
-        if hasattr(input_dict["input"], "content") and isinstance(input_dict["input"].content, list):
+        if isinstance(input_dict["input"], list):
             # ! Because the input has to be a string, we must pass the images in the chat_history
 
-            image_dicts = [item for item in input_dict["input"].content if item.get("type") == "image"]
-            input_dict["input"].content = [item for item in input_dict["input"].content if item.get("type") != "image"]
+            image_dicts = [item for item in input_dict["input"] if isinstance(item, dict) and item.get("type") == "image"]
+            input_dict["input"] = [item for item in input_dict["input"] if not (isinstance(item, dict) and item.get("type") == "image")]
 
             if "chat_history" not in input_dict:
                 input_dict["chat_history"] = []

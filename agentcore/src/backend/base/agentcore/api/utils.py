@@ -19,6 +19,7 @@ from agentcore.services.database.models.conversation.model import ConversationTa
 from agentcore.services.database.models.transactions.model import TransactionTable
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.vertex_builds.model import VertexBuildTable
+from agentcore.services.cache.utils import CacheMiss
 from agentcore.services.deps import get_session, session_scope
 
 if TYPE_CHECKING:
@@ -156,6 +157,16 @@ async def _get_agent_name(agent_id: uuid.UUID) -> str:
     return agent.name
 
 
+def _apply_session_to_graph(graph: LangGraphAdapter, kwargs: dict) -> None:
+    """Apply session_id to a cached graph's vertices."""
+    session_id = kwargs.get("session_id") or str(graph.agent_id)
+    for vid in graph.has_session_id_vertices:
+        vertex = graph.get_vertex(vid)
+        if vertex and not vertex.raw_params.get("session_id"):
+            vertex.update_raw_params({"session_id": session_id}, overwrite=True)
+    graph.session_id = session_id
+
+
 async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwargs):
     """Build and cache the graph.
 
@@ -168,17 +179,37 @@ async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwar
             - session_id: Session ID for grouping
             - project_id: Folder ID for observability project grouping
             - project_name: Folder name for observability display
+            - chat_service: ChatService instance for cache lookups
 
     Returns:
         LangGraphAdapter instance
     """
     from loguru import logger
+
+    from agentcore.services.session.utils import compute_dict_hash
+
+    chat_service = kwargs.pop("chat_service", None)
+    str_agent_id = str(agent_id)
+    data_hash = None
+
+    # --- Cache hit check (only if chat_service is provided) ---
+    if chat_service is not None:
+        data_hash = compute_dict_hash(payload)
+        cached = await chat_service.get_cache(str_agent_id)
+        if not isinstance(cached, CacheMiss):
+            cached_graph = cached.get("result") if isinstance(cached, dict) else cached
+            if isinstance(cached_graph, LangGraphAdapter) and getattr(cached_graph, "_data_hash", None) == data_hash:
+                _apply_session_to_graph(cached_graph, kwargs)
+                await cached_graph.initialize_run()
+                logger.info(f"Graph cache HIT (data hash) for agent {str_agent_id}")
+                return cached_graph
+
+    # --- Cache miss — build fresh ---
     # Get agent name
     if "agent_name" not in kwargs:
         agent_name = await _get_agent_name(agent_id if isinstance(agent_id, uuid.UUID) else uuid.UUID(agent_id))
     else:
         agent_name = kwargs["agent_name"]
-    str_agent_id = str(agent_id)
     session_id = kwargs.get("session_id") or str_agent_id
 
     # Extract observability parameters
@@ -206,6 +237,13 @@ async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwar
 
     graph.session_id = session_id
     await graph.initialize_run()
+
+    # Cache the graph if chat_service is available
+    if chat_service is not None:
+        graph._data_hash = data_hash
+        await chat_service.set_cache(str_agent_id, graph)
+        logger.info(f"Graph cache MISS (data hash) for agent {str_agent_id} — built fresh and cached")
+
     return graph
 
 
@@ -234,8 +272,31 @@ async def build_graph_from_db_no_cache(agent_id: uuid.UUID, session: AsyncSessio
 
 
 async def build_graph_from_db(agent_id: uuid.UUID, session: AsyncSession, chat_service: ChatService, **kwargs):
+    agent_id_str = str(agent_id)
+
+    # 1. Try cache hit — lightweight query for updated_at only
+    cached = await chat_service.get_cache(agent_id_str)
+    if not isinstance(cached, CacheMiss):
+        cached_graph = cached.get("result") if isinstance(cached, dict) else cached
+        if isinstance(cached_graph, LangGraphAdapter) and getattr(cached_graph, "_cached_updated_at", None):
+            from sqlmodel import select
+
+            row = (await session.exec(select(Agent.updated_at).where(Agent.id == agent_id))).first()
+            if row is not None and str(row) == cached_graph._cached_updated_at:
+                # Cache hit — reuse graph, reset execution state
+                _apply_session_to_graph(cached_graph, kwargs)
+                await cached_graph.initialize_run()
+                logger.info(f"Graph cache HIT for agent {agent_id_str}")
+                return cached_graph
+
+    # 2. Cache miss — build fresh
     graph = await build_graph_from_db_no_cache(agent_id=agent_id, session=session, **kwargs)
-    await chat_service.set_cache(str(agent_id), graph)
+    # Stamp cache metadata for future cache-hit checks
+    agent = await session.get(Agent, agent_id)
+    if agent:
+        graph._cached_updated_at = str(agent.updated_at)
+    await chat_service.set_cache(agent_id_str, graph)
+    logger.info(f"Graph cache MISS for agent {agent_id_str} — built fresh")
     return graph
 
 
