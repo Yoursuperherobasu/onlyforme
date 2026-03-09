@@ -5,7 +5,6 @@ from uuid import UUID
 
 from langchain_core.messages import AIMessage
 
-from app.config import get_settings
 from app.providers.base import get_provider
 from app.schemas import (
     ChatCompletionChoice,
@@ -90,9 +89,8 @@ async def _resolve_registry_config(request: ChatCompletionRequest) -> ChatComple
     from app.database import get_session
     from app.services.registry_service import get_decrypted_config
 
-    settings = get_settings()
     async for session in get_session():
-        config = await get_decrypted_config(session, UUID(str(registry_model_id)), settings.encryption_key)
+        config = await get_decrypted_config(session, UUID(str(registry_model_id)))
 
     if config is None:
         msg = f"Registry model {registry_model_id} not found"

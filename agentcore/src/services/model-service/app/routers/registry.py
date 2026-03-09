@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_api_key
-from app.config import get_settings
 from app.database import get_session
 from app.models.registry import (
     ModelRegistryCreate,
@@ -25,12 +24,6 @@ from app.services import registry_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/registry", tags=["registry"])
-
-
-def _encryption_key() -> str:
-    return get_settings().encryption_key
-
-
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -58,7 +51,7 @@ async def create_registry_model(
     _api_key: str = Depends(verify_api_key),
 ):
     """Register a new model."""
-    return await registry_service.create_model(session, body, _encryption_key())
+    return await registry_service.create_model(session, body)
 
 
 @router.get("/models/{model_id}", response_model=ModelRegistryRead)
@@ -82,7 +75,7 @@ async def update_registry_model(
     _api_key: str = Depends(verify_api_key),
 ):
     """Update an existing registered model."""
-    model = await registry_service.update_model(session, model_id, body, _encryption_key())
+    model = await registry_service.update_model(session, model_id, body)
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
     return model

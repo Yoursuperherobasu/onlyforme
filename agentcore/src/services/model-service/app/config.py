@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     max_retries: int = 1
     database_url: str | None = None
     encryption_key: str = ""
+    key_vault_url: str | None = None
+    key_vault_secret_prefix: str = "agentcore-model"
+    key_vault_tenant_id: str | None = None
+    key_vault_client_id: str | None = None
+    key_vault_client_secret: str | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="MODEL_SERVICE_",
