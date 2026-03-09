@@ -648,67 +648,74 @@ export default function AgentOrchestrator() {
         </div>
 
         {/* Chat History */}
-        <div className="flex-1 overflow-y-auto px-2">
-          {Object.entries(grouped).map(([date, chats]) => (
-            <div key={date} className="mb-4">
-              <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {date}
-              </div>
-              {chats.map((chat) => (
-                <div
-                  key={chat.session_id}
-                  className="group relative flex items-center"
-                >
-                  <button
-                    onClick={() => handleSelectSession(chat.session_id)}
-                    className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-2 py-2.5 pr-8 text-left text-sm text-foreground hover:bg-accent ${
-                      currentSessionId === chat.session_id ? "bg-accent" : ""
-                    }`}
-                  >
-                    <MessageSquare size={14} className="shrink-0 opacity-50" />
-                    <span className="truncate">{chat.preview || t("New conversation")}</span>
-                  </button>
-                  {/* Delete button — visible on hover */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteSession(chat.session_id);
-                    }}
-                    className="invisible absolute right-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500 group-hover:visible"
-                    title={t("Delete session")}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("Conversations")}
+          </div>
+          <div className="flex-1 overflow-y-auto px-2">
+            {Object.entries(grouped).map(([date, chats]) => (
+              <div key={date} className="mb-4">
+                <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {date}
                 </div>
-              ))}
-            </div>
-          ))}
+                {chats.map((chat) => (
+                  <div
+                    key={chat.session_id}
+                    className="group relative flex items-center"
+                  >
+                    <button
+                      onClick={() => handleSelectSession(chat.session_id)}
+                      className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-2 py-2.5 pr-8 text-left text-sm text-foreground hover:bg-accent ${
+                        currentSessionId === chat.session_id ? "bg-accent" : ""
+                      }`}
+                    >
+                      <MessageSquare size={14} className="shrink-0 opacity-50" />
+                      <span className="truncate">{chat.preview || t("New conversation")}</span>
+                    </button>
+                    {/* Delete button — visible on hover */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteSession(chat.session_id);
+                      }}
+                      className="invisible absolute right-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500 group-hover:visible"
+                      title={t("Delete session")}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Agents Panel */}
-        <div className="border-t border-border px-2 py-3">
-          <div className="px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+          <div className="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {t("Agents")}
           </div>
-          <div className="flex flex-col gap-0.5">
-            {agents.map((agent) => (
-              <button
-                key={agent.id}
-                onClick={() => {
-                  setSelectedModel(agent.name);
-                  setShowModelPicker(false);
-                }}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-foreground hover:bg-accent ${
-                  selectedModel === agent.name ? "bg-accent" : ""
-                }`}
-              >
-                <span
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ background: agent.online ? agent.color : undefined }}
-                />
-                <span className="truncate">{agent.name}</span>
-              </button>
-            ))}
+          <div className="flex-1 overflow-y-auto px-2 pb-2">
+            <div className="flex flex-col gap-0.5">
+              {agents.map((agent) => (
+                <button
+                  key={agent.id}
+                  onClick={() => {
+                    setSelectedModel(agent.name);
+                    setShowModelPicker(false);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-foreground hover:bg-accent ${
+                    selectedModel === agent.name ? "bg-accent" : ""
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: agent.online ? agent.color : undefined }}
+                  />
+                  <span className="truncate">{agent.name}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

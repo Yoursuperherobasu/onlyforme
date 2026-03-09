@@ -151,9 +151,9 @@ class ChatOutput(ChatNode):
             if self.chat_icon:
                 message.properties.icon = icon
             self.status = message
-            # Add log for AI message completion
             if message.sender == MESSAGE_SENDER_AI:
-                logger.info(f"[AI_MESSAGE] AI: {message.text}")
+                preview = (message.text or "")[:150]
+                logger.info(f"[AI_MESSAGE] AI: {preview}")
             return message
 
         # IMPORTANT: Create a NEW Message object for non-stored inputs
@@ -181,9 +181,9 @@ class ChatOutput(ChatNode):
             message = stored_message
 
         self.status = message
-        # Add log for AI message completion
         if message.sender == MESSAGE_SENDER_AI:
-            logger.info(f"[AI_MESSAGE] AI: {message.text}")
+            preview = (message.text or "")[:150]
+            logger.info(f"[AI_MESSAGE] AI: {preview}")
         return message
 
     def _serialize_data(self, data: Data) -> str:

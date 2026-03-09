@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -38,6 +38,7 @@ import {
   ArrowDownRight,
   XCircle,
   Timer,
+  RefreshCw,
 } from "lucide-react";
 import {
   LineChart,
@@ -329,58 +330,6 @@ interface ProjectsResponse {
   scope_warning_message?: string | null;
 }
 
-interface ProvisionJobRead {
-  id: string;
-  idempotency_key: string;
-  scope_type: string;
-  org_id?: string | null;
-  dept_id?: string | null;
-  status: string;
-  retry_count?: number;
-  error_message?: string | null;
-  started_at?: string | null;
-  finished_at?: string | null;
-  updated_at: string;
-}
-
-interface BindingReadMasked {
-  id: string;
-  org_id: string;
-  dept_id?: string | null;
-  scope_type: string;
-  langfuse_host: string;
-  langfuse_org_id: string;
-  langfuse_project_id: string;
-  langfuse_project_name?: string | null;
-  public_key_masked: string;
-  secret_key_masked: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-interface ProvisionResponse {
-  job: ProvisionJobRead;
-  binding?: BindingReadMasked | null;
-}
-
-interface ReconciliationItem {
-  binding_id: string;
-  org_id: string;
-  dept_id?: string | null;
-  scope_type: string;
-  status: string;
-  issues: string[];
-}
-
-interface ReconciliationResponse {
-  total: number;
-  healthy: number;
-  drifted: number;
-  failed: number;
-  items: ReconciliationItem[];
-}
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -616,42 +565,6 @@ async function fetchProjectDetail(projectId: string, params: FetchMetricsParams 
   applyScopeParams(searchParams, params);
   if (params.fetch_all) searchParams.set("fetch_all", "true");
   const response = await api.get<ProjectDetailResponse>(`/api/observability/projects/${projectId}?${searchParams.toString()}`);
-  return response.data;
-}
-
-async function fetchObservabilityConfig(): Promise<BindingReadMasked[]> {
-  const response = await api.get<BindingReadMasked[]>("/api/observability/config");
-  return response.data ?? [];
-}
-
-async function provisionOrgAdminProject(orgId: string): Promise<ProvisionResponse> {
-  const response = await api.post<ProvisionResponse>(`/api/observability/provision/org/${orgId}`);
-  return response.data;
-}
-
-async function provisionDepartmentProject(deptId: string): Promise<ProvisionResponse> {
-  const response = await api.post<ProvisionResponse>(`/api/observability/provision/dept/${deptId}`);
-  return response.data;
-}
-
-async function retryProvisioningJob(jobId: string): Promise<ProvisionResponse> {
-  const response = await api.post<ProvisionResponse>(`/api/observability/provision/retry/${jobId}`);
-  return response.data;
-}
-
-async function fetchProvisioningStatus(jobId: string): Promise<ProvisionJobRead> {
-  const response = await api.get<ProvisionJobRead>(`/api/observability/provision/status/${jobId}`);
-  return response.data;
-}
-
-async function reconcileObservabilityBindings(orgId?: string | null): Promise<ReconciliationResponse> {
-  const searchParams = new URLSearchParams();
-  if (orgId) {
-    searchParams.set("org_id", orgId);
-  }
-  const query = searchParams.toString();
-  const url = query ? `/api/observability/provision/reconcile?${query}` : "/api/observability/provision/reconcile";
-  const response = await api.post<ReconciliationResponse>(url);
   return response.data;
 }
 
@@ -954,7 +867,9 @@ function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
 // =============================================================================
 
 export default function ObservabilityPage(): JSX.Element {
-  const queryClient = useQueryClient();
+  const OBSERVABILITY_LIST_STALE_MS = 60 * 1000;        // 60s — match backend SWR fresh window
+  const OBSERVABILITY_DETAIL_STALE_MS = 30 * 1000;      // 30s — detail pages refresh sooner
+  const OBSERVABILITY_GC_MS = 5 * 60 * 1000;            // 5 min — keep cache warm between tab switches
   const currentRole = useAuthStore((state) => state.role);
   const sessionRole = String(currentRole || "").toLowerCase();
   const isProvisioningAdminSessionRole = sessionRole === "root" || sessionRole === "super_admin";
@@ -968,11 +883,7 @@ export default function ObservabilityPage(): JSX.Element {
   const [fetchAllMode, setFetchAllMode] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
-  const [lastProvisionResponse, setLastProvisionResponse] = useState<ProvisionResponse | null>(null);
-  const [lastProvisionStatus, setLastProvisionStatus] = useState<ProvisionJobRead | null>(null);
-  const [statusLookupJobId, setStatusLookupJobId] = useState("");
-  const [adminActionError, setAdminActionError] = useState<string | null>(null);
-  const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResponse | null>(null);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
   // Filter state — default to today for faster first-load queries
   const [filters, setFilters] = useState<Filters>({
@@ -991,8 +902,6 @@ export default function ObservabilityPage(): JSX.Element {
   const [isFilterApplying, setIsFilterApplying] = useState(false);
   const filterApplyStartedAtRef = useRef<number | null>(null);
   const filterApplyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const filterFollowupRefetchTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const emptyListsRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const filterApplyBaselineUpdatedAtRef = useRef<{ metrics: number; sessions: number; agents: number; projects: number } | null>(null);
 
   const markFiltersApplying = useCallback(() => {
@@ -1008,23 +917,7 @@ export default function ObservabilityPage(): JSX.Element {
       filterApplyStartedAtRef.current = null;
       filterApplyTimeoutRef.current = null;
     }, 30000);
-
-    if (filterFollowupRefetchTimeoutsRef.current.length > 0) {
-      filterFollowupRefetchTimeoutsRef.current.forEach(clearTimeout);
-      filterFollowupRefetchTimeoutsRef.current = [];
-    }
-
-    // Trigger follow-up refetches so backend SWR-updated aggregates are picked up quickly.
-    [1200, 3200].forEach((delay) => {
-      const timeoutId = setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["observability-metrics"] });
-        queryClient.invalidateQueries({ queryKey: ["observability-sessions"] });
-        queryClient.invalidateQueries({ queryKey: ["observability-agents"] });
-        queryClient.invalidateQueries({ queryKey: ["observability-projects"] });
-      }, delay);
-      filterFollowupRefetchTimeoutsRef.current.push(timeoutId);
-    });
-  }, [queryClient]);
+  }, []);
 
   // Compute date params from filter
   const dateParams = useMemo(() => ({
@@ -1040,18 +933,22 @@ export default function ObservabilityPage(): JSX.Element {
   }, [markFiltersApplying]);
 
   // Queries
-  const { data: status, isLoading: statusLoading } = useQuery({
+  const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery({
     queryKey: ["langfuse-status"],
     queryFn: fetchStatus,
-    refetchInterval: 60000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: scopeOptions, isLoading: scopeOptionsLoading } = useQuery({
+  const { data: scopeOptions, isLoading: scopeOptionsLoading, refetch: refetchScopeOptions } = useQuery({
     queryKey: ["observability-scope-options"],
     queryFn: fetchScopeOptions,
     enabled: true,
-    staleTime: 60000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
@@ -1095,88 +992,14 @@ export default function ObservabilityPage(): JSX.Element {
     [selectedOrgId, selectedDeptId],
   );
   const canRunScopedQueries = !!status?.connected && roleKnown && scopeReady;
-  const isProvisioningAdmin = normalizedRole === "root" || normalizedRole === "super_admin";
-
-  const { data: provisioningConfig, isLoading: provisioningConfigLoading, refetch: refetchProvisioningConfig } = useQuery({
-    queryKey: ["observability-provisioning-config"],
-    queryFn: fetchObservabilityConfig,
-    enabled: roleKnown && isProvisioningAdmin,
-    staleTime: 30000,
-    refetchOnWindowFocus: false,
-  });
-
-  const provisionOrgMutation = useMutation({
-    mutationFn: provisionOrgAdminProject,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setLastProvisionResponse(data);
-      setLastProvisionStatus(data.job);
-      setStatusLookupJobId(data.job.id);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Organization provisioning failed.");
-    },
-  });
-
-  const provisionDeptMutation = useMutation({
-    mutationFn: provisionDepartmentProject,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setLastProvisionResponse(data);
-      setLastProvisionStatus(data.job);
-      setStatusLookupJobId(data.job.id);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Department provisioning failed.");
-    },
-  });
-
-  const retryProvisionMutation = useMutation({
-    mutationFn: retryProvisioningJob,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setLastProvisionResponse(data);
-      setLastProvisionStatus(data.job);
-      setStatusLookupJobId(data.job.id);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Provisioning retry failed.");
-    },
-  });
-
-  const statusLookupMutation = useMutation({
-    mutationFn: fetchProvisioningStatus,
-    onSuccess: (data) => {
-      setAdminActionError(null);
-      setLastProvisionStatus(data);
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Provisioning status lookup failed.");
-    },
-  });
-
-  const reconcileMutation = useMutation({
-    mutationFn: reconcileObservabilityBindings,
-    onSuccess: async (data) => {
-      setAdminActionError(null);
-      setReconciliationResult(data);
-      await refetchProvisioningConfig();
-    },
-    onError: (error: any) => {
-      setAdminActionError(error?.response?.data?.detail || error?.message || "Reconciliation failed.");
-    },
-  });
 
   const includeModelBreakdown = activeTab === "models";
   const shouldFetchMetrics = activeTab === "overview" || activeTab === "models";
-  const shouldFetchSessions = activeTab === "sessions" || !!selectedSession;
-  const shouldFetchAgents = activeTab === "agents" || activeTab === "overview" || !!selectedAgent;
+  const shouldFetchSessions = activeTab === "overview" || activeTab === "sessions" || !!selectedSession;
+  const shouldFetchAgents = activeTab === "agents" || !!selectedAgent;
   const shouldFetchProjects = activeTab === "projects" || !!selectedProject;
 
-  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching, dataUpdatedAt: metricsUpdatedAt } = useQuery({
+  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching, dataUpdatedAt: metricsUpdatedAt, refetch: refetchMetrics } = useQuery({
     queryKey: [
       "observability-metrics",
       filters.dateRange,
@@ -1195,97 +1018,107 @@ export default function ObservabilityPage(): JSX.Element {
       include_model_breakdown: includeModelBreakdown,
     }),
     enabled: canRunScopedQueries && shouldFetchMetrics,
-    refetchInterval: activeTab === "overview" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
     refetchOnWindowFocus: false,
   });
 
-  const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching, refetch: refetchSessions, dataUpdatedAt: sessionsUpdatedAt } = useQuery({
+  const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching, dataUpdatedAt: sessionsUpdatedAt, refetch: refetchSessions } = useQuery({
     queryKey: ["observability-sessions", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchSessions({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchSessions,
-    refetchInterval: activeTab === "sessions" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
     refetchOnWindowFocus: false,
   });
 
-  const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching, refetch: refetchAgents, dataUpdatedAt: agentsUpdatedAt } = useQuery({
+  const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching, dataUpdatedAt: agentsUpdatedAt, refetch: refetchAgents } = useQuery({
     queryKey: ["observability-agents", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchAgents({
       ...dateParams,
       ...scopeParams,
     }),
     enabled: canRunScopedQueries && shouldFetchAgents,
-    refetchInterval: activeTab === "agents" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
     refetchOnWindowFocus: false,
   });
 
-  const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching, refetch: refetchProjects, dataUpdatedAt: projectsUpdatedAt } = useQuery({
+  const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching, dataUpdatedAt: projectsUpdatedAt, refetch: refetchProjects } = useQuery({
     queryKey: ["observability-projects", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchProjects({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchProjects,
-    refetchInterval: activeTab === "projects" ? 60000 : false,
-    staleTime: 30000,
+    staleTime: OBSERVABILITY_LIST_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     placeholderData: (previousData: any) => previousData,
     refetchOnWindowFocus: false,
   });
 
-  const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching } = useQuery({
+  const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching, refetch: refetchSessionDetail } = useQuery({
     queryKey: ["session-detail", selectedSession, filters.dateRange, selectedOrgId, selectedDeptId],
     queryFn: () => fetchSessionDetail(selectedSession!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedSession && canRunScopedQueries,
-    staleTime: 30000,
-    placeholderData: (previousData: any) => previousData,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError } = useQuery({
+  const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError, refetch: refetchTraceDetail } = useQuery({
     queryKey: ["trace-detail", selectedTrace, selectedOrgId, selectedDeptId],
     queryFn: () => fetchTraceDetail(selectedTrace!, scopeParams),
     enabled: !!selectedTrace && canRunScopedQueries,
-    staleTime: 5000,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
     retry: false,
-    placeholderData: (previousData: any) => previousData,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching } = useQuery({
+  const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching, refetch: refetchAgentDetail } = useQuery({
     queryKey: ["agent-detail", selectedAgent, filters.dateRange, selectedOrgId, selectedDeptId],
     queryFn: () => fetchAgentDetail(selectedAgent!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedAgent && canRunScopedQueries,
-    staleTime: 30000,
-    placeholderData: (previousData: any) => previousData,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
-  const { data: projectDetail, isLoading: projectDetailLoading, isFetching: projectDetailFetching } = useQuery({
+  const { data: projectDetail, isLoading: projectDetailLoading, isFetching: projectDetailFetching, refetch: refetchProjectDetail } = useQuery({
     queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
     queryFn: () => fetchProjectDetail(selectedProject!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedProject && canRunScopedQueries,
-    staleTime: 30000,
-    placeholderData: (previousData: any) => previousData,
+    staleTime: OBSERVABILITY_DETAIL_STALE_MS,
+    gcTime: OBSERVABILITY_GC_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 
+  // True only on the initial (no-data) load — used for skeleton/spinner gating.
+  // Background SWR re-fetches (isFetching without isLoading) do NOT trigger this
+  // so the UI doesn't show a spinner on every stale-while-revalidate refresh.
   const isAnyPrimaryQueryLoading =
     scopeOptionsLoading ||
     metricsLoading ||
-    metricsFetching ||
     agentsLoading ||
-    agentsFetching ||
     sessionsLoading ||
-    sessionsFetching ||
     projectsLoading ||
-    projectsFetching ||
     sessionDetailLoading ||
-    sessionDetailFetching ||
     agentDetailLoading ||
+    projectDetailLoading;
+
+  // Separate lightweight indicator for background SWR refreshes.
+  const isAnyPrimaryQueryFetching =
+    metricsFetching ||
+    agentsFetching ||
+    sessionsFetching ||
+    projectsFetching ||
+    sessionDetailFetching ||
     agentDetailFetching ||
-    projectDetailLoading ||
     projectDetailFetching;
 
   useEffect(() => {
@@ -1311,18 +1144,18 @@ export default function ObservabilityPage(): JSX.Element {
 
     const baseline = filterApplyBaselineUpdatedAtRef.current;
     if (!baseline) return;
-    const allCoreQueriesUpdated =
-      metricsUpdatedAt > baseline.metrics &&
-      sessionsUpdatedAt > baseline.sessions &&
-      agentsUpdatedAt > baseline.agents &&
-      projectsUpdatedAt > baseline.projects;
+    const metricsUpdated = !shouldFetchMetrics || metricsUpdatedAt > baseline.metrics;
+    const sessionsUpdated = !shouldFetchSessions || sessionsUpdatedAt > baseline.sessions;
+    const agentsUpdated = !shouldFetchAgents || agentsUpdatedAt > baseline.agents;
+    const projectsUpdated = !shouldFetchProjects || projectsUpdatedAt > baseline.projects;
+    const allCoreQueriesUpdated = metricsUpdated && sessionsUpdated && agentsUpdated && projectsUpdated;
 
     if (!allCoreQueriesUpdated) return;
     if (isAnyPrimaryQueryLoading) return;
 
     const startedAt = filterApplyStartedAtRef.current ?? Date.now();
     const elapsed = Date.now() - startedAt;
-    const minVisibleMs = 1200;
+    const minVisibleMs = 400;
     const remaining = Math.max(0, minVisibleMs - elapsed);
 
     const timer = setTimeout(() => {
@@ -1343,62 +1176,16 @@ export default function ObservabilityPage(): JSX.Element {
     sessionsUpdatedAt,
     agentsUpdatedAt,
     projectsUpdatedAt,
-  ]);
-
-  useEffect(() => {
-    if (!canRunScopedQueries) return;
-    const hasOverviewTraces = (metrics?.total_traces ?? 0) > 0;
-    if (!hasOverviewTraces) return;
-
-    const agentsEmpty = (agentsData?.agents?.length ?? 0) === 0;
-    const projectsEmpty = (projectsData?.projects?.length ?? 0) === 0;
-    const sessionsEmpty = (sessionsData?.sessions?.length ?? 0) === 0;
-    const shouldRecover = agentsEmpty || projectsEmpty || sessionsEmpty;
-
-    if (!shouldRecover) return;
-    if (agentsFetching || projectsFetching || sessionsFetching) return;
-
-    if (emptyListsRecoveryTimeoutRef.current) {
-      clearTimeout(emptyListsRecoveryTimeoutRef.current);
-    }
-
-    emptyListsRecoveryTimeoutRef.current = setTimeout(() => {
-      if (agentsEmpty) void refetchAgents();
-      if (projectsEmpty) void refetchProjects();
-      if (sessionsEmpty) void refetchSessions();
-      emptyListsRecoveryTimeoutRef.current = null;
-    }, 900);
-
-    return () => {
-      if (emptyListsRecoveryTimeoutRef.current) {
-        clearTimeout(emptyListsRecoveryTimeoutRef.current);
-        emptyListsRecoveryTimeoutRef.current = null;
-      }
-    };
-  }, [
-    canRunScopedQueries,
-    metrics?.total_traces,
-    agentsData?.agents?.length,
-    projectsData?.projects?.length,
-    sessionsData?.sessions?.length,
-    agentsFetching,
-    projectsFetching,
-    sessionsFetching,
-    refetchAgents,
-    refetchProjects,
-    refetchSessions,
+    shouldFetchMetrics,
+    shouldFetchSessions,
+    shouldFetchAgents,
+    shouldFetchProjects,
   ]);
 
   useEffect(() => {
     return () => {
       if (filterApplyTimeoutRef.current) {
         clearTimeout(filterApplyTimeoutRef.current);
-      }
-      if (filterFollowupRefetchTimeoutsRef.current.length > 0) {
-        filterFollowupRefetchTimeoutsRef.current.forEach(clearTimeout);
-      }
-      if (emptyListsRecoveryTimeoutRef.current) {
-        clearTimeout(emptyListsRecoveryTimeoutRef.current);
       }
     };
   }, []);
@@ -1504,6 +1291,44 @@ export default function ObservabilityPage(): JSX.Element {
       agentDetail?.scope_warning ||
       projectDetail?.scope_warning,
   );
+
+  const handleManualRefresh = useCallback(async () => {
+    setIsManualRefreshing(true);
+    try {
+      const refreshTasks: Promise<unknown>[] = [refetchStatus(), refetchScopeOptions()];
+      if (shouldFetchMetrics && canRunScopedQueries) refreshTasks.push(refetchMetrics());
+      if (shouldFetchSessions && canRunScopedQueries) refreshTasks.push(refetchSessions());
+      if (shouldFetchAgents && canRunScopedQueries) refreshTasks.push(refetchAgents());
+      if (shouldFetchProjects && canRunScopedQueries) refreshTasks.push(refetchProjects());
+      if (selectedSession && canRunScopedQueries) refreshTasks.push(refetchSessionDetail());
+      if (selectedTrace && canRunScopedQueries) refreshTasks.push(refetchTraceDetail());
+      if (selectedAgent && canRunScopedQueries) refreshTasks.push(refetchAgentDetail());
+      if (selectedProject && canRunScopedQueries) refreshTasks.push(refetchProjectDetail());
+      await Promise.all(refreshTasks);
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  }, [
+    canRunScopedQueries,
+    refetchAgentDetail,
+    refetchAgents,
+    refetchMetrics,
+    refetchProjectDetail,
+    refetchProjects,
+    refetchScopeOptions,
+    refetchSessionDetail,
+    refetchSessions,
+    refetchStatus,
+    refetchTraceDetail,
+    selectedAgent,
+    selectedProject,
+    selectedSession,
+    selectedTrace,
+    shouldFetchAgents,
+    shouldFetchMetrics,
+    shouldFetchProjects,
+    shouldFetchSessions,
+  ]);
 
   // Handle search submit
   const handleSearch = useCallback(() => {
@@ -1757,9 +1582,20 @@ export default function ObservabilityPage(): JSX.Element {
             </Button>
           )}
 
-          {/* Global refreshing indicator — shows a subtle spinner whenever any query is background-fetching */}
-          {(isAnyPrimaryQueryLoading || isFilterApplying) && (
-            <div className="flex items-center gap-1.5 ml-auto">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleManualRefresh()}
+            disabled={isManualRefreshing || isAnyPrimaryQueryLoading || statusLoading || scopeOptionsLoading}
+            className="h-9 ml-auto"
+          >
+            <RefreshCw className={`h-4 w-4 mr-1.5 ${isManualRefreshing ? "animate-spin" : ""}`} />
+            {isManualRefreshing ? "Refreshing..." : "Refresh"}
+          </Button>
+
+          {/* Global refreshing indicator — shows a subtle spinner during background SWR re-fetches */}
+          {(isAnyPrimaryQueryFetching || isFilterApplying) && (
+            <div className="flex items-center gap-1.5">
               <div className="h-3.5 w-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: THEME.primary, borderTopColor: 'transparent' }} />
               <span className="text-xs" style={{ color: THEME.textSecondary }}>Updating…</span>
             </div>
@@ -1791,200 +1627,6 @@ export default function ObservabilityPage(): JSX.Element {
             </Badge>
           )}
         </div>
-
-        {isProvisioningAdmin && (
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base" style={{ color: THEME.textMain }}>
-                Observability Provisioning Admin
-              </CardTitle>
-              <CardDescription style={{ color: THEME.textSecondary }}>
-                Provision Langfuse org-admin and department projects, retry failed jobs, and reconcile binding drift.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    if (!selectedOrgId) {
-                      setAdminActionError("Select organization scope before provisioning org-admin project.");
-                      return;
-                    }
-                    provisionOrgMutation.mutate(selectedOrgId);
-                  }}
-                  disabled={!selectedOrgId || provisionOrgMutation.isPending}
-                  style={{ backgroundColor: THEME.primary }}
-                >
-                  {provisionOrgMutation.isPending ? "Provisioning Org..." : "Provision Org Admin Project"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    if (!selectedDeptId) {
-                      setAdminActionError("Select department scope before provisioning department project.");
-                      return;
-                    }
-                    provisionDeptMutation.mutate(selectedDeptId);
-                  }}
-                  disabled={!selectedDeptId || provisionDeptMutation.isPending}
-                >
-                  {provisionDeptMutation.isPending ? "Provisioning Dept..." : "Provision Department Project"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    reconcileMutation.mutate(selectedOrgId || undefined);
-                  }}
-                  disabled={reconcileMutation.isPending}
-                >
-                  {reconcileMutation.isPending ? "Reconciling..." : "Reconcile Bindings"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    void refetchProvisioningConfig();
-                  }}
-                >
-                  Refresh Config
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  value={statusLookupJobId}
-                  onChange={(event) => setStatusLookupJobId(event.target.value)}
-                  placeholder="Provision job ID"
-                  className="h-9 max-w-md bg-gray-50 border-gray-200"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    const trimmed = statusLookupJobId.trim();
-                    if (!trimmed) {
-                      setAdminActionError("Enter provisioning job ID for status lookup.");
-                      return;
-                    }
-                    statusLookupMutation.mutate(trimmed);
-                  }}
-                  disabled={statusLookupMutation.isPending}
-                >
-                  {statusLookupMutation.isPending ? "Loading..." : "Get Job Status"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdminActionError(null);
-                    const trimmed = statusLookupJobId.trim();
-                    if (!trimmed) {
-                      setAdminActionError("Enter provisioning job ID before retry.");
-                      return;
-                    }
-                    retryProvisionMutation.mutate(trimmed);
-                  }}
-                  disabled={retryProvisionMutation.isPending}
-                >
-                  {retryProvisionMutation.isPending ? "Retrying..." : "Retry Job"}
-                </Button>
-              </div>
-
-              {adminActionError && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Provisioning Action Failed</AlertTitle>
-                  <AlertDescription>{adminActionError}</AlertDescription>
-                </Alert>
-              )}
-
-              {lastProvisionStatus && (
-                <Alert className="border-gray-200 bg-gray-50">
-                  <AlertTitle style={{ color: THEME.textMain }}>
-                    Last Job: {lastProvisionStatus.id}
-                  </AlertTitle>
-                  <AlertDescription style={{ color: THEME.textSecondary }}>
-                    Status: {lastProvisionStatus.status} | Scope: {lastProvisionStatus.scope_type}
-                    {lastProvisionStatus.error_message ? ` | Error: ${lastProvisionStatus.error_message}` : ""}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {lastProvisionResponse?.binding && (
-                <Alert className="border-gray-200 bg-gray-50">
-                  <AlertTitle style={{ color: THEME.textMain }}>
-                    Latest Binding Updated
-                  </AlertTitle>
-                  <AlertDescription style={{ color: THEME.textSecondary }}>
-                    Project: {lastProvisionResponse.binding.langfuse_project_name || lastProvisionResponse.binding.langfuse_project_id} | Public Key: {lastProvisionResponse.binding.public_key_masked}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {reconciliationResult && (
-                <Alert className="border-gray-200 bg-gray-50">
-                  <AlertTitle style={{ color: THEME.textMain }}>
-                    Reconciliation Summary
-                  </AlertTitle>
-                  <AlertDescription style={{ color: THEME.textSecondary }}>
-                    Total: {reconciliationResult.total} | Healthy: {reconciliationResult.healthy} | Drifted: {reconciliationResult.drifted} | Failed: {reconciliationResult.failed}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              <div>
-                <p className="text-sm font-medium mb-2" style={{ color: THEME.textMain }}>
-                  Active Binding Configuration
-                </p>
-                {provisioningConfigLoading ? (
-                  <Skeleton className="h-28 w-full" />
-                ) : provisioningConfig && provisioningConfig.length > 0 ? (
-                  <div className="rounded-md border overflow-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Scope</TableHead>
-                          <TableHead>Org</TableHead>
-                          <TableHead>Dept</TableHead>
-                          <TableHead>Project</TableHead>
-                          <TableHead>Public Key</TableHead>
-                          <TableHead>Updated</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {provisioningConfig.map((binding) => (
-                          <TableRow key={binding.id}>
-                            <TableCell>{binding.scope_type}</TableCell>
-                            <TableCell>{(scopeOptions?.organizations ?? []).find((org) => org.id === binding.org_id)?.name || binding.org_id}</TableCell>
-                            <TableCell>
-                              {binding.dept_id
-                                ? ((scopeOptions?.departments ?? []).find((dept) => dept.id === binding.dept_id)?.name || binding.dept_id)
-                                : "-"}
-                            </TableCell>
-                            <TableCell>{binding.langfuse_project_name || binding.langfuse_project_id}</TableCell>
-                            <TableCell>{binding.public_key_masked}</TableCell>
-                            <TableCell>{formatDate(binding.updated_at)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <p className="text-sm" style={{ color: THEME.textSecondary }}>
-                    No active Langfuse bindings found yet.
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {requiresFilterFirst && !scopeReady && (
           <Alert className="border-blue-200 bg-blue-50">

@@ -103,6 +103,19 @@ async def _resolve_existing_user_for_create(
         if len(local_part_matches) == 1:
             return local_part_matches[0]
 
+    # Fallback: look for a soft-deleted user with the same username so the
+    # caller can reactivate it instead of failing on a unique-constraint error.
+    soft_deleted = (
+        await session.exec(
+            select(User).where(
+                User.deleted_at.is_not(None),
+                func.lower(User.username) == username.lower(),
+            )
+        )
+    ).first()
+    if soft_deleted:
+        return soft_deleted
+
     return None
 
 
@@ -334,20 +347,29 @@ async def add_user(
             username=username,
             email=email,
         )
+        is_reusing_soft_deleted = bool(
+            existing_user and existing_user.deleted_at is not None
+        )
         is_reusing_consumer = bool(
-            existing_user and normalize_role(getattr(existing_user, "role", "consumer")) == "consumer"
+            existing_user
+            and not is_reusing_soft_deleted
+            and normalize_role(getattr(existing_user, "role", "consumer")) == "consumer"
         )
         is_reusing_same_role = bool(
             existing_user
             and not is_reusing_consumer
+            and not is_reusing_soft_deleted
             and normalize_role(getattr(existing_user, "role", "consumer")) == target_role
         )
-        if existing_user and not is_reusing_consumer and not is_reusing_same_role:
+        if existing_user and not is_reusing_consumer and not is_reusing_same_role and not is_reusing_soft_deleted:
             raise HTTPException(status_code=400, detail="This username is unavailable.")
 
         raw_password = user.password or secrets.token_urlsafe(32)
-        if (is_reusing_consumer or is_reusing_same_role) and existing_user:
+        if (is_reusing_consumer or is_reusing_same_role or is_reusing_soft_deleted) and existing_user:
             new_user = existing_user
+            if is_reusing_soft_deleted:
+                new_user.deleted_at = None
+                new_user.is_active = True
             new_user.display_name = display_name or new_user.display_name
             new_user.email = new_user.email or email or username
         else:
@@ -386,15 +408,32 @@ async def add_user(
         role_entity = await _get_role_entity(session, target_role)
 
         if creator_role == "root":
-            org = Organization(
-                name=organization_name,
-                description=organization_description,
-                status="active",
-                owner_user_id=new_user.id,
-                created_by=current_user.id,
-                updated_by=current_user.id,
-            )
-            session.add(org)
+            # Reactivate a suspended/deleted org with the same name if one exists
+            # (e.g. after a super_admin was deleted and is being recreated).
+            org = (
+                await session.exec(
+                    select(Organization).where(
+                        Organization.name == organization_name,
+                    )
+                )
+            ).first()
+            if org:
+                org.status = "active"
+                org.owner_user_id = new_user.id
+                org.description = organization_description or org.description
+                org.updated_by = current_user.id
+                org.updated_at = datetime.now(timezone.utc)
+                session.add(org)
+            else:
+                org = Organization(
+                    name=organization_name,
+                    description=organization_description,
+                    status="active",
+                    owner_user_id=new_user.id,
+                    created_by=current_user.id,
+                    updated_by=current_user.id,
+                )
+                session.add(org)
             await session.flush()
             await _ensure_org_membership(
                 session,
@@ -441,15 +480,32 @@ async def add_user(
             if target_role == "department_admin":
                 if not department_name:
                     raise HTTPException(status_code=400, detail="Department name is required for department admins.")
-                department = Department(
-                    org_id=org_id,
-                    name=department_name,
-                    admin_user_id=new_user.id,
-                    status="active",
-                    created_by=current_user.id,
-                    updated_by=current_user.id,
-                )
-                session.add(department)
+                # Reactivate an archived department with the same name if one exists
+                # (e.g. after a dept_admin was deleted and is being recreated).
+                department = (
+                    await session.exec(
+                        select(Department).where(
+                            Department.org_id == org_id,
+                            Department.name == department_name,
+                        )
+                    )
+                ).first()
+                if department:
+                    department.status = "active"
+                    department.admin_user_id = new_user.id
+                    department.updated_by = current_user.id
+                    department.updated_at = datetime.now(timezone.utc)
+                    session.add(department)
+                else:
+                    department = Department(
+                        org_id=org_id,
+                        name=department_name,
+                        admin_user_id=new_user.id,
+                        status="active",
+                        created_by=current_user.id,
+                        updated_by=current_user.id,
+                    )
+                    session.add(department)
                 await session.flush()
                 new_user.department_name = department.name
                 new_user.department_admin_email = None
@@ -542,7 +598,16 @@ async def add_user(
         raise
     except IntegrityError as e:
         await session.rollback()
-        raise HTTPException(status_code=400, detail="This username is unavailable.") from e
+        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        if "username" in error_msg.lower():
+            detail = "This username is unavailable."
+        elif "email" in error_msg.lower():
+            detail = "This email is already in use."
+        elif "department" in error_msg.lower() or "uq_department" in error_msg.lower():
+            detail = "A department with this name already exists in the organization."
+        else:
+            detail = "Could not create user due to a data conflict."
+        raise HTTPException(status_code=400, detail=detail) from e
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -902,13 +967,25 @@ async def delete_user(
                 raise HTTPException(status_code=403, detail="Permission denied")
         if normalize_role(user_db.role) == "root":
             raise HTTPException(status_code=403, detail="Root users cannot be deleted.")
-        deleted_count, _ = await soft_delete_user_hierarchy(
+        deleted_count, _, affected_dept_ids, affected_org_ids = await soft_delete_user_hierarchy(
             session,
             user_id,
             actor_user_id=current_user.id,
         )
         if deleted_count == 0:
             raise HTTPException(status_code=409, detail="No eligible users found to delete.")
+
+        # Langfuse cleanup: delete projects/orgs that were just archived/suspended in DB.
+        try:
+            provisioning_service = get_langfuse_provisioning_service()
+            if provisioning_service.enabled:
+                for dept_id in affected_dept_ids:
+                    await provisioning_service.cleanup_department_langfuse(session, dept_id=dept_id)
+                for org_id in affected_org_ids:
+                    await provisioning_service.cleanup_org_admin_langfuse(session, org_id=org_id)
+        except LangfuseProvisioningError:
+            pass  # logged inside the service; do not block the delete
+
         await session.commit()
     except HTTPException:
         await session.rollback()

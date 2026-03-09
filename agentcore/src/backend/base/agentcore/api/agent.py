@@ -470,6 +470,8 @@ async def acquire_agent_session(
     except IntegrityError:
         await session.rollback()
         existing_lock = (await session.exec(select(AgentEditLock).where(AgentEditLock.agent_id == agent_id))).first()
+        if existing_lock:
+            await session.refresh(existing_lock)
         if existing_lock and existing_lock.locked_by != current_user.id and existing_lock.expires_at > now:
             raise HTTPException(
                 status_code=423,

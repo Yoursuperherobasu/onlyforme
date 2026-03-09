@@ -20,9 +20,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+from agentcore.base.child_agent.registry import ChildAgentRegistry
 from agentcore.custom.custom_node.node import Node
 from agentcore.io import (
     BoolInput,
+    DropdownInput,
     HandleInput,
     IntInput,
     MultilineInput,
@@ -41,6 +43,7 @@ from agentcore.schema.a2a_jsonrpc import (
     JsonRpcResponse,
 )
 from agentcore.schema.data import Data
+from agentcore.schema.dotdict import dotdict
 from agentcore.schema.message import Message
 from agentcore.utils.constants import MESSAGE_SENDER_AI
 
@@ -74,6 +77,23 @@ class A2AClientComponent(Node):
     beta = False
 
     inputs = [
+        DropdownInput(
+            name="agent_source",
+            display_name="Agent Source",
+            options=["Local Agent", "Remote URL"],
+            value="Local Agent",
+            info="Choose whether to call a local agent from this system or a remote agent via URL.",
+            real_time_refresh=True,
+        ),
+        DropdownInput(
+            name="local_agent_name",
+            display_name="Local Agent",
+            options=[],
+            real_time_refresh=True,
+            refresh_button=True,
+            value=None,
+            info="Select an agent from this system to call via A2A protocol.",
+        ),
         StrInput(
             name="agent_url",
             display_name="Agent URL",
@@ -84,7 +104,7 @@ class A2AClientComponent(Node):
                 "The agent card will be fetched from <url>/.well-known/agent.json "
                 "and the RPC endpoint will be read from the agent card."
             ),
-            required=True,
+            required=False,
         ),
         SecretStrInput(
             name="api_key",
@@ -110,7 +130,7 @@ class A2AClientComponent(Node):
             name="timeout",
             display_name="Timeout (seconds)",
             info="Maximum time to wait for the agent to respond, in seconds.",
-            value=30,
+            value=120,
             advanced=True,
         ),
         StrInput(
@@ -203,13 +223,84 @@ class A2AClientComponent(Node):
         self._agent_card_cache: A2AAgentCardResponse | None = None
         self._last_task_info: A2ATaskInfo | None = None
         self._last_send_result: A2ASendResult | None = None
+        self._resolved_url: str | None = None
+
+    # ── Build config / dropdown population ───────────────────────────
+
+    async def update_build_config(
+        self, build_config: dotdict, field_value: Any, field_name: str | None = None
+    ) -> dotdict:
+        """Show/hide fields based on agent_source and populate local agent dropdown."""
+        if field_name == "agent_source":
+            is_local = field_value == "Local Agent"
+            build_config["local_agent_name"]["show"] = is_local
+            build_config["agent_url"]["show"] = not is_local
+            build_config["api_key"]["show"] = not is_local
+
+        if field_name in ("local_agent_name", "agent_source"):
+            try:
+                current_agent_id = None
+                if hasattr(self, "graph") and self.graph:
+                    current_agent_id = getattr(self.graph, "agent_id", None) or getattr(
+                        self.graph, "flow_id", None
+                    )
+                agent_names = await ChildAgentRegistry.get_agent_names(
+                    user_id=str(self.user_id),
+                    exclude_agent_id=current_agent_id,
+                )
+                build_config["local_agent_name"]["options"] = agent_names
+            except Exception as e:
+                logger.warning(f"Error getting available agents: {e}")
+                build_config["local_agent_name"]["options"] = []
+
+        return build_config
+
+    async def _resolve_agent_url(self) -> str:
+        """Resolve the agent URL based on agent_source setting.
+
+        For local agents: look up agent by name in DB, construct local A2A URL.
+        For remote agents: return the user-provided URL as-is.
+        """
+        agent_source = getattr(self, "agent_source", "Remote URL")
+
+        if agent_source == "Local Agent":
+            agent_name = getattr(self, "local_agent_name", None)
+            if not agent_name:
+                msg = "No local agent selected"
+                raise ValueError(msg)
+
+            agent_info = await ChildAgentRegistry.get_agent_by_name(
+                agent_name=agent_name,
+                user_id=str(self.user_id),
+            )
+            if not agent_info:
+                msg = f"Agent '{agent_name}' not found in the database"
+                raise ValueError(msg)
+
+            return f"http://{LOCALHOST_HOST}:{os.getenv('BACKEND_PORT', '7860')}/api/a2a/{agent_info.id}"
+
+        # Remote URL mode
+        url = getattr(self, "agent_url", "")
+        if not url:
+            msg = "Agent URL is required when using Remote URL mode"
+            raise ValueError(msg)
+        return url
 
     # ── Private helpers ──────────────────────────────────────────────
 
     def _build_http_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
-            timeout=httpx.Timeout(float(self.timeout)),
+            timeout=httpx.Timeout(
+                connect=30.0,
+                read=float(self.timeout),
+                write=30.0,
+                pool=10.0,
+            ),
             verify=self.verify_ssl,
+            limits=httpx.Limits(
+                max_connections=10,
+                max_keepalive_connections=0,  # disable keep-alive to avoid stale connections
+            ),
         )
 
     @staticmethod
@@ -231,7 +322,7 @@ class A2AClientComponent(Node):
 
     async def _fetch_agent_card(self, client: httpx.AsyncClient) -> A2AAgentCardResponse:
         """GET <base_url>/.well-known/agent.json → validate and return agent card."""
-        base_url = self._normalize_base_url(self.agent_url)
+        base_url = self._normalize_base_url(self._resolved_url)
         agent_card_url = f"{base_url}/.well-known/agent.json"
 
         logger.info(f"A2A Client: Fetching agent card from {agent_card_url}")
@@ -312,7 +403,7 @@ class A2AClientComponent(Node):
         rpc_url = agent_card.url
         # Resolve relative URLs (e.g., "/api/a2a/{agent_id}/rpc") against base URL
         if rpc_url.startswith("/"):
-            base_url = self._normalize_base_url(self.agent_url)
+            base_url = self._normalize_base_url(self._resolved_url)
             parsed = urlparse(base_url)
             rpc_url = f"{parsed.scheme}://{parsed.netloc}{rpc_url}"
         headers = self._build_auth_headers(agent_card)
@@ -573,6 +664,9 @@ class A2AClientComponent(Node):
         """
         if self._last_send_result is not None:
             return
+
+        # Resolve the agent URL (local agent lookup or remote URL)
+        self._resolved_url = await self._resolve_agent_url()
 
         message_text = self._extract_message_text()
         if not message_text.strip():

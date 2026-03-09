@@ -3,16 +3,15 @@ import concurrent.futures
 from typing import Any
 
 from loguru import logger
-from sqlmodel import select
 
 from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import BoolInput, MessageTextInput, MultilineInput
 from agentcore.io import DropdownInput, Output
 from agentcore.schema.message import Message
-from agentcore.services.database.models.guardrail_catalogue.model import GuardrailCatalogue
-from agentcore.services.database.models.model_registry.model import ModelRegistry
-from agentcore.services.deps import session_scope
-from agentcore.services.guardrails import apply_nemo_guardrail_text, is_nemo_runtime_config_ready
+from agentcore.services.guardrail_service_client import (
+    apply_nemo_guardrail_via_service,
+    list_active_guardrails_via_service,
+)
 
 
 def _run_async(coro):
@@ -27,48 +26,29 @@ def _run_async(coro):
 
 def _fetch_active_guardrail_options() -> list[str]:
     async def _query() -> list[str]:
-        async with session_scope() as session:
-            stmt = (
-                select(GuardrailCatalogue)
-                .where(
-                    GuardrailCatalogue.framework == "nemo",
-                    GuardrailCatalogue.status == "active",
-                    GuardrailCatalogue.model_registry_id.is_not(None),
-                )
-                .order_by(GuardrailCatalogue.name.asc())
-            )
-            rows = (await session.exec(stmt)).all()
-            total_rows = len(rows)
-            model_ids = {row.model_registry_id for row in rows if row.model_registry_id}
-            if not model_ids:
-                logger.warning(
-                    "NeMo guardrail dropdown query returned no model-linked active guardrails: "
-                    f"active_guardrails={total_rows}"
-                )
-                return []
-            active_model_ids = set(
-                await session.exec(
-                    select(ModelRegistry.id).where(
-                        ModelRegistry.id.in_(list(model_ids)),
-                        ModelRegistry.is_active.is_(True),
-                    )
-                )
-            )
-            selectable_rows = [row for row in rows if row.model_registry_id in active_model_ids]
-            options: list[str] = []
-            runtime_ready_count = 0
-            for row in selectable_rows:
-                is_ready = is_nemo_runtime_config_ready(row.runtime_config, row.model_registry_id)
-                label = row.name if is_ready else f"{row.name} (Runtime incomplete)"
-                if is_ready:
-                    runtime_ready_count += 1
-                options.append(f"{label} | {row.id}")
-            logger.info(
-                "NeMo guardrail dropdown options loaded: "
-                f"active_guardrails={total_rows}, active_model_guardrails={len(selectable_rows)}, "
-                f"runtime_ready={runtime_ready_count}, runtime_incomplete={len(selectable_rows) - runtime_ready_count}"
-            )
-            return options
+        try:
+            items = await list_active_guardrails_via_service()
+        except Exception:  # noqa: BLE001
+            logger.exception("NeMo guardrail dropdown options query failed (service unavailable).")
+            return []
+
+        options: list[str] = []
+        runtime_ready_count = 0
+        for item in items:
+            name = item.get("name", "")
+            gid = item.get("id", "")
+            is_ready = bool(item.get("runtime_ready", False))
+            label = name if is_ready else f"{name} (Runtime incomplete)"
+            if is_ready:
+                runtime_ready_count += 1
+            options.append(f"{label} | {gid}")
+
+        logger.info(
+            "NeMo guardrail dropdown options loaded via service: "
+            f"total={len(items)}, runtime_ready={runtime_ready_count}, "
+            f"runtime_incomplete={len(items) - runtime_ready_count}"
+        )
+        return options
 
     try:
         return _run_async(_query())
@@ -151,7 +131,7 @@ class NemoGuardrailComponent(Node):
             value = value.split("|")[-1].strip()
         return value
 
-    def update_build_config(self, build_config: dict, field_value: str, field_name: str | None = None):
+    def update_build_config(self, build_config: dict, field_value: str, field_name: str | None = None):  # noqa: ARG002
         if field_name in {"guardrail_id", None}:
             options = _fetch_active_guardrail_options()
             build_config["guardrail_id"]["options"] = options
@@ -204,7 +184,7 @@ class NemoGuardrailComponent(Node):
             return decision
 
         try:
-            result = await apply_nemo_guardrail_text(
+            result = await apply_nemo_guardrail_via_service(
                 input_text=input_text,
                 guardrail_id=guardrail_id,
             )
@@ -212,19 +192,20 @@ class NemoGuardrailComponent(Node):
                 "agentcore_usage": {
                     "source": "nemoguardrails",
                     "component": self.name,
-                    "guardrail_id": result.guardrail_id,
-                    "llm_calls_count": int(result.llm_calls_count or 0),
-                    "input_tokens": int(result.input_tokens or 0),
-                    "output_tokens": int(result.output_tokens or 0),
-                    "total_tokens": int(result.total_tokens or 0),
-                    "model": result.model,
-                    "provider": result.provider,
+                    "guardrail_id": result.get("guardrail_id"),
+                    "llm_calls_count": int(result.get("llm_calls_count") or 0),
+                    "input_tokens": int(result.get("input_tokens") or 0),
+                    "output_tokens": int(result.get("output_tokens") or 0),
+                    "total_tokens": int(result.get("total_tokens") or 0),
+                    "model": result.get("model"),
+                    "provider": result.get("provider"),
                 }
             }
             logger.info(
                 "NeMo guardrail node usage metadata prepared: "
-                f"guardrail_id={result.guardrail_id}, llm_calls={result.llm_calls_count}, "
-                f"input_tokens={result.input_tokens}, output_tokens={result.output_tokens}, total_tokens={result.total_tokens}"
+                f"guardrail_id={result.get('guardrail_id')}, llm_calls={result.get('llm_calls_count')}, "
+                f"input_tokens={result.get('input_tokens')}, output_tokens={result.get('output_tokens')}, "
+                f"total_tokens={result.get('total_tokens')}"
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"NeMo guardrail node execution failed: guardrail_id={guardrail_id}")
@@ -249,12 +230,13 @@ class NemoGuardrailComponent(Node):
             self._decision_evaluated = True
             return decision
 
-        if result.action == "blocked":
+        action = result.get("action", "passthrough")
+        if action == "blocked":
             decision["blocked"] = True
-            decision["action"] = result.action
-            decision["guardrail_id"] = result.guardrail_id
-            decision["status"] = f"Guardrail action=blocked (guardrail_id={result.guardrail_id})"
-            logger.warning(f"NeMo guardrail node blocked content: guardrail_id={result.guardrail_id}")
+            decision["action"] = action
+            decision["guardrail_id"] = result.get("guardrail_id", guardrail_id)
+            decision["status"] = f"Guardrail action=blocked (guardrail_id={result.get('guardrail_id')})"
+            logger.warning(f"NeMo guardrail node blocked content: guardrail_id={result.get('guardrail_id')}")
             self._decision = decision
             self._decision_evaluated = True
             return decision
@@ -262,17 +244,18 @@ class NemoGuardrailComponent(Node):
         decision["blocked"] = False
         # For input-guardrail topology, keep safe traffic unchanged to avoid prompt drift.
         decision["safe_text"] = input_text
-        decision["action"] = result.action
-        decision["guardrail_id"] = result.guardrail_id
-        decision["status"] = f"Guardrail action={result.action} (guardrail_id={result.guardrail_id})"
-        if result.action == "rewritten":
+        decision["action"] = action
+        decision["guardrail_id"] = result.get("guardrail_id", guardrail_id)
+        decision["status"] = f"Guardrail action={action} (guardrail_id={result.get('guardrail_id')})"
+        if action == "rewritten":
             logger.warning(
                 "NeMo guardrail returned rewritten text but node is forwarding original input as configured: "
-                f"guardrail_id={result.guardrail_id}, rewritten_output_length={len(result.output_text)}"
+                f"guardrail_id={result.get('guardrail_id')}, rewritten_output_length={len(result.get('output_text', ''))}"
             )
         logger.info(
             "NeMo guardrail node execution completed: "
-            f"guardrail_id={result.guardrail_id}, action={result.action}, output_length={len(result.output_text)}"
+            f"guardrail_id={result.get('guardrail_id')}, action={action}, "
+            f"output_length={len(result.get('output_text', ''))}"
         )
         self._decision = decision
         self._decision_evaluated = True

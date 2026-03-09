@@ -1,5 +1,7 @@
 import { Play, Plus } from "lucide-react";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { AuthContext } from "@/contexts/authContext";
+import { api } from "@/controllers/API/api";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { useTranslation } from "react-i18next";
 import useAlertStore from "@/stores/alertStore";
-import { useModelStore } from "@/stores/modelStore";
+import { useGetRegistryModels } from "@/controllers/API/queries/models/use-get-models";
 import {
   createEvaluationDataset,
   createEvaluationDatasetItem,
@@ -91,8 +93,22 @@ const ensureDatasetPromptTemplate = (criteria?: string | null): string => {
   return `${text}\n\n${DATASET_PROMPT_TEMPLATE}`;
 };
 
+type VisibilityOptions = {
+  organizations: { id: string; name: string }[];
+  departments: { id: string; name: string; org_id: string }[];
+  private_share_users: { id: string; email: string }[];
+  role?: string;
+};
+
 export default function EvaluationPage() {
   const { t } = useTranslation();
+  const { userData } = useContext(AuthContext);
+  const userRole = (userData?.role || "").toLowerCase();
+  const [visibilityOptions, setVisibilityOptions] = useState<VisibilityOptions>({
+    organizations: [],
+    departments: [],
+    private_share_users: [],
+  });
   const [activeTab, setActiveTab] = useState("judges");
   const [status, setStatus] = useState<EvaluationStatus | null>(null);
   const [recentScores, setRecentScores] = useState<Score[]>([]);
@@ -118,7 +134,15 @@ export default function EvaluationPage() {
   const [runDetailLoading, setRunDetailLoading] = useState<boolean>(false);
   const [selectedRunDetail, setSelectedRunDetail] =
     useState<EvaluationDatasetRunDetail | null>(null);
-  const [datasetForm, setDatasetForm] = useState({ name: "", description: "" });
+  const [datasetForm, setDatasetForm] = useState({
+    name: "",
+    description: "",
+    visibility: "private" as "private" | "public",
+    public_scope: "" as string,
+    org_id: "" as string,
+    dept_id: "" as string,
+    public_dept_ids: [] as string[],
+  });
   const [datasetItemForm, setDatasetItemForm] = useState({
     input: "",
     expected_output: "",
@@ -131,13 +155,13 @@ export default function EvaluationPage() {
     description: "",
     agent_id: "",
     generation_model: "",
-    generation_model_api_key: "",
+    generation_model_registry_id: "",
     evaluator_config_id: "",
     preset_id: "",
     evaluator_name: "",
     criteria: "",
     judge_model: "",
-    judge_model_api_key: "",
+    judge_model_registry_id: "",
   });
 
   // Dialog States
@@ -149,36 +173,12 @@ export default function EvaluationPage() {
   );
   const fetchSeqRef = useRef(0);
 
-  const [modelApiKey, setModelApiKey] = useState<string>("");
   const [agentList, setAgentList] = useState<any[]>([]);
-  const storeModels = useModelStore((s) => s.models);
-  const [savedModelKeys, setSavedModelKeys] = useState<Record<string, string>>(
-    {},
-  );
+  const { data: registryModels = [] } = useGetRegistryModels({ model_type: "llm", active_only: true });
 
   // Per-tab fetch guards — prevent redundant refetches on every tab revisit
   const hasFetchedScoresRef = useRef(false);
   const hasFetchedDatasetsRef = useRef(false);
-  const loadSavedModelKeys = () => {
-    try {
-      const raw = localStorage.getItem("evaluation_model_keys");
-      if (!raw) return {} as Record<string, string>;
-      const parsed = JSON.parse(raw || "{}");
-      setSavedModelKeys(parsed || {});
-      return parsed || {};
-    } catch (e) {
-      return {} as Record<string, string>;
-    }
-  };
-  const saveModelKey = (modelId: string, key: string) => {
-    const next = { ...(savedModelKeys || {}), [modelId]: key };
-    setSavedModelKeys(next);
-    try {
-      localStorage.setItem("evaluation_model_keys", JSON.stringify(next));
-    } catch {
-      // ignore storage errors
-    }
-  };
 
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [filterSessionId, setFilterSessionId] = useState<string>("");
@@ -194,11 +194,16 @@ export default function EvaluationPage() {
   const [judgeForm, setJudgeForm] = useState({
     trace_id: "",
     criteria: "",
-    model: "gpt-4o",
+    model: "",
     name: "",
     preset_id: "",
     saved_evaluator_id: "",
-    model_name: "",
+    model_registry_id: "",
+    visibility: "private" as "private" | "public",
+    public_scope: "" as string,
+    org_id: "" as string,
+    dept_id: "" as string,
+    public_dept_ids: [] as string[],
   });
   const [groundTruth, setGroundTruth] = useState("");
   const [scoreForm, setScoreForm] = useState({
@@ -222,11 +227,16 @@ export default function EvaluationPage() {
     setJudgeForm({
       trace_id: "",
       criteria: "",
-      model: "gpt-4o",
+      model: "",
       name: "",
       preset_id: "",
       saved_evaluator_id: "",
-      model_name: "",
+      model_registry_id: "",
+      visibility: "private",
+      public_scope: "",
+      org_id: "",
+      dept_id: "",
+      public_dept_ids: [],
     });
     setGroundTruth("");
     setSelectedAgentIds([]);
@@ -419,18 +429,6 @@ export default function EvaluationPage() {
         } else {
           setPendingTraces([]);
         }
-        // load saved model API keys and prefill if available
-        try {
-          const keys = loadSavedModelKeys();
-          const modelName =
-            (judgeForm.model_name && judgeForm.model_name.trim()) ||
-            judgeForm.model;
-          if (keys && modelName && keys[modelName]) {
-            setModelApiKey(keys[modelName]);
-          }
-        } catch (e) {
-          /* ignore */
-        }
       } catch (e) {
         console.error("Failed fetching pending traces:", e);
         setPendingTraces([]);
@@ -440,6 +438,25 @@ export default function EvaluationPage() {
       mounted = false;
     };
   }, [isJudgeDialogOpen]);
+
+  // Load visibility options when opening the judge dialog or datasets tab
+  useEffect(() => {
+    if (!isJudgeDialogOpen && activeTab !== "datasets") return;
+    api
+      .get("/api/evaluation/visibility-options")
+      .then((res) => {
+        const opts = res.data || { organizations: [], departments: [], private_share_users: [] };
+        setVisibilityOptions(opts);
+        // Auto-select first org/dept for non-root roles
+        if (!judgeForm.org_id && opts.organizations?.length) {
+          setJudgeForm((prev) => ({ ...prev, org_id: opts.organizations[0].id }));
+        }
+        if (!judgeForm.dept_id && opts.departments?.length) {
+          setJudgeForm((prev) => ({ ...prev, dept_id: opts.departments[0].id }));
+        }
+      })
+      .catch(() => {});
+  }, [isJudgeDialogOpen, activeTab]);
 
   // Lazy-load scores data only when the Scores tab becomes active
   useEffect(() => {
@@ -598,36 +615,38 @@ export default function EvaluationPage() {
       });
       return;
     }
+    if (!judgeForm.model_registry_id) {
+      setErrorData({ title: "Select a judge model from the registry." });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      // If both selected, create evaluator targeting both (backend should accept array or handle 'both')
       const targets: string[] = [];
       if (runOnExisting) targets.push("existing");
       if (runOnNew) targets.push("new");
 
-      const modelName =
-        (judgeForm.model_name && judgeForm.model_name.trim()) ||
-        judgeForm.model;
       const payload: any = {
         name:
           judgeForm.name?.trim() || `LLM Judge - ${new Date().toISOString()}`,
         criteria: judgeForm.criteria || "",
-        model: modelName,
+        model_registry_id: judgeForm.model_registry_id,
         preset_id: judgeForm.preset_id || undefined,
         target: targets.length === 1 ? targets[0] : targets,
+        visibility: judgeForm.visibility || "private",
       };
-      if (groundTruth.trim()) payload.ground_truth = groundTruth.trim();
-      if (modelApiKey) {
-        payload.model_api_key = modelApiKey;
-        // persist locally under the chosen model name
-        if (modelName) saveModelKey(modelName, modelApiKey);
+      if (judgeForm.visibility === "public" && judgeForm.public_scope) {
+        payload.public_scope = judgeForm.public_scope;
       }
+      if (judgeForm.org_id) payload.org_id = judgeForm.org_id;
+      if (judgeForm.dept_id) payload.dept_id = judgeForm.dept_id;
+      if (judgeForm.public_dept_ids?.length)
+        payload.public_dept_ids = judgeForm.public_dept_ids;
+      if (groundTruth.trim()) payload.ground_truth = groundTruth.trim();
       if (selectedAgentIds && selectedAgentIds.length)
         payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
 
-      // optional filters are currently not exposed in this simplified dialog
       await createEvaluator(payload);
       setIsJudgeDialogOpen(false);
       resetForms();
@@ -666,6 +685,10 @@ export default function EvaluationPage() {
       setErrorData({ title: "Provide a name and criteria to save evaluator" });
       return;
     }
+    if (!judgeForm.model_registry_id) {
+      setErrorData({ title: "Select a judge model from the registry." });
+      return;
+    }
     if (requiresGroundTruth && !groundTruth.trim()) {
       setErrorData({
         title: "Ground truth is required for the selected preset.",
@@ -676,14 +699,19 @@ export default function EvaluationPage() {
       const targets: string[] = [];
       if (runOnExisting) targets.push("existing");
       if (runOnNew) targets.push("new");
-      const modelName =
-        (judgeForm.model_name && judgeForm.model_name.trim()) ||
-        judgeForm.model;
       const payload: any = {
         name: judgeForm.name,
         criteria: judgeForm.criteria,
-        model: modelName,
+        model_registry_id: judgeForm.model_registry_id,
+        visibility: judgeForm.visibility || "private",
       };
+      if (judgeForm.visibility === "public" && judgeForm.public_scope) {
+        payload.public_scope = judgeForm.public_scope;
+      }
+      if (judgeForm.org_id) payload.org_id = judgeForm.org_id;
+      if (judgeForm.dept_id) payload.dept_id = judgeForm.dept_id;
+      if (judgeForm.public_dept_ids?.length)
+        payload.public_dept_ids = judgeForm.public_dept_ids;
       if (targets.length === 1) payload.target = targets[0];
       else if (targets.length > 1) payload.target = targets;
       if (judgeForm.preset_id) payload.preset_id = judgeForm.preset_id;
@@ -692,10 +720,6 @@ export default function EvaluationPage() {
         payload.agent_ids = selectedAgentIds;
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
-      if (modelApiKey && modelName) {
-        payload.model_api_key = modelApiKey;
-        saveModelKey(modelName, modelApiKey);
-      }
 
       if (editingEvaluator) {
         const updated = await updateEvaluator(editingEvaluator, payload);
@@ -733,8 +757,13 @@ export default function EvaluationPage() {
       criteria: s.criteria,
       name: s.name,
       model: s.model,
-      model_name: s.model,
+      model_registry_id: s.model_registry_id || "",
       preset_id: s.preset_id || "",
+      visibility: s.visibility || "private",
+      public_scope: s.public_scope || "",
+      org_id: s.org_id || "",
+      dept_id: s.dept_id || "",
+      public_dept_ids: s.public_dept_ids || [],
     });
     setGroundTruth(s.ground_truth || "");
     const target = Array.isArray(s.target) ? s.target : [];
@@ -749,12 +778,6 @@ export default function EvaluationPage() {
     setSelectedAgentIds(agentIds);
     setFilterSessionId(s.session_id || "");
     setFilterTraceId(s.trace_id || "");
-    try {
-      const keys = loadSavedModelKeys();
-      setModelApiKey((s.model && keys[s.model]) || "");
-    } catch {
-      setModelApiKey("");
-    }
     setEditingEvaluator(id);
     setIsJudgeDialogOpen(true);
   };
@@ -831,11 +854,31 @@ export default function EvaluationPage() {
     }
 
     try {
-      const created = await createEvaluationDataset({
+      const payload: Parameters<typeof createEvaluationDataset>[0] = {
         name,
         description: datasetForm.description.trim() || undefined,
+        visibility: datasetForm.visibility || "private",
+      };
+      if (datasetForm.visibility === "public" && datasetForm.public_scope) {
+        payload.public_scope = datasetForm.public_scope;
+        if (datasetForm.public_scope === "organization" && datasetForm.org_id) {
+          payload.org_id = datasetForm.org_id;
+        }
+        if (datasetForm.public_scope === "department") {
+          if (datasetForm.org_id) payload.org_id = datasetForm.org_id;
+          if (datasetForm.public_dept_ids.length > 0) {
+            payload.public_dept_ids = datasetForm.public_dept_ids;
+          } else if (datasetForm.dept_id) {
+            payload.dept_id = datasetForm.dept_id;
+            payload.public_dept_ids = [datasetForm.dept_id];
+          }
+        }
+      }
+      const created = await createEvaluationDataset(payload);
+      setDatasetForm({
+        name: "", description: "",
+        visibility: "private", public_scope: "", org_id: "", dept_id: "", public_dept_ids: [],
       });
-      setDatasetForm({ name: "", description: "" });
       setSuccessData({ title: t("Dataset '{{name}}' created", { name: created.name }) });
       await fetchDatasets(false);
       setSelectedDatasetName(created.name);
@@ -994,20 +1037,11 @@ export default function EvaluationPage() {
       return;
     }
     const hasAgent = Boolean(datasetExperimentForm.agent_id);
-    const generationModel = datasetExperimentForm.generation_model.trim();
-    const generationModelApiKey =
-      datasetExperimentForm.generation_model_api_key.trim();
-    if (!hasAgent && !generationModel) {
+    const hasRegistryModel = Boolean(datasetExperimentForm.generation_model_registry_id);
+    if (!hasAgent && !hasRegistryModel) {
       setErrorData({
         title:
-          "Select an agent or provide a generation model to run the dataset.",
-      });
-      return;
-    }
-    if (!hasAgent && !generationModelApiKey) {
-      setErrorData({
-        title:
-          "Generation model API key is required when running without an agent.",
+          "Select an agent or choose a generation model from the registry.",
       });
       return;
     }
@@ -1018,10 +1052,9 @@ export default function EvaluationPage() {
         experiment_name: datasetExperimentForm.experiment_name.trim(),
         description: datasetExperimentForm.description.trim() || undefined,
         agent_id: datasetExperimentForm.agent_id || undefined,
-        generation_model: hasAgent ? undefined : generationModel || undefined,
-        generation_model_api_key: hasAgent
+        generation_model_registry_id: hasAgent
           ? undefined
-          : generationModelApiKey || undefined,
+          : datasetExperimentForm.generation_model_registry_id || undefined,
         evaluator_config_id:
           datasetExperimentForm.evaluator_config_id || undefined,
         preset_id: datasetExperimentForm.preset_id || undefined,
@@ -1030,9 +1063,8 @@ export default function EvaluationPage() {
         criteria: datasetExperimentForm.criteria.trim()
           ? ensureDatasetPromptTemplate(datasetExperimentForm.criteria.trim())
           : undefined,
-        judge_model: datasetExperimentForm.judge_model.trim() || undefined,
-        judge_model_api_key:
-          datasetExperimentForm.judge_model_api_key.trim() || undefined,
+        judge_model_registry_id:
+          datasetExperimentForm.judge_model_registry_id || undefined,
       });
 
       setDatasetExperimentJob({
@@ -1340,6 +1372,114 @@ export default function EvaluationPage() {
                 }
               />
             </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Visibility</label>
+              <select
+                value={datasetForm.visibility}
+                onChange={(e) =>
+                  setDatasetForm({
+                    ...datasetForm,
+                    visibility: e.target.value as "private" | "public",
+                    public_scope: e.target.value === "private" ? "" : datasetForm.public_scope,
+                  })
+                }
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="private">Private</option>
+                <option value="public">Public</option>
+              </select>
+            </div>
+            {datasetForm.visibility === "public" && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Public Scope</label>
+                <select
+                  value={datasetForm.public_scope}
+                  onChange={(e) =>
+                    setDatasetForm({ ...datasetForm, public_scope: e.target.value })
+                  }
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">Select scope...</option>
+                  <option value="organization">Organization</option>
+                  <option value="department">Department</option>
+                </select>
+              </div>
+            )}
+            {datasetForm.visibility === "public" &&
+              datasetForm.public_scope === "organization" && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Organization</label>
+                  <select
+                    value={datasetForm.org_id}
+                    onChange={(e) =>
+                      setDatasetForm({ ...datasetForm, org_id: e.target.value })
+                    }
+                    disabled={userRole === "developer" || userRole === "department_admin"}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                  >
+                    <option value="">Select organization...</option>
+                    {visibilityOptions.organizations.map((org) => (
+                      <option key={org.id} value={org.id}>{org.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            {datasetForm.visibility === "public" &&
+              datasetForm.public_scope === "department" && (
+                <>
+                  {(userRole === "super_admin" || userRole === "root") && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Organization</label>
+                      <select
+                        value={datasetForm.org_id}
+                        onChange={(e) =>
+                          setDatasetForm({ ...datasetForm, org_id: e.target.value, public_dept_ids: [] })
+                        }
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Select organization...</option>
+                        {visibilityOptions.organizations.map((org) => (
+                          <option key={org.id} value={org.id}>{org.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      Department{userRole === "super_admin" || userRole === "root" ? "s" : ""}
+                    </label>
+                    {userRole === "super_admin" || userRole === "root" ? (
+                      <select
+                        multiple
+                        value={datasetForm.public_dept_ids}
+                        onChange={(e) =>
+                          setDatasetForm({
+                            ...datasetForm,
+                            public_dept_ids: Array.from(e.target.selectedOptions).map((o) => o.value),
+                          })
+                        }
+                        className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        {visibilityOptions.departments
+                          .filter((d) => !datasetForm.org_id || d.org_id === datasetForm.org_id)
+                          .map((dept) => (
+                            <option key={dept.id} value={dept.id}>{dept.name}</option>
+                          ))}
+                      </select>
+                    ) : (
+                      <select
+                        value={datasetForm.dept_id}
+                        disabled
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                      >
+                        {visibilityOptions.departments.map((dept) => (
+                          <option key={dept.id} value={dept.id}>{dept.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </>
+              )}
           </div>
           <div className="mt-4">
             <Button size="sm" onClick={handleCreateDataset}>
@@ -1361,6 +1501,7 @@ export default function EvaluationPage() {
                 <tr>
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Description</th>
+                  <th className="px-4 py-3">Visibility</th>
                   <th className="px-4 py-3">Items</th>
                   <th className="px-4 py-3">Updated</th>
                 </tr>
@@ -1397,6 +1538,19 @@ export default function EvaluationPage() {
                       >
                         {dataset.description || "-"}
                       </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                            dataset.visibility === "public"
+                              ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                              : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300"
+                          }`}
+                        >
+                          {dataset.visibility === "public"
+                            ? `Public (${dataset.public_scope || "org"})`
+                            : "Private"}
+                        </span>
+                      </td>
                       <td className="px-4 py-3">{dataset.item_count ?? "-"}</td>
                       <td className="px-4 py-3">
                         {dataset.updated_at
@@ -1409,7 +1563,7 @@ export default function EvaluationPage() {
                 {datasets.length === 0 && (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={5}
                       className="px-4 py-6 text-center text-gray-500"
                     >
                       No datasets found.
@@ -1484,38 +1638,38 @@ export default function EvaluationPage() {
               </Select>
             </div>
             {!datasetExperimentForm.agent_id ? (
-              <>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    Generation Model
-                  </label>
-                  <Input
-                    placeholder="e.g. gpt-4o-mini"
-                    value={datasetExperimentForm.generation_model}
-                    onChange={(e) =>
-                      setDatasetExperimentForm({
-                        ...datasetExperimentForm,
-                        generation_model: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">
-                    Generation Model API Key
-                  </label>
-                  <Input
-                    placeholder="sk-..."
-                    value={datasetExperimentForm.generation_model_api_key}
-                    onChange={(e) =>
-                      setDatasetExperimentForm({
-                        ...datasetExperimentForm,
-                        generation_model_api_key: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  Generation Model
+                </label>
+                <Select
+                  value={datasetExperimentForm.generation_model_registry_id || ""}
+                  onValueChange={(val) => {
+                    const selected = registryModels.find((m) => m.id === val);
+                    setDatasetExperimentForm({
+                      ...datasetExperimentForm,
+                      generation_model_registry_id: val,
+                      generation_model: selected ? selected.model_name : "",
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select from registry" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {registryModels.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.display_name} ({m.provider}/{m.model_name})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {registryModels.length === 0 && (
+                  <p className="text-xs text-amber-600">
+                    No models available. Add models in the Model Registry first.
+                  </p>
+                )}
+              </div>
             ) : null}
             <div className="space-y-2">
               <label className="text-sm font-medium">Use Saved Evaluator</label>
@@ -1604,16 +1758,28 @@ export default function EvaluationPage() {
               <label className="text-sm font-medium">
                 Judge Model (Optional)
               </label>
-              <Input
-                placeholder="e.g. gpt-4o"
-                value={datasetExperimentForm.judge_model}
-                onChange={(e) =>
+              <Select
+                value={datasetExperimentForm.judge_model_registry_id || ""}
+                onValueChange={(val) => {
+                  const selected = registryModels.find((m) => m.id === val);
                   setDatasetExperimentForm({
                     ...datasetExperimentForm,
-                    judge_model: e.target.value,
-                  })
-                }
-              />
+                    judge_model_registry_id: val,
+                    judge_model: selected ? selected.model_name : "",
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select from registry" />
+                </SelectTrigger>
+                <SelectContent>
+                  {registryModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.display_name} ({m.provider}/{m.model_name})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium">
@@ -1635,21 +1801,6 @@ export default function EvaluationPage() {
                 <code>{"{{generation}}"}</code>,{" "}
                 <code>{"{{ground_truth}}"}</code>.
               </p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">
-                Judge Model API Key (Optional)
-              </label>
-              <Input
-                placeholder="sk-..."
-                value={datasetExperimentForm.judge_model_api_key}
-                onChange={(e) =>
-                  setDatasetExperimentForm({
-                    ...datasetExperimentForm,
-                    judge_model_api_key: e.target.value,
-                  })
-                }
-              />
             </div>
             <div className="space-y-2 md:col-span-3">
               <label className="text-sm font-medium">
@@ -2068,7 +2219,7 @@ export default function EvaluationPage() {
 
       {/* Run Judge Dialog */}
       <Dialog open={isJudgeDialogOpen} onOpenChange={setIsJudgeDialogOpen}>
-        <DialogContent className="max-w-2xl w-full">
+        <DialogContent className="max-w-2xl w-full max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Run LLM Judge</DialogTitle>
             <DialogDescription>
@@ -2192,38 +2343,38 @@ export default function EvaluationPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Judge Model Name</label>
-                <Input
-                  placeholder="e.g. gpt-4o or custom"
-                  value={judgeForm.model_name}
-                  onChange={(e) =>
-                    setJudgeForm({ ...judgeForm, model_name: e.target.value })
-                  }
-                />
-                <p className="text-xs text-gray-500">
-                  Name of the LLM to use as judge. If empty, a default model
-                  will be used.
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Judge Model</label>
+              <Select
+                value={judgeForm.model_registry_id || ""}
+                onValueChange={(val) => {
+                  const selected = registryModels.find((m) => m.id === val);
+                  setJudgeForm({
+                    ...judgeForm,
+                    model_registry_id: val,
+                    model: selected ? selected.model_name : judgeForm.model,
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a model from registry" />
+                </SelectTrigger>
+                <SelectContent>
+                  {registryModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.display_name} ({m.provider}/{m.model_name})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {registryModels.length === 0 && (
+                <p className="text-xs text-amber-600">
+                  No models available. Add models in the Model Registry first.
                 </p>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Model API Key (optional)
-                </label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="sk-..."
-                    value={modelApiKey}
-                    onChange={(e) => setModelApiKey(e.target.value)}
-                  />
-                </div>
-                <p className="text-xs text-gray-500">
-                  API key is stored locally in your browser only and will be
-                  saved when you Save or Run the evaluator.
-                </p>
-              </div>
+              )}
+              <p className="text-xs text-gray-500">
+                Model and API key are resolved from the registry.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -2249,6 +2400,138 @@ export default function EvaluationPage() {
                 />
               </div>
             )}
+
+            {/* Visibility Controls */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Visibility</label>
+              <select
+                value={judgeForm.visibility}
+                onChange={(e) =>
+                  setJudgeForm({
+                    ...judgeForm,
+                    visibility: e.target.value as "private" | "public",
+                    public_scope: e.target.value === "private" ? "" : judgeForm.public_scope,
+                  })
+                }
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="private">Private</option>
+                <option value="public">Public</option>
+              </select>
+            </div>
+
+            {judgeForm.visibility === "public" && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Public Scope</label>
+                <select
+                  value={judgeForm.public_scope}
+                  onChange={(e) =>
+                    setJudgeForm({
+                      ...judgeForm,
+                      public_scope: e.target.value,
+                    })
+                  }
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">Select scope...</option>
+                  <option value="organization">Organization</option>
+                  <option value="department">Department</option>
+                </select>
+              </div>
+            )}
+
+            {judgeForm.visibility === "public" &&
+              judgeForm.public_scope === "organization" && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Organization</label>
+                  <select
+                    value={judgeForm.org_id}
+                    onChange={(e) =>
+                      setJudgeForm({ ...judgeForm, org_id: e.target.value })
+                    }
+                    disabled={
+                      userRole === "developer" || userRole === "department_admin"
+                    }
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                  >
+                    {visibilityOptions.organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+            {judgeForm.visibility === "public" &&
+              judgeForm.public_scope === "department" && (
+                <>
+                  {(userRole === "super_admin" || userRole === "root") && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Organization</label>
+                      <select
+                        value={judgeForm.org_id}
+                        onChange={(e) =>
+                          setJudgeForm({
+                            ...judgeForm,
+                            org_id: e.target.value,
+                            public_dept_ids: [],
+                          })
+                        }
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        {visibilityOptions.organizations.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      Department{userRole === "super_admin" || userRole === "root" ? "s" : ""}
+                    </label>
+                    {userRole === "super_admin" || userRole === "root" ? (
+                      <select
+                        multiple
+                        value={judgeForm.public_dept_ids}
+                        onChange={(e) =>
+                          setJudgeForm({
+                            ...judgeForm,
+                            public_dept_ids: Array.from(
+                              e.target.selectedOptions,
+                            ).map((o) => o.value),
+                          })
+                        }
+                        className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        {visibilityOptions.departments
+                          .filter(
+                            (d) => !judgeForm.org_id || d.org_id === judgeForm.org_id,
+                          )
+                          .map((dept) => (
+                            <option key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </option>
+                          ))}
+                      </select>
+                    ) : (
+                      <select
+                        value={judgeForm.dept_id}
+                        disabled
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                      >
+                        {visibilityOptions.departments.map((dept) => (
+                          <option key={dept.id} value={dept.id}>
+                            {dept.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </>
+              )}
 
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleSaveEvaluator}>

@@ -20,6 +20,11 @@ class BundleTypeEnum(str, Enum):
     MODEL = "model"
     MCP_SERVER = "mcp_server"
     GUARDRAIL = "guardrail"
+    KNOWLEDGE_BASE = "knowledge_base"
+    VECTOR_DB = "vector_db"
+    CONNECTOR = "connector"
+    TOOL = "tool"
+    CUSTOM_COMPONENT = "custom_component"
 
 
 class DeploymentEnvEnum(str, Enum):
