@@ -81,7 +81,25 @@ class ApprovalResponse(BaseModel):
     approvedBy: str | None = None
 
 
+class ProdPromotionHandoffResponse(BaseModel):
+    id: UUID
+    agent_id: UUID
+    promoted_from_uat_id: UUID | None = None
+    version_number: int
+
+
 router = APIRouter(prefix="/approvals", tags=["approvals"])
+
+
+def _build_prod_promotion_handoff_payload(
+    deployment: AgentDeploymentProd,
+) -> ProdPromotionHandoffResponse:
+    return ProdPromotionHandoffResponse(
+        id=deployment.id,
+        agent_id=deployment.agent_id,
+        promoted_from_uat_id=deployment.promoted_from_uat_id,
+        version_number=deployment.version_number,
+    )
 
 
 def _normalize_mcp_mode(value: str) -> str:
@@ -403,6 +421,25 @@ async def _collect_attachment_metadata(
     return uploaded_files
 
 
+@router.get(
+    "/prod-deployments/{deployment_id}/handoff",
+    response_model=ProdPromotionHandoffResponse,
+    status_code=200,
+)
+async def get_prod_promotion_handoff(
+    deployment_id: UUID,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> ProdPromotionHandoffResponse:
+    """Return PROD deployment handoff payload for downstream backend processing."""
+    record = await session.get(AgentDeploymentProd, deployment_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="PROD deployment not found")
+
+    return _build_prod_promotion_handoff_payload(record)
+
+
 @router.get("", response_model=list[ApprovalAgent])
 async def get_approvals(
     *,
@@ -588,6 +625,11 @@ async def approve_agent(
 ) -> ApprovalResponse:
     """Approve a pending deployment request."""
     now = datetime.now(timezone.utc)
+    attachment_count = len(attachments or [])
+    logger.info(
+        f"[APPROVE_REQUEST] target={agent_id} approver={getattr(current_user, 'id', None)} "
+        f"comments_len={len((comments or '').strip())} attachments={attachment_count}",
+    )
     req: ApprovalRequest | None = None
     mcp_req: McpApprovalRequest | None = None
     model_req: ModelApprovalRequest | None = None
@@ -649,7 +691,7 @@ async def approve_agent(
         session.add(mcp_row)
         await session.commit()
         approver_name = getattr(current_user, "username", None)
-        return ApprovalResponse(
+        response_payload = ApprovalResponse(
             success=True,
             message="MCP request approved successfully",
             agentId=str(mcp_req.id),
@@ -657,6 +699,8 @@ async def approve_agent(
             timestamp=now.isoformat(),
             approvedBy=approver_name,
         )
+        logger.info(f"[APPROVE_RESPONSE] {response_payload.model_dump()}")
+        return response_payload
 
     if model_req is not None:
         if model_req.decision is not None:
@@ -800,7 +844,7 @@ async def approve_agent(
         session.add(model_row)
         await session.commit()
         approver_name = getattr(current_user, "username", None)
-        return ApprovalResponse(
+        response_payload = ApprovalResponse(
             success=True,
             message="Model request approved successfully",
             agentId=str(model_req.id),
@@ -808,6 +852,8 @@ async def approve_agent(
             timestamp=now.isoformat(),
             approvedBy=approver_name,
         )
+        logger.info(f"[APPROVE_RESPONSE] {response_payload.model_dump()}")
+        return response_payload
 
     assert req is not None
     if req.decision is not None:
@@ -898,8 +944,17 @@ async def approve_agent(
     except Exception as notify_err:
         logger.warning(f"Publish notification failed after approval {req.id}: {notify_err}")
 
+    # Trigger handoff payload only for approved AGENT promotions (never on reject).
+    try:
+        handoff_payload = _build_prod_promotion_handoff_payload(deployment)
+        logger.info(
+            f"[PROD_PROMOTION_HANDOFF_TRIGGER] {handoff_payload.model_dump()}",
+        )
+    except Exception as handoff_err:
+        logger.warning(f"Handoff payload trigger failed after approval {req.id}: {handoff_err}")
+
     approver_name = getattr(current_user, "username", None)
-    return ApprovalResponse(
+    response_payload = ApprovalResponse(
         success=True,
         message="Agent approved successfully",
         agentId=str(req.agent_id),
@@ -907,6 +962,11 @@ async def approve_agent(
         timestamp=now.isoformat(),
         approvedBy=approver_name,
     )
+    logger.info(
+        f"[APPROVE_RESPONSE] {response_payload.model_dump()} "
+        f"handoff={_build_prod_promotion_handoff_payload(deployment).model_dump()}",
+    )
+    return response_payload
 
 
 @router.post("/{agent_id}/reject", response_model=ApprovalResponse)
