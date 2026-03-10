@@ -31,7 +31,11 @@ def _read_root_env_key(name: str) -> str:
 
 
 def _derive_encryption_key() -> str:
-    key = os.getenv("PINECONE_SERVICE_ENCRYPTION_KEY", "").strip()
+    key = os.getenv("RAG_SERVICE_ENCRYPTION_KEY", "").strip()
+    if key and key not in ("your-secret-key-here", "your-fernet-key-here"):
+        return key
+
+    key = os.getenv("MODEL_REGISTRY_ENCRYPTION_KEY", "").strip()
     if key and key not in ("your-secret-key-here", "your-fernet-key-here"):
         return key
 
@@ -41,7 +45,7 @@ def _derive_encryption_key() -> str:
     if not raw:
         raw = "default-agentcore-registry-key"
         logger.warning(
-            "No PINECONE_SERVICE_ENCRYPTION_KEY or WEBUI_SECRET_KEY set — "
+            "No RAG_SERVICE_ENCRYPTION_KEY or WEBUI_SECRET_KEY set — "
             "using default key. Set a proper key for production!"
         )
 
@@ -52,20 +56,26 @@ def _derive_encryption_key() -> str:
 class Settings(BaseSettings):
     api_key: str = ""
     host: str = "0.0.0.0"
-    port: int = 8003
+    port: int = 8005
     log_level: str = "info"
     cors_origins: str = "*"
     database_url: str | None = None
     encryption_key: str = ""
 
+    # Pinecone
     pinecone_api_key: str = ""
-    default_cloud: str = "aws"
-    default_region: str = "us-east-1"
     ingest_batch_size: int = 50
     sparse_batch_size: int = 96
 
+    # Neo4j
+    neo4j_uri: str = ""
+    neo4j_username: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
+    neo4j_ingest_batch_size: int = 100
+
     model_config = SettingsConfigDict(
-        env_prefix="PINECONE_SERVICE_",
+        env_prefix="RAG_SERVICE_",
         env_file=".env",
         env_file_encoding="utf-8",
     )
@@ -82,4 +92,13 @@ def get_settings() -> Settings:
     # Also read PINECONE_API_KEY from root .env if not set
     if not settings.pinecone_api_key:
         settings.pinecone_api_key = os.getenv("PINECONE_API_KEY", "") or _read_root_env_key("PINECONE_API_KEY")
+    # Also read NEO4J vars from root .env if not set via prefix
+    if not settings.neo4j_uri:
+        settings.neo4j_uri = os.getenv("NEO4J_URI", "") or _read_root_env_key("NEO4J_URI")
+    if settings.neo4j_username == "neo4j":
+        val = os.getenv("NEO4J_USERNAME", "") or _read_root_env_key("NEO4J_USERNAME")
+        if val:
+            settings.neo4j_username = val
+    if not settings.neo4j_password:
+        settings.neo4j_password = os.getenv("NEO4J_PASSWORD", "") or _read_root_env_key("NEO4J_PASSWORD")
     return settings

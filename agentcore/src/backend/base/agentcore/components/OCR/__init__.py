@@ -1,5 +1,3 @@
-"""Document Processing components for AgentCore RAG pipeline."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -7,13 +5,13 @@ from typing import TYPE_CHECKING, Any
 from agentcore.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from agentcore.components.document_processing.gemini_ocr_extractor import GeminiOCRExtractorNode
+    from agentcore.components.document_processing.ocr_extractor import OCRExtractorNode
 _dynamic_imports = {
-    "GeminiOCRExtractorNode": "gemini_ocr_extractor",
+    "OCRExtractorNode": "ocr_extractor",
 }
 
 __all__ = [
-    "GeminiOCRExtractorNode",
+    "OCRExtractorNode",
 ]
 
 

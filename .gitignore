@@ -204,6 +204,10 @@ myenv/
 .DS_Store
 nohup.outagentcore/pii_masking_templates/
 agentcore/docs/
+agentcore/src/backend/base/agentcore/components/graph_rag/COMPONENTS.md
+agentcore/src/backend/base/agentcore/components/vectorstores/COMPONENTS.md
+agentcore/src/services/graph-rag-service/.env.example
+agentcore/src/services/pinecone-service/.env.example
 
 # Azure deployment files (local testing only)
 agentcore/Dockerfile
