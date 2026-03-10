@@ -22,6 +22,7 @@ from agentcore.events.event_manager import EventManager, create_default_event_ma
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
     DeploymentPRODStatusEnum,
+    ProdDeploymentVisibilityEnum,
 )
 from agentcore.services.database.models.agent_deployment_uat.model import (
     AgentDeploymentUAT,
@@ -495,20 +496,30 @@ async def list_orch_agents(
             )
             .exists()
         )
-        prod_access = (
+        prod_private_access = (
             (AgentDeploymentProd.deployed_by == current_user.id)
             | prod_share_exists
-            | prod_dept_member_exists
         )
+        prod_public_access = prod_private_access | prod_dept_member_exists
         if is_admin:
-            prod_access = prod_access | true()
+            prod_private_access = prod_private_access | true()
+            prod_public_access = prod_public_access | true()
 
         prod_stmt = (
             select(AgentDeploymentProd)
             .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
             .where(AgentDeploymentProd.is_active == True)  # noqa: E712
             .where(AgentDeploymentProd.is_enabled == True)  # noqa: E712
-            .where(prod_access)
+            .where(
+                (
+                    (AgentDeploymentProd.visibility == ProdDeploymentVisibilityEnum.PUBLIC)
+                    & prod_public_access
+                )
+                | (
+                    (AgentDeploymentProd.visibility == ProdDeploymentVisibilityEnum.PRIVATE)
+                    & prod_private_access
+                )
+            )
         )
 
         uat_share_exists = (

@@ -1184,6 +1184,50 @@ def _record_to_summary(record: AgentDeploymentUAT | AgentDeploymentProd, environ
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+
+async def _notify_publish_event(
+    session: DbSession,
+    *,
+    agent_id: UUID,
+    agent_name: str,
+    environment: str,
+    version_number: int | str,
+    publish_id: UUID,
+    published_by: UUID,
+    published_at: datetime | None,
+) -> None:
+    """Internal publish notifier with DB verification.
+
+    This helper verifies the deployment row and logs the publish event.
+    It intentionally never raises so successful publishes are not blocked.
+    """
+    try:
+        record, record_env = await _find_deploy_record(session, publish_id)
+        if record_env != str(environment).lower():
+            logger.warning(
+                f"[PUBLISH_NOTIFY] env mismatch for {publish_id}: payload={environment}, db={record_env}",
+            )
+        if record.agent_id != agent_id:
+            logger.warning(
+                f"[PUBLISH_NOTIFY] agent mismatch for {publish_id}: payload={agent_id}, db={record.agent_id}",
+            )
+
+        payload_version = str(version_number).strip()
+        if payload_version.lower().startswith("v"):
+            payload_version = payload_version[1:]
+        if str(record.version_number) != payload_version:
+            logger.warning(
+                f"[PUBLISH_NOTIFY] version mismatch for {publish_id}: payload=v{version_number}, db=v{record.version_number}",
+            )
+
+        logger.info(
+            f"[PUBLISH_NOTIFY] agent='{agent_name}' agent_id={agent_id} publish_id={publish_id} "
+            f"env={record_env} version=v{record.version_number} by={published_by} "
+            f"at={published_at or record.deployed_at}",
+        )
+    except Exception as notify_err:
+        logger.warning(f"[PUBLISH_NOTIFY] failed for publish_id={publish_id}: {notify_err}")
+
 @router.post("/notify", response_model=PublishNotifyResponse, status_code=200)
 async def publish_notification(*, body: PublishNotifyRequest):
     """Internal endpoint triggered after a successful agent publish.
