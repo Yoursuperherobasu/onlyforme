@@ -26,7 +26,7 @@ class ModelRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     model_name: str = Field(nullable=False)
     model_type: str = Field(default="llm", index=True)
     base_url: str | None = Field(default=None)
-    api_key_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    api_key_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     environment: str = Field(default="test", index=True)
     provider_config: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     capabilities: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))

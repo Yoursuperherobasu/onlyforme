@@ -16,6 +16,9 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     logger = logging.getLogger(__name__)
     logger.info("RAG Service starting on %s:%s", settings.host, settings.port)
+    if not settings.key_vault_url:
+        msg = "RAG Service requires Azure Key Vault. Set RAG_SERVICE_KEY_VAULT_URL."
+        raise RuntimeError(msg)
 
     if settings.database_url:
         from app.database import init_db

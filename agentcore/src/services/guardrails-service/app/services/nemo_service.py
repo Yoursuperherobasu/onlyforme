@@ -19,6 +19,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
@@ -30,9 +31,10 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.guardrail_catalogue import GuardrailCatalogue
 from app.models.model_registry import ModelRegistry
-from app.utils.crypto import decrypt_api_key
+from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore
 
 
 @dataclass(slots=True)
@@ -89,10 +91,27 @@ async def _get_guardrail(session: AsyncSession, guardrail_id: UUID) -> Guardrail
     return row
 
 
+@lru_cache
+def _get_kv_store() -> KeyVaultSecretStore:
+    settings = get_settings()
+    kv_store = KeyVaultSecretStore.from_config(
+        KeyVaultConfig(
+            vault_url=settings.key_vault_url,
+            secret_prefix=settings.key_vault_secret_prefix,
+            tenant_id=settings.key_vault_tenant_id,
+            client_id=settings.key_vault_client_id,
+            client_secret=settings.key_vault_client_secret,
+        )
+    )
+    if kv_store is None:
+        msg = "Azure Key Vault client is not initialized. Check GUARDRAILS_SERVICE_KEY_VAULT_URL."
+        raise RuntimeError(msg)
+    return kv_store
+
+
 async def _get_model_registry_config(
     session: AsyncSession,
     guardrail: GuardrailCatalogue,
-    encryption_key: str,
 ) -> dict[str, Any] | None:
     model_registry_id = getattr(guardrail, "model_registry_id", None)
     if not model_registry_id:
@@ -126,15 +145,18 @@ async def _get_model_registry_config(
         "default_params": model_row.default_params or {},
     }
 
-    if model_row.api_key_encrypted and encryption_key:
-        try:
-            config["api_key"] = decrypt_api_key(model_row.api_key_encrypted, encryption_key)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "NeMo model registry decryption failed: "
-                f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}"
+    if model_row.api_key_secret_ref:
+        kv_store = _get_kv_store()
+        secret_value = kv_store.get_secret(model_row.api_key_secret_ref)
+        if not secret_value:
+            logger.warning(
+                "NeMo model registry secret ref not found in Key Vault: "
+                f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}, "
+                f"secret_ref={model_row.api_key_secret_ref}"
             )
             config["api_key"] = ""
+        else:
+            config["api_key"] = secret_value
     else:
         config["api_key"] = ""
 
@@ -1047,7 +1069,6 @@ async def apply_nemo_guardrail_text(
     input_text: str,
     guardrail_id: str,
     session: AsyncSession,
-    encryption_key: str,
 ) -> GuardrailExecutionResult:
     """Apply NeMo guardrails to input_text using the guardrail identified by guardrail_id."""
     started_at = perf_counter()
@@ -1063,7 +1084,7 @@ async def apply_nemo_guardrail_text(
         guardrail = await _get_guardrail(session, guardrail_uuid)
 
         step = "lookup_model_registry"
-        model_config = await _get_model_registry_config(session, guardrail, encryption_key)
+        model_config = await _get_model_registry_config(session, guardrail)
 
         step = "normalize_runtime_config"
         runtime_config = _normalize_runtime_config(guardrail.runtime_config)
