@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_api_key
-from app.config import get_settings
 from app.database import get_session
 from app.schemas import InvokeToolRequest, InvokeToolResponse, ListToolsRequest, ListToolsResponse
 from app.services.tool_service import invoke_tool, list_tools
@@ -26,13 +25,11 @@ async def discover_tools(
 ):
     """Discover tools on a registered MCP server. Returns tool names and JSON Schemas."""
     try:
-        settings = get_settings()
         session_context = body.session_context if body else None
 
         tool_schemas = await list_tools(
             server_id=str(server_id),
             session=session,
-            encryption_key=settings.encryption_key,
             session_context=session_context,
         )
 
@@ -62,13 +59,11 @@ async def invoke_mcp_tool(
 ):
     """Invoke a specific tool on an MCP server."""
     try:
-        settings = get_settings()
         result = await invoke_tool(
             server_id=body.server_id,
             tool_name=body.tool_name,
             arguments=body.arguments,
             session=session,
-            encryption_key=settings.encryption_key,
             session_context=body.session_context,
         )
         return result

@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 async def list_tools(
     server_id: str,
     session: AsyncSession,
-    encryption_key: str,
     session_context: str | None = None,
 ) -> list[ToolSchema]:
     """Discover tools on a registered MCP server.
@@ -30,7 +29,7 @@ async def list_tools(
     4. Call session.list_tools()
     5. Return tool schemas with raw inputSchema dicts
     """
-    result = await get_decrypted_config_by_id(session, UUID(server_id), encryption_key)
+    result = await get_decrypted_config_by_id(session, UUID(server_id))
     if result is None:
         msg = f"MCP server {server_id} not found"
         raise ValueError(msg)
@@ -103,7 +102,6 @@ async def invoke_tool(
     tool_name: str,
     arguments: dict[str, Any],
     session: AsyncSession,
-    encryption_key: str,
     session_context: str | None = None,
 ) -> InvokeToolResponse:
     """Invoke a specific tool on a registered MCP server.
@@ -113,7 +111,7 @@ async def invoke_tool(
     3. Call client.run_tool(tool_name, arguments)
     4. Extract content items and return
     """
-    result = await get_decrypted_config_by_id(session, UUID(server_id), encryption_key)
+    result = await get_decrypted_config_by_id(session, UUID(server_id))
     if result is None:
         return InvokeToolResponse(success=False, error=f"MCP server {server_id} not found")
 

@@ -10,16 +10,13 @@ Canvas wiring:
   [Query]  --+
 
 This component:
-  - Detects communities in the Neo4j graph (Leiden / label propagation)
-  - Generates LLM summaries for each community
+  - Detects communities in the Neo4j graph (via graph-rag-service microservice)
+  - Generates LLM summaries for each community (locally)
   - For a query: ranks communities -> feeds top summaries to LLM -> map-reduce answer
   - Best for broad/summary questions like "What are the main themes?"
 """
 
 from __future__ import annotations
-
-import hashlib
-import os
 
 from loguru import logger
 
@@ -33,6 +30,10 @@ from agentcore.io import (
 )
 from agentcore.schema.data import Data
 from agentcore.schema.message import Message
+from agentcore.services.graph_rag_service_client import (
+    detect_communities_via_service,
+    store_communities_via_service,
+)
 
 
 MAP_PROMPT = """You are analyzing a community of related entities in a knowledge graph.
@@ -151,320 +152,131 @@ class GraphCommunitySearchComponent(Node):
         return str(query).strip()
 
     # ------------------------------------------------------------------
-    # Internal: driver
-    # ------------------------------------------------------------------
-
-    def _get_driver(self):
-        try:
-            from neo4j import GraphDatabase
-        except ImportError as e:
-            msg = "The 'neo4j' package is required. Install with: pip install neo4j>=5.20.0"
-            raise ImportError(msg) from e
-
-        uri = os.getenv("NEO4J_URI", "")
-        username = os.getenv("NEO4J_USERNAME", "neo4j")
-        password = os.getenv("NEO4J_PASSWORD", "")
-
-        if not uri:
-            raise ValueError(
-                "Neo4j URI is required. Set NEO4J_URI in the .env file "
-                "(e.g. NEO4J_URI=neo4j+s://xxx.databases.neo4j.io)."
-            )
-
-        try:
-            driver = GraphDatabase.driver(uri, auth=(username, password))
-            driver.verify_connectivity()
-        except Exception as e:
-            raise ValueError(
-                f"Failed to connect to Neo4j at '{uri}': {e}. "
-                f"Check your URI, credentials, and network connectivity."
-            ) from e
-
-        return driver
-
-    def _get_database(self) -> str:
-        return os.getenv("NEO4J_DATABASE", "neo4j")
-
-    # ------------------------------------------------------------------
-    # Deterministic community hash (safe for all string content)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _community_hash(seed: str) -> str:
-        """Generate a deterministic 8-character community ID from a seed string."""
-        return hashlib.sha256(seed.encode("utf-8", errors="replace")).hexdigest()[:8]
-
-    # ------------------------------------------------------------------
-    # Community detection
+    # Community detection via microservice + local LLM summaries
     # ------------------------------------------------------------------
 
     def detect_communities(self) -> list[Data]:
         """
-        Detect communities in the graph and generate LLM summaries.
-
-        Uses Label Propagation (works on all Neo4j editions) by default,
-        or Louvain/Leiden if Neo4j GDS is available.
+        Detect communities in the graph via the graph-rag-service microservice
+        and generate LLM summaries locally.
 
         Returns list of Data items, one per community, with:
           - title, summary, node_count, members
         """
-        driver = self._get_driver()
-        db = self._get_database()
         graph_kb_id = self.graph_kb_id or "default"
         max_communities = max(1, self.max_communities or 10)
         min_community_size = max(2, self.min_community_size or 2)
 
-        try:
-            # Check for existing communities first
-            try:
-                with driver.session(database=db) as session:
-                    existing = session.run(
-                        """
-                        MATCH (c:__Community__ {graph_kb_id: $graph_kb_id})
-                        RETURN c.id AS id, c.summary AS summary, c.title AS title,
-                               c.node_count AS node_count, c.level AS level
-                        ORDER BY c.node_count DESC
-                        LIMIT $limit
-                        """,
-                        graph_kb_id=graph_kb_id,
-                        limit=max_communities,
-                    )
-                    existing_records = [dict(r) for r in existing]
-            except Exception as e:
-                logger.warning(f"[Community Search] Failed to query existing communities: {e}")
-                existing_records = []
+        # Delegate community detection to graph-rag-service
+        resp = detect_communities_via_service(
+            graph_kb_id=graph_kb_id,
+            max_communities=max_communities,
+            min_community_size=min_community_size,
+        )
 
-            if existing_records:
-                self.log(f"Found {len(existing_records)} existing communities.")
-                results = []
-                for rec in existing_records:
-                    results.append(Data(
-                        text=f"**{rec.get('title', 'Community')}**\n{rec.get('summary', '')}",
-                        data={
-                            "community_id": rec["id"],
-                            "title": rec.get("title", ""),
-                            "summary": rec.get("summary", ""),
-                            "node_count": rec.get("node_count", 0),
-                            "level": rec.get("level", 0),
-                            "graph_kb_id": graph_kb_id,
-                        },
-                    ))
-                self.status = f"{len(results)} communities loaded."
-                return results
+        communities = resp.get("communities", [])
 
-            # No existing communities -- detect them
-            self.log(f"No existing communities found for graph_kb_id='{graph_kb_id}'. Running community detection...")
+        if not communities:
+            self.status = resp.get("message", "No communities found.")
+            self.log(self.status)
+            return []
 
-            # Fetch all entities and their edges for Union-Find
-            with driver.session(database=db) as session:
-                edge_result = session.run(
-                    """
-                    MATCH (a:__Entity__ {graph_kb_id: $graph_kb_id})
-                           -[:RELATED_TO]-
-                          (b:__Entity__ {graph_kb_id: $graph_kb_id})
-                    RETURN DISTINCT a.name AS src, b.name AS tgt
-                    """,
-                    graph_kb_id=graph_kb_id,
-                )
-                edges = [(r["src"], r["tgt"]) for r in edge_result]
-
-            with driver.session(database=db) as session:
-                all_result = session.run(
-                    """
-                    MATCH (e:__Entity__ {graph_kb_id: $graph_kb_id})
-                    RETURN e.name AS name
-                    """,
-                    graph_kb_id=graph_kb_id,
-                )
-                all_names = [r["name"] for r in all_result]
-
-            self.log(f"Found {len(all_names)} entities and {len(edges)} edges for graph_kb_id='{graph_kb_id}'.")
-
-            if not all_names:
-                # No entities at all — check if entities exist under a different graph_kb_id
-                with driver.session(database=db) as session:
-                    kb_check = session.run(
-                        """
-                        MATCH (e:__Entity__)
-                        RETURN DISTINCT e.graph_kb_id AS kb_id, count(e) AS cnt
-                        LIMIT 10
-                        """
-                    )
-                    available_kbs = {r["kb_id"]: r["cnt"] for r in kb_check}
-
-                if available_kbs:
-                    kb_list = ", ".join(f"'{k}' ({v} entities)" for k, v in available_kbs.items())
-                    self.status = (
-                        f"No entities found for graph_kb_id='{graph_kb_id}'. "
-                        f"Available graphs: {kb_list}"
-                    )
-                    self.log(self.status)
-                else:
-                    self.status = "No entities found in Neo4j. Ingest documents first."
-                return []
-
-            # Union-Find to detect connected components
-            parent: dict[str, str] = {n: n for n in all_names}
-
-            def find(x: str) -> str:
-                while parent[x] != x:
-                    parent[x] = parent[parent[x]]
-                    x = parent[x]
-                return x
-
-            def union(a: str, b: str) -> None:
-                ra, rb = find(a), find(b)
-                if ra != rb:
-                    parent[ra] = rb
-
-            for src, tgt in edges:
-                if src in parent and tgt in parent:
-                    union(src, tgt)
-
-            # Group entities by their root (= connected component)
-            from collections import defaultdict as _defaultdict
-            components: dict[str, list[str]] = _defaultdict(list)
-            for name in all_names:
-                components[find(name)].append(name)
-
-            # Assign community IDs back to Neo4j
-            for root, members in components.items():
-                cid = self._community_hash(root)
-                with driver.session(database=db) as session:
-                    session.run(
-                        """
-                        UNWIND $members AS member_name
-                        MATCH (e:__Entity__ {name: member_name, graph_kb_id: $graph_kb_id})
-                        SET e.community_id = $cid
-                        """,
-                        members=members,
-                        graph_kb_id=graph_kb_id,
-                        cid=cid,
-                    )
-
-            self.log(
-                f"Union-Find detected {len(components)} components "
-                f"from {len(all_names)} entities and {len(edges)} edges."
-            )
-
-            # Get community groupings
-            try:
-                with driver.session(database=db) as session:
-                    community_result = session.run(
-                        """
-                        MATCH (e:__Entity__ {graph_kb_id: $graph_kb_id})
-                        WHERE e.community_id IS NOT NULL
-                        WITH e.community_id AS cid,
-                             collect(e.name) AS members,
-                             collect(e.description) AS descriptions,
-                             collect(e.type) AS types,
-                             count(e) AS node_count
-                        WHERE node_count >= $min_size
-                        RETURN cid, members, descriptions, types, node_count
-                        ORDER BY node_count DESC
-                        LIMIT $limit
-                        """,
-                        graph_kb_id=graph_kb_id,
-                        limit=max_communities,
-                        min_size=min_community_size,
-                    )
-                    communities = [dict(r) for r in community_result]
-            except Exception as e:
-                raise ValueError(
-                    f"Failed to retrieve community groupings from Neo4j: {e}"
-                ) from e
-
-            if not communities:
-                self.status = (
-                    f"No communities >= {min_community_size} members detected "
-                    f"(graph_kb_id='{graph_kb_id}', {len(all_names)} entities, {len(edges)} edges, "
-                    f"{len(components)} components)."
-                )
-                self.log(self.status)
-                return []
-
-            # Generate LLM summaries for each community
-            self.log(f"Generating summaries for {len(communities)} communities...")
+        # Check if communities already have summaries (pre-existing)
+        already_summarized = all(c.get("summary") for c in communities)
+        if already_summarized:
+            self.log(f"Found {len(communities)} existing communities with summaries.")
             results = []
-            for comm_idx, comm in enumerate(communities):
-                members = comm.get("members", [])[:20]
-                types = list(set(t for t in comm.get("types", []) if t))
-                descriptions = [d for d in comm.get("descriptions", []) if d and d.strip()][:10]
-
-                member_text = ", ".join(members[:10])
-                desc_text = ". ".join(descriptions[:5])
-                community_text = (
-                    f"Entities ({len(members)}): {member_text}\n"
-                    f"Types: {', '.join(types)}\n"
-                    f"Descriptions: {desc_text}"
-                )
-
-                title = f"Community: {', '.join(members[:3])}"
-                summary = community_text  # fallback
-
-                if self.llm:
-                    try:
-                        prompt = (
-                            f"Summarize this knowledge graph community in 2-3 sentences. "
-                            f"Give it a short title.\n\n{community_text}\n\n"
-                            f"Format: Title: <title>\nSummary: <summary>"
-                        )
-                        response = self.llm.invoke(prompt)
-                        raw = response.content if hasattr(response, "content") else str(response)
-
-                        if "Title:" in raw and "Summary:" in raw:
-                            parts = raw.split("Summary:", 1)
-                            title = parts[0].replace("Title:", "").strip()
-                            summary = parts[1].strip()
-                        else:
-                            summary = raw.strip()
-                            title = f"Community: {members[0]}" if members else "Community"
-                    except Exception as e:
-                        logger.warning(f"[Community Search] LLM summary failed for community {comm_idx}: {e}")
-                        self.log(f"LLM summary failed for community {comm_idx + 1}: {e}")
-
-                # Store community in Neo4j
-                try:
-                    with driver.session(database=db) as session:
-                        session.run(
-                            """
-                            MERGE (c:__Community__ {id: $cid, graph_kb_id: $graph_kb_id})
-                            SET c.title = $title,
-                                c.summary = $summary,
-                                c.node_count = $node_count,
-                                c.level = 0
-                            WITH c
-                            UNWIND $members AS member_name
-                            MATCH (e:__Entity__ {name: member_name, graph_kb_id: $graph_kb_id})
-                            MERGE (c)-[:HAS_MEMBER]->(e)
-                            """,
-                            cid=comm["cid"],
-                            graph_kb_id=graph_kb_id,
-                            title=title,
-                            summary=summary,
-                            node_count=comm["node_count"],
-                            members=members,
-                        )
-                except Exception as e:
-                    logger.warning(f"[Community Search] Failed to store community {comm_idx}: {e}")
-
+            for comm in communities:
                 results.append(Data(
-                    text=f"**{title}**\n{summary}",
+                    text=f"**{comm.get('title', 'Community')}**\n{comm.get('summary', '')}",
                     data={
-                        "community_id": comm["cid"],
-                        "title": title,
-                        "summary": summary,
-                        "node_count": comm["node_count"],
-                        "members": members,
+                        "community_id": comm.get("id", ""),
+                        "title": comm.get("title", ""),
+                        "summary": comm.get("summary", ""),
+                        "node_count": comm.get("node_count", 0),
+                        "members": comm.get("members", []),
                         "graph_kb_id": graph_kb_id,
                     },
                 ))
-
-            self.status = f"Detected and summarized {len(results)} communities."
+            self.status = f"{len(results)} communities loaded."
             return results
 
-        finally:
-            driver.close()
+        # Generate LLM summaries locally for newly detected communities
+        self.log(f"Generating summaries for {len(communities)} communities...")
+        results = []
+        community_summaries = []
+
+        for comm_idx, comm in enumerate(communities):
+            members = comm.get("members", [])[:20]
+            types = list(set(t for t in comm.get("types", []) if t))
+            descriptions = [d for d in comm.get("descriptions", []) if d and d.strip()][:10]
+
+            member_text = ", ".join(members[:10])
+            desc_text = ". ".join(descriptions[:5])
+            community_text = (
+                f"Entities ({len(members)}): {member_text}\n"
+                f"Types: {', '.join(types)}\n"
+                f"Descriptions: {desc_text}"
+            )
+
+            title = f"Community: {', '.join(members[:3])}"
+            summary = community_text  # fallback
+
+            if self.llm:
+                try:
+                    prompt = (
+                        f"Summarize this knowledge graph community in 2-3 sentences. "
+                        f"Give it a short title.\n\n{community_text}\n\n"
+                        f"Format: Title: <title>\nSummary: <summary>"
+                    )
+                    response = self.llm.invoke(prompt)
+                    raw = response.content if hasattr(response, "content") else str(response)
+
+                    if "Title:" in raw and "Summary:" in raw:
+                        parts = raw.split("Summary:", 1)
+                        title = parts[0].replace("Title:", "").strip()
+                        summary = parts[1].strip()
+                    else:
+                        summary = raw.strip()
+                        title = f"Community: {members[0]}" if members else "Community"
+                except Exception as e:
+                    logger.warning(f"[Community Search] LLM summary failed for community {comm_idx}: {e}")
+                    self.log(f"LLM summary failed for community {comm_idx + 1}: {e}")
+
+            # Collect for batch storage via microservice
+            community_summaries.append({
+                "community_id": comm.get("id", ""),
+                "title": title,
+                "summary": summary,
+                "node_count": comm.get("node_count", 0),
+                "members": members,
+            })
+
+            results.append(Data(
+                text=f"**{title}**\n{summary}",
+                data={
+                    "community_id": comm.get("id", ""),
+                    "title": title,
+                    "summary": summary,
+                    "node_count": comm.get("node_count", 0),
+                    "members": members,
+                    "graph_kb_id": graph_kb_id,
+                },
+            ))
+
+        # Store community summaries back to Neo4j via microservice
+        if community_summaries:
+            try:
+                store_communities_via_service(
+                    graph_kb_id=graph_kb_id,
+                    communities=community_summaries,
+                )
+                self.log(f"Stored {len(community_summaries)} community summaries.")
+            except Exception as e:
+                logger.warning(f"[Community Search] Failed to store communities: {e}")
+
+        self.status = f"Detected and summarized {len(results)} communities."
+        return results
 
     # ------------------------------------------------------------------
     # Global search (map-reduce over communities)
