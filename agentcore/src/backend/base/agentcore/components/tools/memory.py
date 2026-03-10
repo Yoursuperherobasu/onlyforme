@@ -1,5 +1,7 @@
 from typing import Any, cast
 
+from loguru import logger
+
 from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
 from agentcore.inputs.inputs import DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
@@ -21,16 +23,25 @@ class MemoryComponent(Node):
     mode_config = {
         "Store": ["message", "memory", "sender", "sender_name", "session_id"],
         "Retrieve": ["n_messages", "order", "template", "memory"],
+        "Short Term Memory": ["input_value", "n_messages", "session_id", "template", "memory"],
     }
 
     inputs = [
         TabInput(
             name="mode",
             display_name="Mode",
-            options=["Retrieve", "Store"],
+            options=["Retrieve", "Store", "Short Term Memory"],
             value="Retrieve",
-            info="Operation mode: Store messages or Retrieve messages.",
+            info="Operation mode: Store messages, Retrieve messages, or Short Term Memory (fetch recent conversation and concat with current input).",
             real_time_refresh=True,
+        ),
+        HandleInput(
+            name="input_value",
+            display_name="Chat Input",
+            input_types=["Message"],
+            info="The current chat input message. In Short Term Memory mode, recent conversation history will be prepended to this message.",
+            required=True,
+            show=False,
         ),
         MessageTextInput(
             name="message",
@@ -72,9 +83,8 @@ class MemoryComponent(Node):
         IntInput(
             name="n_messages",
             display_name="Number of Messages",
-            value=100,
-            info="Number of messages to retrieve.",
-            advanced=True,
+            value=10,
+            info="Number of recent messages to retrieve. In Short Term Memory mode, these are the top K latest conversations prepended to the input.",
             show=True,
         ),
         MessageTextInput(
@@ -108,6 +118,7 @@ class MemoryComponent(Node):
     outputs = [
         Output(display_name="Message", name="messages_text", method="retrieve_messages_as_text", dynamic=True),
         Output(display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", dynamic=True),
+        Output(display_name="Enriched Message", name="enriched_message", method="short_term_memory", dynamic=True),
     ]
 
     def update_outputs(self, frontend_node: dict, field_name: str, field_value: Any) -> dict:
@@ -132,6 +143,15 @@ class MemoryComponent(Node):
                     ),
                     Output(
                         display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", dynamic=True
+                    ),
+                ]
+            if field_value == "Short Term Memory":
+                frontend_node["outputs"] = [
+                    Output(
+                        display_name="Enriched Message",
+                        name="enriched_message",
+                        method="short_term_memory",
+                        dynamic=True,
                     ),
                 ]
         return frontend_node
@@ -244,6 +264,113 @@ class MemoryComponent(Node):
         """
         messages = await self.retrieve_messages()
         return DataFrame(messages)
+
+    async def short_term_memory(self) -> Message:
+        """Fetch the top K latest messages from the session and concat with the current chat input.
+
+        The conversation history is prepended to the current user message so the downstream
+        LLM receives recent context along with the new input. The current user message is also
+        stored in the conversation history so future STM retrievals include it.
+
+        Returns:
+            Message: A new Message with conversation history prepended to the input text.
+        """
+        session_id = self._effective_session_id()
+        n_messages = self.n_messages or 10
+
+        # Get the current input text from ChatInput
+        current_input = self.input_value
+        if current_input is None:
+            logger.warning("[STM] input_value is None — ChatInput output is not connected to Memory's 'Chat Input' handle.")
+        if isinstance(current_input, Message):
+            current_text = current_input.text or ""
+            logger.info(f"[STM] Received input from ChatInput: {current_text[:100]}")
+        elif isinstance(current_input, str):
+            current_text = current_input
+        else:
+            current_text = str(current_input) if current_input else ""
+
+        # Check if ChatInput already stored this message (has an id from DB)
+        already_stored = (
+            isinstance(current_input, Message)
+            and hasattr(current_input, "id")
+            and current_input.id is not None
+        )
+
+        # Only store if not already saved by ChatInput (avoid duplicates)
+        if not already_stored:
+            user_message = Message(text=current_text)
+            if isinstance(current_input, Message):
+                user_message.sender = current_input.sender or MESSAGE_SENDER_USER
+                user_message.sender_name = current_input.sender_name or "User"
+                user_message.session_id = current_input.session_id or session_id
+                user_message.files = current_input.files
+            else:
+                user_message.sender = MESSAGE_SENDER_USER
+                user_message.sender_name = "User"
+                user_message.session_id = session_id
+
+            if session_id and user_message.sender and user_message.sender_name:
+                if self.memory:
+                    self.memory.session_id = session_id
+                    lc_message = user_message.to_lc_message()
+                    await self.memory.aadd_messages([lc_message])
+                else:
+                    await astore_message(user_message, agent_id=self.graph.agent_id if hasattr(self, "graph") else None)
+
+        # Fetch the top K latest messages from the session (includes the just-stored user message)
+        history_messages: list[Message] = []
+        if session_id:
+            if self.memory:
+                self.memory.session_id = session_id
+                lc_messages = await self.memory.aget_messages()
+                history_messages = [Message.from_lc_message(m) for m in lc_messages] if lc_messages else []
+                # Take the latest N messages
+                history_messages = history_messages[-n_messages:]
+            else:
+                history_messages = await aget_messages(
+                    session_id=session_id,
+                    order="DESC",
+                    limit=n_messages,
+                )
+                # Reverse to chronological order (oldest first)
+                history_messages = list(reversed(history_messages))
+
+        # Format conversation history using the template
+        template = self.template if hasattr(self, "template") and self.template else "{sender_name}: {text}"
+        if history_messages:
+            conversation_history = data_to_text(template, history_messages)
+        else:
+            conversation_history = ""
+
+        # Build the enriched text: history + current input
+        if conversation_history:
+            enriched_text = (
+                f"Conversation History:\n{conversation_history}\n\n"
+                f"Current Message:\n{current_text}"
+            )
+        else:
+            enriched_text = current_text
+
+        # Create a new message with the enriched text, preserving original message properties
+        enriched_message = Message(text=enriched_text)
+        if isinstance(current_input, Message):
+            enriched_message.sender = current_input.sender
+            enriched_message.sender_name = current_input.sender_name
+            enriched_message.session_id = current_input.session_id or session_id
+            enriched_message.files = current_input.files
+        else:
+            enriched_message.session_id = session_id
+
+        logger.info(
+            f"[STM] session_id={session_id} | "
+            f"n_messages={n_messages} | "
+            f"already_stored={already_stored}"
+        )
+        logger.debug(f"[STM] Final enriched payload to LLM:\n{enriched_text}")
+
+        self.status = enriched_message
+        return enriched_message
 
     def update_build_config(
         self,
