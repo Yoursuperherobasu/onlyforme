@@ -1572,14 +1572,31 @@ class Node(ExecutableNode):
         return result
 
     async def _store_orch_message(self, message: Message, agent_id: str | None) -> Message:
-        """Store a message in the orch_conversation table instead of the regular conversation table."""
+        """Store a message in the orch_conversation table instead of the regular conversation table.
+
+        When ``graph.orch_skip_node_persist`` is True (set by the orchestrator
+        chat endpoint), the message is returned as-is **without** DB persistence.
+        The orchestrator already stores user messages and agent replies explicitly
+        with correct metadata; letting individual nodes also persist would create
+        duplicates, "Message empty." entries from intermediate nodes, and
+        cross-user session leakage via stale graph state.
+        """
+        graph = self.graph
+
+        # Orchestrator endpoint handles persistence — skip node-level storage.
+        # Assign an id so callers (send_message) that access .id don't crash.
+        if getattr(graph, "orch_skip_node_persist", False):
+            from uuid import uuid4 as _uuid4
+            if not getattr(message, "id", None):
+                message.id = str(_uuid4())
+            return message
+
         from uuid import UUID as _UUID, uuid4 as _uuid4
         from datetime import datetime, timezone
         from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
         from agentcore.services.database.models.orch_conversation.crud import orch_add_message
         from agentcore.services.deps import session_scope
 
-        graph = self.graph
         orch_row = OrchConversationTable(
             id=_uuid4(),
             sender=message.sender or "Machine",

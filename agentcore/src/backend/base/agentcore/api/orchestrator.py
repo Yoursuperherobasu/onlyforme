@@ -193,6 +193,12 @@ async def _build_orch_graph(
         chat_service=get_chat_service(),
     )
 
+    # Always update user_id after retrieving the graph — the graph may have
+    # been returned from cache with a *different* user's ID. Without this,
+    # node-level messages (stored by _store_orch_message) would carry the
+    # stale user_id, causing sessions to leak across users.
+    graph.user_id = user_id
+
     if stream:
         for vertex in graph.vertices:
             if isinstance(vertex.template.get("stream"), dict):
@@ -200,6 +206,12 @@ async def _build_orch_graph(
 
     # Orchestration chat persists messages/transactions in its own tables.
     graph.skip_dev_logging = True
+
+    # Tell nodes NOT to persist messages — the orchestrator endpoint stores
+    # user messages and agent replies explicitly with correct metadata.
+    # Node-level persistence would create duplicates and "Message empty."
+    # entries from intermediate nodes (e.g. RegistryModelComponent).
+    graph.orch_skip_node_persist = True
 
     # Pass orch context so the adapter logs to orch_transaction.
     graph.orch_session_id = session_id
@@ -991,6 +1003,9 @@ async def get_orch_session_messages(
                 content_blocks=m.content_blocks if m.content_blocks else None,
             )
             for m in messages
+            # Safety net: skip messages with empty text that were persisted by
+            # intermediate graph nodes before the orch_skip_node_persist fix.
+            if (m.text and m.text.strip()) or m.category == "context_reset"
         ]
     except Exception as e:
         logger.error(f"Error getting orch session messages: {e}")
@@ -1007,7 +1022,7 @@ async def delete_orch_session(
 ):
     """Delete all messages and transactions for an orchestrator session."""
     try:
-        await orch_delete_session(session, session_id)
+        await orch_delete_session(session, session_id, user_id=current_user.id)
         await orch_delete_session_transactions(session, session_id)
     except Exception as e:
         logger.error(f"Error deleting orch session: {e}")
@@ -1029,7 +1044,7 @@ async def rename_orch_session(
 ):
     """Rename an orchestrator session (updates session_id on all messages)."""
     try:
-        count = await orch_rename_session(session, session_id, new_session_id)
+        count = await orch_rename_session(session, session_id, new_session_id, user_id=current_user.id)
         return {"updated": count, "new_session_id": new_session_id}
     except Exception as e:
         logger.error(f"Error renaming orch session: {e}")
