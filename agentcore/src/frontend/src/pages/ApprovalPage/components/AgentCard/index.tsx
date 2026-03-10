@@ -73,6 +73,12 @@ export function AgentCard({
     const atIndex = raw.indexOf("@");
     return atIndex > 0 ? raw.slice(0, atIndex) : raw;
   })();
+  const submittedByEmail = (() => {
+    const explicit = submittedBy?.email?.trim() ?? "";
+    if (explicit) return explicit;
+    const raw = submittedBy?.name?.trim() ?? "";
+    return raw.includes("@") ? raw : "";
+  })();
 
   return (
     <div className="rounded-lg border border-border bg-card p-6 transition-shadow hover:shadow-md">
@@ -104,9 +110,13 @@ export function AgentCard({
       <div className="mb-4 grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
         <div className="min-w-0">
           <div className="text-xs text-muted-foreground">{t("Submitted By")}</div>
-          <div className="truncate font-medium" title={submittedByDisplay}>
-            {submittedByDisplay}
-          </div>
+          {submittedByEmail ? (
+            <ShadTooltip content={submittedByEmail}>
+              <div className="truncate font-medium">{submittedByDisplay}</div>
+            </ShadTooltip>
+          ) : (
+            <div className="truncate font-medium">{submittedByDisplay}</div>
+          )}
         </div>
         <div>
           <div className="text-xs text-muted-foreground">{t("Project")}</div>

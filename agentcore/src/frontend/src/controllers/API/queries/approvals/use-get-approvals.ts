@@ -12,6 +12,7 @@ export interface ApprovalAgent {
   submittedBy: {
     name: string;
     avatar?: string;
+    email?: string | null;
   };
   project: string;
   submitted: string;

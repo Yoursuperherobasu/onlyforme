@@ -72,6 +72,7 @@ class RegistryEntryResponse(BaseModel):
     visibility: str
     listed_by: UUID
     listed_by_username: str | None = None
+    listed_by_email: str | None = None
     listed_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -284,11 +285,20 @@ async def browse_registry(
         items: list[RegistryEntryResponse] = []
         lister_ids = {r.listed_by for r in records}
         lister_map: dict[UUID, str] = {}
+        lister_email_map: dict[UUID, str | None] = {}
         if lister_ids:
             users = (await session.exec(
                 select(User).where(User.id.in_(lister_ids))  # type: ignore[union-attr]
             )).all()
             lister_map = {u.id: u.username for u in users}
+            lister_email_map = {
+                u.id: (
+                    u.email
+                    if getattr(u, "email", None)
+                    else (u.username if getattr(u, "username", None) and "@" in u.username else None)
+                )
+                for u in users
+            }
 
         for r in records:
             items.append(
@@ -306,6 +316,7 @@ async def browse_registry(
                     visibility=r.visibility.value,
                     listed_by=r.listed_by,
                     listed_by_username=lister_map.get(r.listed_by),
+                    listed_by_email=lister_email_map.get(r.listed_by),
                     listed_at=r.listed_at,
                     created_at=r.created_at,
                     updated_at=r.updated_at,
@@ -366,6 +377,15 @@ async def get_registry_entry(
         # Fetch lister username
         lister = await session.get(User, entry.listed_by)
         lister_username = lister.username if lister else None
+        lister_email = (
+            lister.email
+            if lister and lister.email
+            else (
+                lister.username
+                if lister and lister.username and "@" in lister.username
+                else None
+            )
+        )
 
         # Fetch deployment details based on environment
         version_number: str | None = None
@@ -411,6 +431,7 @@ async def get_registry_entry(
             visibility=entry.visibility.value,
             listed_by=entry.listed_by,
             listed_by_username=lister_username,
+            listed_by_email=lister_email,
             listed_at=entry.listed_at,
             created_at=entry.created_at,
             updated_at=entry.updated_at,

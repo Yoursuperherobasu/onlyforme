@@ -47,6 +47,7 @@ from agentcore.services.database.registry_service import sync_agent_registry
 class SubmittedBy(BaseModel):
     name: str
     avatar: str | None = None
+    email: str | None = None
 
 
 class ApprovalAgent(BaseModel):
@@ -436,6 +437,15 @@ async def get_approvals(
                 if requester and requester.display_name
                 else (requester.username if requester else "Unknown")
             )
+            submitter_email = (
+                requester.email
+                if requester and requester.email
+                else (
+                    requester.username
+                    if requester and requester.username and "@" in requester.username
+                    else None
+                )
+            )
 
             payload.append(
                 ApprovalAgent(
@@ -444,7 +454,7 @@ async def get_approvals(
                     title=title,
                     status=_to_status_label(req.decision),
                     description=description,
-                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     project=project_name,
                     submitted=(
                         req.updated_at.replace(tzinfo=timezone.utc).isoformat()
@@ -475,6 +485,15 @@ async def get_approvals(
                 if requester and requester.display_name
                 else (requester.username if requester else "Unknown")
             )
+            submitter_email = (
+                requester.email
+                if requester and requester.email
+                else (
+                    requester.username
+                    if requester and requester.username and "@" in requester.username
+                    else None
+                )
+            )
             submitted_at = req.requested_at
             deployment_env = (req.deployment_env or "DEV").upper()
             payload.append(
@@ -484,7 +503,7 @@ async def get_approvals(
                     title=row.server_name,
                     status=_to_status_label_any(req.decision),
                     description=row.description or "",
-                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     project=dept_name,
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()
@@ -514,6 +533,15 @@ async def get_approvals(
                 if requester and requester.display_name
                 else (requester.username if requester else "Unknown")
             )
+            submitter_email = (
+                requester.email
+                if requester and requester.email
+                else (
+                    requester.username
+                    if requester and requester.username and "@" in requester.username
+                    else None
+                )
+            )
             submitted_at = req.requested_at
             # Extract project name from provider_config.request_meta
             provider_cfg = row.provider_config if isinstance(row.provider_config, dict) else {}
@@ -526,7 +554,7 @@ async def get_approvals(
                     title=row.display_name,
                     status=_to_status_label_any(req.decision),
                     description=row.description or "",
-                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     project=model_project_name,
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()

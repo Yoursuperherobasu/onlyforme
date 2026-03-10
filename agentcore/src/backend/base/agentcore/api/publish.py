@@ -27,6 +27,7 @@ from enum import Enum as PyEnum
 from fastapi import APIRouter, HTTPException, Query, status
 from loguru import logger
 from pydantic import BaseModel, Field
+from sqlalchemy import and_, func, or_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -50,6 +51,7 @@ from agentcore.services.database.models.agent_deployment_uat.model import (
     DeploymentVisibilityEnum,
 )
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
 from agentcore.services.database.models.agent_registry.model import RegistryDeploymentEnvEnum
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.database.models.agent_bundle.model import (
@@ -139,6 +141,10 @@ class PublishRequest(BaseModel):
             "snapshot is copied from this UAT record instead of agent.data. "
             "Only valid when environment='prod'."
         ),
+    )
+    recipient_emails: list[str] | None = Field(
+        default=None,
+        description="Optional recipient emails for this agent publish scope.",
     )
 
 
@@ -263,6 +269,11 @@ class PublishContextResponse(BaseModel):
     org_id: UUID
     department_id: UUID
     department_admin_id: UUID
+
+
+class PublishEmailSuggestion(BaseModel):
+    email: str
+    display_name: str | None = None
 
 
 async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set[UUID]:
@@ -468,6 +479,127 @@ async def _resolve_publish_scope(
     return resolved_department_id, resolved_department_admin_id
 
 # ═══════════════════════════════════════════════════════════════════════════
+
+EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _normalize_recipient_emails(raw_emails: list[str] | None) -> list[str]:
+    if not raw_emails:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_email in raw_emails:
+        email = str(raw_email).strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        normalized.append(email)
+    return normalized
+
+
+async def _validate_and_store_publish_recipients(
+    *,
+    session: DbSession,
+    agent: Agent,
+    department_id: UUID,
+    current_user: CurrentActiveUser,
+    recipient_emails: list[str],
+) -> None:
+    if not recipient_emails:
+        return
+
+    invalid_format = [email for email in recipient_emails if not EMAIL_REGEX.match(email)]
+    if invalid_format:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid email format: {', '.join(invalid_format)}",
+        )
+
+    user_rows = (
+        await session.exec(
+            select(User).where(
+                or_(
+                    func.lower(User.username).in_(recipient_emails),
+                    and_(User.email.is_not(None), func.lower(User.email).in_(recipient_emails)),
+                )
+            )
+        )
+    ).all()
+    matched_users_by_email: dict[str, User] = {}
+    for user in user_rows:
+        if user.username:
+            matched_users_by_email[str(user.username).strip().lower()] = user
+        if user.email:
+            matched_users_by_email[str(user.email).strip().lower()] = user
+
+    missing_users = [email for email in recipient_emails if email not in matched_users_by_email]
+    if missing_users:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Email not found in users table: {', '.join(missing_users)}",
+        )
+
+    recipient_user_ids = {matched_users_by_email[email].id for email in recipient_emails}
+    memberships = (
+        await session.exec(
+            select(UserDepartmentMembership).where(
+                UserDepartmentMembership.user_id.in_(list(recipient_user_ids)),
+                UserDepartmentMembership.department_id == department_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    allowed_user_ids = {membership.user_id for membership in memberships}
+
+    not_in_department = sorted(
+        {
+            email
+            for email in recipient_emails
+            if matched_users_by_email[email].id not in allowed_user_ids
+        }
+    )
+    if not_in_department:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Some emails are not active members of this department: "
+                f"{', '.join(not_in_department)}"
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    for email in recipient_emails:
+        user = matched_users_by_email[email]
+        existing = (
+            await session.exec(
+                select(AgentPublishRecipient).where(
+                    AgentPublishRecipient.agent_id == agent.id,
+                    AgentPublishRecipient.dept_id == department_id,
+                    AgentPublishRecipient.recipient_email == email,
+                )
+            )
+        ).first()
+
+        if existing:
+            existing.recipient_user_id = user.id
+            existing.updated_at = now
+            if agent.org_id:
+                existing.org_id = agent.org_id
+            session.add(existing)
+            continue
+
+        session.add(
+            AgentPublishRecipient(
+                agent_id=agent.id,
+                org_id=agent.org_id,
+                dept_id=department_id,
+                recipient_user_id=user.id,
+                recipient_email=email,
+                created_by=current_user.id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
 # Helper Functions
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -539,6 +671,91 @@ async def validate_publish_email(
             else "Email exists, but not in this department."
         ),
     )
+
+
+@router.get("/{agent_id}/email-suggestions", response_model=list[PublishEmailSuggestion], status_code=200)
+async def get_publish_email_suggestions(
+    *,
+    session: DbSession,
+    agent_id: UUID,
+    q: str = Query(default="", description="Email prefix or substring for suggestions"),
+    limit: int = Query(default=8, ge=1, le=25),
+    current_user: CurrentActiveUser,
+) -> list[PublishEmailSuggestion]:
+    """Return recipient suggestions scoped to current user's departments.
+
+    Results are ranked with previously selected recipients first, then
+    department directory matches from the user table.
+    """
+    query_text = str(q).strip().lower()
+    if not query_text:
+        return []
+
+    agent = await _get_agent_or_404(session, agent_id, current_user.id)
+    current_user_dept_ids = await _current_user_department_ids(session, current_user.id)
+    if not current_user_dept_ids:
+        return []
+
+    recent_stmt = (
+        select(AgentPublishRecipient, User)
+        .join(User, User.id == AgentPublishRecipient.recipient_user_id)
+        .where(
+            AgentPublishRecipient.agent_id == agent.id,
+            AgentPublishRecipient.dept_id.in_(list(current_user_dept_ids)),
+            func.lower(AgentPublishRecipient.recipient_email).like(f"%{query_text}%"),
+        )
+        .order_by(col(AgentPublishRecipient.updated_at).desc())
+        .limit(limit)
+    )
+    recent_rows = (await session.exec(recent_stmt)).all()
+    suggestions: list[PublishEmailSuggestion] = []
+    seen: set[str] = set()
+    for recipient_row, user in recent_rows:
+        email = str(recipient_row.recipient_email).strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        suggestions.append(
+            PublishEmailSuggestion(
+                email=email,
+                display_name=user.display_name or user.username,
+            )
+        )
+
+    if len(suggestions) >= limit:
+        return suggestions[:limit]
+
+    directory_limit = max(limit * 2, 16)
+    directory_stmt = (
+        select(User)
+        .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
+        .where(
+            UserDepartmentMembership.department_id.in_(list(current_user_dept_ids)),
+            UserDepartmentMembership.status == "active",
+            or_(
+                func.lower(User.username).like(f"%{query_text}%"),
+                and_(User.email.is_not(None), func.lower(User.email).like(f"%{query_text}%")),
+            ),
+        )
+        .order_by(col(User.display_name), col(User.username))
+        .limit(directory_limit)
+    )
+    directory_users = (await session.exec(directory_stmt)).all()
+    for user in directory_users:
+        email_candidate = str(user.email or user.username or "").strip().lower()
+        if not email_candidate or "@" not in email_candidate or email_candidate in seen:
+            continue
+        seen.add(email_candidate)
+        suggestions.append(
+            PublishEmailSuggestion(
+                email=email_candidate,
+                display_name=user.display_name or user.username,
+            )
+        )
+        if len(suggestions) >= limit:
+            break
+
+    return suggestions
 
 
 @router.get("/{agent_id}/context", response_model=PublishContextResponse, status_code=200)
@@ -1289,9 +1506,6 @@ async def publish_agent(
         PublishActionResponse with the deployment record details.
     """
     try:
-        print("*********************")
-        print(current_user)
-
         agent = await _get_agent_or_404(session, agent_id, current_user.id)
 
         if not agent.data:
@@ -1306,6 +1520,14 @@ async def publish_agent(
             agent=agent,
             requested_department_id=body.department_id,
             requested_department_admin_id=body.department_admin_id,
+        )
+        recipient_emails = _normalize_recipient_emails(body.recipient_emails)
+        await _validate_and_store_publish_recipients(
+            session=session,
+            agent=agent,
+            department_id=resolved_department_id,
+            current_user=current_user,
+            recipient_emails=recipient_emails,
         )
 
         # Freeze snapshot — immutable copy of the current agent flow

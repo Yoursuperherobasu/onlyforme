@@ -19,6 +19,7 @@ from .user_department_membership import UserDepartmentMembership
 from .vector_db_catalogue import VectorDBCatalogue
 from .knowledge_base import KnowledgeBase
 from .agent_bundle import AgentBundle
+from .agent_publish_recipient import AgentPublishRecipient
 from .agent_edit_lock import AgentEditLock
 from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
@@ -44,6 +45,7 @@ from .observability_schema_lock import ObservabilitySchemaLock
 __all__ = [
     "Agent",
     "AgentBundle",
+    "AgentPublishRecipient",
     "AgentEditLock",
     "AgentDeploymentProd",
     "AgentDeploymentUAT",

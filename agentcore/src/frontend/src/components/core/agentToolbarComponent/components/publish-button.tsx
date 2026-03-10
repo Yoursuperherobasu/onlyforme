@@ -1,27 +1,38 @@
+import {
+  type KeyboardEvent,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
-import { PUBLISH_BUTTON_NAME } from "@/constants/constants";
-import { ENABLE_PUBLISH } from "@/customization/feature-flags";
-import { AuthContext } from "@/contexts/authContext";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import useAgentsManagerStore from "@/stores/agentsManagerStore";
-import useAgentStore from "@/stores/agentStore";
-import useAlertStore from "@/stores/alertStore";
-import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
-import { useGetPublishStatus } from "@/controllers/API/queries/agents/use-get-publish-status";
-import { useValidatePublishEmail } from "@/controllers/API/queries/agents/use-validate-publish-email";
-import { usePatchUpdateAgent } from "@/controllers/API/queries/agents/use-patch-update-agent";
-import { usePostUnifiedPublishAgent } from "@/controllers/API/queries/agents/use-post-unified-publish-agent";
-import { cn } from "@/utils/utils";
-import { Input } from "@/components/ui/input";
+import { PUBLISH_BUTTON_NAME } from "@/constants/constants";
+import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
-import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
+import { useGetPublishEmailSuggestions } from "@/controllers/API/queries/agents/use-get-publish-email-suggestions";
+import { useGetPublishStatus } from "@/controllers/API/queries/agents/use-get-publish-status";
+import { usePatchUpdateAgent } from "@/controllers/API/queries/agents/use-patch-update-agent";
+import { usePostUnifiedPublishAgent } from "@/controllers/API/queries/agents/use-post-unified-publish-agent";
+import { useValidatePublishEmail } from "@/controllers/API/queries/agents/use-validate-publish-email";
+import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
+import { ENABLE_PUBLISH } from "@/customization/feature-flags";
+import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
+import useAlertStore from "@/stores/alertStore";
+import { cn } from "@/utils/utils";
 
 interface PublishButtonProps {
   hasIO: boolean;
@@ -71,17 +82,16 @@ const DisabledButton = () => (
   </div>
 );
 
-const PublishButton = ({
-  hasIO,
-}: PublishButtonProps) => {
+const PublishButton = ({ hasIO }: PublishButtonProps) => {
   const { permissions, userData } = useContext(AuthContext);
-  const navigate = useCustomNavigate();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canPublish = can("view_project_page");
   const currentAgent = useAgentsManagerStore((state) => state.currentAgent);
   const agents = useAgentsManagerStore((state) => state.agents);
   const setAgents = useAgentsManagerStore((state) => state.setAgents);
-  const setManagerCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);
+  const setManagerCurrentAgent = useAgentsManagerStore(
+    (state) => state.setCurrentAgent,
+  );
   const setCanvasCurrentAgent = useAgentStore((state) => state.setCurrentAgent);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -90,14 +100,17 @@ const PublishButton = ({
 
   const [open, setOpen] = useState(false);
   const [agentNameInput, setAgentNameInput] = useState("");
-  const [publishUat, setPublishUat] = useState(false);
-  const [publishProd, setPublishProd] = useState(false);
-  const [prodPublic, setProdPublic] = useState(false);
-  const [prodPrivate, setProdPrivate] = useState(false);
   const [publishDescription, setPublishDescription] = useState("");
-  const [emailsInput, setEmailsInput] = useState("");
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
+  const [emailDraft, setEmailDraft] = useState("");
+  const [debouncedEmailQuery, setDebouncedEmailQuery] = useState("");
   const [emailValidationResults, setEmailValidationResults] = useState<
-    Array<{ email: string; department_id: string | null; exists_in_department: boolean; message: string }>
+    Array<{
+      email: string;
+      department_id: string | null;
+      exists_in_department: boolean;
+      message: string;
+    }>
   >([]);
   const [validationInProgress, setValidationInProgress] = useState(false);
   const latestValidationRun = useRef(0);
@@ -117,24 +130,113 @@ const PublishButton = ({
   const normalizedEmails = useMemo(() => {
     return Array.from(
       new Set(
-        emailsInput
-          .split(/[\n,;\s]+/)
+        selectedEmails
           .map((email) => email.trim().toLowerCase())
           .filter(Boolean),
       ),
     );
-  }, [emailsInput]);
+  }, [selectedEmails]);
 
   const invalidEmails = useMemo(() => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return normalizedEmails.filter((email) => !emailRegex.test(email));
   }, [normalizedEmails]);
 
+  const {
+    data: rawEmailSuggestions = [],
+    isFetching: isFetchingEmailSuggestions,
+  } = useGetPublishEmailSuggestions(
+    {
+      agent_id: currentAgent?.id ?? "",
+      q: debouncedEmailQuery,
+      limit: 8,
+    },
+    {
+      enabled:
+        open && !!currentAgent?.id && debouncedEmailQuery.trim().length > 0,
+    },
+  );
+
+  const emailSuggestions = useMemo(
+    () =>
+      rawEmailSuggestions.filter(
+        (item) => !normalizedEmails.includes(item.email.trim().toLowerCase()),
+      ),
+    [rawEmailSuggestions, normalizedEmails],
+  );
+
   useEffect(() => {
     if (open) {
       setAgentNameInput(currentAgent?.name ?? "");
+      setSelectedEmails([]);
+      setEmailDraft("");
+      setEmailValidationResults([]);
     }
   }, [open, currentAgent?.name]);
+
+  useEffect(() => {
+    if (!open) {
+      setDebouncedEmailQuery("");
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedEmailQuery(emailDraft.trim().toLowerCase());
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [emailDraft, open]);
+
+  const addEmails = (rawValue: string) => {
+    const parsed = rawValue
+      .split(/[\n,;\s]+/)
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+    if (parsed.length === 0) return;
+
+    setSelectedEmails((prev) => {
+      const merged = new Set(prev.map((email) => email.trim().toLowerCase()));
+      parsed.forEach((email) => merged.add(email));
+      return Array.from(merged);
+    });
+  };
+
+  const removeEmail = (email: string) => {
+    const normalized = email.trim().toLowerCase();
+    setSelectedEmails((prev) =>
+      prev.filter((item) => item.trim().toLowerCase() !== normalized),
+    );
+    setEmailValidationResults((prev) =>
+      prev.filter((item) => item.email.trim().toLowerCase() !== normalized),
+    );
+  };
+
+  const commitDraftEmail = () => {
+    const value = emailDraft.trim();
+    if (!value) return;
+    addEmails(value);
+    setEmailDraft("");
+  };
+
+  const handleEmailKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (["Enter", "Tab", ",", ";", " "].includes(event.key)) {
+      if (!emailDraft.trim()) {
+        return;
+      }
+      event.preventDefault();
+      commitDraftEmail();
+      return;
+    }
+
+    if (
+      event.key === "Backspace" &&
+      !emailDraft.trim() &&
+      normalizedEmails.length > 0
+    ) {
+      const lastEmail = normalizedEmails[normalizedEmails.length - 1];
+      if (lastEmail) {
+        removeEmail(lastEmail);
+      }
+    }
+  };
 
   const validateEmails = async () => {
     if (!currentAgent?.id) {
@@ -208,7 +310,9 @@ const PublishButton = ({
     }
   };
 
-  const resolveDepartmentFromCurrentUserEmail = async (): Promise<string | null> => {
+  const resolveDepartmentFromCurrentUserEmail = async (): Promise<
+    string | null
+  > => {
     if (!currentAgent?.id) {
       return null;
     }
@@ -251,7 +355,7 @@ const PublishButton = ({
     }, 450);
 
     return () => clearTimeout(timer);
-  }, [emailsInput, open, currentAgent?.id]);
+  }, [normalizedEmails, invalidEmails, open, currentAgent?.id]);
 
   const handleSubmit = async () => {
     if (!currentAgent?.id) {
@@ -268,7 +372,9 @@ const PublishButton = ({
     if (agentNameAvailability.isNameTaken) {
       setErrorData({
         title: "Agent name already taken",
-        list: [agentNameAvailability.reason || "Please choose a different name."],
+        list: [
+          agentNameAvailability.reason || "Please choose a different name.",
+        ],
       });
       return;
     }
@@ -287,7 +393,9 @@ const PublishButton = ({
 
         if (agents) {
           setAgents(
-            agents.map((agent) => (agent.id === updatedAgent.id ? updatedAgent : agent)),
+            agents.map((agent) =>
+              agent.id === updatedAgent.id ? updatedAgent : agent,
+            ),
           );
         }
         setManagerCurrentAgent(updatedAgent);
@@ -299,19 +407,6 @@ const PublishButton = ({
         });
         return;
       }
-    }
-
-    if (!publishUat && !publishProd) {
-      setErrorData({
-        title: "Select at least one publishing environment (UAT or PROD).",
-      });
-      return;
-    }
-    if (publishProd && !prodPublic && !prodPrivate) {
-      setErrorData({
-        title: "For PROD, select public or private.",
-      });
-      return;
     }
 
     let resolvedDepartmentId: string | null = null;
@@ -336,7 +431,8 @@ const PublishButton = ({
       }
 
       resolvedDepartmentId =
-        results.find((item) => item.exists_in_department && item.department_id)?.department_id ??
+        results.find((item) => item.exists_in_department && item.department_id)
+          ?.department_id ??
         results.find((item) => item.department_id)?.department_id ??
         null;
     } else {
@@ -346,11 +442,15 @@ const PublishButton = ({
         resolvedDepartmentAdminId =
           contextResult.data.department_admin_id ?? resolvedDepartmentAdminId;
       } else {
-        const fallbackDepartmentId = await resolveDepartmentFromCurrentUserEmail();
+        const fallbackDepartmentId =
+          await resolveDepartmentFromCurrentUserEmail();
         if (!fallbackDepartmentId) {
           setErrorData({
             title: "Unable to resolve publish context.",
-            list: [contextResult.errorDetail ?? "Please provide at least one valid email ID."],
+            list: [
+              contextResult.errorDetail ??
+                "Please provide at least one valid email ID.",
+            ],
           });
           return;
         }
@@ -365,55 +465,23 @@ const PublishButton = ({
       return;
     }
 
-    const publishRequests: Array<{
-      environment: "uat" | "prod";
-      visibility: "PUBLIC" | "PRIVATE";
-    }> = [];
-    if (publishUat) {
-      publishRequests.push({ environment: "uat", visibility: "PRIVATE" });
-    }
-    if (publishProd) {
-      publishRequests.push({
-        environment: "prod",
-        visibility: prodPublic ? "PUBLIC" : "PRIVATE",
-      });
-    }
-
     try {
-      const responses: Array<{
-        environment: "uat" | "prod";
-        message: string;
-        version_number: string;
-      }> = [];
-      for (const request of publishRequests) {
-        const response = await publishMutation.mutateAsync({
-          agent_id: currentAgent.id,
-          department_id: resolvedDepartmentId,
-          ...(resolvedDepartmentAdminId
-            ? { department_admin_id: resolvedDepartmentAdminId }
-            : {}),
-          environment: request.environment,
-          visibility: request.visibility,
-          publish_description: publishDescription.trim() || undefined,
-        });
-        responses.push(response);
-      }
-
-      const responseLines = responses.map(
-        (response) =>
-          `${response.environment.toUpperCase()}: ${response.message} (${response.version_number})`,
-      );
+      const response = await publishMutation.mutateAsync({
+        agent_id: currentAgent.id,
+        department_id: resolvedDepartmentId,
+        ...(resolvedDepartmentAdminId
+          ? { department_admin_id: resolvedDepartmentAdminId }
+          : {}),
+        environment: "uat",
+        visibility: "PRIVATE",
+        publish_description: publishDescription.trim() || undefined,
+        recipient_emails:
+          normalizedEmails.length > 0 ? normalizedEmails : undefined,
+      });
       setSuccessData({
-        title: `Publish completed successfully. ${responseLines.join(" | ")}`,
+        title: `UAT: ${response.message} (${response.version_number})`,
       });
       setOpen(false);
-      if (publishProd) {
-        const folderId =
-          (currentAgent as any)?.project_id ||
-          (currentAgent as any)?.folder_id ||
-          "";
-        navigate(folderId ? `/agents/folder/${folderId}` : "/agents");
-      }
     } catch (error: any) {
       setErrorData({
         title: "Failed to publish agent",
@@ -421,7 +489,6 @@ const PublishButton = ({
       });
       return;
     }
-
   };
 
   // If user doesn't have edit_agents permission, show disabled button with no interaction
@@ -470,7 +537,10 @@ const PublishButton = ({
         <DialogHeader className="space-y-2 border-b bg-gradient-to-r from-slate-50 to-white px-6 py-5">
           <DialogTitle className="text-base">Publish Agent</DialogTitle>
           <div className="rounded-md border bg-white p-3 text-sm">
-            <Label htmlFor="publish-agent-name" className="text-xs text-muted-foreground">
+            <Label
+              htmlFor="publish-agent-name"
+              className="text-xs text-muted-foreground"
+            >
               Agent name
             </Label>
             <Input
@@ -484,7 +554,8 @@ const PublishButton = ({
               !agentNameAvailability.isFetching &&
               agentNameAvailability.isNameTaken && (
                 <p className="mt-2 text-xs font-medium text-red-500">
-                  {agentNameAvailability.reason ?? "This agent name is already taken."}
+                  {agentNameAvailability.reason ??
+                    "This agent name is already taken."}
                 </p>
               )}
           </div>
@@ -492,64 +563,21 @@ const PublishButton = ({
 
         <div className="flex max-h-[calc(88dvh-96px)] flex-col gap-5 overflow-y-auto px-6 py-5">
           <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
-            <Label className="text-sm font-medium">Publishing Environment</Label>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="publish-uat"
-                checked={publishUat}
-                onCheckedChange={(checked) => setPublishUat(checked === true)}
-              />
-              <Label htmlFor="publish-uat">UAT</Label>
+            <Label className="text-sm font-medium">
+              Publishing Environment
+            </Label>
+            <div className="rounded-md border bg-background px-3 py-2 text-sm">
+              This action publishes the agent to{" "}
+              <span className="font-medium">UAT</span>. Move to PROD from the
+              Control Panel.
             </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="publish-prod"
-                checked={publishProd}
-                onCheckedChange={(checked) => {
-                  const enabled = checked === true;
-                  setPublishProd(enabled);
-                  if (!enabled) {
-                    setProdPublic(false);
-                    setProdPrivate(false);
-                  }
-                }}
-              />
-              <Label htmlFor="publish-prod">PROD</Label>
-            </div>
-
-            {publishProd && (
-              <div className="mt-2 space-y-2 rounded-md border bg-background p-3">
-                <Label className="text-sm font-medium">PROD visibility</Label>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="prod-public"
-                    checked={prodPublic}
-                    onCheckedChange={(checked) => {
-                      const enabled = checked === true;
-                      setProdPublic(enabled);
-                      if (enabled) setProdPrivate(false);
-                    }}
-                  />
-                  <Label htmlFor="prod-public">Public</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="prod-private"
-                    checked={prodPrivate}
-                    onCheckedChange={(checked) => {
-                      const enabled = checked === true;
-                      setProdPrivate(enabled);
-                      if (enabled) setProdPublic(false);
-                    }}
-                  />
-                  <Label htmlFor="prod-private">Private</Label>
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
-            <Label htmlFor="publish-description" className="text-sm font-medium">
+            <Label
+              htmlFor="publish-description"
+              className="text-sm font-medium"
+            >
               Publish description (optional)
             </Label>
             <Textarea
@@ -565,18 +593,94 @@ const PublishButton = ({
             <Label htmlFor="publish-emails" className="text-sm font-medium">
               Business/User Email IDs (optional)
             </Label>
-            <Textarea
-              id="publish-emails"
-              value={emailsInput}
-              onChange={(event) => setEmailsInput(event.target.value)}
-              placeholder="Enter one or multiple emails (comma, space, or newline separated)"
-              className="min-h-[120px] bg-background"
-            />
+            <div className="rounded-md border bg-background px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {normalizedEmails.map((email) => (
+                  <span
+                    key={email}
+                    className="inline-flex items-center gap-1 rounded-full border bg-slate-100 px-2 py-1 text-xs text-slate-700"
+                  >
+                    <span className="max-w-[200px] truncate">{email}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeEmail(email)}
+                      className="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                      aria-label={`Remove ${email}`}
+                    >
+                      <ForwardedIconComponent name="X" className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+                <input
+                  id="publish-emails"
+                  value={emailDraft}
+                  onChange={(event) => setEmailDraft(event.target.value)}
+                  onKeyDown={handleEmailKeyDown}
+                  onBlur={() => {
+                    if (emailDraft.trim()) {
+                      commitDraftEmail();
+                    }
+                  }}
+                  onPaste={(event) => {
+                    const pasted = event.clipboardData.getData("text");
+                    if (!pasted) return;
+                    if (/[,;\n\s]/.test(pasted)) {
+                      event.preventDefault();
+                      addEmails(pasted);
+                    }
+                  }}
+                  placeholder={
+                    normalizedEmails.length === 0
+                      ? "Type email to search and press Enter to add"
+                      : "Add another email"
+                  }
+                  className="min-w-[200px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                />
+              </div>
+              {emailDraft.trim().length > 0 && (
+                <div className="mt-2 rounded-md border bg-white shadow-sm">
+                  {isFetchingEmailSuggestions ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      Searching directory...
+                    </div>
+                  ) : emailSuggestions.length > 0 ? (
+                    <div className="max-h-44 overflow-auto py-1">
+                      {emailSuggestions.map((item) => (
+                        <button
+                          key={item.email}
+                          type="button"
+                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-100"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            addEmails(item.email);
+                            setEmailDraft("");
+                          }}
+                        >
+                          <span className="truncate">{item.email}</span>
+                          {item.display_name && (
+                            <span className="ml-2 truncate text-xs text-muted-foreground">
+                              {item.display_name}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      No department suggestions found.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <span className="text-xs text-muted-foreground">
-              Validation runs automatically while typing and is restricted to this agent's department.
+              Outlook-style recipients. Suggestions come from saved department
+              emails for this agent.
             </span>
             {validationInProgress && (
-              <div className="text-xs text-muted-foreground">Checking emails...</div>
+              <div className="text-xs text-muted-foreground">
+                Checking emails...
+              </div>
             )}
 
             {emailValidationResults.length > 0 && (
@@ -586,15 +690,22 @@ const PublishButton = ({
                 </div>
                 <div className="space-y-1 text-sm">
                   {emailValidationResults.map((result) => (
-                    <div key={result.email} className="flex items-center justify-between gap-3">
+                    <div
+                      key={result.email}
+                      className="flex items-center justify-between gap-3"
+                    >
                       <span className="truncate">{result.email}</span>
                       <span
                         className={cn(
                           "text-xs font-medium",
-                          result.exists_in_department ? "text-green-600" : "text-red-600",
+                          result.exists_in_department
+                            ? "text-green-600"
+                            : "text-red-600",
                         )}
                       >
-                        {result.exists_in_department ? "Available" : "Not in department"}
+                        {result.exists_in_department
+                          ? "Available"
+                          : "Not in department"}
                       </span>
                     </div>
                   ))}
@@ -616,7 +727,9 @@ const PublishButton = ({
                 agentNameAvailability.isNameTaken
               }
             >
-              {publishMutation.isPending ? "Publishing..." : "Submit Publish Request"}
+              {publishMutation.isPending
+                ? "Publishing..."
+                : "Submit Publish Request"}
             </Button>
           </div>
         </div>

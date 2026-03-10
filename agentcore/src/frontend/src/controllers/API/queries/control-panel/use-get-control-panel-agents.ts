@@ -14,12 +14,18 @@ export interface ControlPanelAgentItem {
   is_active: boolean;
   is_enabled: boolean;
   creator_name?: string | null;
+  creator_email?: string | null;
+  owner_name?: string | null;
+  owner_count?: number;
+  owner_names?: string[];
+  owner_emails?: string[];
   creator_department?: string | null;
   created_at: string;
   deployed_at?: string | null;
   last_run?: string | null;
   failed_runs: number;
   input_type: "chat" | "autonomous" | "file_processing";
+  moved_to_prod?: boolean;
 }
 
 export interface ControlPanelAgentsResponse {
@@ -42,25 +48,31 @@ export const useGetControlPanelAgents: useQueryFunctionType<
 > = (params, options?) => {
   const { query } = UseRequestProcessor();
 
-  const getControlPanelAgentsFn = async (): Promise<ControlPanelAgentsResponse> => {
-    const res = await api.get<ControlPanelAgentsResponse>(
-      `${getURL("CONTROL_PANEL")}/agents`,
-      {
-        params: {
-          env: params.env,
-          search: params.search || undefined,
-          page: params.page ?? 1,
-          size: params.size ?? 20,
+  const getControlPanelAgentsFn =
+    async (): Promise<ControlPanelAgentsResponse> => {
+      const res = await api.get<ControlPanelAgentsResponse>(
+        `${getURL("CONTROL_PANEL")}/agents`,
+        {
+          params: {
+            env: params.env,
+            search: params.search || undefined,
+            page: params.page ?? 1,
+            size: params.size ?? 20,
+          },
         },
-      },
-    );
-    return res.data;
-  };
+      );
+      return res.data;
+    };
 
   return query(
-    ["useGetControlPanelAgents", params.env, params.search, params.page, params.size],
+    [
+      "useGetControlPanelAgents",
+      params.env,
+      params.search,
+      params.page,
+      params.size,
+    ],
     getControlPanelAgentsFn,
     options,
   );
 };
-

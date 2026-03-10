@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from pydantic import BaseModel
+from sqlalchemy import or_, true
 from sqlmodel import col, select
 
 from fastapi.responses import StreamingResponse
@@ -21,6 +22,16 @@ from agentcore.events.event_manager import EventManager, create_default_event_ma
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
     DeploymentPRODStatusEnum,
+)
+from agentcore.services.database.models.agent_deployment_uat.model import (
+    AgentDeploymentUAT,
+    DeploymentUATStatusEnum,
+)
+from agentcore.services.database.models.agent_publish_recipient.model import (
+    AgentPublishRecipient,
+)
+from agentcore.services.database.models.user_department_membership.model import (
+    UserDepartmentMembership,
 )
 from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
 from agentcore.services.database.models.orch_conversation.crud import (
@@ -42,6 +53,7 @@ class OrchAgentSummary(BaseModel):
     agent_name: str
     agent_description: str | None = None
     version_number: int
+    environment: str
 
 
 class OrchChatRequest(BaseModel):
@@ -318,8 +330,9 @@ async def _run_agent_from_snapshot(
 
 async def _resolve_agent(
     session,
+    current_user: CurrentActiveUser,
     body: OrchChatRequest,
-) -> tuple[UUID, UUID, AgentDeploymentProd]:
+) -> tuple[UUID, UUID, AgentDeploymentProd | AgentDeploymentUAT]:
     """Resolve the target agent for a chat request (sticky routing).
 
     If agent_id/deployment_id are provided → use them (explicit @mention).
@@ -342,12 +355,73 @@ async def _resolve_agent(
 
     deployment = await session.get(AgentDeploymentProd, deployment_id)
     if not deployment:
+        deployment = await session.get(AgentDeploymentUAT, deployment_id)
+    if not deployment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Deployment {deployment_id} not found",
         )
 
+    if not await _user_can_access_deployment(session, current_user, deployment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this deployment.",
+        )
+
     return agent_id, deployment_id, deployment
+
+
+async def _user_can_access_deployment(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    deployment: AgentDeploymentProd | AgentDeploymentUAT,
+) -> bool:
+    role = str(getattr(current_user, "role", "")).lower()
+    if role in {"super_admin", "department_admin", "root"}:
+        return True
+
+    if deployment.deployed_by == current_user.id:
+        return True
+
+    recipient_exists = (
+        await session.exec(
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == deployment.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    deployment.dept_id is None,
+                    AgentPublishRecipient.dept_id == deployment.dept_id,
+                ),
+            )
+            .limit(1)
+        )
+    ).first()
+    if recipient_exists:
+        return True
+
+    if isinstance(deployment, AgentDeploymentProd):
+        visibility_value = (
+            deployment.visibility.value
+            if hasattr(deployment.visibility, "value")
+            else str(deployment.visibility)
+        )
+        if str(visibility_value).upper() == "PUBLIC":
+            member_exists = (
+                await session.exec(
+                    select(UserDepartmentMembership.id)
+                    .where(
+                        UserDepartmentMembership.user_id == current_user.id,
+                        UserDepartmentMembership.department_id == deployment.dept_id,
+                        UserDepartmentMembership.status == "active",
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if member_exists:
+                return True
+
+    return False
 
 
 async def _maybe_context_reset(
@@ -395,16 +469,95 @@ async def list_orch_agents(
     session: DbSession,
     current_user: CurrentActiveUser,
 ):
-    """Return all PROD-deployed agents that are PUBLISHED, active, and enabled."""
+    """Return accessible UAT/PROD deployed agents for orchestration chat."""
     try:
-        stmt = (
+        current_role = str(getattr(current_user, "role", "")).lower()
+        is_admin = current_role in {"super_admin", "department_admin", "root"}
+
+        prod_share_exists = (
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    AgentDeploymentProd.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id == AgentDeploymentProd.dept_id,
+                ),
+            )
+            .exists()
+        )
+        prod_dept_member_exists = (
+            select(UserDepartmentMembership.id)
+            .where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.department_id == AgentDeploymentProd.dept_id,
+                UserDepartmentMembership.status == "active",
+            )
+            .exists()
+        )
+        prod_access = (
+            (AgentDeploymentProd.deployed_by == current_user.id)
+            | prod_share_exists
+            | prod_dept_member_exists
+        )
+        if is_admin:
+            prod_access = prod_access | true()
+
+        prod_stmt = (
             select(AgentDeploymentProd)
             .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
             .where(AgentDeploymentProd.is_active == True)  # noqa: E712
             .where(AgentDeploymentProd.is_enabled == True)  # noqa: E712
-            .order_by(col(AgentDeploymentProd.agent_name).asc())
+            .where(prod_access)
         )
-        records = (await session.exec(stmt)).all()
+
+        uat_share_exists = (
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    AgentDeploymentUAT.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id == AgentDeploymentUAT.dept_id,
+                ),
+            )
+            .exists()
+        )
+        uat_access = (
+            (AgentDeploymentUAT.deployed_by == current_user.id)
+            | uat_share_exists
+        )
+        if is_admin:
+            uat_access = uat_access | true()
+
+        uat_stmt = (
+            select(AgentDeploymentUAT)
+            .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+            .where(AgentDeploymentUAT.is_active == True)  # noqa: E712
+            .where(AgentDeploymentUAT.is_enabled == True)  # noqa: E712
+            .where(uat_access)
+        )
+
+        prod_records = list((await session.exec(prod_stmt)).all())
+        uat_records = list((await session.exec(uat_stmt)).all())
+
+        # Keep all PROD versions. Hide UAT rows only when a PROD exists for same agent_id.
+        prod_agent_ids = {str(rec.agent_id) for rec in prod_records}
+        filtered_uat_records = [
+            rec for rec in uat_records if str(rec.agent_id) not in prod_agent_ids
+        ]
+
+        records_with_env: list[tuple[AgentDeploymentProd | AgentDeploymentUAT, str]] = (
+            [(rec, "prod") for rec in prod_records]
+            + [(rec, "uat") for rec in filtered_uat_records]
+        )
+        records_with_env.sort(
+            key=lambda row: (
+                str(row[0].agent_name or "").lower(),
+                -int(getattr(row[0], "version_number", 0) or 0),
+            )
+        )
+
         return [
             OrchAgentSummary(
                 deploy_id=r.id,
@@ -412,8 +565,9 @@ async def list_orch_agents(
                 agent_name=r.agent_name,
                 agent_description=r.agent_description,
                 version_number=r.version_number,
+                environment=env_name,
             )
-            for r in records
+            for r, env_name in records_with_env
         ]
     except HTTPException:
         raise
@@ -440,7 +594,11 @@ async def orch_chat(
     """
     try:
         # -- 1. Resolve agent (sticky routing) -----------------------------
-        agent_id, deployment_id, deployment = await _resolve_agent(session, body)
+        agent_id, deployment_id, deployment = await _resolve_agent(
+            session,
+            current_user,
+            body,
+        )
 
         # -- 2. Context reset if agent switched ----------------------------
         did_reset = await _maybe_context_reset(
@@ -551,7 +709,11 @@ async def orch_chat_stream(
       - ``end``          – signals stream is done, carries final ``{agent_text, message_id}``
     """
     # -- 1. Resolve agent (sticky routing) -------------------------------
-    agent_id, deployment_id, deployment = await _resolve_agent(session, body)
+    agent_id, deployment_id, deployment = await _resolve_agent(
+        session,
+        current_user,
+        body,
+    )
 
     # -- 2. Context reset if agent switched ------------------------------
     await _maybe_context_reset(
@@ -776,6 +938,8 @@ async def list_orch_sessions(
                 summary.active_agent_id = active["agent_id"]
                 summary.active_deployment_id = active["deployment_id"]
                 dep = await session.get(AgentDeploymentProd, active["deployment_id"])
+                if not dep:
+                    dep = await session.get(AgentDeploymentUAT, active["deployment_id"])
                 if dep:
                     summary.active_agent_name = dep.agent_name
             summaries.append(summary)
@@ -889,6 +1053,8 @@ async def get_active_agent(
         if not active:
             return ActiveAgentResponse()
         dep = await session.get(AgentDeploymentProd, active["deployment_id"])
+        if not dep:
+            dep = await session.get(AgentDeploymentUAT, active["deployment_id"])
         return ActiveAgentResponse(
             agent_id=active["agent_id"],
             deployment_id=active["deployment_id"],
