@@ -264,6 +264,7 @@ async def generate_agent_events(
     """
     import time as time_module
     run_id = f"{agent_id}_{int(time_module.time() * 1000) % 100000}"
+    _run_start = time.perf_counter()
     chat_service = get_chat_service()
 
     telemetry_service = get_telemetry_service()
@@ -413,6 +414,8 @@ async def generate_agent_events(
         raise ValueError(msg)
 
     logger.info("Executing graph via compiled astream")
+    from agentcore.observability.metrics_registry import adjust_active_sessions
+    adjust_active_sessions(1)
     try:
         from agentcore.schema.schema import INPUT_FIELD_NAME
 
@@ -486,6 +489,7 @@ async def generate_agent_events(
             logger.warning(f"[HITL] Could not save checkpoint after interrupt: {_chk_err}")
 
     except asyncio.CancelledError:
+        adjust_active_sessions(-1)
         background_tasks.add_task(graph.end_all_traces_in_context)
         raise
     # NOTE: GraphInterrupt is NOT caught here.
@@ -495,6 +499,9 @@ async def generate_agent_events(
     # persistence) is done inside the except GraphInterrupt block in nodes.py,
     # which is the only reliable execution point for interrupt handling.
     except Exception as e:
+        adjust_active_sessions(-1)
+        from agentcore.observability.metrics_registry import record_agent_run
+        record_agent_run(agent_name or "unknown", "error", (time.perf_counter() - _run_start) * 1000)
         logger.error(f"Error in LangGraph execution: {e}")
         error_message = ErrorMessage(
             agent_id=agent_id,
@@ -504,6 +511,9 @@ async def generate_agent_events(
         event_manager.on_error(data=error_message.data)
         raise
 
+    adjust_active_sessions(-1)
+    from agentcore.observability.metrics_registry import record_agent_run
+    record_agent_run(agent_name or "unknown", "success", (time.perf_counter() - _run_start) * 1000)
     event_manager.on_end(data={})
     await graph.end_all_traces()
     await event_manager.queue.put((None, None, time.time()))

@@ -36,8 +36,8 @@ class McpRegistry(SQLModel, table=True):
     args: list | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # Secrets (encrypted JSON)
-    env_vars_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    headers_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    env_vars_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    headers_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
 
     is_active: bool = Field(default=True)  # Runtime enabled flag after approval
     status: str = Field(default="disconnected", sa_column=Column(String(50), nullable=False, default="disconnected"))
@@ -201,8 +201,8 @@ class McpRegistryRead(BaseModel):
     @classmethod
     def from_orm_model(cls, row: McpRegistry) -> "McpRegistryRead":
         obj = cls.model_validate(row)
-        object.__setattr__(obj, "_has_env_vars", bool(row.env_vars_encrypted))
-        object.__setattr__(obj, "_has_headers", bool(row.headers_encrypted))
+        object.__setattr__(obj, "_has_env_vars", bool(row.env_vars_secret_ref))
+        object.__setattr__(obj, "_has_headers", bool(row.headers_secret_ref))
         return obj
 
 

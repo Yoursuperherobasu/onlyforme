@@ -1,19 +1,3 @@
-"""
-Document OCR Extractor Component
-
-Drag-and-drop node that extracts text from files using a connected
-multimodal Language Model for vision-based OCR on scanned pages and images.
-
-Canvas wiring:
-  [Knowledge Base] ---> [Document OCR Extractor] ---> [Text Splitter]
-                              ^
-                          [LLM Model] (multimodal, e.g. GPT-4o, Gemini, Claude)
-
-Supports: PDF (native + scanned), images, DOCX, PPTX, XLSX, CSV, TXT.
-Native text extraction is used when possible; the LLM is only called
-for scanned/image content that requires OCR.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -29,7 +13,7 @@ from agentcore.io import BoolInput, HandleInput, IntInput, Output
 from agentcore.schema.data import Data
 
 
-class GeminiOCRExtractorNode(Node):
+class OCRExtractorNode(Node):
     """Extract text from documents using a connected multimodal LLM for OCR."""
 
     display_name: str = "Document OCR Extractor"

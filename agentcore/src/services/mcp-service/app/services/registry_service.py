@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
@@ -9,23 +11,57 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.registry import (
     McpRegistry,
     McpRegistryCreate,
     McpRegistryRead,
     McpRegistryUpdate,
 )
-from app.utils.crypto import decrypt_json, encrypt_json
+from app.utils.key_vault import (
+    KeyVaultConfig,
+    KeyVaultSecretStore,
+    mcp_env_vars_secret_name,
+    mcp_headers_secret_name,
+)
 
 logger = logging.getLogger(__name__)
+
+def _build_key_vault_store() -> KeyVaultSecretStore | None:
+    settings = get_settings()
+    config = KeyVaultConfig(
+        vault_url=settings.key_vault_url,
+        secret_prefix=settings.key_vault_secret_prefix,
+        tenant_id=settings.key_vault_tenant_id,
+        client_id=settings.key_vault_client_id,
+        client_secret=settings.key_vault_client_secret,
+    )
+    return KeyVaultSecretStore.from_config(config)
+
+
+def _require_key_vault_store() -> KeyVaultSecretStore:
+    kv = _build_key_vault_store()
+    if kv is None:
+        msg = "Azure Key Vault is required for MCP registry secrets. Set MCP_SERVICE_KEY_VAULT_URL."
+        raise RuntimeError(msg)
+    return kv
+
+
+def _encode_json(payload: dict) -> str:
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+
+
+def _decode_json(payload: str) -> dict:
+    return json.loads(payload)
 
 
 async def create_server(
     session: AsyncSession,
     data: McpRegistryCreate,
-    encryption_key: str,
 ) -> McpRegistryRead:
     """Register a new MCP server."""
+    settings = get_settings()
+    key_vault = _require_key_vault_store()
     row = McpRegistry(
         server_name=data.server_name,
         description=data.description,
@@ -50,12 +86,19 @@ async def create_server(
         created_by_id=data.created_by_id,
     )
 
-    if data.env_vars and encryption_key:
-        row.env_vars_encrypted = encrypt_json(data.env_vars, encryption_key)
-    if data.headers and encryption_key:
-        row.headers_encrypted = encrypt_json(data.headers, encryption_key)
-
     session.add(row)
+    await session.flush()
+
+    if data.env_vars:
+        env_secret_name = mcp_env_vars_secret_name(settings.key_vault_secret_prefix, row.id)
+        await asyncio.to_thread(key_vault.set_secret, env_secret_name, _encode_json(data.env_vars))
+        row.env_vars_secret_ref = env_secret_name
+
+    if data.headers:
+        headers_secret_name = mcp_headers_secret_name(settings.key_vault_secret_prefix, row.id)
+        await asyncio.to_thread(key_vault.set_secret, headers_secret_name, _encode_json(data.headers))
+        row.headers_secret_ref = headers_secret_name
+
     await session.commit()
     await session.refresh(row)
     return McpRegistryRead.from_orm_model(row)
@@ -99,9 +142,10 @@ async def update_server(
     session: AsyncSession,
     server_id: UUID,
     data: McpRegistryUpdate,
-    encryption_key: str,
 ) -> McpRegistryRead | None:
     """Update an existing MCP server."""
+    settings = get_settings()
+    key_vault = _require_key_vault_store()
     row = await session.get(McpRegistry, server_id)
     if row is None:
         return None
@@ -110,12 +154,26 @@ async def update_server(
 
     # Handle secrets separately
     plain_env_vars = update_fields.pop("env_vars", None)
-    if plain_env_vars is not None and encryption_key:
-        row.env_vars_encrypted = encrypt_json(plain_env_vars, encryption_key) if plain_env_vars else None
+    if plain_env_vars is not None:
+        if plain_env_vars:
+            env_secret_name = row.env_vars_secret_ref or mcp_env_vars_secret_name(
+                settings.key_vault_secret_prefix, row.id
+            )
+            await asyncio.to_thread(key_vault.set_secret, env_secret_name, _encode_json(plain_env_vars))
+            row.env_vars_secret_ref = env_secret_name
+        else:
+            row.env_vars_secret_ref = None
 
     plain_headers = update_fields.pop("headers", None)
-    if plain_headers is not None and encryption_key:
-        row.headers_encrypted = encrypt_json(plain_headers, encryption_key) if plain_headers else None
+    if plain_headers is not None:
+        if plain_headers:
+            headers_secret_name = row.headers_secret_ref or mcp_headers_secret_name(
+                settings.key_vault_secret_prefix, row.id
+            )
+            await asyncio.to_thread(key_vault.set_secret, headers_secret_name, _encode_json(plain_headers))
+            row.headers_secret_ref = headers_secret_name
+        else:
+            row.headers_secret_ref = None
 
     for field, value in update_fields.items():
         setattr(row, field, value)
@@ -129,20 +187,33 @@ async def update_server(
 
 async def delete_server(session: AsyncSession, server_id: UUID) -> bool:
     """Hard-delete an MCP server. Returns True if the row existed."""
+    key_vault = _require_key_vault_store()
     row = await session.get(McpRegistry, server_id)
     if row is None:
         return False
+    env_secret_name = row.env_vars_secret_ref
+    headers_secret_name = row.headers_secret_ref
     await session.delete(row)
     await session.commit()
+    if env_secret_name:
+        try:
+            await asyncio.to_thread(key_vault.delete_secret, env_secret_name)
+        except Exception:
+            logger.warning("Failed to delete MCP env secret '%s' for server %s", env_secret_name, server_id)
+    if headers_secret_name:
+        try:
+            await asyncio.to_thread(key_vault.delete_secret, headers_secret_name)
+        except Exception:
+            logger.warning("Failed to delete MCP headers secret '%s' for server %s", headers_secret_name, server_id)
     return True
 
 
 async def get_decrypted_config_by_id(
     session: AsyncSession,
     server_id: UUID,
-    encryption_key: str,
 ) -> tuple[str, dict] | None:
     """Return (server_name, config_dict) with decrypted secrets, looked up by ID."""
+    key_vault = _require_key_vault_store()
     row = await session.get(McpRegistry, server_id)
     if row is None:
         return None
@@ -152,16 +223,22 @@ async def get_decrypted_config_by_id(
     if row.mode == "sse":
         if row.url:
             config["url"] = row.url
-        if row.headers_encrypted and encryption_key:
-            config["headers"] = decrypt_json(row.headers_encrypted, encryption_key)
+        if row.headers_secret_ref:
+            payload = await asyncio.to_thread(key_vault.get_secret, row.headers_secret_ref)
+            if not payload:
+                raise RuntimeError(f"MCP headers secret '{row.headers_secret_ref}' not found.")
+            config["headers"] = _decode_json(payload)
     elif row.mode == "stdio":
         if row.command:
             config["command"] = row.command
         if row.args:
             config["args"] = row.args
 
-    if row.env_vars_encrypted and encryption_key:
-        config["env"] = decrypt_json(row.env_vars_encrypted, encryption_key)
+    if row.env_vars_secret_ref:
+        payload = await asyncio.to_thread(key_vault.get_secret, row.env_vars_secret_ref)
+        if not payload:
+            raise RuntimeError(f"MCP env secret '{row.env_vars_secret_ref}' not found.")
+        config["env"] = _decode_json(payload)
 
     return row.server_name, config
 
@@ -169,9 +246,9 @@ async def get_decrypted_config_by_id(
 async def get_decrypted_config(
     session: AsyncSession,
     server_name: str,
-    encryption_key: str,
 ) -> dict | None:
     """Return the full MCP server config with decrypted secrets."""
+    key_vault = _require_key_vault_store()
     stmt = select(McpRegistry).where(McpRegistry.server_name == server_name)
     result = await session.execute(stmt)
     row = result.scalars().first()
@@ -183,8 +260,11 @@ async def get_decrypted_config(
     if row.mode == "sse":
         if row.url:
             config["url"] = row.url
-        if row.headers_encrypted and encryption_key:
-            config["headers"] = decrypt_json(row.headers_encrypted, encryption_key)
+        if row.headers_secret_ref:
+            payload = await asyncio.to_thread(key_vault.get_secret, row.headers_secret_ref)
+            if not payload:
+                raise RuntimeError(f"MCP headers secret '{row.headers_secret_ref}' not found.")
+            config["headers"] = _decode_json(payload)
     elif row.mode == "stdio":
         if row.command:
             config["command"] = row.command
@@ -192,7 +272,10 @@ async def get_decrypted_config(
             config["args"] = row.args
 
     # Env vars apply to both modes
-    if row.env_vars_encrypted and encryption_key:
-        config["env"] = decrypt_json(row.env_vars_encrypted, encryption_key)
+    if row.env_vars_secret_ref:
+        payload = await asyncio.to_thread(key_vault.get_secret, row.env_vars_secret_ref)
+        if not payload:
+            raise RuntimeError(f"MCP env secret '{row.env_vars_secret_ref}' not found.")
+        config["env"] = _decode_json(payload)
 
     return config

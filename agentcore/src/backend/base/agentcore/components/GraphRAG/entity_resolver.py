@@ -1,29 +1,3 @@
-"""
-Entity Resolver Component
-
-Drag-and-drop node that deduplicates and merges entities extracted across
-multiple document chunks. This is critical for enterprise graphs -- without it
-you get "John Smith", "Dr. John Smith", "J. Smith", "john smith" as 4
-separate nodes instead of 1.
-
-Canvas wiring:
-  [Graph Entity Extractor] ---> [Entity Resolver] ---> [Neo4j Graph Store]
-                                      ^
-                                    [LLM] (optional, for semantic dedup)
-
-Resolution strategies:
-  - Exact Match: case-insensitive string equality
-  - Fuzzy Match: Levenshtein distance / token overlap above threshold
-  - LLM-Assisted: ask the LLM if two entities refer to the same thing
-  - Embedding Similarity: cosine similarity on entity name embeddings
-
-Merge logic:
-  - Keep the longest / richest description
-  - Union all relationships
-  - Union all source_chunk_ids
-  - Keep the most specific entity type
-"""
-
 from __future__ import annotations
 
 from collections import defaultdict

@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_api_key
-from app.config import get_settings
 from app.database import get_session
 from app.models.guardrail_catalogue import GuardrailCatalogue
 from app.models.model_registry import ModelRegistry
@@ -26,10 +25,6 @@ from app.services import nemo_service, registry_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/guardrails", tags=["guardrail-execution"])
-
-
-def _encryption_key() -> str:
-    return get_settings().encryption_key
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +48,6 @@ async def apply_guardrail(
             input_text=body.input_text,
             guardrail_id=body.guardrail_id,
             session=session,
-            encryption_key=_encryption_key(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

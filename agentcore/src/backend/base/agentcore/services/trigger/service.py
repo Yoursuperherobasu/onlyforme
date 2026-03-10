@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -45,18 +46,24 @@ async def _get_storage_connector_config(connector_id: str) -> dict | None:
         return None
 
 
+def _odata_escape(value: str) -> str:
+    """Escape single quotes for OData filter values."""
+    return value.replace("'", "''")
+
+
 class TriggerService(Service):
-    """Manages non-schedule triggers: folder monitors.
+    """Manages non-schedule triggers: folder monitors and email monitors.
 
     Runs background asyncio tasks that poll external sources (local folders,
-    Azure Blob, SharePoint) and invoke agent flows when new data is detected.
+    Azure Blob, SharePoint, Outlook mailboxes) and invoke agent flows when
+    new data is detected.
     """
 
     name = "trigger_service"
 
     def __init__(self) -> None:
         self._monitors: dict[str, asyncio.Task] = {}
-        self._seen_files: dict[str, set[str]] = {}  # trigger_id -> set of seen file keys
+        self._seen_files: dict[str, OrderedDict] = {}  # trigger_id -> OrderedDict of seen file keys
         self._started = False
 
     def start(self) -> None:
@@ -104,6 +111,13 @@ class TriggerService(Service):
                     await self.register_folder_monitor(trigger)
 
                 logger.info(f"Loaded {len(folder_triggers)} active folder monitors")
+
+                # Load email monitors
+                email_triggers = await get_active_triggers_by_type(session, TriggerTypeEnum.EMAIL_MONITOR)
+                for trigger in email_triggers:
+                    await self.register_email_monitor(trigger)
+
+                logger.info(f"Loaded {len(email_triggers)} active email monitors")
         except Exception as e:
             logger.warning(f"Failed to load active monitors (table may not exist yet): {e}")
 
@@ -269,6 +283,28 @@ class TriggerService(Service):
         self._monitors[task_id] = task
         logger.info(f"Registered folder monitor {task_id} for agent {trigger_record.agent_id}")
 
+    async def register_email_monitor(self, trigger_record) -> None:
+        """Register an email monitor from a TriggerConfigTable record."""
+        task_id = str(trigger_record.id)
+        if task_id in self._monitors:
+            await self.unregister(trigger_record.id)
+
+        config = trigger_record.trigger_config or {}
+        self._seen_files[task_id] = await self._load_seen_files(trigger_record.id)
+
+        task = asyncio.create_task(
+            self._email_monitor_loop(
+                trigger_config_id=trigger_record.id,
+                agent_id=trigger_record.agent_id,
+                config=config,
+                environment=trigger_record.environment,
+                version=trigger_record.version,
+            ),
+            name=f"email_monitor_{task_id}",
+        )
+        self._monitors[task_id] = task
+        logger.info(f"Registered email monitor {task_id} for agent {trigger_record.agent_id}")
+
     async def unregister(self, trigger_config_id: UUID) -> bool:
         """Unregister and cancel a monitor task."""
         task_id = str(trigger_config_id)
@@ -302,10 +338,10 @@ class TriggerService(Service):
                 if record and record.trigger_config:
                     keys = record.trigger_config.get("_seen_keys", [])
                     if isinstance(keys, list):
-                        return set(keys)
+                        return OrderedDict.fromkeys(keys)
         except Exception as e:
             logger.warning(f"TriggerService: failed to load seen files for {trigger_config_id}: {e}")
-        return set()
+        return OrderedDict()
 
     async def _persist_seen_files(self, trigger_config_id: UUID) -> None:
         """Save the in-memory seen-file keys to the trigger_config JSON.
@@ -323,8 +359,8 @@ class TriggerService(Service):
                 get_trigger_config_by_id,
             )
 
-            # Keep only last 500 to prevent JSON bloat
-            keys_list = list(seen)[-500:]
+            # Keep only last 10,000 to prevent JSON bloat
+            keys_list = list(seen)[-10_000:]
 
             db_service = get_db_service()
             async with db_service.with_session() as session:
@@ -418,7 +454,7 @@ class TriggerService(Service):
             logger.warning(f"Folder monitor {task_id}: path '{folder_path}' does not exist")
             return []
 
-        seen = self._seen_files.get(task_id, set())
+        seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
         for entry in os.scandir(folder_path):
@@ -442,7 +478,7 @@ class TriggerService(Service):
                     "size": entry.stat().st_size,
                     "modified": datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc).isoformat(),
                 })
-                seen.add(file_key)
+                seen[file_key] = None
             elif trigger_on in ("Modified Files", "Both") and file_key not in seen:
                 new_files.append({
                     "name": entry.name,
@@ -450,7 +486,7 @@ class TriggerService(Service):
                     "size": entry.stat().st_size,
                     "modified": datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc).isoformat(),
                 })
-                seen.add(file_key)
+                seen[file_key] = None
 
         self._seen_files[task_id] = seen
         return new_files
@@ -489,7 +525,7 @@ class TriggerService(Service):
             logger.warning(f"TriggerService: Azure Blob trigger {task_id} missing connection_string or container_name")
             return []
 
-        seen = self._seen_files.get(task_id, set())
+        seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
         async with BlobServiceClient.from_connection_string(connection_string) as client:
@@ -509,7 +545,7 @@ class TriggerService(Service):
                         "size": blob.size,
                         "modified": blob.last_modified.isoformat() if blob.last_modified else None,
                     })
-                    seen.add(blob_key)
+                    seen[blob_key] = None
 
         self._seen_files[task_id] = seen
         return new_files
@@ -556,7 +592,7 @@ class TriggerService(Service):
             logger.warning(f"TriggerService: SharePoint trigger {task_id} missing site_url, client_id, or client_secret")
             return []
 
-        seen = self._seen_files.get(task_id, set())
+        seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
         try:
@@ -586,7 +622,7 @@ class TriggerService(Service):
                         "size": sp_file.length if hasattr(sp_file, "length") else 0,
                         "modified": str(modified),
                     })
-                    seen.add(file_key)
+                    seen[file_key] = None
 
         except Exception:
             logger.exception(f"Error scanning SharePoint for trigger {task_id}")
@@ -608,6 +644,403 @@ class TriggerService(Service):
                     await asyncio.to_thread(os.rename, src, dst)
                 except OSError:
                     logger.warning(f"Could not move {src} to {dst}")
+
+    # ── Email Monitor Loop ─────────────────────────────────────────────────
+
+    async def _email_monitor_loop(
+        self,
+        trigger_config_id: UUID,
+        agent_id: UUID,
+        config: dict,
+        environment: str,
+        version: str | None,
+    ) -> None:
+        """Poll an Outlook mailbox for new emails and trigger the agent flow.
+
+        Supports fetching full email body and parsing attachments (pdf, docx,
+        xlsx, pptx, csv, txt) when the corresponding config flags are enabled.
+        """
+        connector_id = config.get("connector_id", "")
+        poll_interval = config.get("poll_interval_seconds", 60)
+        account_email = config.get("account_email", "")
+        mail_folder = config.get("mail_folder", "inbox")
+        filter_sender = config.get("filter_sender", "")
+        filter_subject = config.get("filter_subject", "")
+        filter_body = config.get("filter_body", "")
+        filter_importance = config.get("filter_importance", "")
+        filter_has_attachments = config.get("filter_has_attachments", False)
+        unread_only = config.get("unread_only", True)
+        mark_as_read = config.get("mark_as_read", False)
+        max_results = config.get("max_results", 10)
+        fetch_full_body = config.get("fetch_full_body", True)
+        fetch_attachments = config.get("fetch_attachments", True)
+        task_id = str(trigger_config_id)
+
+        logger.info(
+            f"Email monitor started: connector={connector_id}, "
+            f"account={account_email or '(first)'}, folder={mail_folder}, "
+            f"poll={poll_interval}s, max_results={max_results}, "
+            f"unread_only={unread_only}, mark_as_read={mark_as_read}, "
+            f"full_body={fetch_full_body}, attachments={fetch_attachments}"
+        )
+
+        first_run = True
+        while True:
+            try:
+                # Sleep at top EXCEPT on first run — scan immediately when started
+                if first_run:
+                    first_run = False
+                else:
+                    await asyncio.sleep(poll_interval)
+
+                # 1. Load connector config (encrypted) from DB
+                connector_cfg = await _get_storage_connector_config(str(connector_id))
+                if not connector_cfg:
+                    logger.warning(f"Email monitor {task_id}: connector {connector_id} not found")
+                    continue
+
+                # 2. Get linked account + refresh token
+                accounts = connector_cfg.get("linked_accounts", [])
+                if not accounts:
+                    logger.warning(f"Email monitor {task_id}: no linked mailbox")
+                    continue
+
+                # Select account by email if configured, otherwise first
+                acct = None
+                if account_email:
+                    for a in accounts:
+                        if a.get("email", "").lower() == account_email.lower():
+                            acct = a
+                            break
+                    if not acct:
+                        logger.warning(
+                            f"Email monitor {task_id}: configured account '{account_email}' "
+                            f"not found, falling back to first account"
+                        )
+                if not acct:
+                    acct = accounts[0]
+
+                access_token = await self._refresh_outlook_token(connector_cfg, acct, connector_id)
+
+                # 3. Build Graph API request with OData filters
+                safe_folder = mail_folder.replace("/", "").replace("\\", "").replace("..", "") or "inbox"
+                url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{safe_folder}/messages"
+                # Include body in $select when full body is requested
+                select_fields = "id,subject,from,receivedDateTime,bodyPreview,hasAttachments,toRecipients,importance,isRead"
+                if fetch_full_body:
+                    select_fields += ",body"
+                params: dict[str, str] = {
+                    "$top": str(max_results),
+                    "$select": select_fields,
+                    "$orderby": "receivedDateTime desc",
+                }
+                filters = []
+                if unread_only:
+                    filters.append("isRead eq false")
+                if filter_sender:
+                    filters.append(f"from/emailAddress/address eq '{_odata_escape(filter_sender)}'")
+                if filter_subject:
+                    filters.append(f"contains(subject, '{_odata_escape(filter_subject)}')")
+                if filter_body:
+                    filters.append(f"contains(body/content, '{_odata_escape(filter_body)}')")
+                if filter_importance and filter_importance != "all":
+                    filters.append(f"importance eq '{_odata_escape(filter_importance)}'")
+                if filter_has_attachments:
+                    filters.append("hasAttachments eq true")
+                if filters:
+                    params["$filter"] = " and ".join(filters)
+
+                # 4. Call Graph API
+                import httpx
+
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        url,
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        params=params,
+                        timeout=15,
+                    )
+
+                if resp.status_code == 401:
+                    logger.warning(f"Email monitor {task_id}: Graph API 401 — force-refreshing token")
+                    access_token = await self._refresh_outlook_token(connector_cfg, acct, connector_id, force=True)
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(
+                            url,
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            params=params,
+                            timeout=15,
+                        )
+                    if resp.status_code != 200:
+                        logger.error(f"Email monitor {task_id}: Graph API {resp.status_code} after token refresh")
+                        continue
+
+                # OData $filter may fail on consumer Outlook.com accounts (400/501)
+                # Fall back to client-side filtering
+                client_side_filter = False
+                if resp.status_code in (400, 501) and "$filter" in params:
+                    logger.warning(f"Email monitor {task_id}: OData $filter failed ({resp.status_code}), using client-side filter")
+                    fallback_params = {k: v for k, v in params.items() if k != "$filter"}
+                    fallback_params["$top"] = "50"
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(
+                            url,
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            params=fallback_params,
+                            timeout=15,
+                        )
+                    client_side_filter = True
+
+                if resp.status_code != 200:
+                    logger.warning(f"Email monitor {task_id}: Graph API {resp.status_code}")
+                    continue
+
+                messages = resp.json().get("value", [])
+
+                # Apply client-side filters if OData $filter was not supported
+                if client_side_filter and messages:
+                    filtered = []
+                    for m in messages:
+                        m_sender = m.get("from", {}).get("emailAddress", {}).get("address", "").lower()
+                        m_subject = (m.get("subject") or "").lower()
+                        m_body = (m.get("bodyPreview") or "").lower()
+                        if filter_sender and filter_sender.lower() != m_sender:
+                            continue
+                        if filter_subject and filter_subject.lower() not in m_subject:
+                            continue
+                        if filter_body and filter_body.lower() not in m_body:
+                            continue
+                        filtered.append(m)
+                    messages = filtered
+
+                # 5. Filter to unseen messages only
+                seen = self._seen_files.get(task_id, OrderedDict())
+                new_messages = []
+                for msg in messages:
+                    msg_id = msg.get("id", "")
+                    if msg_id and msg_id not in seen:
+                        new_messages.append(msg)
+                        seen[msg_id] = None  # OrderedDict append (preserves insertion order)
+                # Cap seen set to prevent unbounded memory growth
+                _MAX_SEEN = 10_000
+                if len(seen) > _MAX_SEEN:
+                    excess = len(seen) - _MAX_SEEN
+                    for _ in range(excess):
+                        seen.popitem(last=False)  # evicts OLDEST, not random
+                self._seen_files[task_id] = seen
+
+                if not new_messages:
+                    continue
+
+                logger.info(f"Email monitor {task_id}: found {len(new_messages)} new email(s)")
+
+                # 6. Build enhanced payload with full body + attachments
+                email_payload = []
+                for msg in new_messages:
+                    from_addr = msg.get("from", {}).get("emailAddress", {})
+                    entry: dict = {
+                        "id": msg.get("id"),
+                        "subject": msg.get("subject", ""),
+                        "from_name": from_addr.get("name", ""),
+                        "from_email": from_addr.get("address", ""),
+                        "received": msg.get("receivedDateTime", ""),
+                        "preview": msg.get("bodyPreview", ""),
+                        "has_attachments": msg.get("hasAttachments", False),
+                        "importance": msg.get("importance", "normal"),
+                        "is_read": msg.get("isRead", False),
+                    }
+
+                    # Include full email body when enabled
+                    if fetch_full_body:
+                        body_obj = msg.get("body", {})
+                        entry["body"] = body_obj.get("content", "")
+                        entry["body_type"] = body_obj.get("contentType", "text")
+
+                    # Fetch and parse attachments when enabled
+                    if fetch_attachments and msg.get("hasAttachments"):
+                        entry["attachments"] = await self._fetch_and_parse_attachments(
+                            msg["id"], access_token, task_id,
+                        )
+                    elif fetch_attachments:
+                        entry["attachments"] = []
+
+                    email_payload.append(entry)
+
+                await self._execute_trigger(
+                    trigger_config_id=trigger_config_id,
+                    agent_id=agent_id,
+                    payload={"emails": email_payload, "trigger_type": "email_monitor"},
+                    environment=environment,
+                    version=version,
+                    trigger_config=config,
+                )
+
+                # 7. Mark processed emails as read if configured
+                if mark_as_read:
+                    await self._mark_emails_as_read(
+                        [m.get("id") for m in new_messages if m.get("id")],
+                        access_token,
+                        task_id,
+                    )
+
+                await self._persist_seen_files(trigger_config_id)
+
+            except asyncio.CancelledError:
+                logger.debug(f"Email monitor {task_id} cancelled")
+                await self._persist_seen_files(trigger_config_id)
+                break
+            except Exception:
+                logger.exception(f"Error in email monitor {task_id}")
+                await asyncio.sleep(poll_interval)
+
+    async def _mark_emails_as_read(
+        self,
+        message_ids: list[str],
+        access_token: str,
+        task_id: str,
+    ) -> None:
+        """Mark processed emails as read via Graph API PATCH.
+
+        Best-effort — logs on failure but does not raise.
+        """
+        import httpx
+        from urllib.parse import quote
+
+        for msg_id in message_ids:
+            try:
+                safe_id = quote(msg_id, safe="")
+                url = f"https://graph.microsoft.com/v1.0/me/messages/{safe_id}"
+                async with httpx.AsyncClient() as client:
+                    resp = await client.patch(
+                        url,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"isRead": True},
+                        timeout=10,
+                    )
+                if resp.status_code not in (200, 204):
+                    logger.warning(
+                        f"Email monitor {task_id}: failed to mark {msg_id[:20]}... "
+                        f"as read ({resp.status_code})"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Email monitor {task_id}: error marking {msg_id[:20]}... as read: {e}"
+                )
+
+    async def _fetch_and_parse_attachments(
+        self,
+        message_id: str,
+        access_token: str,
+        task_id: str,
+    ) -> list[dict]:
+        """Fetch attachments for a message from Graph API and parse to text.
+
+        Uses the existing ``attachment_parser.py`` which supports pdf, docx,
+        xlsx, pptx, csv, and txt formats with a 10 MB / 20 attachment cap.
+        """
+        import httpx
+        from urllib.parse import quote
+
+        safe_id = quote(message_id, safe="")
+        url = f"https://graph.microsoft.com/v1.0/me/messages/{safe_id}/attachments"
+        try:
+            # No $select — contentBytes only exists on fileAttachment subtype
+            # and consumer Outlook.com rejects it on the base attachment type
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=30,
+                )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Email monitor {task_id}: failed to fetch attachments "
+                    f"for message {message_id[:20]}... (HTTP {resp.status_code})"
+                )
+                return []
+
+            attachments_data = resp.json().get("value", [])
+            if not attachments_data:
+                return []
+
+            from agentcore.services.outlook.attachment_parser import parse_attachments
+
+            parsed = parse_attachments(attachments_data)
+            logger.info(
+                f"Email monitor {task_id}: parsed {len(parsed)} attachment(s) "
+                f"for message {message_id[:20]}..."
+            )
+            return parsed
+
+        except Exception as e:
+            logger.warning(
+                f"Email monitor {task_id}: error fetching/parsing attachments "
+                f"for message {message_id[:20]}...: {e}"
+            )
+            return []
+
+    async def _refresh_outlook_token(self, config: dict, acct: dict, connector_id: str, force: bool = False) -> str:
+        """Refresh an Outlook OAuth token if expired, returning a valid access token."""
+        access_token = acct.get("access_token", "")
+        expires_at = acct.get("token_expires_at", 0)
+
+        if not force and access_token and time.time() < (expires_at - 60):
+            return access_token
+
+        logger.info(f"Outlook token refresh: force={force}, expired={time.time() >= (expires_at - 60)}")
+
+        refresh_token = acct.get("refresh_token", "")
+        if not refresh_token:
+            raise ValueError("Token expired, no refresh token. Re-link mailbox.")
+
+        import httpx
+
+        token_url = f"https://login.microsoftonline.com/{config.get('tenant_id')}/oauth2/v2.0/token"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                token_url,
+                data={
+                    "client_id": config.get("client_id"),
+                    "client_secret": config.get("client_secret"),
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                    "scope": "Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access",
+                },
+                timeout=15,
+            )
+
+        if resp.status_code != 200:
+            raise ValueError(f"Token refresh failed ({resp.status_code})")
+
+        data = resp.json()
+        acct["access_token"] = data["access_token"]
+        acct["refresh_token"] = data.get("refresh_token", refresh_token)
+        acct["token_expires_at"] = time.time() + data.get("expires_in", 3600)
+
+        # Persist refreshed tokens back to DB
+        await self._persist_outlook_tokens(config, connector_id)
+        return data["access_token"]
+
+    async def _persist_outlook_tokens(self, config: dict, connector_id: str) -> None:
+        """Persist refreshed Outlook tokens to the connector_catalogue row."""
+        try:
+            from agentcore.services.deps import get_db_service
+            from agentcore.services.database.models.connector_catalogue.model import ConnectorCatalogue
+            from agentcore.api.connector_catalogue import _encrypt_provider_config
+
+            persist_config = {k: v for k, v in config.items() if k != "provider"}
+            db_service = get_db_service()
+            async with db_service.with_session() as session:
+                row = await session.get(ConnectorCatalogue, UUID(str(connector_id)))
+                if row:
+                    row.provider_config = _encrypt_provider_config(row.provider, persist_config)
+                    session.add(row)
+                    await session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to persist refreshed Outlook tokens: {e}")
 
     # ── Common Execution ───────────────────────────────────────────────────
 

@@ -1122,6 +1122,24 @@ def _record_to_summary(record: AgentDeploymentUAT | AgentDeploymentProd, environ
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@router.post("/notify", response_model=PublishNotifyResponse, status_code=200)
+async def publish_notification(*, body: PublishNotifyRequest):
+    """Internal endpoint triggered after a successful agent publish.
+
+    Returns agent_id, environment, and version_number.
+    Can also be called externally to verify a publish event.
+    """
+    logger.info(
+        f"Publish notification: agent={body.agent_id} env={body.environment} "
+        f"version={body.version_number}"
+    )
+    return PublishNotifyResponse(
+        agent_id=body.agent_id,
+        environment=body.environment,
+        version_number=body.version_number,
+    )
+
+
 @router.get("/uat", response_model=list[PublishRecordSummary], status_code=200)
 async def list_uat_published_agents(
     *,
@@ -1663,6 +1681,18 @@ async def publish_agent(
             except Exception as reg_err:
                 logger.warning(f"Registry sync failed after UAT publish of {agent_id}: {reg_err}")
 
+            # ─── Publish notification (DB-verified) ──
+            await _notify_publish_event(
+                session,
+                agent_id=agent_id,
+                agent_name=agent.name,
+                environment="uat",
+                version_number=next_version,
+                publish_id=new_record.id,
+                published_by=current_user.id,
+                published_at=new_record.deployed_at,
+            )
+
             return PublishActionResponse(
                 success=True,
                 message=f"Agent '{agent.name}' deployed to UAT as v{next_version}",
@@ -1762,6 +1792,18 @@ async def publish_agent(
                     )
                 except Exception as fm_err:
                     logger.warning(f"FileTrigger sync failed for PROD deploy of {agent_id}: {fm_err}")
+
+                # ─── Publish notification (DB-verified) ──
+                await _notify_publish_event(
+                    session,
+                    agent_id=agent_id,
+                    agent_name=agent.name,
+                    environment="prod",
+                    version_number=next_version,
+                    publish_id=new_record.id,
+                    published_by=current_user.id,
+                    published_at=new_record.deployed_at,
+                )
 
                 return PublishActionResponse(
                     success=True,

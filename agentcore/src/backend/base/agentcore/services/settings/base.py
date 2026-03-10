@@ -241,6 +241,26 @@ class Settings(BaseSettings):
     When set, guardrail catalogue CRUD and NeMo guardrail execution are proxied through the microservice."""
     guardrails_service_api_key: str = ""
     """API key for authenticating with the Guardrails microservice (sent as x-api-key header)."""
+    # Pinecone Microservice
+    pinecone_service_url: str = ""
+    """Base URL of the Pinecone microservice (e.g. http://localhost:8003).
+    When set, Pinecone vector store operations are proxied through the microservice."""
+    pinecone_service_api_key: str = ""
+    """API key for authenticating with the Pinecone microservice (sent as x-api-key header)."""
+
+    # Unified RAG Microservice (Pinecone + Graph RAG)
+    rag_service_url: str = ""
+    """Base URL of the unified RAG microservice (e.g. http://localhost:8005).
+    When set, both Pinecone and Neo4j operations are proxied through this service."""
+    rag_service_api_key: str = ""
+    """API key for authenticating with the RAG microservice (sent as x-api-key header)."""
+
+    # Graph RAG Microservice (legacy — use rag_service_url instead)
+    graph_rag_service_url: str = ""
+    """Base URL of the Graph RAG microservice (e.g. http://localhost:8004).
+    When set, Neo4j graph operations are proxied through the microservice."""
+    graph_rag_service_api_key: str = ""
+    """API key for authenticating with the Graph RAG microservice (sent as x-api-key header)."""
 
     # Public Agent Settings
     public_agent_cleanup_interval: int = Field(default=3600, gt=600)

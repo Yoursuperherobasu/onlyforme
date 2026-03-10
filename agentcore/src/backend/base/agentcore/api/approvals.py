@@ -882,6 +882,22 @@ async def approve_agent(
         except Exception as fm_err:
             logger.warning(f"FileTrigger sync failed after approval {req.id}: {fm_err}")
 
+    # ─── Publish notification (DB-verified) ──
+    try:
+        from agentcore.api.publish import _notify_publish_event
+        await _notify_publish_event(
+            session,
+            agent_id=deployment.agent_id,
+            agent_name=deployment.agent_name,
+            environment="prod",
+            version_number=deployment.version_number,
+            publish_id=deployment.id,
+            published_by=deployment.deployed_by,
+            published_at=deployment.deployed_at,
+        )
+    except Exception as notify_err:
+        logger.warning(f"Publish notification failed after approval {req.id}: {notify_err}")
+
     approver_name = getattr(current_user, "username", None)
     return ApprovalResponse(
         success=True,

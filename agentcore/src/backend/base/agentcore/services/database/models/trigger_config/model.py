@@ -17,6 +17,7 @@ class TriggerTypeEnum(str, Enum):
 
     SCHEDULE = "schedule"
     FOLDER_MONITOR = "folder_monitor"
+    EMAIL_MONITOR = "email_monitor"
 
 
 class TriggerExecutionStatusEnum(str, Enum):

@@ -1,5 +1,6 @@
 import importlib
 import json
+import time as _time_mod
 import warnings
 from abc import abstractmethod
 
@@ -246,6 +247,7 @@ class LCModelNode(Node):
             messages.insert(0, SystemMessage(content=system_message))
         inputs: list | dict = messages or {}
         lf_message = None
+        _llm_start = _time_mod.perf_counter()
         try:
             if hasattr(self, "output_parser") and self.output_parser is not None:
                 runnable |= self.output_parser
@@ -269,7 +271,9 @@ class LCModelNode(Node):
                 # When LLM calls go through the model-service microservice,
                 # LangChain callbacks never see the real provider response,
                 # so we must extract tokens from the AIMessage metadata.
-                self._set_trace_usage_from_message(message)
+                self._set_trace_usage_from_message(
+                    message, duration_ms=(_time_mod.perf_counter() - _llm_start) * 1000
+                )
             elif isinstance(result, dict):
                 result = json.dumps(message, indent=4)
                 self.status = result
@@ -281,7 +285,7 @@ class LCModelNode(Node):
             raise
         return lf_message or Message(text=result)
 
-    def _set_trace_usage_from_message(self, message: AIMessage) -> None:
+    def _set_trace_usage_from_message(self, message: AIMessage, duration_ms: float = 0.0) -> None:
         """Extract token usage from AIMessage.response_metadata and set trace_output_metadata."""
         meta = message.response_metadata or {}
 
@@ -311,6 +315,16 @@ class LCModelNode(Node):
                     "model": model_name,
                 }
             }
+
+        # Emit Prometheus metric for Grafana LLM dashboards
+        from agentcore.observability.metrics_registry import record_llm_call
+        record_llm_call(
+            model_name=model_name or self.display_name,
+            provider=getattr(self, "model_provider", "unknown"),
+            duration_ms=duration_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
 
     async def _handle_stream(self, runnable, inputs):
         """Handle streaming responses from the language model.
