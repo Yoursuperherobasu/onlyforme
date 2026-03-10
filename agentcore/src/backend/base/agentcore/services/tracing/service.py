@@ -42,6 +42,9 @@ def _get_langfuse_tracer():
 trace_context_var: ContextVar[TraceContext | None] = ContextVar("trace_context", default=None)
 component_context_var: ContextVar[ComponentTraceContext | None] = ContextVar("component_trace_context", default=None)
 
+# Keep strong references to background tasks to prevent "Task was destroyed but pending" warnings
+_background_tasks: set[asyncio.Task] = set()
+
 
 class TraceContext:
     def __init__(
@@ -147,6 +150,8 @@ class TracingService(Service):
         try:
             trace_context.running = True
             trace_context.worker_task = asyncio.create_task(self._trace_worker(trace_context))
+            _background_tasks.add(trace_context.worker_task)
+            trace_context.worker_task.add_done_callback(_background_tasks.discard)
         except Exception:  # noqa: BLE001
             logger.exception("Error starting tracing service")
 

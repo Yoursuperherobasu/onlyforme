@@ -31,6 +31,7 @@ class AccessTypeEnum(str, Enum):
 
 class LifecycleStatusEnum(str, Enum):
     DRAFT = "DRAFT"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
     PUBLISHED = "PUBLISHED"
     DEPRECATED = "DEPRECATED"
     ARCHIVED = "ARCHIVED"

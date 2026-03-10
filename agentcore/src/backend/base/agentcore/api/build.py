@@ -293,7 +293,7 @@ async def generate_agent_events(
             components_count = len(graph.vertices)
             vertices_to_run = list(graph.vertices_to_run.union(get_top_level_vertices(graph, graph.vertices_to_run)))
 
-            await chat_service.set_cache(agent_id_str, graph)
+            # Graph is already cached inside build_graph_from_db / build_graph_from_data
             await log_telemetry(start_time, components_count, success=True)
 
         except Exception as exc:
@@ -344,6 +344,7 @@ async def generate_agent_events(
             user_id=str(current_user.id),
             agent_name=agent_name,
             session_id=effective_session_id,
+            chat_service=chat_service,
         )
 
     def sort_vertices(graph: LangGraphAdapter) -> list[str]:
@@ -489,7 +490,7 @@ async def generate_agent_events(
 
     except asyncio.CancelledError:
         adjust_active_sessions(-1)
-        background_tasks.add_task(graph.end_all_traces_in_context())
+        background_tasks.add_task(graph.end_all_traces_in_context)
         raise
     # NOTE: GraphInterrupt is NOT caught here.
     # When interrupt() is called inside a LangGraph node, LangGraph catches the

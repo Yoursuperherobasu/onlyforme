@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { useTranslation } from "react-i18next";
 import IconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import type { HITLRequestItem } from "@/controllers/API/queries/hitl/use-get-hit
 import { useGetHitlPending } from "@/controllers/API/queries/hitl/use-get-hitl-pending";
 import { useResumeHitl } from "@/controllers/API/queries/hitl/use-resume-hitl";
 import { useCancelHitl } from "@/controllers/API/queries/hitl/use-cancel-hitl";
+import { AuthContext } from "@/contexts/authContext";
 
 type StatusFilter = "all" | "pending" | "approved" | "rejected" | "cancelled";
 
@@ -99,6 +100,8 @@ interface DetailModalProps {
   onAction: (threadId: string, action: string, feedback: string) => void;
   onCancel: (threadId: string) => void;
   isActing: boolean;
+  canApprove: boolean;
+  canReject: boolean;
 }
 
 function DetailModal({
@@ -108,6 +111,8 @@ function DetailModal({
   onAction,
   onCancel,
   isActing,
+  canApprove,
+  canReject,
 }: DetailModalProps) {
   const { t } = useTranslation();
   const [feedback, setFeedback] = useState("");
@@ -232,13 +237,16 @@ function DetailModal({
                   {actions.map((action) => {
                     const isReject = action.toLowerCase().includes("reject");
                     const isSelected = selectedAction === action;
+                    const canUseAction = isReject ? canReject : canApprove;
                     return (
                       <button
                         key={action}
+                        disabled={!canUseAction}
                         onClick={() =>
-                          setSelectedAction(isSelected ? null : action)
+                          canUseAction && setSelectedAction(isSelected ? null : action)
                         }
-                        className={`rounded-md border px-4 py-1.5 text-sm font-medium transition-colors ${
+                        title={!canUseAction ? t("You don't have permission") : action}
+                        className={`rounded-md border px-4 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                           isSelected
                             ? isReject
                               ? "border-red-500 bg-red-500 text-white"
@@ -273,7 +281,7 @@ function DetailModal({
                   variant="outline"
                   size="sm"
                   onClick={handleCancel}
-                  disabled={isActing}
+                  disabled={isActing || !canReject}
                 >
                   {t("Cancel Run")}
                 </Button>
@@ -295,8 +303,12 @@ function DetailModal({
 
 export default function HITLApprovalsPage(): JSX.Element {
   const { t } = useTranslation();
+  const { permissions } = useContext(AuthContext);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canApprove = can("hitl_approve");
+  const canReject = can("hitl_reject");
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
   const [searchQuery, setSearchQuery] = useState("");
@@ -598,8 +610,9 @@ export default function HITLApprovalsPage(): JSX.Element {
                                   return (
                                     <button
                                       key={action}
-                                      disabled={isActing}
+                                      disabled={isActing || (isReject ? !canReject : !canApprove)}
                                       onClick={() =>
+                                        (isReject ? canReject : canApprove) &&
                                         handleAction(item.thread_id, action, "")
                                       }
                                       title={action}
@@ -614,7 +627,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                                   );
                                 })}
                               <button
-                                disabled={isActing}
+                                disabled={isActing || !canReject}
                                 onClick={() => handleCancel(item.thread_id)}
                                 title={t("Cancel run")}
                                 className="rounded px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
@@ -645,6 +658,8 @@ export default function HITLApprovalsPage(): JSX.Element {
         onAction={handleAction}
         onCancel={handleCancel}
         isActing={actingThreadId === selectedItem?.thread_id}
+        canApprove={canApprove}
+        canReject={canReject}
       />
     </div>
   );

@@ -18,11 +18,6 @@ from agentcore.schema.dotdict import dotdict
 from agentcore.schema.message import Message
 
 
-def set_advanced_true(component_input):
-    component_input.advanced = True
-    return component_input
-
-
 class AgentNode(ToolCallingAgentNode):
     display_name: str = "Worker Node"
     description: str = "Define the agent's instructions, then enter a task to complete using tools."
@@ -30,13 +25,10 @@ class AgentNode(ToolCallingAgentNode):
     beta = False
     name = "Agent"
 
-    memory_inputs = [set_advanced_true(component_input) for component_input in MemoryNode().inputs]
-
     inputs = [
         HandleInput(
             name="agent_llm",
             display_name="LLM",
-
             info="Connect a language model component to the agent.",
             input_types=["LanguageModel"],
             required=True,
@@ -57,8 +49,6 @@ class AgentNode(ToolCallingAgentNode):
             show=True,
         ),
         *LCToolsAgentNode._base_inputs,
-        # removed memory inputs from agent component
-        # *memory_inputs,
         BoolInput(
             name="add_current_date_tool",
             display_name="Current Date",
@@ -87,17 +77,14 @@ class AgentNode(ToolCallingAgentNode):
                 self.chat_history = [self.chat_history]
 
             # Normalize self.tools to a list
-            # Handle various edge cases: None, empty string, single tool, or list
             if self.tools is None or self.tools == "" or (isinstance(self.tools, str) and not self.tools.strip()):
                 self.tools = []
             elif isinstance(self.tools, list):
-                # Filter out any empty strings or None values from the list
                 self.tools = [t for t in self.tools if t is not None and t != ""]
             elif hasattr(self.tools, 'name'):
-                # It's a single tool object, wrap it in a list
                 self.tools = [self.tools]
             else:
-                # Unknown type - reset to empty list
+                logger.warning("[AgentNode] Unknown tools type %s, resetting to [].", type(self.tools).__name__)
                 self.tools = []
 
             # Add current date tool if enabled
@@ -139,36 +126,45 @@ class AgentNode(ToolCallingAgentNode):
 
     async def json_response(self) -> Data:
         """Convert agent response to structured JSON Data output."""
-        # Run the regular message response first to get the result
-        if not hasattr(self, "_agent_result"):
-            await self.message_response()
-
-        result = self._agent_result
-
-        # Extract content from result
-        if hasattr(result, "content"):
-            content = result.content
-        elif hasattr(result, "text"):
-            content = result.text
-        else:
-            content = str(result)
-
-        # Try to parse as JSON
         try:
-            json_data = json.loads(content)
-            return Data(data=json_data)
-        except json.JSONDecodeError:
-            # If it's not valid JSON, try to extract JSON from the content
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                try:
-                    json_data = json.loads(json_match.group())
-                    return Data(data=json_data)
-                except json.JSONDecodeError:
-                    pass
+            # Run the regular message response first to get the result
+            if not hasattr(self, "_agent_result"):
+                await self.message_response()
 
-            # If we can't extract JSON, return the raw content as data
-            return Data(data={"content": content, "error": "Could not parse as JSON"})
+            result = self._agent_result
+
+            # Extract content from result
+            if hasattr(result, "content"):
+                content = result.content
+            elif hasattr(result, "text"):
+                content = result.text
+            else:
+                content = str(result)
+            # Ensure content is always a string
+            if not isinstance(content, str):
+                content = str(content)
+
+            # Try to parse as JSON
+            try:
+                json_data = json.loads(content)
+                if not isinstance(json_data, dict):
+                    json_data = {"result": json_data}
+                return Data(data=json_data)
+            except (json.JSONDecodeError, TypeError):
+                # If it's not valid JSON, try to extract JSON from the content
+                json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                if json_match:
+                    try:
+                        json_data = json.loads(json_match.group())
+                        return Data(data=json_data)
+                    except json.JSONDecodeError:
+                        pass
+
+                # If we can't extract JSON, return the raw content as data
+                return Data(data={"content": content, "error": "Could not parse as JSON"})
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[AgentNode] json_response failed, returning fallback: {e}")
+            return Data(data={"error": str(e)})
 
     async def get_memory_data(self):
         messages = (

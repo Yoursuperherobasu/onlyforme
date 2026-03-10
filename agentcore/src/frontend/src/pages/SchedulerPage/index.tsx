@@ -17,7 +17,7 @@ import {
   Mail,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import Loading from "@/components/ui/loading";
 import {
   useGetConnectorCatalogue,
@@ -38,6 +38,7 @@ import {
   type CreateTriggerPayload,
   type TriggerExecutionLog,
 } from "@/controllers/API/queries/triggers/use-mutate-trigger";
+import { AuthContext } from "@/contexts/authContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -137,6 +138,8 @@ function envBadge(env: string): JSX.Element {
 // ── Main component ────────────────────────────────────────────────────────
 
 export default function SchedulerPage(): JSX.Element {
+  const { permissions } = useContext(AuthContext);
+  const canAddScheduler = permissions?.includes("add_scheduler");
   const [typeFilter, setTypeFilter] = useState<TriggerTypeFilter>("all");
   const [showModal, setShowModal] = useState(false);
   const [logsTriggerId, setLogsTriggerId] = useState<string | null>(null);
@@ -200,13 +203,15 @@ export default function SchedulerPage(): JSX.Element {
             Schedule and monitor autonomous agent runs for published agents
           </p>
         </div>
-        <button
-          onClick={() => { setEditingTrigger(null); setShowModal(true); }}
-          className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
-        >
-          <Plus className="h-4 w-4" />
-          Add Scheduler
-        </button>
+        {canAddScheduler && (
+          <button
+            onClick={() => { setEditingTrigger(null); setShowModal(true); }}
+            className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
+          >
+            <Plus className="h-4 w-4" />
+            Add Scheduler
+          </button>
+        )}
       </div>
 
       {/* Filter tabs */}
@@ -236,7 +241,10 @@ export default function SchedulerPage(): JSX.Element {
             <Loading />
           </div>
         ) : triggers.length === 0 ? (
-          <EmptyState onAdd={() => { setEditingTrigger(null); setShowModal(true); }} />
+          <EmptyState
+            canAddScheduler={!!canAddScheduler}
+            onAdd={() => { setEditingTrigger(null); setShowModal(true); }}
+          />
         ) : (
           <TriggersTable
             triggers={triggers}
@@ -303,7 +311,13 @@ export default function SchedulerPage(): JSX.Element {
 
 // ── EmptyState ────────────────────────────────────────────────────────────
 
-function EmptyState({ onAdd }: { onAdd: () => void }): JSX.Element {
+function EmptyState({
+  onAdd,
+  canAddScheduler,
+}: {
+  onAdd: () => void;
+  canAddScheduler: boolean;
+}): JSX.Element {
   return (
     <div className="flex h-64 flex-col items-center justify-center gap-3 text-center">
       <div className="rounded-full bg-muted p-4">
@@ -315,13 +329,15 @@ function EmptyState({ onAdd }: { onAdd: () => void }): JSX.Element {
           Add your first scheduler to start running agents on a schedule or trigger.
         </p>
       </div>
-      <button
-        onClick={onAdd}
-        className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
-      >
-        <Plus className="h-4 w-4" />
-        Add Scheduler
-      </button>
+      {canAddScheduler && (
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
+        >
+          <Plus className="h-4 w-4" />
+          Add Scheduler
+        </button>
+      )}
     </div>
   );
 }

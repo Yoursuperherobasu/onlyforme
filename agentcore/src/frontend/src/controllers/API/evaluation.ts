@@ -38,6 +38,12 @@ export interface EvaluationDataset {
   created_at?: string | null;
   updated_at?: string | null;
   item_count?: number | null;
+  visibility?: "private" | "public";
+  public_scope?: "organization" | "department" | null;
+  owner_user_id?: string | null;
+  org_id?: string | null;
+  dept_id?: string | null;
+  public_dept_ids?: string[] | null;
 }
 
 export interface EvaluationDatasetItem {
@@ -184,6 +190,11 @@ export const createEvaluationDataset = async (data: {
   name: string;
   description?: string;
   metadata?: unknown;
+  visibility?: string;
+  public_scope?: string;
+  org_id?: string;
+  dept_id?: string;
+  public_dept_ids?: string[];
 }) => {
   const response = await api.post("/api/evaluation/datasets", data);
   return response.data as EvaluationDataset;
@@ -329,14 +340,12 @@ export const runEvaluationDatasetExperiment = async (
     experiment_name: string;
     description?: string;
     agent_id?: string;
-    generation_model?: string;
-    generation_model_api_key?: string;
+    generation_model_registry_id?: string;
     evaluator_config_id?: string;
     preset_id?: string;
     evaluator_name?: string;
     criteria?: string;
-    judge_model?: string;
-    judge_model_api_key?: string;
+    judge_model_registry_id?: string;
   },
 ) => {
   const response = await api.post(
@@ -363,6 +372,10 @@ export interface EvaluatorConfig {
   name: string;
   criteria: string;
   model: string;
+  model_registry_id?: string;
+  user_id?: string;
+  org_id?: string;
+  dept_id?: string;
   preset_id?: string;
   target?: string[];
   ground_truth?: string;
@@ -374,6 +387,11 @@ export interface EvaluatorConfig {
   project_name?: string;
   ts_from?: string;
   ts_to?: string;
+  created_at?: string;
+  visibility?: "private" | "public";
+  public_scope?: "organization" | "department" | null;
+  shared_user_ids?: string[];
+  public_dept_ids?: string[];
 }
 
 export interface EvaluationPreset {

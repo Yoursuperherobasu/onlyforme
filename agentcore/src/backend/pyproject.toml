@@ -130,11 +130,13 @@ dependencies = [
     "cryptography", 
     "psycopg2-binary",
     "nemoguardrails",
-    "apscheduler>=3.10"
+    "apscheduler>=3.10",
+    "annoy",
+    "tabulate"
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/backend/base/agentcore"]
+packages = ["base/agentcore"]
 
 [project.scripts]
 agentcore = "agentcore.__main__:main"
@@ -202,7 +204,7 @@ ignore-regex = '.*(Stati Uniti|Tense=Pres).*'
 timeout = 150
 timeout_method = "signal"
 minversion = "6.0"
-testpaths = ["src/backend/tests"]
+testpaths = ["tests"]
 console_output_style = "progress"
 filterwarnings = ["ignore::DeprecationWarning", "ignore::ResourceWarning"]
 log_cli = true
@@ -227,7 +229,7 @@ command_line = """
     --cov --cov-report=term --cov-report=html
     --instafail -ra -n auto -m "not api_key_required"
 """
-source = ["src/backend/base/agentcore/"]
+source = ["base/agentcore/"]
 omit = ["*/alembic/*", "tests/*", "*/__init__.py"]
 
 
@@ -243,7 +245,7 @@ directory = "coverage"
 
 
 [tool.ruff]
-exclude = ["src/backend/base/agentcore/alembic/*", "src/frontend/tests/assets/*"]
+exclude = ["base/agentcore/alembic/*", "src/frontend/tests/assets/*"]
 line-length = 120
 
 [tool.ruff.lint]
@@ -287,21 +289,21 @@ external = ["RUF027"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["D1", "INP", "T201"]
-"src/backend/base/agentcore/alembic/versions/*" = ["INP001", "D415", "PGH003"]
-"src/backend/tests/*" = [
+"base/agentcore/alembic/versions/*" = ["INP001", "D415", "PGH003"]
+"tests/*" = [
     "D1",
     "PLR2004",
     "S101",
     "SLF001",
     "BLE001",  # allow broad-exception catching in tests
 ]
-"src/backend/base/agentcore/api/*" = [
+"base/agentcore/api/*" = [
     "TCH", # FastAPI needs to evaluate types at runtime
 ]
-"src/backend/base/agentcore/{components/tools/python_code_structured_tool.py,custom/code_parser/code_parser.py,utils/validate.py}" = [
+"base/agentcore/{components/tools/python_code_structured_tool.py,custom/code_parser/code_parser.py,utils/validate.py}" = [
     "S102", # Use of exec
 ]
-"src/backend/base/agentcore/services/cache/*" = [
+"base/agentcore/services/cache/*" = [
     "S301", # Use of pickle
 ]
 
@@ -310,8 +312,8 @@ builtins-allowed-modules = [ "io", "logging", "socket"]
 
 [tool.codeflash]
 # All paths are relative to this pyproject.toml's directory.
-module-root = "src/backend/base/agentcore"
-ignore-paths = ["src/backend/base/agentcore/components/"]
+module-root = "base/agentcore"
+ignore-paths = ["base/agentcore/components/"]
 formatter-cmds = ["ruff check --exit-zero --fix $file", "ruff format $file"]
 
 [tool.mypy]
@@ -319,7 +321,7 @@ plugins = ["pydantic.mypy"]
 follow_imports = "skip"
 disable_error_code = ["type-var"]
 namespace_packages = true
-mypy_path = "src/backend/base"
+mypy_path = "base"
 ignore_missing_imports = true
 
 [build-system]

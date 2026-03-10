@@ -100,6 +100,22 @@ export default function AdminPage() {
     return [String(detail)];
   }
 
+  function isAlreadyExistsError(error: any): boolean {
+    const detail = error?.response?.data?.detail;
+    const messages = [
+      typeof detail === "string" ? detail : "",
+      error?.response?.data?.message ?? "",
+      error?.message ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return (
+      messages.includes("already exists") ||
+      messages.includes("already registered") ||
+      messages.includes("duplicate")
+    );
+  }
+
   function getUsers() {
     mutateGetUsers(
       {
@@ -218,34 +234,102 @@ export default function AdminPage() {
     );
   }
 
+  function overwriteExistingUser(existingUserId: string, user: UserInputType) {
+    mutateUpdateUser(
+      {
+        user_id: existingUserId,
+        user: {
+          is_active: user.is_active,
+          role: user.role,
+          ...(user.organization_name
+            ? { organization_name: user.organization_name }
+            : {}),
+          ...(user.organization_description
+            ? { organization_description: user.organization_description }
+            : {}),
+          ...(user.department_name ? { department_name: user.department_name } : {}),
+          ...(user.department_id ? { department_id: user.department_id } : {}),
+          ...(user.department_admin_email
+            ? { department_admin_email: user.department_admin_email }
+            : {}),
+        } as any,
+      },
+      {
+        onSuccess: () => {
+          resetFilter();
+          setSuccessData({
+            title: USER_ADD_SUCCESS_ALERT,
+          });
+        },
+        onError: (updateError) => {
+          setErrorData({
+            title: USER_ADD_ERROR_ALERT,
+            list: normalizeErrorMessages(updateError),
+          });
+        },
+      },
+    );
+  }
+
   function handleNewUser(user: UserInputType) {
     mutateAddUser(user, {
-      onSuccess: (res) => {
-        mutateUpdateUser(
-          {
-            user_id: res["id"],
-            user: {
-              is_active: user.is_active,
-              role: user.role,
-            },
-          },
-          {
-            onSuccess: () => {
-              resetFilter();
-              setSuccessData({
-                title: USER_ADD_SUCCESS_ALERT,
-              });
-            },
-            onError: (error) => {
-              setErrorData({
-                title: USER_ADD_ERROR_ALERT,
-                list: normalizeErrorMessages(error),
-              });
-            },
-          },
-        );
+      onSuccess: () => {
+        resetFilter();
+        setSuccessData({
+          title: USER_ADD_SUCCESS_ALERT,
+        });
       },
       onError: (error) => {
+        // Upsert behavior: if username exists, overwrite role/active/org fields.
+        if (isAlreadyExistsError(error)) {
+          const existingUser = (userList.current as Users[]).find(
+            (u) =>
+              String(u.username || "").toLowerCase() ===
+              String(user.username || "").toLowerCase(),
+          );
+
+          if (existingUser?.id) {
+            overwriteExistingUser(existingUser.id, user);
+            return;
+          }
+
+          mutateGetUsers(
+            {
+              skip: 0,
+              limit: 200,
+              q: user.username,
+            },
+            {
+              onSuccess: (res: any) => {
+                const rows: Users[] = Array.isArray(res)
+                  ? res
+                  : Array.isArray(res?.users)
+                    ? res.users
+                    : [];
+                const matched = rows.find(
+                  (u) =>
+                    String(u.username || "").toLowerCase() ===
+                    String(user.username || "").toLowerCase(),
+                );
+                if (matched?.id) {
+                  overwriteExistingUser(matched.id, user);
+                  return;
+                }
+                setErrorData({
+                  title: USER_ADD_ERROR_ALERT,
+                  list: normalizeErrorMessages(error),
+                });
+              },
+              onError: () => {
+                setErrorData({
+                  title: USER_ADD_ERROR_ALERT,
+                  list: normalizeErrorMessages(error),
+                });
+              },
+            },
+          );
+          return;
+        }
         setErrorData({
           title: USER_ADD_ERROR_ALERT,
           list: normalizeErrorMessages(error),

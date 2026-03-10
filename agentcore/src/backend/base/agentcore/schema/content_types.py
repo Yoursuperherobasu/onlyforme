@@ -85,7 +85,11 @@ class ToolContent(BaseContent):
 
     type: Literal["tool_use"] = Field(default="tool_use")
     name: str | None = None
-    tool_input: dict[str, Any] = Field(default_factory=dict, alias="input")
+    tool_input: dict[str, Any] | None = Field(default=None, alias="input")
     output: Any | None = None
     error: Any | None = None
     duration: int | None = None
+    children: list["ToolContent"] = Field(default_factory=list)
+
+
+ToolContent.model_rebuild()

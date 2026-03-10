@@ -1553,23 +1553,60 @@ class Node(ExecutableNode):
         if hasattr(self, "graph"):
             # Convert UUID to str if needed
             agent_id = str(self.graph.agent_id) if self.graph.agent_id else None
-            # Mark orchestrator messages so they don't appear in the playground
+            # Orchestrator messages go to the dedicated orch_conversation table
             if getattr(self.graph, "skip_dev_logging", False):
-                message.category = "orch"
+                return await self._store_orch_message(message, agent_id)
 
         stored_messages = await astore_message(message, agent_id=agent_id)
         if len(stored_messages) != 1:
             msg = "Only one message can be stored at a time."
             raise ValueError(msg)
         stored_message = stored_messages[0]
-        
+
         # Get the dump and create a new Message from it
         dump = stored_message.model_dump()
-        
+
         # CRITICAL: Ensure timestamp is preserved when creating the new Message
         result = await Message.create(**dump)
-        
+
         return result
+
+    async def _store_orch_message(self, message: Message, agent_id: str | None) -> Message:
+        """Store a message in the orch_conversation table instead of the regular conversation table."""
+        from uuid import UUID as _UUID, uuid4 as _uuid4
+        from datetime import datetime, timezone
+        from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+        from agentcore.services.database.models.orch_conversation.crud import orch_add_message
+        from agentcore.services.deps import session_scope
+
+        graph = self.graph
+        orch_row = OrchConversationTable(
+            id=_uuid4(),
+            sender=message.sender or "Machine",
+            sender_name=message.sender_name or "AI",
+            session_id=str(message.session_id or getattr(graph, "orch_session_id", "") or ""),
+            text=message.text if isinstance(message.text, str) else "",
+            agent_id=_UUID(agent_id) if agent_id else None,
+            user_id=_UUID(graph.user_id) if getattr(graph, "user_id", None) else None,
+            deployment_id=_UUID(graph.orch_deployment_id) if getattr(graph, "orch_deployment_id", None) else None,
+            org_id=_UUID(graph.orch_org_id) if getattr(graph, "orch_org_id", None) else None,
+            dept_id=_UUID(graph.orch_dept_id) if getattr(graph, "orch_dept_id", None) else None,
+            timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+            files=list(message.files or []),
+            properties=message.properties.model_dump() if hasattr(message.properties, "model_dump") else (message.properties or {}),
+            category=message.category or "message",
+            content_blocks=[
+                cb.model_dump() if hasattr(cb, "model_dump") else cb
+                for cb in (message.content_blocks or [])
+            ],
+        )
+
+        async with session_scope() as db:
+            saved = await orch_add_message(orch_row, db)
+
+        # Return as a Message so callers can use it uniformly
+        dump = saved.model_dump()
+        return await Message.create(**dump)
 
     async def _send_message_event(self, message: Message, id_: str | None = None, category: str | None = None) -> None:
         if hasattr(self, "_event_manager") and self._event_manager:

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Text
+from sqlalchemy import String, Text
 from sqlmodel import Field, SQLModel, Column, JSON
 
 
@@ -10,6 +10,7 @@ class EvaluatorBase(SQLModel):
     name: str
     criteria: str = Field(sa_column=Column(Text, nullable=False))
     model: str | None = "gpt-4o"
+    model_registry_id: Optional[str] = Field(default=None, index=True)
     preset_id: Optional[str] = None
     ground_truth: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     target: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
@@ -23,7 +24,13 @@ class EvaluatorBase(SQLModel):
     project_name: Optional[str] = None
     ts_from: Optional[datetime] = None
     ts_to: Optional[datetime] = None
-    model_api_key: Optional[str] = None
+    visibility: str = Field(
+        default="private",
+        sa_column=Column(String(20), nullable=False, default="private"),
+    )
+    public_scope: Optional[str] = Field(default=None, sa_column=Column(String(20), nullable=True))
+    shared_user_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    public_dept_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
 
 class Evaluator(EvaluatorBase, table=True):
@@ -39,6 +46,7 @@ class Evaluator(EvaluatorBase, table=True):
             "name": self.name,
             "criteria": self.criteria,
             "model": self.model,
+            "model_registry_id": self.model_registry_id,
             "user_id": str(self.user_id) if self.user_id else None,
             "org_id": str(self.org_id) if self.org_id else None,
             "dept_id": str(self.dept_id) if self.dept_id else None,
@@ -56,4 +64,8 @@ class Evaluator(EvaluatorBase, table=True):
             "ts_from": self.ts_from.isoformat() if self.ts_from else None,
             "ts_to": self.ts_to.isoformat() if self.ts_to else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "visibility": self.visibility or "private",
+            "public_scope": self.public_scope,
+            "shared_user_ids": self.shared_user_ids,
+            "public_dept_ids": self.public_dept_ids,
         }

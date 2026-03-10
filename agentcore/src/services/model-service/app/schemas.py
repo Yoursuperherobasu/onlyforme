@@ -95,6 +95,7 @@ class ChatCompletionResponse(BaseModel):
 class DeltaMessage(BaseModel):
     role: str | None = None
     content: str | None = None
+    tool_calls: list[dict] | None = None
 
 
 class ChunkChoice(BaseModel):

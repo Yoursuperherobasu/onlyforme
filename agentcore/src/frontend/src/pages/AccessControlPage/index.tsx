@@ -129,6 +129,20 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Actions", keys: ["add_connector"] },
     ],
   },
+  {
+    page: "HITL Approvals",
+    sections: [
+      { name: "Page Access", keys: ["view_hitl_approvals_page"] },
+      { name: "Actions", keys: ["hitl_approve", "hitl_reject"] },
+    ],
+  },
+  {
+    page: "Agent Scheduler",
+    sections: [
+      { name: "Page Access", keys: ["view_agent_scheduler_page"] },
+      { name: "Actions", keys: ["add_scheduler"] },
+    ],
+  },
 ];
 
 const EXCEL_PERMISSION_KEYS = new Set(
@@ -155,7 +169,16 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_observability_dashboard: ["view_observability_page"],
   view_knowledge_base_management: ["view_knowledge_base"],
   approve_reject_page: ["prod_publish_approval_required"],
-  view_approval_page: ["view_agent", "view_model", "view_mcp"],
+  prod_publish_approval_required: ["hitl_approve", "hitl_reject"],
+  prod_publish_approval_not_required: ["hitl_approve", "hitl_reject"],
+  view_approval_page: [
+    "view_agent",
+    "view_model",
+    "view_mcp",
+    "view_hitl_approvals_page",
+  ],
+  view_control_panel: ["view_agent_scheduler_page"],
+  start_stop_agent: ["add_scheduler"],
   view_connectors_page: ["connectore_page"],
   connector_page: ["connectore_page"],
 };

@@ -7,7 +7,11 @@ import { useContext } from "react";
 import { useTranslation } from "react-i18next";
 import { AuthContext } from "@/contexts/authContext";
 import CustomLoader from "@/customization/components/custom-loader";
-import { useGetControlPanelAgents } from "@/controllers/API/queries/control-panel";
+import {
+  useGetControlPanelAgents,
+  useToggleControlPanelAgent,
+} from "@/controllers/API/queries/control-panel";
+import useAlertStore from "@/stores/alertStore";
 
 type EnvironmentTab = "UAT" | "PROD";
 
@@ -48,7 +52,12 @@ export default function WorkflowsView({
   const [workflowStates, setWorkagentStates] = useState<{
     [key: string]: { status: boolean; enabled: boolean };
   }>({});
+  const [pendingToggles, setPendingToggles] = useState<{
+    [key: string]: { status: boolean; enabled: boolean };
+  }>({});
   const { permissions } = useContext(AuthContext);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
+  const toggleControlPanelAgent = useToggleControlPanelAgent();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
   const { data, isLoading } = useGetControlPanelAgents(
@@ -60,7 +69,6 @@ export default function WorkflowsView({
     },
     {
       refetchInterval: 30000,
-      keepPreviousData: true,
     },
   );
 
@@ -94,24 +102,104 @@ export default function WorkflowsView({
     setWorkagentStates(initialStates);
   }, [displayworkflows]);
 
-  const handleStatusToggle = (workflowId: string) => {
+  const handleStatusToggle = async (workflowId: string) => {
+    const currentStatus = workflowStates[workflowId]?.status ?? false;
+    const nextStatus = !currentStatus;
+    const env = activeTab.toLowerCase() as "uat" | "prod";
+
     setWorkagentStates((prev) => ({
       ...prev,
       [workflowId]: {
         ...prev[workflowId],
-        status: !prev[workflowId]?.status,
+        status: nextStatus,
       },
     }));
+    setPendingToggles((prev) => ({
+      ...prev,
+      [workflowId]: {
+        ...(prev[workflowId] ?? { status: false, enabled: false }),
+        status: true,
+      },
+    }));
+
+    try {
+      await toggleControlPanelAgent.mutateAsync({
+        deployId: workflowId,
+        env,
+        field: "is_active",
+        value: nextStatus,
+      });
+    } catch (error: any) {
+      setWorkagentStates((prev) => ({
+        ...prev,
+        [workflowId]: {
+          ...prev[workflowId],
+          status: currentStatus,
+        },
+      }));
+      setErrorData({
+        title: t("Failed to update Start/Stop state"),
+        list: [error?.response?.data?.detail || error?.message || t("Unknown error")],
+      });
+    } finally {
+      setPendingToggles((prev) => ({
+        ...prev,
+        [workflowId]: {
+          ...(prev[workflowId] ?? { status: false, enabled: false }),
+          status: false,
+        },
+      }));
+    }
   };
 
-  const handleEnabledToggle = (workflowId: string) => {
+  const handleEnabledToggle = async (workflowId: string) => {
+    const currentEnabled = workflowStates[workflowId]?.enabled ?? false;
+    const nextEnabled = !currentEnabled;
+    const env = activeTab.toLowerCase() as "uat" | "prod";
+
     setWorkagentStates((prev) => ({
       ...prev,
       [workflowId]: {
         ...prev[workflowId],
-        enabled: !prev[workflowId]?.enabled,
+        enabled: nextEnabled,
       },
     }));
+    setPendingToggles((prev) => ({
+      ...prev,
+      [workflowId]: {
+        ...(prev[workflowId] ?? { status: false, enabled: false }),
+        enabled: true,
+      },
+    }));
+
+    try {
+      await toggleControlPanelAgent.mutateAsync({
+        deployId: workflowId,
+        env,
+        field: "is_enabled",
+        value: nextEnabled,
+      });
+    } catch (error: any) {
+      setWorkagentStates((prev) => ({
+        ...prev,
+        [workflowId]: {
+          ...prev[workflowId],
+          enabled: currentEnabled,
+        },
+      }));
+      setErrorData({
+        title: t("Failed to update Enable/Disable state"),
+        list: [error?.response?.data?.detail || error?.message || t("Unknown error")],
+      });
+    } finally {
+      setPendingToggles((prev) => ({
+        ...prev,
+        [workflowId]: {
+          ...(prev[workflowId] ?? { status: false, enabled: false }),
+          enabled: false,
+        },
+      }));
+    }
   };
 
   const filteredworkflows = displayworkflows.filter((workflow) => {
@@ -263,12 +351,15 @@ export default function WorkflowsView({
                   {can("start_stop_agent") && (
                     <td className="px-6 py-4">
                       <button
+                        type="button"
+                        disabled={pendingToggles[workflow.id]?.status}
                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                           workflowStates[workflow.id]?.status ? "bg-blue-600" : "bg-muted"
                         }`}
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          handleStatusToggle(workflow.id);
+                          if (pendingToggles[workflow.id]?.status) return;
+                          await handleStatusToggle(workflow.id);
                         }}
                       >
                         <span
@@ -282,12 +373,15 @@ export default function WorkflowsView({
                   {can("enable_disable_agent") && (
                     <td className="px-6 py-4">
                       <button
+                        type="button"
+                        disabled={pendingToggles[workflow.id]?.enabled}
                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                           workflowStates[workflow.id]?.enabled ? "bg-green-500" : "bg-muted"
                         }`}
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          handleEnabledToggle(workflow.id);
+                          if (pendingToggles[workflow.id]?.enabled) return;
+                          await handleEnabledToggle(workflow.id);
                         }}
                       >
                         <span

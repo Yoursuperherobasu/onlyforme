@@ -140,6 +140,10 @@ class LangGraphAdapter:
         self._lock: asyncio.Lock = asyncio.Lock()
         self.activated_vertices: list[str] = []
         self._is_state_vertices: list[str] | None = None
+
+        # Cache invalidation metadata
+        self._cached_updated_at: str | None = None  # agent.updated_at when cached (for DB builds)
+        self._data_hash: str | None = None           # SHA256 of payload (for data builds)
     
  # ── Redis serialization support ──────────────────────────────────────
     def __getstate__(self) -> dict:

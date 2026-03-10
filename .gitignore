@@ -9,7 +9,7 @@ yarn-error.log*
 lerna-debug.log*
 qdrant_storage
 
-
+.venvmodel
 # VSCode
 .vscode/settings.json
 .chroma
@@ -203,6 +203,7 @@ myenv/
 
 .DS_Store
 nohup.outagentcore/pii_masking_templates/
+agentcore/docs/
 
 # Azure deployment files (local testing only)
 agentcore/Dockerfile

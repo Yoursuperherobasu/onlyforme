@@ -206,27 +206,225 @@ def _coerce_temperature(value: Any) -> float | None:
         return None
 
 
-def _should_strip_temperature_for_model(
-    provider: str | None,
-    model_name: str | None,
-    temperature: Any,
-) -> bool:
-    provider_normalized = (provider or "").strip().lower()
-    model_normalized = (model_name or "").strip().lower()
-    temp_value = _coerce_temperature(temperature)
+def _normalize_provider_for_model_constraints(provider: str | None) -> str:
+    normalized = (provider or "").strip().lower()
+    if normalized == "azure_openai":
+        return "azure"
+    return normalized
 
+
+def _coerce_positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except Exception:  # noqa: BLE001
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _is_openai_reasoning_family(provider: str | None, model_name: str | None) -> bool:
+    provider_normalized = _normalize_provider_for_model_constraints(provider)
+    model_normalized = (model_name or "").strip().lower()
     if provider_normalized not in {"openai", "azure", "openai_compatible"}:
         return False
-    if temp_value is None or temp_value == 1.0:
-        return False
-
-    # Azure/OpenAI reasoning-like models reject custom temperature values.
-    # In practice this includes o1/o3 and gpt-5 variants (including *-chat deployments).
     return (
         model_normalized.startswith("o1")
         or model_normalized.startswith("o3")
         or model_normalized.startswith("gpt-5")
     )
+
+
+def _ensure_reasoning_completion_budget(
+    provider: str | None,
+    model_name: str | None,
+    params: dict[str, Any],
+) -> int | None:
+    """Ensure max_completion_tokens is not too low for reasoning models.
+
+    NeMo self-check rails often use max_tokens=3. After rewriting to
+    max_completion_tokens for GPT-5/o-series, that budget can be too small and
+    produce truncated/ambiguous responses, which NeMo may parse as unsafe.
+    """
+    if not isinstance(params, dict):
+        return None
+    if not _is_openai_reasoning_family(provider=provider, model_name=model_name):
+        return None
+    if "max_completion_tokens" not in params:
+        return None
+
+    current_value = _coerce_positive_int(params.get("max_completion_tokens"))
+    if current_value is None:
+        return None
+
+    minimum_safe_budget = 32
+    if current_value < minimum_safe_budget:
+        params["max_completion_tokens"] = minimum_safe_budget
+        return current_value
+    return None
+
+
+def _should_strip_temperature_for_model(
+    provider: str | None,
+    model_name: str | None,
+    temperature: Any,
+) -> bool:
+    temp_value = _coerce_temperature(temperature)
+
+    if not _is_openai_reasoning_family(provider=provider, model_name=model_name):
+        return False
+    if temp_value is None or temp_value == 1.0:
+        return False
+    return True
+
+
+def _contains_all(haystack: str, needles: tuple[str, ...]) -> bool:
+    return all(token in haystack for token in needles)
+
+
+def _normalize_error_text(error_text: str) -> str:
+    text = (error_text or "").lower()
+    for ch in (" ", "_", "-", "`", "'", '"'):
+        text = text.replace(ch, "")
+    return text
+
+
+def _build_fallback_llm_params_from_error(
+    llm_params: dict[str, Any],
+    error_text: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """Build fallback params by adapting to provider/model-specific unsupported params.
+
+    This is intentionally model-agnostic and reacts to runtime API errors rather than
+    hardcoded model names.
+    """
+    params = dict(llm_params)
+    changes: list[str] = []
+    normalized_error = _normalize_error_text(error_text)
+
+    # Generic token-parameter fallbacks based on provider error hints.
+    if _contains_all(normalized_error, ("unsupported", "parameter", "maxtokens", "maxcompletiontokens")):
+        if "max_tokens" in params:
+            value = params.pop("max_tokens")
+            params.setdefault("max_completion_tokens", value)
+            changes.append("max_tokens->max_completion_tokens")
+
+    if _contains_all(normalized_error, ("unsupported", "parameter", "maxcompletiontokens", "maxtokens")):
+        if "max_completion_tokens" in params and "max_tokens" not in params:
+            value = params.pop("max_completion_tokens")
+            params["max_tokens"] = value
+            changes.append("max_completion_tokens->max_tokens")
+
+    if _contains_all(normalized_error, ("unsupported", "parameter", "maxtokens", "maxoutputtokens")):
+        if "max_tokens" in params:
+            value = params.pop("max_tokens")
+            params.setdefault("max_output_tokens", value)
+            changes.append("max_tokens->max_output_tokens")
+
+    if _contains_all(normalized_error, ("unsupported", "parameter", "maxoutputtokens", "maxtokens")):
+        if "max_output_tokens" in params and "max_tokens" not in params:
+            value = params.pop("max_output_tokens")
+            params["max_tokens"] = value
+            changes.append("max_output_tokens->max_tokens")
+
+    # Generic removals for common unsupported parameters.
+    if _contains_all(normalized_error, ("unsupported", "parameter", "streamusage")) and "stream_usage" in params:
+        params.pop("stream_usage", None)
+        changes.append("removed:stream_usage")
+
+    if (
+        _contains_all(normalized_error, ("unsupported", "parameter", "temperature"))
+        or _contains_all(normalized_error, ("unsupported", "value", "temperature"))
+    ) and "temperature" in params:
+        params.pop("temperature", None)
+        changes.append("removed:temperature")
+
+    return params, changes
+
+
+_UNSET: Any = object()  # Sentinel for "field not present on LLM object"
+
+
+def _rebuild_llm_with_fallback_from_error(llm: Any, error_text: str) -> tuple[Any, list[str]]:
+    """Try rebuilding LLM via model_copy when unsupported params are baked into the LLM object.
+
+    Uses Pydantic's model_copy (shallow copy + selective field overrides) rather than
+    model_dump + __class__(**data) to avoid issues with non-serialisable fields such as
+    SecretStr, callbacks, and internal httpx clients.
+    """
+    normalized_error = _normalize_error_text(error_text)
+
+    source_key: str | None = None
+    target_key: str | None = None
+    if _contains_all(normalized_error, ("unsupported", "parameter", "maxtokens", "maxcompletiontokens")):
+        source_key, target_key = "max_tokens", "max_completion_tokens"
+    elif _contains_all(normalized_error, ("unsupported", "parameter", "maxtokens", "maxoutputtokens")):
+        source_key, target_key = "max_tokens", "max_output_tokens"
+
+    if not source_key or not target_key:
+        # No max-tokens error detected; check for a temperature error.
+        # Rebuild the LLM with temperature=1.0 so the retry call's
+        # llm.bind(**params) uses the only accepted value rather than
+        # the LLM object's own default (e.g. 0.7).
+        is_temp_error = (
+            _contains_all(normalized_error, ("unsupported", "parameter", "temperature"))
+            or _contains_all(normalized_error, ("unsupported", "value", "temperature"))
+        )
+        if is_temp_error and hasattr(llm, "model_copy"):
+            try:
+                # Use temperature=None so _default_params (exclude_if_none)
+                # omits temperature entirely from the API payload.  Passing
+                # explicit 1.0 can also be rejected by models that only accept
+                # the implicit default temperature.
+                rebuilt = llm.model_copy(update={"temperature": None})
+                return rebuilt, ["llm:temperature->None"]
+            except Exception:  # noqa: BLE001
+                pass
+        return llm, []
+    if not hasattr(llm, "model_copy"):
+        return llm, []
+
+    changes: list[str] = []
+    update_dict: dict[str, Any] = {}
+    token_value: Any = None
+
+    # 1) Check the top-level Pydantic field.
+    top_val = getattr(llm, source_key, _UNSET)
+    if top_val is not _UNSET and top_val is not None:
+        token_value = top_val
+        update_dict[source_key] = None
+        changes.append(f"llm:{source_key}->None")
+
+    # 2) Check inside model_kwargs (some providers store extra params here).
+    existing_mkwargs: dict[str, Any] = dict(getattr(llm, "model_kwargs", None) or {})
+    if source_key in existing_mkwargs and existing_mkwargs[source_key] is not None:
+        mk_val = existing_mkwargs.pop(source_key)
+        if token_value is None:
+            token_value = mk_val
+        update_dict["model_kwargs"] = existing_mkwargs
+        changes.append(f"llm:model_kwargs.{source_key}->removed")
+
+    if not changes:
+        return llm, []
+
+    # 3) Route the token value to target_key.
+    #    Prefer a named Pydantic field; otherwise stash in model_kwargs so the
+    #    underlying API client receives it correctly.
+    if token_value is not None:
+        model_fields = getattr(llm, "model_fields", {})
+        if target_key in model_fields:
+            update_dict[target_key] = token_value
+        else:
+            # No named field → inject via model_kwargs
+            mk = dict(update_dict.get("model_kwargs", existing_mkwargs) or {})
+            mk[target_key] = token_value
+            update_dict["model_kwargs"] = mk
+        changes.append(f"llm:{source_key}->{target_key}")
+
+    try:
+        rebuilt_llm = llm.model_copy(update=update_dict)
+    except Exception:  # noqa: BLE001
+        return llm, []
+
+    return rebuilt_llm, changes
 
 def _map_registry_provider_to_nemo_engine(provider: str) -> str:
     normalized = (provider or "").strip().lower()
@@ -237,59 +435,6 @@ def _map_registry_provider_to_nemo_engine(provider: str) -> str:
         raise ValueError(msg)
     return engine
 
-
-def _normalize_default_params_for_provider(provider: str, default_params: dict[str, Any]) -> dict[str, Any]:
-    """Normalize default_params to use provider-specific parameter names.
-    
-    Different providers expect different parameter names:
-    - OpenAI/Azure/Anthropic/Groq/OpenAI-compatible: max_tokens
-    - Google: max_output_tokens
-    
-    Some models (like Azure o1-preview, o1-mini) don't support max_tokens at all.
-    
-    This function ensures parameters from the model registry are properly
-    translated to what each provider expects, and removes unsupported parameters.
-    """
-    if not isinstance(default_params, dict) or not default_params:
-        return {}
-    
-    if not provider or not isinstance(provider, str):
-        logger.warning(f"Invalid provider type for normalization: {type(provider)}")
-        return {}
-    
-    normalized = dict(default_params)
-    provider_lower = provider.strip().lower()
-    
-    # Google uses max_output_tokens, others use max_tokens
-    if provider_lower == "google":
-        # Convert max_tokens -> max_output_tokens for Google
-        if "max_tokens" in normalized and "max_output_tokens" not in normalized:
-            normalized["max_output_tokens"] = normalized.pop("max_tokens")
-    else:
-        # Convert max_output_tokens -> max_tokens for non-Google providers
-        if "max_output_tokens" in normalized and "max_tokens" not in normalized:
-            normalized["max_tokens"] = normalized.pop("max_output_tokens")
-    
-    # Remove None, empty string, or zero values for token limits
-    # This allows models that don't support max_tokens to work without errors
-    for token_param in ["max_tokens", "max_output_tokens"]:
-        if token_param in normalized:
-            value = normalized[token_param]
-            if value is None or value == "" or (isinstance(value, (int, float)) and value <= 0):
-                normalized.pop(token_param, None)
-    
-    # Remove parameters that NeMo or providers might reject
-    # stream_usage is problematic for Groq/Google (already handled in compatibility shim)
-    # Remove any provider-specific auth params that should come from model_config
-    params_to_exclude = {
-        "api_key", "openai_api_key", "anthropic_api_key", "google_api_key", "groq_api_key",
-        "base_url", "openai_api_base", "groq_api_base", "azure_endpoint",
-        "deployment_name", "azure_deployment", "openai_api_version", "api_version",
-    }
-    for key in params_to_exclude:
-        normalized.pop(key, None)
-    
-    return normalized
 
 
 def _build_model_parameters(model_config: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -309,9 +454,6 @@ def _build_model_parameters(model_config: dict[str, Any]) -> tuple[str, str, dic
 
     engine = _map_registry_provider_to_nemo_engine(provider)
     params: dict[str, Any] = {}
-
-    # Normalize default_params to handle provider-specific parameter names
-    normalized_default_params = _normalize_default_params_for_provider(provider, default_params)
 
     if provider == "openai":
         if api_key:
@@ -350,29 +492,23 @@ def _build_model_parameters(model_config: dict[str, Any]) -> tuple[str, str, dic
         if isinstance(custom_headers, dict) and custom_headers:
             params["default_headers"] = custom_headers
 
-    # Merge normalized default_params, excluding provider-agnostic keys
-    if normalized_default_params:
+    # Merge additional default params from the model registry, excluding
+    # provider-specific auth/connection keys already set above.
+    if isinstance(default_params, dict):
         params.update({
-            k: v for k, v in normalized_default_params.items()
-            if k not in {"model", "model_name", "engine", "api_key", "base_url"}
+            k: v for k, v in default_params.items()
+            if k not in {
+                "model", "model_name", "engine", "api_key", "base_url",
+                "openai_api_key", "anthropic_api_key", "google_api_key", "groq_api_key",
+                "openai_api_base", "groq_api_base", "azure_endpoint",
+                "deployment_name", "azure_deployment", "openai_api_version", "api_version",
+            }
         })
-
-    if "temperature" in params and _should_strip_temperature_for_model(
-        provider=provider,
-        model_name=model_name,
-        temperature=params.get("temperature"),
-    ):
-        stripped_temp = params.pop("temperature", None)
-        logger.info(
-            "NeMo model parameters adjusted: removed unsupported temperature "
-            f"for provider={provider}, model={model_name}, temperature={stripped_temp}"
-        )
 
     logger.info(
         "NeMo model parameters built: "
         f"provider={provider}, engine={engine}, model={model_name}, has_base_url={bool(base_url)}, "
-        f"default_params_count={len(default_params) if isinstance(default_params, dict) else 0}, "
-        f"normalized_params_count={len(normalized_default_params)}, final_params_keys={sorted(params.keys())}"
+        f"final_params_keys={sorted(params.keys())}"
     )
     return engine, model_name, params
 
@@ -407,25 +543,6 @@ def _build_effective_runtime_config(
             model_type = str(item.get("type", "")).strip().lower()
             if model_type != "main":
                 preserved_models.append(item)
-
-    # NeMo topic/content safety actions resolve model instances from `llms`,
-    # and `llms` intentionally excludes model type "main". Ensure at least one
-    # non-main, non-embedding model exists so safety flows can reference it.
-    _EXCLUDED_LLM_TYPES = {"main", "embeddings", "jailbreak_detection"}
-    has_usable_safety_model = any(
-        str(item.get("type", "")).strip().lower() not in _EXCLUDED_LLM_TYPES
-        for item in preserved_models
-        if isinstance(item, dict)
-    )
-    if not has_usable_safety_model:
-        safety_model_block = {
-            "type": "agentcore_safety",
-            "engine": engine,
-            "model": model_name,
-        }
-        if params:
-            safety_model_block["parameters"] = dict(params)
-        preserved_models.insert(0, safety_model_block)
 
     parsed["models"] = [model_block, *preserved_models]
 
@@ -464,115 +581,11 @@ def _materialize_config(runtime_config: dict[str, Any]) -> Path:
     config_dir = Path(tempfile.mkdtemp(prefix="agentcore_nemo_guardrails_"))
     logger.info(f"NeMo runtime config materialization started: config_dir={config_dir}")
 
-    # NeMo topic/content safety flows require a $model=<type> qualifier that references
-    # a named model in config.yml's `models:` list.  Users often omit this qualifier, so
-    # we auto-detect the model type and inject it consistently into both config.yml and
-    # prompts.yml before writing to disk.
-    _SAFETY_FLOW_IDS = frozenset(
-        {
-            "topic safety check input",
-            "topic safety check output",
-            "content safety check input",
-            "content safety check output",
-        }
-    )
-    _MODEL_QUALIFIER_TASKS = frozenset(
-        {
-            "topic_safety_check_input",
-            "topic_safety_check_output",
-            "content_safety_check_input",
-            "content_safety_check_output",
-        }
-    )
-
-    # --- Step 1: patch config.yml flows ---
-    config_yml_str = runtime_config["config_yml"]
-    _resolved_safety_model: str = "main"  # fallback; updated if we can parse config
-    try:
-        _config_parsed = yaml.safe_load(config_yml_str)
-        if isinstance(_config_parsed, dict):
-            # Determine which model type to use for safety flows.
-            # Prefer a dedicated non-main LLM type (especially agentcore_safety).
-            _models_list = _config_parsed.get("models") or []
-            _safety_model_type = "main"
-            if isinstance(_models_list, list):
-                _preferred_type = None
-                for _m in _models_list:
-                    if isinstance(_m, dict):
-                        _t = (_m.get("type") or "").strip()
-                        _t_lower = _t.lower()
-                        if _t_lower == "agentcore_safety":
-                            _preferred_type = _t
-                            break
-                        if _t and _t_lower not in {"main", "embeddings", "jailbreak_detection"}:
-                            _preferred_type = _preferred_type or _t
-                if _preferred_type:
-                    _safety_model_type = _preferred_type
-            _resolved_safety_model = _safety_model_type
-
-            # Inject $model=<type> into any safety flow that is missing the qualifier.
-            _rails = _config_parsed.get("rails") or {}
-            _config_changed = False
-            for _section in ("input", "output"):
-                _sect = _rails.get(_section) or {}
-                if not isinstance(_sect, dict):
-                    continue
-                _flows = _sect.get("flows") or []
-                if not isinstance(_flows, list):
-                    continue
-                for _i, _flow in enumerate(_flows):
-                    if not isinstance(_flow, str):
-                        continue
-                    _base_flow = _flow.split("$model=")[0].strip()
-                    if _base_flow in _SAFETY_FLOW_IDS and "$model=" not in _flow:
-                        _flows[_i] = f"{_base_flow} $model={_safety_model_type}"
-                        _config_changed = True
-
-            if _config_changed:
-                config_yml_str = yaml.dump(_config_parsed, default_flow_style=False, allow_unicode=True)
-                logger.info(
-                    f"NeMo config_yml: auto-injected '$model={_safety_model_type}' "
-                    "into topic/content safety flows for NeMo compatibility."
-                )
-    except Exception:  # noqa: BLE001
-        pass  # Let NeMo surface its own parse error with better context
-
-    _write_safe_file(config_dir, "config.yml", config_yml_str)
+    _write_safe_file(config_dir, "config.yml", runtime_config["config_yml"])
     _write_safe_file(config_dir, "rails.co", runtime_config["rails_co"])
 
-    # --- Step 2: patch prompts.yml ---
     prompts_yml = runtime_config.get("prompts_yml")
     if isinstance(prompts_yml, str) and prompts_yml.strip():
-        try:
-            _parsed_prompts = yaml.safe_load(prompts_yml)
-            # Wrap bare list → {"prompts": [...]}
-            if isinstance(_parsed_prompts, list):
-                _parsed_prompts = {"prompts": _parsed_prompts}
-                logger.info(
-                    "NeMo prompts_yml was a bare YAML list; "
-                    "auto-wrapped under 'prompts:' key for NeMo compatibility."
-                )
-            # Append " $model=<type>" to topic/content safety task names that are
-            # missing the model qualifier, using the same type resolved from config.yml.
-            if isinstance(_parsed_prompts, dict):
-                _prompt_list = _parsed_prompts.get("prompts")
-                if isinstance(_prompt_list, list):
-                    _prompts_changed = False
-                    for _p in _prompt_list:
-                        if isinstance(_p, dict):
-                            _task = _p.get("task", "")
-                            _base_task = _task.split(" $model=")[0].strip()
-                            if _base_task in _MODEL_QUALIFIER_TASKS and "$model=" not in _task:
-                                _p["task"] = f"{_base_task} $model={_resolved_safety_model}"
-                                _prompts_changed = True
-                    if _prompts_changed:
-                        logger.info(
-                            f"NeMo prompts_yml: auto-appended '$model={_resolved_safety_model}' "
-                            "to topic/content safety task names for NeMo compatibility."
-                        )
-                prompts_yml = yaml.dump(_parsed_prompts, default_flow_style=False, allow_unicode=True)
-        except Exception:  # noqa: BLE001
-            pass  # Let NeMo surface its own parse error with better context
         _write_safe_file(config_dir, "prompts.yml", prompts_yml)
 
     for relative_path, content in runtime_config.get("files", {}).items():
@@ -620,41 +633,147 @@ def _build_rails_from_config_path(config_dir: Path) -> Any:
         ) -> str:
             params = dict(llm_params) if isinstance(llm_params, dict) else llm_params
 
+            # Resolve provider/model_name unconditionally so they are always
+            # available inside the except block even when llm_params is None.
+            provider = (llm_utils.get_llm_provider(llm) or "").lower()
+            resolved_model_name = (
+                model_name
+                or getattr(llm, "model", None)
+                or getattr(llm, "model_name", None)
+                # AzureChatOpenAI: model and model_name are None; the deployment
+                # name is stored in deployment_name (alias: azure_deployment).
+                # Without this, resolved_model_name is always '' for Azure and
+                # _should_strip_temperature_for_model never fires proactively.
+                or getattr(llm, "deployment_name", None)
+                or getattr(llm, "azure_deployment", None)
+                or ""
+            )
+
             if isinstance(params, dict):
-                provider = (llm_utils.get_llm_provider(llm) or "").lower()
                 if provider in {"google_genai", "google_vertexai", "vertexai"}:
                     if "max_tokens" in params and "max_output_tokens" not in params:
                         params["max_output_tokens"] = params.pop("max_tokens")
                     params.pop("stream_usage", None)
                 elif provider in {"groq"}:
                     params.pop("stream_usage", None)
+                else:
+                    # Proactively rewrite max_tokens → max_completion_tokens when the
+                    # LLM natively uses max_completion_tokens (e.g. Azure gpt-5 class).
+                    # We probe by setting max_tokens=1 on a shallow copy and reading
+                    # _default_params — this fires even when the LLM was initialised
+                    # WITHOUT an explicit max_tokens value, which is the common case.
+                    # Avoids hardcoding any model names.
+                    if "max_tokens" in params and "max_completion_tokens" not in params:
+                        try:
+                            probe = llm.model_copy(update={"max_tokens": 1})
+                            probe_defaults = probe._default_params
+                            if (
+                                isinstance(probe_defaults, dict)
+                                and "max_completion_tokens" in probe_defaults
+                                and "max_tokens" not in probe_defaults
+                            ):
+                                params["max_completion_tokens"] = params.pop("max_tokens")
+                                logger.info(
+                                    "NeMo llm_call adjusted: rewrote max_tokens→max_completion_tokens "
+                                    f"(probe: _default_params prefers max_completion_tokens) for "
+                                    f"provider={provider}, model={resolved_model_name}"
+                                )
+                        except Exception:  # noqa: BLE001
+                            pass  # probe unavailable; retry path handles it if needed
 
-                resolved_model_name = (
-                    model_name
-                    or getattr(llm, "model", None)
-                    or getattr(llm, "model_name", None)
-                    or ""
-                )
                 if _should_strip_temperature_for_model(
                     provider=provider,
                     model_name=str(resolved_model_name),
                     temperature=params.get("temperature"),
                 ):
-                    stripped_temp = params.pop("temperature", None)
+                    original_temp = params.pop("temperature", None)
+                    # Remove NeMo's unsupported temperature from llm_params so
+                    # it is NOT passed via llm.bind(**params).
+                    # LangChain's AzureChatOpenAI defaults temperature=None, and
+                    # _default_params uses exclude_if_none — so when temperature
+                    # is absent from both llm_params and the LLM object's own
+                    # fields, the Azure API receives NO temperature parameter at
+                    # all and uses its own default (1.0 for gpt-5.x).  Passing
+                    # any explicit value — even 1.0 — may still be rejected by
+                    # models that only accept the implicit default.
                     logger.info(
-                        "NeMo llm_call adjusted: removed unsupported temperature "
-                        f"for provider={provider}, model={resolved_model_name}, temperature={stripped_temp}"
+                        "NeMo llm_call adjusted: removed unsupported temperature from params "
+                        f"for provider={provider}, model={resolved_model_name}, "
+                        f"original_temperature={original_temp}"
                     )
 
-            return await original_llm_call(
-                llm=llm,
-                prompt=prompt,
-                model_name=model_name,
-                model_provider=model_provider,
-                stop=stop,
-                custom_callback_handlers=custom_callback_handlers,
-                llm_params=params,
-            )
+                previous_budget = _ensure_reasoning_completion_budget(
+                    provider=provider,
+                    model_name=str(resolved_model_name),
+                    params=params,
+                )
+                if previous_budget is not None:
+                    logger.info(
+                        "NeMo llm_call adjusted: raised max_completion_tokens for reasoning self-check stability "
+                        f"for provider={provider}, model={resolved_model_name}, "
+                        f"original_max_completion_tokens={previous_budget}, new_max_completion_tokens=32"
+                    )
+
+            try:
+                response = await original_llm_call(
+                    llm=llm,
+                    prompt=prompt,
+                    model_name=model_name,
+                    model_provider=model_provider,
+                    stop=stop,
+                    custom_callback_handlers=custom_callback_handlers,
+                    llm_params=params,
+                )
+                logger.debug(
+                    "NeMo llm_call succeeded: "
+                    f"provider={provider}, model={resolved_model_name}, "
+                    f"response_preview={str(response)[:80]!r}"
+                )
+                return response
+            except Exception as exc:  # noqa: BLE001
+                error_str = str(exc)
+                # Build fallback params only when params is a dict.  When
+                # llm_params is None, NeMo passes token limits baked into the
+                # LLM object itself, so we must always attempt the LLM rebuild
+                # regardless of whether llm_params was supplied.
+                fallback_params: dict[str, Any] | None = params
+                param_changes: list[str] = []
+                if isinstance(params, dict):
+                    fallback_params, param_changes = _build_fallback_llm_params_from_error(params, error_str)
+
+                fallback_llm, llm_changes = _rebuild_llm_with_fallback_from_error(llm, error_str)
+                changes = [*param_changes, *llm_changes]
+                if not changes:
+                    raise
+
+                logger.warning(
+                    "NeMo llm_call retry with fallback params: "
+                    f"provider={provider}, model={resolved_model_name}, changes={changes}"
+                )
+
+                try:
+                    response = await original_llm_call(
+                        llm=fallback_llm,
+                        prompt=prompt,
+                        model_name=model_name,
+                        model_provider=model_provider,
+                        stop=stop,
+                        custom_callback_handlers=custom_callback_handlers,
+                        llm_params=fallback_params,
+                    )
+                    logger.info(
+                        "NeMo llm_call retry succeeded: "
+                        f"provider={provider}, model={resolved_model_name}, "
+                        f"response_preview={str(response)[:80]!r}"
+                    )
+                    return response
+                except Exception as retry_exc:
+                    logger.error(
+                        "NeMo llm_call retry also failed: "
+                        f"provider={provider}, model={resolved_model_name}, "
+                        f"original_changes={changes}, retry_error={retry_exc!r}"
+                    )
+                    raise
 
         setattr(_compat_llm_call, "_agentcore_compat_patched", True)
         llm_utils.llm_call = _compat_llm_call
@@ -938,8 +1057,21 @@ def _is_input_rail_blocked(activated_rails: list[dict[str, Any]]) -> tuple[bool,
         if rail.get("type") != "input":
             continue
         decisions = [str(item).strip().lower() for item in rail.get("decisions", [])]
-        has_stop_decision = any(item == "stop" for item in decisions)
-        if bool(rail.get("stop")) or has_stop_decision:
+
+        # IMPORTANT:
+        # For some NeMo input rails (notably self-check rails), `stop=True` can
+        # appear for control-flow transitions and does not always mean policy block.
+        # We therefore require explicit refusal/block hints in decisions before
+        # classifying the rail as blocked.
+        explicit_block_decision = any(
+            item in {"block", "blocked", "refuse", "refused", "unsafe"}
+            for item in decisions
+        )
+        refusal_hint = any(
+            ("refuse" in item) or ("block" in item) or ("unsafe" in item)
+            for item in decisions
+        )
+        if explicit_block_decision or (bool(rail.get("stop")) and refusal_hint):
             blocked_names.append(str(rail.get("name") or "<unnamed>"))
     return bool(blocked_names), blocked_names
 

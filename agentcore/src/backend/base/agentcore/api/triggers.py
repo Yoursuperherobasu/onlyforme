@@ -48,31 +48,96 @@ async def list_all_triggers(
     current_user: CurrentActiveUser,
     trigger_type: TriggerTypeEnum | None = None,
 ) -> list[dict]:
-    """List all trigger configurations across all agents (admin view)."""
-    from agentcore.services.database.models.agent.model import Agent
+    """List trigger configurations visible to the current user (tenancy aware)."""
+    from sqlmodel import select
+
+    from agentcore.services.auth.permissions import normalize_role
+    from agentcore.services.database.models.agent.model import Agent, AccessTypeEnum, LifecycleStatusEnum
     from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
     from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
+    from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+    from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+
+    role = normalize_role(getattr(current_user, "role", "") or "")
+
+    org_rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == current_user.id,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+            )
+        )
+    ).all()
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
+    dept_ids = {r if isinstance(r, UUID) else r[0] for r in dept_rows}
 
     triggers = await get_all_triggers(session, trigger_type=trigger_type)
     result = []
+
     for t in triggers:
         agent = await session.get(Agent, t.agent_id)
+
+        dep = None
+        env = (t.environment or "").lower()
+        if t.deployment_id and env == "prod":
+            dep = await session.get(AgentDeploymentProd, t.deployment_id)
+        elif t.deployment_id and env == "uat":
+            dep = await session.get(AgentDeploymentUAT, t.deployment_id)
+
+        # Resolve visibility/tenancy from deployment first; fallback to agent metadata.
+        dep_org_id = dep.org_id if dep is not None else (agent.org_id if agent else None)
+        dep_dept_id = dep.dept_id if dep is not None else (agent.dept_id if agent else None)
+        is_owner = (
+            t.created_by == current_user.id
+            or (dep is not None and dep.deployed_by == current_user.id)
+            or (agent is not None and agent.user_id == current_user.id)
+        )
+
+        if dep is not None:
+            dep_visibility = str(dep.visibility.value if hasattr(dep.visibility, "value") else dep.visibility).upper()
+            is_public = dep_visibility == "PUBLIC"
+        else:
+            is_public = bool(
+                agent
+                and agent.access_type == AccessTypeEnum.PUBLIC
+                and agent.lifecycle_status == LifecycleStatusEnum.PUBLISHED
+            )
+
+        can_view = False
+        if role == "root":
+            can_view = True
+        elif is_owner or is_public:
+            can_view = True
+        elif role == "super_admin":
+            can_view = dep_org_id in org_ids if dep_org_id else False
+        elif role == "department_admin":
+            can_view = dep_dept_id in dept_ids if dep_dept_id else False
+        else:
+            # developer/business_user/consumer: scoped tenancy visibility
+            can_view = (
+                (dep_dept_id in dept_ids if dep_dept_id else False)
+                or (dep_org_id in org_ids if dep_org_id else False)
+            )
+
+        if not can_view:
+            continue
+
         row = TriggerConfigRead.model_validate(t).model_dump()
 
-        # Use deployment-specific agent name so each version keeps the name
-        # it was deployed with (even if the agent is later renamed/republished).
-        deploy_name = None
-        if t.deployment_id:
-            env = (t.environment or "").lower()
-            if env == "prod":
-                dep = await session.get(AgentDeploymentProd, t.deployment_id)
-                deploy_name = dep.agent_name if dep else None
-            elif env == "uat":
-                dep = await session.get(AgentDeploymentUAT, t.deployment_id)
-                deploy_name = dep.agent_name if dep else None
-
+        # Use deployment-specific name so each version keeps its original deployed name.
+        deploy_name = dep.agent_name if dep else None
         row["agent_name"] = deploy_name or (agent.name if agent else str(t.agent_id))
         result.append(row)
+
     return result
 
 
