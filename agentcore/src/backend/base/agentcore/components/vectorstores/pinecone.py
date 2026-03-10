@@ -1,9 +1,10 @@
 """
 Pinecone Vector Store Component
+
+Delegates all Pinecone SDK operations to the pinecone-service microservice.
+Embedding generation stays local (via the connected Embedding component).
 """
 
-import hashlib
-import os
 import time
 
 import numpy as np
@@ -14,17 +15,11 @@ from agentcore.base.vectorstores.model import LCVectorStoreNode, check_cached_ve
 from agentcore.io import BoolInput, DropdownInput, HandleInput, IntInput, StrInput
 from agentcore.schema.data import Data
 from agentcore.schema.message import Message
-
-
-def _get_env_key(name: str) -> str:
-    """Retrieve a required environment variable or raise a clear error."""
-    value = os.getenv(name)
-    if not value:
-        raise EnvironmentError(
-            f"Environment variable '{name}' is not set. "
-            f"Please set it before using the Pinecone component."
-        )
-    return value
+from agentcore.services.pinecone_service_client import (
+    ensure_index_via_service,
+    ingest_via_service,
+    search_via_service,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -63,10 +58,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
     #  HELPERS
     # ══════════════════════════════════════════════════════════
 
-    def _get_pinecone_client(self):
-        from pinecone import Pinecone
-        return Pinecone(api_key=_get_env_key("PINECONE_API_KEY"))
-
     def _get_alpha(self) -> float:
         try:
             return float(self.hybrid_alpha)
@@ -88,42 +79,27 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         return str(query).strip()
 
     # ══════════════════════════════════════════════════════════
-    #  AUTO-CREATE INDEX — always dotproduct for flexibility
+    #  AUTO-CREATE INDEX via microservice
     # ══════════════════════════════════════════════════════════
 
     def _ensure_index_exists(self):
         if not self.auto_create_index:
             logger.info(f"[Pinecone] Auto-create disabled, assuming index '{self.index_name}' exists")
             return
-        pc = self._get_pinecone_client()
-        logger.info(f"[Pinecone] Checking if index '{self.index_name}' exists...")
-        existing = pc.list_indexes()
-        names = [idx.name for idx in existing] if existing else []
-        if self.index_name in names:
-            logger.info(f"[Pinecone] Index '{self.index_name}' already exists")
-            return
-
-        from pinecone import ServerlessSpec
-        logger.info(f"[Pinecone] Creating index '{self.index_name}' (dim={self.embedding_dimension}, metric=dotproduct)...")
-        pc.create_index(
-            name=self.index_name,
-            dimension=self.embedding_dimension,
-            metric="dotproduct",
-            vector_type="dense",
-            spec=ServerlessSpec(cloud=self.cloud_provider, region=self.cloud_region),
+        logger.info(f"[Pinecone] Ensuring index '{self.index_name}' via microservice...")
+        result = ensure_index_via_service(
+            index_name=self.index_name,
+            embedding_dimension=self.embedding_dimension,
+            cloud_provider=self.cloud_provider,
+            cloud_region=self.cloud_region,
         )
-        for attempt in range(30):
-            try:
-                desc = pc.describe_index(self.index_name)
-                if desc.status and desc.status.get("ready", False):
-                    logger.info(f"[Pinecone] Index '{self.index_name}' ready after {(attempt+1)*2}s")
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
+        if result.get("created"):
+            logger.info(f"[Pinecone] Index '{self.index_name}' created via microservice")
+        else:
+            logger.info(f"[Pinecone] Index '{self.index_name}' already exists")
 
     # ══════════════════════════════════════════════════════════
-    #  EMBEDDING MODEL
+    #  EMBEDDING MODEL (stays local — from connected component)
     # ══════════════════════════════════════════════════════════
 
     def _get_embedding_model(self):
@@ -144,97 +120,38 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         )
 
     # ══════════════════════════════════════════════════════════
-    #  SPARSE / HYBRID HELPERS
+    #  INGESTION via microservice
     # ══════════════════════════════════════════════════════════
-
-    def _generate_sparse_vectors(self, texts, input_type="passage"):
-        pc = self._get_pinecone_client()
-        all_sparse = []
-        for i in range(0, len(texts), 96):
-            batch = texts[i:i+96]
-            response = pc.inference.embed(
-                model=self.sparse_model, inputs=batch,
-                parameters={"input_type": input_type, "truncate": "END"},
-            )
-            for item in response:
-                indices = getattr(item, "sparse_indices", None) or getattr(item, "indices", [])
-                values = getattr(item, "sparse_values", None) or getattr(item, "values", [])
-                all_sparse.append({"indices": list(indices), "values": list(values)})
-        return all_sparse
-
-    def _generate_sparse_query(self, query):
-        result = self._generate_sparse_vectors([query], input_type="query")
-        return result[0] if result else {"indices": [], "values": []}
-
-    @staticmethod
-    def _hybrid_score_norm(dense, sparse, alpha):
-        if alpha < 0 or alpha > 1:
-            raise ValueError("Alpha must be between 0 and 1")
-        return (
-            [v * alpha for v in dense],
-            {"indices": sparse["indices"], "values": [v * (1 - alpha) for v in sparse["values"]]},
-        )
-
-    # ══════════════════════════════════════════════════════════
-    #  INGESTION — always dense, optionally adds sparse
-    # ══════════════════════════════════════════════════════════
-
-    @staticmethod
-    def _stable_doc_id(namespace: str, index: int, content: str) -> str:
-        """Generate a deterministic vector ID using SHA-256 (stable across Python sessions)."""
-        digest = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
-        return f"{namespace or 'ns'}_{index}_{digest}"
 
     def _ingest_documents(self, documents, embedder):
-        """Upsert documents with dense vectors + optional sparse vectors."""
-        pc = self._get_pinecone_client()
-        index = pc.Index(self.index_name)
         texts = [doc.page_content for doc in documents]
         logger.info(f"[Pinecone] Generating dense embeddings for {len(texts)} chunk(s)...")
         t0 = time.time()
         dense_embeddings = embedder.embed_documents(texts)
         logger.info(f"[Pinecone] Dense embeddings done in {time.time()-t0:.1f}s")
 
-        sparse_vectors = None
-        if self.use_hybrid_search:
-            try:
-                logger.info(f"[Pinecone] Generating sparse vectors for {len(texts)} chunk(s)...")
-                t1 = time.time()
-                sparse_vectors = self._generate_sparse_vectors(texts, input_type="passage")
-                logger.info(f"[Pinecone] Sparse vectors done in {time.time()-t1:.1f}s")
-            except Exception as e:
-                logger.warning(f"[Pinecone] Sparse embedding failed, ingesting dense-only: {e}")
+        doc_items = [
+            {"page_content": doc.page_content, "metadata": dict(doc.metadata) if doc.metadata else {}}
+            for doc in documents
+        ]
 
-        vectors = []
-        for i, (doc, dense) in enumerate(zip(documents, dense_embeddings)):
-            metadata = dict(doc.metadata) if doc.metadata else {}
-            metadata[self.text_key] = doc.page_content[:40000]
-            vec_id = self._stable_doc_id(self.namespace, i, doc.page_content)
-
-            vec_data = {"id": vec_id, "values": dense, "metadata": metadata}
-            if sparse_vectors and i < len(sparse_vectors):
-                vec_data["sparse_values"] = sparse_vectors[i]
-
-            vectors.append(vec_data)
-
-        batch_size = 50
-        total_batches = (len(vectors) + batch_size - 1) // batch_size
-        logger.info(
-            f"[Pinecone] Upserting {len(vectors)} vector(s) to namespace={self.namespace!r} "
-            f"in {total_batches} batch(es) of {batch_size}..."
+        logger.info(f"[Pinecone] Ingesting {len(doc_items)} document(s) via microservice...")
+        result = ingest_via_service(
+            index_name=self.index_name,
+            namespace=self.namespace or "",
+            text_key=self.text_key,
+            documents=doc_items,
+            embedding_vectors=dense_embeddings,
+            auto_create_index=self.auto_create_index,
+            embedding_dimension=self.embedding_dimension,
+            cloud_provider=self.cloud_provider,
+            cloud_region=self.cloud_region,
+            use_hybrid_search=self.use_hybrid_search,
+            sparse_model=self.sparse_model,
         )
-        t2 = time.time()
-        for i in range(0, len(vectors), batch_size):
-            batch = vectors[i:i + batch_size]
-            batch_num = i // batch_size + 1
-            try:
-                index.upsert(vectors=batch, namespace=self.namespace or "")
-                logger.info(f"[Pinecone] Batch {batch_num}/{total_batches} done ({len(batch)} vectors)")
-            except Exception as e:
-                logger.error(f"[Pinecone] Batch {batch_num}/{total_batches} FAILED: {e}")
-                raise
-        logger.info(f"[Pinecone] Upsert complete: {len(vectors)} vectors in {time.time()-t2:.1f}s")
-        return len(vectors)
+        count = result.get("vectors_upserted", 0)
+        logger.info(f"[Pinecone] Microservice upserted {count} vectors")
+        return count
 
     def _ingest_if_needed(self, wrapped_embeddings):
         self.ingest_data = self._prepare_ingest_data()
@@ -271,6 +188,7 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             raise ValueError(f"Error creating index: {e}") from e
 
         from langchain_pinecone import PineconeVectorStore
+        import os
 
         real_embedding = self._get_embedding_model()
         wrapped = Float32Embeddings(real_embedding)
@@ -280,7 +198,7 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             embedding=wrapped,
             text_key=self.text_key,
             namespace=self.namespace,
-            pinecone_api_key=_get_env_key("PINECONE_API_KEY"),
+            pinecone_api_key=os.getenv("PINECONE_API_KEY", ""),
         )
 
         try:
@@ -293,15 +211,12 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         return pinecone
 
     # ══════════════════════════════════════════════════════════
-    #  SEARCH — hybrid and reranking are retrieval-time options
+    #  SEARCH via microservice
     # ══════════════════════════════════════════════════════════
 
     def search_documents(self) -> list[Data]:
         query = self._resolve_search_query()
 
-        # Resolve index / embeddings BEFORE checking for a query so that an
-        # ingest-only run (Ingest Data connected, Search Query empty) still
-        # persists documents to Pinecone.
         try:
             self._ensure_index_exists()
         except Exception as e:
@@ -319,156 +234,49 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         except Exception as e:
             raise ValueError(f"Error ingesting: {e}") from e
 
-        # Return early AFTER ingestion — documents are already in the index.
         if not query:
             self.status = f"Ingested {count} document(s). No search query provided."
             return []
 
-        # ── Determine retrieval method ─────────────────────
-        retrieve_k = self.number_of_results
-        if self.use_reranking:
-            retrieve_k = max(self.number_of_results, 20)
-
-        search_method = "dense"
-        scores = []
+        # Embed the query locally, then delegate search to microservice
+        query_embedding = wrapped.embed_query(query)
 
         try:
-            if self.use_hybrid_search:
-                docs, scores = self._hybrid_search(query, wrapped, k=retrieve_k)
-                search_method = f"hybrid (alpha={self._get_alpha()})"
-            else:
-                docs, scores = self._dense_search(query, wrapped, k=retrieve_k)
-                search_method = "dense"
+            result = search_via_service(
+                index_name=self.index_name,
+                namespace=self.namespace or "",
+                text_key=self.text_key,
+                query=query,
+                query_embedding=query_embedding,
+                number_of_results=self.number_of_results,
+                use_hybrid_search=self.use_hybrid_search,
+                sparse_model=self.sparse_model,
+                hybrid_alpha=self._get_alpha(),
+                use_reranking=self.use_reranking,
+                rerank_model=self.rerank_model,
+                rerank_top_n=self.rerank_top_n,
+            )
         except Exception as e:
             raise ValueError(f"Error searching: {type(e).__name__}: {e}") from e
 
-        # ── Reranking ──────────────────────────────────────
-        rerank_info = "disabled"
-        if self.use_reranking and docs:
-            try:
-                docs, scores = self._rerank_documents(query, docs)
-                rerank_info = f"{self.rerank_model} (top {len(docs)})"
-            except Exception as e:
-                rerank_info = f"failed: {e}"
-                logger.warning(f"[Pinecone] Reranking failed: {e}")
+        search_method = result.get("search_method", "dense")
+        rerank_info = result.get("rerank_info", "disabled")
 
-        # ── Build output with metadata ─────────────────────
-        data = self._build_output(docs, scores, search_method, rerank_info, query)
-        self.status = f"{len(data)} result(s) | method={search_method} | rerank={rerank_info}"
-        return data
-
-    def _dense_search(self, query, wrapped_embeddings, k=10):
-        """Pure dense vector search. Returns (docs, scores) as parallel lists."""
-        from langchain_core.documents import Document
-        pc = self._get_pinecone_client()
-        index = pc.Index(self.index_name)
-
-        dense_vector = wrapped_embeddings.embed_query(query)
-        results = index.query(
-            namespace=self.namespace or "",
-            top_k=k,
-            vector=dense_vector,
-            include_metadata=True,
-        )
-
-        docs = []
-        scores = []
-        for match in results.get("matches", []):
-            metadata = match.get("metadata", {})
-            text = metadata.pop(self.text_key, "")
-            score = match.get("score", 0.0)
-            doc = Document(page_content=text, metadata=metadata)
-            docs.append(doc)
-            scores.append({"score": round(score, 4), "type": "dense"})
-
-        return docs, scores
-
-    def _hybrid_search(self, query, wrapped_embeddings, k=10):
-        """Hybrid dense + sparse search. Returns (docs, scores) as parallel lists."""
-        from langchain_core.documents import Document
-        pc = self._get_pinecone_client()
-        index = pc.Index(self.index_name)
-
-        dense_vector = wrapped_embeddings.embed_query(query)
-        sparse_vector = self._generate_sparse_query(query)
-
-        alpha = self._get_alpha()
-        hdense, hsparse = self._hybrid_score_norm(dense_vector, sparse_vector, alpha)
-
-        results = index.query(
-            namespace=self.namespace or "",
-            top_k=k,
-            vector=hdense,
-            sparse_vector=hsparse,
-            include_metadata=True,
-        )
-
-        docs = []
-        scores = []
-        for match in results.get("matches", []):
-            metadata = match.get("metadata", {})
-            text = metadata.pop(self.text_key, "")
-            score = match.get("score", 0.0)
-            doc = Document(page_content=text, metadata=metadata)
-            docs.append(doc)
-            scores.append({
-                "score": round(score, 4),
-                "type": "hybrid",
-                "alpha": alpha,
-            })
-
-        return docs, scores
-
-    def _rerank_documents(self, query, docs):
-        """Rerank documents. Returns (reranked_docs, scores) as parallel lists."""
-        pc = self._get_pinecone_client()
-        rerank_input = [
-            {"id": str(i), "text": doc.page_content if hasattr(doc, "page_content") else str(doc)}
-            for i, doc in enumerate(docs)
-        ][:100]
-
-        response = pc.inference.rerank(
-            model=self.rerank_model, query=query, documents=rerank_input,
-            top_n=min(self.rerank_top_n, len(rerank_input)),
-            return_documents=True, parameters={"truncate": "END"},
-        )
-
-        reranked_docs = []
-        rerank_scores = []
-        for rank, r in enumerate(response.data):
-            if r.index < len(docs):
-                reranked_docs.append(docs[r.index])
-                rerank_scores.append({
-                    "rerank_score": round(r.score, 4),
-                    "rerank_position": rank + 1,
-                    "rerank_model": self.rerank_model,
-                    "type": "reranked",
-                })
-
-        return reranked_docs, rerank_scores
-
-    def _build_output(self, docs, scores, search_method, rerank_info, query):
-        """Build Data output with search metadata and scores."""
-        results = []
-        for rank, doc in enumerate(docs):
-            text = doc.page_content if hasattr(doc, "page_content") else str(doc)
-            metadata = doc.metadata if hasattr(doc, "metadata") else {}
-
-            score_info = scores[rank] if rank < len(scores) else {}
-
+        data = []
+        for item in result.get("results", []):
             result_data = {
-                "text": text,
-                "rank": rank + 1,
+                "text": item["text"],
+                "rank": item.get("rank", 0),
                 "search_method": search_method,
                 "reranking": rerank_info,
                 "query": query,
-                **score_info,
-                **metadata,
+                **item.get("score_info", {}),
+                **item.get("metadata", {}),
             }
+            data.append(Data(text=item["text"], data=result_data))
 
-            results.append(Data(text=text, data=result_data))
-
-        return results
+        self.status = f"{len(data)} result(s) | method={search_method} | rerank={rerank_info}"
+        return data
 
 
 # ═══════════════════════════════════════════════════════════════
