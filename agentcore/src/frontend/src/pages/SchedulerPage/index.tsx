@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  Mail,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useContext, useEffect, useMemo, useState } from "react";
@@ -21,6 +22,7 @@ import Loading from "@/components/ui/loading";
 import {
   useGetConnectorCatalogue,
 } from "@/controllers/API/queries/connectors/use-get-connector-catalogue";
+import { api } from "@/controllers/API/api";
 import { useGetControlPanelAgents } from "@/controllers/API/queries/control-panel";
 import {
   useGetAllTriggers,
@@ -40,7 +42,7 @@ import { AuthContext } from "@/contexts/authContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-type TriggerTypeFilter = "all" | "schedule";
+type TriggerTypeFilter = "all" | "schedule" | "email_monitor";
 
 interface AgentOption {
   deployId: string;       // deploy_id — unique per deployment
@@ -75,6 +77,21 @@ function formatSchedule(trigger: TriggerInfo): string {
     if (st === "SharePoint") {
       return `SharePoint — poll ${pollLabel}`;
     }
+  }
+  if (trigger.trigger_type === "email_monitor") {
+    const poll = cfg.poll_interval_seconds ?? 60;
+    const pollLabel = poll >= 60 ? `${Math.round(poll / 60)}m` : `${poll}s`;
+    const folder = cfg.mail_folder && cfg.mail_folder !== "inbox" ? ` [${cfg.mail_folder}]` : "";
+    const acct = cfg.account_email ? ` (${cfg.account_email})` : "";
+    const sender = cfg.filter_sender ? ` — from: ${cfg.filter_sender}` : "";
+    const subject = cfg.filter_subject ? ` — subj: ${cfg.filter_subject}` : "";
+    const extras: string[] = [];
+    if (cfg.unread_only !== false) extras.push("unread");
+    if (cfg.mark_as_read) extras.push("mark-read");
+    if (cfg.fetch_full_body !== false) extras.push("body");
+    if (cfg.fetch_attachments !== false) extras.push("attachments");
+    const extrasLabel = extras.length ? ` + ${extras.join(", ")}` : "";
+    return `Outlook${acct}${folder} — poll ${pollLabel}${sender}${subject}${extrasLabel}`;
   }
   return "—";
 }
@@ -199,7 +216,7 @@ export default function SchedulerPage(): JSX.Element {
 
       {/* Filter tabs */}
       <div className="flex gap-1 border-b border-border px-6 pt-3">
-        {(["all", "schedule"] as const).map((t) => (
+        {(["all", "schedule", "email_monitor"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTypeFilter(t)}
@@ -211,7 +228,8 @@ export default function SchedulerPage(): JSX.Element {
           >
             {t === "all" && <Zap className="h-3.5 w-3.5" />}
             {t === "schedule" && <Clock className="h-3.5 w-3.5" />}
-            {t === "all" ? "All" : "Schedule"}
+            {t === "email_monitor" && <Mail className="h-3.5 w-3.5" />}
+            {t === "all" ? "All" : t === "schedule" ? "Schedule" : "Email Trigger"}
           </button>
         ))}
       </div>
@@ -412,10 +430,12 @@ function TriggersTable({
                 <span className="flex items-center gap-1 capitalize text-muted-foreground">
                   {t.trigger_type === "schedule" ? (
                     <Clock className="h-3.5 w-3.5" />
+                  ) : t.trigger_type === "email_monitor" ? (
+                    <Mail className="h-3.5 w-3.5" />
                   ) : (
                     <FolderSearch className="h-3.5 w-3.5" />
                   )}
-                  {t.trigger_type === "schedule" ? "Schedule" : "File Trigger"}
+                  {t.trigger_type === "schedule" ? "Schedule" : t.trigger_type === "email_monitor" ? "Email Trigger" : "File Trigger"}
                 </span>
               </td>
 
@@ -761,6 +781,23 @@ const BLANK_FOLDER = {
   trigger_on: "New Files",
 };
 
+const BLANK_EMAIL = {
+  connector_id: "",
+  account_email: "",
+  mail_folder: "inbox",
+  poll_interval_seconds: 60,
+  filter_sender: "",
+  filter_subject: "",
+  filter_body: "",
+  filter_importance: "all",
+  filter_has_attachments: false,
+  unread_only: true,
+  mark_as_read: false,
+  max_results: 10,
+  fetch_full_body: true,
+  fetch_attachments: true,
+};
+
 function AddSchedulerModal({
   editing,
   onClose,
@@ -771,8 +808,8 @@ function AddSchedulerModal({
   // When editing, skip step 1 (agent selection) and go straight to config
   const [step, setStep] = useState<Step>(editing ? 2 : 1);
   const [selectedAgent, setSelectedAgent] = useState<AgentOption | null>(null);
-  const [triggerType, setTriggerType] = useState<"schedule" | "folder_monitor">(
-    editing?.trigger_type ?? "schedule",
+  const [triggerType, setTriggerType] = useState<"schedule" | "folder_monitor" | "email_monitor">(
+    (editing?.trigger_type as "schedule" | "folder_monitor" | "email_monitor") ?? "schedule",
   );
   const [scheduleForm, setScheduleForm] = useState(() => {
     if (editing?.trigger_type === "schedule" && editing.trigger_config) {
@@ -797,6 +834,28 @@ function AddSchedulerModal({
       };
     }
     return { ...BLANK_FOLDER };
+  });
+  const [emailForm, setEmailForm] = useState(() => {
+    if (editing?.trigger_type === "email_monitor" && editing.trigger_config) {
+      const cfg = editing.trigger_config;
+      return {
+        connector_id: cfg.connector_id ?? "",
+        account_email: cfg.account_email ?? "",
+        mail_folder: cfg.mail_folder ?? "inbox",
+        poll_interval_seconds: cfg.poll_interval_seconds ?? 60,
+        filter_sender: cfg.filter_sender ?? "",
+        filter_subject: cfg.filter_subject ?? "",
+        filter_body: cfg.filter_body ?? "",
+        filter_importance: cfg.filter_importance ?? "all",
+        filter_has_attachments: cfg.filter_has_attachments ?? false,
+        unread_only: cfg.unread_only ?? true,
+        mark_as_read: cfg.mark_as_read ?? false,
+        max_results: cfg.max_results ?? 10,
+        fetch_full_body: cfg.fetch_full_body ?? true,
+        fetch_attachments: cfg.fetch_attachments ?? true,
+      };
+    }
+    return { ...BLANK_EMAIL };
   });
   const [environment, setEnvironment] = useState<"uat" | "prod">(
     (editing?.environment as "uat" | "prod") ?? "prod",
@@ -855,6 +914,8 @@ function AddSchedulerModal({
         ? scheduleForm.schedule_type === "cron"
           ? { schedule_type: "cron", cron_expression: scheduleForm.cron_expression }
           : { schedule_type: "interval", interval_minutes: scheduleForm.interval_minutes }
+        : triggerType === "email_monitor"
+        ? { ...emailForm }
         : { ...folderForm };
 
     if (editing) {
@@ -882,6 +943,8 @@ function AddSchedulerModal({
       ? selectedAgent !== null
       : triggerType === "schedule"
       ? true
+      : triggerType === "email_monitor"
+      ? editing ? true : Boolean(emailForm.connector_id)
       : editing ? true : Boolean(folderForm.connector_id);
 
   return (
@@ -916,13 +979,14 @@ function AddSchedulerModal({
               selectedAgent={selectedAgent}
               onSelectAgent={setSelectedAgent}
               triggerType={triggerType}
-              onSelectType={setTriggerType}
+              onSelectType={setTriggerType as (t: "schedule" | "folder_monitor" | "email_monitor") => void}
             />
           ) : (
             <Step2
               triggerType={triggerType}
               scheduleForm={scheduleForm}
               folderForm={folderForm}
+              emailForm={emailForm}
               environment={environment}
               isEditing={!!editing}
               onScheduleChange={(k, v) =>
@@ -930,6 +994,9 @@ function AddSchedulerModal({
               }
               onFolderChange={(k, v) =>
                 setFolderForm((f) => ({ ...f, [k]: v }))
+              }
+              onEmailChange={(k, v) =>
+                setEmailForm((f) => ({ ...f, [k]: v }))
               }
               onEnvChange={setEnvironment}
             />
@@ -995,8 +1062,8 @@ function Step1({
   agentsLoading: boolean;
   selectedAgent: AgentOption | null;
   onSelectAgent: (a: AgentOption | null) => void;
-  triggerType: "schedule" | "folder_monitor";
-  onSelectType: (t: "schedule" | "folder_monitor") => void;
+  triggerType: "schedule" | "folder_monitor" | "email_monitor";
+  onSelectType: (t: "schedule" | "folder_monitor" | "email_monitor") => void;
 }): JSX.Element {
   return (
     <div className="space-y-5">
@@ -1046,18 +1113,42 @@ function Step1({
         )}
       </div>
 
-      {/* Trigger type — Schedule only. File Trigger is auto-detected from
-          FileTrigger nodes in the builder when an agent is published. */}
+      {/* Trigger type selector */}
       <div>
         <label className="mb-1.5 block text-sm font-medium text-foreground">
           Trigger Type
         </label>
-        <div className="flex items-center gap-3 rounded-lg border-2 border-primary bg-primary/5 px-4 py-3">
-          <Clock className="h-5 w-5 text-primary" />
-          <div>
-            <p className="text-sm font-medium text-primary">Schedule</p>
-            <p className="text-xs text-muted-foreground">Run on a cron or interval</p>
-          </div>
+        <div className="flex flex-col gap-2">
+          {/* Schedule */}
+          <button
+            onClick={() => onSelectType("schedule")}
+            className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left ${
+              triggerType === "schedule"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:border-muted-foreground"
+            }`}
+          >
+            <Clock className={`h-5 w-5 ${triggerType === "schedule" ? "text-primary" : "text-muted-foreground"}`} />
+            <div>
+              <p className={`text-sm font-medium ${triggerType === "schedule" ? "text-primary" : "text-foreground"}`}>Schedule</p>
+              <p className="text-xs text-muted-foreground">Run on a cron or interval</p>
+            </div>
+          </button>
+          {/* Email Trigger */}
+          <button
+            onClick={() => onSelectType("email_monitor")}
+            className={`flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left ${
+              triggerType === "email_monitor"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:border-muted-foreground"
+            }`}
+          >
+            <Mail className={`h-5 w-5 ${triggerType === "email_monitor" ? "text-primary" : "text-muted-foreground"}`} />
+            <div>
+              <p className={`text-sm font-medium ${triggerType === "email_monitor" ? "text-primary" : "text-foreground"}`}>Email Trigger</p>
+              <p className="text-xs text-muted-foreground">Monitor an Outlook mailbox for new emails matching filters</p>
+            </div>
+          </button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           File Trigger automations are created automatically when you publish an agent
@@ -1074,25 +1165,31 @@ function Step2({
   triggerType,
   scheduleForm,
   folderForm,
+  emailForm,
   environment,
   isEditing,
   onScheduleChange,
   onFolderChange,
+  onEmailChange,
   onEnvChange,
 }: {
-  triggerType: "schedule" | "folder_monitor";
+  triggerType: "schedule" | "folder_monitor" | "email_monitor";
   scheduleForm: typeof BLANK_SCHEDULE;
   folderForm: typeof BLANK_FOLDER;
+  emailForm: typeof BLANK_EMAIL;
   environment: "uat" | "prod";
   isEditing: boolean;
   onScheduleChange: (k: keyof typeof BLANK_SCHEDULE, v: any) => void;
   onFolderChange: (k: keyof typeof BLANK_FOLDER, v: any) => void;
+  onEmailChange: (k: keyof typeof BLANK_EMAIL, v: any) => void;
   onEnvChange: (e: "uat" | "prod") => void;
 }): JSX.Element {
   return (
     <div className="space-y-5">
       {triggerType === "schedule" ? (
         <ScheduleConfig form={scheduleForm} onChange={onScheduleChange} />
+      ) : triggerType === "email_monitor" ? (
+        <EmailTriggerConfig form={emailForm} onChange={onEmailChange} />
       ) : (
         <FileTriggerConfig form={folderForm} onChange={onFolderChange} />
       )}
@@ -1297,12 +1394,297 @@ function FileTriggerConfig({
   );
 }
 
+// ── EmailTriggerConfig ────────────────────────────────────────────────
+
+function EmailTriggerConfig({
+  form,
+  onChange,
+}: {
+  form: typeof BLANK_EMAIL;
+  onChange: (k: keyof typeof BLANK_EMAIL, v: any) => void;
+}): JSX.Element {
+  const { data: connectors = [], isLoading } = useGetConnectorsByProvider("outlook");
+  const [linkedAccounts, setLinkedAccounts] = useState<{ email: string; display_name: string }[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+
+  // Fetch linked accounts when connector changes
+  useEffect(() => {
+    if (!form.connector_id) {
+      setLinkedAccounts([]);
+      return;
+    }
+    let cancelled = false;
+    setAccountsLoading(true);
+    api
+      .get(`/api/outlook/${form.connector_id}/accounts`)
+      .then((res) => {
+        if (!cancelled) setLinkedAccounts(res.data ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedAccounts([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAccountsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [form.connector_id]);
+
+  return (
+    <div className="space-y-4">
+      {/* Connector selector */}
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">
+          Outlook Connector
+        </label>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading connectors…
+          </div>
+        ) : connectors.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No Outlook connectors found. Add one on the Connectors page first and link a mailbox.
+          </p>
+        ) : (
+          <select
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            value={form.connector_id}
+            onChange={(e) => {
+              onChange("connector_id", e.target.value);
+              onChange("account_email", "");
+            }}
+          >
+            <option value="" disabled>
+              Select an Outlook connector…
+            </option>
+            {connectors.map((c: any) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Account selector */}
+      {form.connector_id && (
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-foreground">
+            Linked Account
+          </label>
+          {accountsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading linked accounts…
+            </div>
+          ) : linkedAccounts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No linked accounts. Link a mailbox on the Connectors page first.
+            </p>
+          ) : (
+            <select
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              value={form.account_email}
+              onChange={(e) => onChange("account_email", e.target.value)}
+            >
+              <option value="">First available account</option>
+              {linkedAccounts.map((a) => (
+                <option key={a.email} value={a.email}>
+                  {a.email}{a.display_name ? ` (${a.display_name})` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">
+            Which mailbox to monitor. Leave as "First available" for single-account setups.
+          </p>
+        </div>
+      )}
+
+      {/* Mail folder */}
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">
+          Mail Folder
+        </label>
+        <select
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          value={form.mail_folder}
+          onChange={(e) => onChange("mail_folder", e.target.value)}
+        >
+          <option value="inbox">Inbox</option>
+          <option value="sentitems">Sent Items</option>
+          <option value="drafts">Drafts</option>
+          <option value="junkemail">Junk Email</option>
+          <option value="deleteditems">Deleted Items</option>
+          <option value="archive">Archive</option>
+        </select>
+      </div>
+
+      {/* Poll interval */}
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">
+          Poll Interval (seconds)
+        </label>
+        <input
+          type="number"
+          min={30}
+          value={form.poll_interval_seconds}
+          onChange={(e) =>
+            onChange("poll_interval_seconds", Math.max(30, parseInt(e.target.value) || 60))
+          }
+          className="w-32 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          How often to check for new emails (minimum 30s)
+        </p>
+      </div>
+
+      {/* Filters section */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-sm font-medium text-foreground">Filters</p>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Sender</label>
+          <input
+            type="text"
+            value={form.filter_sender}
+            onChange={(e) => onChange("filter_sender", e.target.value)}
+            placeholder="e.g. john@company.com (optional)"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Subject contains</label>
+          <input
+            type="text"
+            value={form.filter_subject}
+            onChange={(e) => onChange("filter_subject", e.target.value)}
+            placeholder="e.g. invoice (optional)"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Body contains</label>
+          <input
+            type="text"
+            value={form.filter_body}
+            onChange={(e) => onChange("filter_body", e.target.value)}
+            placeholder="e.g. urgent (optional)"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+
+        <div className="flex gap-4">
+          <div className="flex-1">
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Importance</label>
+            <select
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              value={form.filter_importance}
+              onChange={(e) => onChange("filter_importance", e.target.value)}
+            >
+              <option value="all">All</option>
+              <option value="high">High only</option>
+              <option value="normal">Normal only</option>
+              <option value="low">Low only</option>
+            </select>
+          </div>
+          <div className="flex items-end gap-2 pb-0.5">
+            <Switch
+              checked={form.filter_has_attachments}
+              onCheckedChange={(v) => onChange("filter_has_attachments", v)}
+            />
+            <span className="text-sm text-foreground">Has attachments only</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Max emails */}
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">
+          Max Emails per Poll
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={50}
+          value={form.max_results}
+          onChange={(e) =>
+            onChange("max_results", Math.min(50, Math.max(1, parseInt(e.target.value) || 10)))
+          }
+          className="w-32 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+
+      {/* Processing options */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-sm font-medium text-foreground">Processing Options</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-foreground">Unread Emails Only</p>
+            <p className="text-xs text-muted-foreground">
+              Only process emails that haven't been read yet
+            </p>
+          </div>
+          <Switch
+            checked={form.unread_only}
+            onCheckedChange={(v) => onChange("unread_only", v)}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-foreground">Mark as Read After Processing</p>
+            <p className="text-xs text-muted-foreground">
+              Automatically mark emails as read once the agent processes them
+            </p>
+          </div>
+          <Switch
+            checked={form.mark_as_read}
+            onCheckedChange={(v) => onChange("mark_as_read", v)}
+          />
+        </div>
+      </div>
+
+      {/* Content fetching options */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-sm font-medium text-foreground">Content Options</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-foreground">Fetch Full Email Body</p>
+            <p className="text-xs text-muted-foreground">
+              Read the complete email content (not just preview)
+            </p>
+          </div>
+          <Switch
+            checked={form.fetch_full_body}
+            onCheckedChange={(v) => onChange("fetch_full_body", v)}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-foreground">Fetch & Parse Attachments</p>
+            <p className="text-xs text-muted-foreground">
+              Download and extract text from PDF, DOCX, XLSX, PPTX, CSV, TXT
+            </p>
+          </div>
+          <Switch
+            checked={form.fetch_attachments}
+            onCheckedChange={(v) => onChange("fetch_attachments", v)}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Connector loader hook ─────────────────────────────────────────────────
 
 function useGetConnectorsByProvider(storageType: string) {
   const providerMap: Record<string, string> = {
     "Azure Blob Storage": "azure_blob",
     SharePoint: "sharepoint",
+    outlook: "outlook",
   };
   const provider = providerMap[storageType];
 

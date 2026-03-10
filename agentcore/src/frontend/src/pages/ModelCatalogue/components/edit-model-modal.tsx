@@ -103,7 +103,7 @@ export default function EditModelModal({
   const [customHeaders, setCustomHeaders] = useState("");
 
   // Default params (LLM)
-  const [temperature, setTemperature] = useState<number | "">(0.7);
+  const [temperature, setTemperature] = useState<number | "">("");
   const [maxTokens, setMaxTokens] = useState<number | "">("");
 
   // Embedding-specific
@@ -653,7 +653,7 @@ export default function EditModelModal({
                       step="0.01"
                       min="0"
                       max="2"
-                      placeholder="0.7"
+                      placeholder="Optional"
                       value={temperature}
                       onChange={(e) =>
                         setTemperature(

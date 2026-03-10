@@ -1046,11 +1046,19 @@ class Node(ExecutableNode):
             session_id = self._session_id
         else:
             session_id = None
+        import time as _time_mod
+        _build_start = _time_mod.perf_counter()
         try:
             if self._tracing_service:
-                return await self._build_with_tracing()
-            return await self._build_without_tracing()
+                result = await self._build_with_tracing()
+            else:
+                result = await self._build_without_tracing()
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "success", (_time_mod.perf_counter() - _build_start) * 1000)
+            return result
         except StreamingError as e:
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "error", (_time_mod.perf_counter() - _build_start) * 1000)
             await self.send_error(
                 exception=e.cause,
                 session_id=session_id,
@@ -1059,11 +1067,10 @@ class Node(ExecutableNode):
             )
             raise e.cause  # noqa: B904
         except GraphInterrupt:
-            # HITL pause — let the interrupt propagate without calling send_error.
-            # send_error would emit an on_error event which shows a red box in the UI.
-            # The interrupt is handled cleanly by nodes.py and build.py upstream.
             raise
         except Exception as e:
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "error", (_time_mod.perf_counter() - _build_start) * 1000)
             await self.send_error(
                 exception=e,
                 session_id=session_id,

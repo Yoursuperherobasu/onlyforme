@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_api_key
-from app.config import get_settings
 from app.database import get_session
 from app.models.registry import (
     McpProbeResponse,
@@ -48,8 +47,7 @@ async def create_server(
     _api_key: str = Depends(verify_api_key),
 ):
     """Register a new MCP server."""
-    settings = get_settings()
-    return await registry_service.create_server(session, body, settings.encryption_key)
+    return await registry_service.create_server(session, body)
 
 
 @router.get("/servers/{server_id}", response_model=McpRegistryRead)
@@ -73,8 +71,7 @@ async def update_server(
     _api_key: str = Depends(verify_api_key),
 ):
     """Update an existing MCP server."""
-    settings = get_settings()
-    result = await registry_service.update_server(session, server_id, body, settings.encryption_key)
+    result = await registry_service.update_server(session, server_id, body)
     if result is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
     return result
@@ -124,11 +121,9 @@ async def probe_server(
 ):
     """Probe a registered MCP server: test connectivity and discover tools."""
     try:
-        settings = get_settings()
         tool_schemas = await list_tools(
             server_id=str(server_id),
             session=session,
-            encryption_key=settings.encryption_key,
         )
 
         tools_info = [

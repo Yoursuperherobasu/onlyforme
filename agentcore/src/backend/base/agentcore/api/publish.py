@@ -265,6 +265,68 @@ class PublishContextResponse(BaseModel):
     department_admin_id: UUID
 
 
+class PublishNotifyRequest(BaseModel):
+    """Request body for the publish notification endpoint."""
+
+    agent_id: UUID
+    agent_name: str
+    environment: str          # "uat" or "prod"
+    version_number: str       # e.g. "v3"
+    publish_id: UUID
+    published_by: UUID
+    published_at: datetime
+
+
+class PublishNotifyResponse(BaseModel):
+    """Response from the publish notification endpoint."""
+
+    agent_id: UUID
+    environment: str
+    version_number: str
+
+
+async def _notify_publish_event(
+    session,
+    *,
+    agent_id: UUID,
+    agent_name: str,
+    environment: str,
+    version_number: int,
+    publish_id: UUID,
+    published_by: UUID,
+    published_at: datetime,
+) -> PublishNotifyResponse | None:
+    """Fire notification after a successful publish — with DB verification.
+
+    Re-queries the deployment record to confirm status=PUBLISHED before emitting.
+    """
+    try:
+        # ── DB double-confirmation ──
+        if environment == "uat":
+            record = await session.get(AgentDeploymentUAT, publish_id)
+            if not record or record.status != DeploymentUATStatusEnum.PUBLISHED:
+                logger.warning(f"[PublishNotify] SKIPPED — UAT record {publish_id} not in PUBLISHED state")
+                return None
+        else:
+            record = await session.get(AgentDeploymentProd, publish_id)
+            if not record or record.status != DeploymentPRODStatusEnum.PUBLISHED:
+                logger.warning(f"[PublishNotify] SKIPPED — PROD record {publish_id} not in PUBLISHED state")
+                return None
+
+        logger.info(
+            f"[PublishNotify] agent={agent_id} env={environment} "
+            f"version=v{version_number} publish_id={publish_id}"
+        )
+        return PublishNotifyResponse(
+            agent_id=agent_id,
+            environment=environment,
+            version_number=f"v{version_number}",
+        )
+    except Exception as e:
+        logger.warning(f"Publish notification failed: {e}")
+        return None
+
+
 async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set[UUID]:
     rows = (
         await session.exec(
@@ -905,6 +967,24 @@ def _record_to_summary(record: AgentDeploymentUAT | AgentDeploymentProd, environ
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@router.post("/notify", response_model=PublishNotifyResponse, status_code=200)
+async def publish_notification(*, body: PublishNotifyRequest):
+    """Internal endpoint triggered after a successful agent publish.
+
+    Returns agent_id, environment, and version_number.
+    Can also be called externally to verify a publish event.
+    """
+    logger.info(
+        f"Publish notification: agent={body.agent_id} env={body.environment} "
+        f"version={body.version_number}"
+    )
+    return PublishNotifyResponse(
+        agent_id=body.agent_id,
+        environment=body.environment,
+        version_number=body.version_number,
+    )
+
+
 @router.get("/uat", response_model=list[PublishRecordSummary], status_code=200)
 async def list_uat_published_agents(
     *,
@@ -1441,6 +1521,18 @@ async def publish_agent(
             except Exception as reg_err:
                 logger.warning(f"Registry sync failed after UAT publish of {agent_id}: {reg_err}")
 
+            # ─── Publish notification (DB-verified) ──
+            await _notify_publish_event(
+                session,
+                agent_id=agent_id,
+                agent_name=agent.name,
+                environment="uat",
+                version_number=next_version,
+                publish_id=new_record.id,
+                published_by=current_user.id,
+                published_at=new_record.deployed_at,
+            )
+
             return PublishActionResponse(
                 success=True,
                 message=f"Agent '{agent.name}' deployed to UAT as v{next_version}",
@@ -1540,6 +1632,18 @@ async def publish_agent(
                     )
                 except Exception as fm_err:
                     logger.warning(f"FileTrigger sync failed for PROD deploy of {agent_id}: {fm_err}")
+
+                # ─── Publish notification (DB-verified) ──
+                await _notify_publish_event(
+                    session,
+                    agent_id=agent_id,
+                    agent_name=agent.name,
+                    environment="prod",
+                    version_number=next_version,
+                    publish_id=new_record.id,
+                    published_by=current_user.id,
+                    published_at=new_record.deployed_at,
+                )
 
                 return PublishActionResponse(
                     success=True,
