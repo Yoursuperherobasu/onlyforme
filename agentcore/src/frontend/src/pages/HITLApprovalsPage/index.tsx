@@ -13,6 +13,8 @@ import type { HITLRequestItem } from "@/controllers/API/queries/hitl/use-get-hit
 import { useGetHitlPending } from "@/controllers/API/queries/hitl/use-get-hitl-pending";
 import { useResumeHitl } from "@/controllers/API/queries/hitl/use-resume-hitl";
 import { useCancelHitl } from "@/controllers/API/queries/hitl/use-cancel-hitl";
+import { useDelegateHitl } from "@/controllers/API/queries/hitl/use-delegate-hitl";
+import { useGetDelegatableUsers } from "@/controllers/API/queries/hitl/use-get-delegatable-users";
 import { AuthContext } from "@/contexts/authContext";
 
 type StatusFilter = "all" | "pending" | "approved" | "rejected" | "cancelled";
@@ -99,9 +101,12 @@ interface DetailModalProps {
   onClose: () => void;
   onAction: (threadId: string, action: string, feedback: string) => void;
   onCancel: (threadId: string) => void;
+  onDelegate: (threadId: string, userId: string) => void;
   isActing: boolean;
   canApprove: boolean;
   canReject: boolean;
+  isAssignee: boolean;
+  currentUserId: string | undefined;
 }
 
 function DetailModal({
@@ -110,20 +115,34 @@ function DetailModal({
   onClose,
   onAction,
   onCancel,
+  onDelegate,
   isActing,
   canApprove,
   canReject,
+  isAssignee,
+  currentUserId,
 }: DetailModalProps) {
   const { t } = useTranslation();
   const [feedback, setFeedback] = useState("");
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
+  const [showDelegateUI, setShowDelegateUI] = useState(false);
+  const [selectedDelegateUser, setSelectedDelegateUser] = useState("");
+
+  // Fetch delegatable users when delegation UI is open
+  const { data: delegatableUsers = [] } = useGetDelegatableUsers(
+    { dept_id: showDelegateUI && item?.dept_id ? item.dept_id : null },
+    { enabled: showDelegateUI && !!item?.dept_id },
+  );
 
   if (!item) return null;
 
   const actions = item.interrupt_data?.actions ?? [];
-  const question = item.interrupt_data?.question ?? "—";
+  const question = item.interrupt_data?.question ?? "\u2014";
   const context = item.interrupt_data?.context ?? "";
   const isPending = item.status === "pending";
+  // For deployed runs, check if current user is the assignee.
+  // For playground runs (no assigned_to), fall back to permission check only.
+  const canAct = item.assigned_to ? isAssignee : true;
 
   const handleSubmit = () => {
     if (!selectedAction) return;
@@ -136,6 +155,13 @@ function DetailModal({
     onCancel(item.thread_id);
     setFeedback("");
     setSelectedAction(null);
+  };
+
+  const handleDelegate = () => {
+    if (!selectedDelegateUser) return;
+    onDelegate(item.thread_id, selectedDelegateUser);
+    setShowDelegateUI(false);
+    setSelectedDelegateUser("");
   };
 
   return (
@@ -155,11 +181,86 @@ function DetailModal({
               <span className="font-medium text-foreground">
                 {item.agent_name ?? item.agent_id.slice(0, 8) + "..."}
               </span>
-              {" · "}
+              {" \u00b7 "}
               <span>{formatRelativeTime(item.requested_at)}</span>
             </div>
             <StatusBadge status={item.status} />
           </div>
+
+          {/* Assigned To info + inline delegation */}
+          {item.assigned_to_name && (
+            <div className="rounded-md border border-border bg-muted/30 px-3 py-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm">
+                  <IconComponent name="User" className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">{t("Assigned to")}:</span>
+                  <span className="font-medium text-foreground">{item.assigned_to_name}</span>
+                  {item.delegated_by && item.delegated_at && (
+                    <span className="text-xs text-muted-foreground">
+                      ({t("delegated")} {formatRelativeTime(item.delegated_at)})
+                    </span>
+                  )}
+                </div>
+                {/* Inline delegate toggle */}
+                {isPending && canAct && item.is_deployed_run && item.dept_id && !showDelegateUI && (
+                  <button
+                    onClick={() => setShowDelegateUI(true)}
+                    disabled={isActing}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                  >
+                    <IconComponent name="UserPlus" className="h-3.5 w-3.5" />
+                    {t("Reassign")}
+                  </button>
+                )}
+              </div>
+
+              {/* Delegation dropdown — appears right below assigned to */}
+              {isPending && canAct && showDelegateUI && (
+                <div className="space-y-2 border-t border-border pt-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    {t("Reassign to")}
+                  </p>
+                  {delegatableUsers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {t("No users available in this department")}
+                    </p>
+                  ) : (
+                    <select
+                      value={selectedDelegateUser}
+                      onChange={(e) => setSelectedDelegateUser(e.target.value)}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="">{t("Select a user...")}</option>
+                      {delegatableUsers.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.display_name}{u.email ? ` (${u.email})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowDelegateUI(false);
+                        setSelectedDelegateUser("");
+                      }}
+                    >
+                      {t("Cancel")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleDelegate}
+                      disabled={!selectedDelegateUser || isActing}
+                    >
+                      {t("Confirm Reassign")}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Question */}
           <div>
@@ -237,7 +338,7 @@ function DetailModal({
                   {actions.map((action) => {
                     const isReject = action.toLowerCase().includes("reject");
                     const isSelected = selectedAction === action;
-                    const canUseAction = isReject ? canReject : canApprove;
+                    const canUseAction = canAct && (isReject ? canReject : canApprove);
                     return (
                       <button
                         key={action}
@@ -281,14 +382,14 @@ function DetailModal({
                   variant="outline"
                   size="sm"
                   onClick={handleCancel}
-                  disabled={isActing || !canReject}
+                  disabled={isActing || !(canAct && canReject)}
                 >
                   {t("Cancel Run")}
                 </Button>
                 <Button
                   size="sm"
                   onClick={handleSubmit}
-                  disabled={!selectedAction || isActing}
+                  disabled={!selectedAction || isActing || !canAct}
                 >
                   {isActing ? t("Submitting...") : t("Submit Decision")}
                 </Button>
@@ -303,7 +404,7 @@ function DetailModal({
 
 export default function HITLApprovalsPage(): JSX.Element {
   const { t } = useTranslation();
-  const { permissions } = useContext(AuthContext);
+  const { permissions, userData } = useContext(AuthContext);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -326,6 +427,7 @@ export default function HITLApprovalsPage(): JSX.Element {
 
   const resumeMutation = useResumeHitl();
   const cancelMutation = useCancelHitl();
+  const delegateMutation = useDelegateHitl();
 
   // Client-side filter by status tab and search
   const filteredItems = allItems.filter((item) => {
@@ -389,6 +491,27 @@ export default function HITLApprovalsPage(): JSX.Element {
     );
   };
 
+  const handleDelegate = (threadId: string, userId: string) => {
+    setActingThreadId(threadId);
+    delegateMutation.mutate(
+      { thread_id: threadId, delegate_to_user_id: userId },
+      {
+        onSuccess: () => {
+          setSuccessData({ title: t("Request delegated successfully") });
+          setModalOpen(false);
+          setSelectedItem(null);
+        },
+        onError: (err: any) => {
+          setErrorData({
+            title: t("Failed to delegate request"),
+            list: [err?.response?.data?.detail ?? String(err)],
+          });
+        },
+        onSettled: () => setActingThreadId(null),
+      },
+    );
+  };
+
   const openDetail = (item: HITLRequestItem) => {
     setSelectedItem(item);
     setModalOpen(true);
@@ -404,7 +527,7 @@ export default function HITLApprovalsPage(): JSX.Element {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
-      {/* ── Header ── */}
+      {/* -- Header -- */}
       <div className="border-b border-border px-6 py-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -472,7 +595,7 @@ export default function HITLApprovalsPage(): JSX.Element {
         </div>
       </div>
 
-      {/* ── Table ── */}
+      {/* -- Table -- */}
       <div className="flex-1 overflow-auto px-6 py-4">
         {isLoading ? (
           <div className="flex h-40 items-center justify-center">
@@ -491,12 +614,13 @@ export default function HITLApprovalsPage(): JSX.Element {
                     t("Question"),
                     t("Reason"),
                     t("Actions"),
+                    t("Assigned To"),
                     t("Requested"),
                     t("Status"),
                     "",
-                  ].map((h) => (
+                  ].map((h, idx) => (
                     <th
-                      key={h}
+                      key={h || `col-${idx}`}
                       className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                     >
                       {h}
@@ -508,7 +632,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                 {filteredItems.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-12 text-center text-sm text-muted-foreground"
                     >
                       <IconComponent
@@ -516,14 +640,14 @@ export default function HITLApprovalsPage(): JSX.Element {
                         className="mx-auto mb-2 h-8 w-8 opacity-30"
                       />
                       {statusFilter === "pending"
-                        ? t("No pending approvals — all clear!")
+                        ? t("No pending approvals \u2014 all clear!")
                         : t("No items found")}
                     </td>
                   </tr>
                 ) : (
                   filteredItems.map((item) => {
                     const actions = item.interrupt_data?.actions ?? [];
-                    const question = item.interrupt_data?.question ?? "—";
+                    const question = item.interrupt_data?.question ?? "\u2014";
                     const isPending = item.status === "pending";
                     const isActing = actingThreadId === item.thread_id;
 
@@ -536,7 +660,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                         {/* Agent */}
                         <td className="px-4 py-3">
                           <p className="text-sm font-medium text-foreground">
-                            {item.agent_name ?? "—"}
+                            {item.agent_name ?? "\u2014"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {item.agent_id.slice(0, 8)}…
@@ -547,7 +671,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                         <td className="max-w-xs px-4 py-3">
                           <p className="truncate text-sm text-foreground">
                             {question.length > 80
-                              ? question.slice(0, 80) + "…"
+                              ? question.slice(0, 80) + "\u2026"
                               : question}
                           </p>
                         </td>
@@ -582,6 +706,17 @@ export default function HITLApprovalsPage(): JSX.Element {
                               </span>
                             ))}
                           </div>
+                        </td>
+
+                        {/* Assigned To */}
+                        <td className="px-4 py-3">
+                          {item.assigned_to_name ? (
+                            <p className="text-sm text-foreground">
+                              {item.assigned_to_name}
+                            </p>
+                          ) : (
+                            <span className="text-xs text-muted-foreground/50">—</span>
+                          )}
                         </td>
 
                         {/* Time */}
@@ -622,7 +757,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                                           : "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
                                       }`}
                                     >
-                                      {isActing ? "…" : action}
+                                      {isActing ? "\u2026" : action}
                                     </button>
                                   );
                                 })}
@@ -632,7 +767,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                                 title={t("Cancel run")}
                                 className="rounded px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                ✕
+                                \u2715
                               </button>
                             </div>
                           )}
@@ -647,7 +782,7 @@ export default function HITLApprovalsPage(): JSX.Element {
         )}
       </div>
 
-      {/* ── Detail Modal ── */}
+      {/* -- Detail Modal -- */}
       <DetailModal
         item={selectedItem}
         open={modalOpen}
@@ -657,9 +792,14 @@ export default function HITLApprovalsPage(): JSX.Element {
         }}
         onAction={handleAction}
         onCancel={handleCancel}
+        onDelegate={handleDelegate}
         isActing={actingThreadId === selectedItem?.thread_id}
         canApprove={canApprove}
         canReject={canReject}
+        isAssignee={
+          !!userData?.id && selectedItem?.assigned_to === userData.id
+        }
+        currentUserId={userData?.id}
       />
     </div>
   );

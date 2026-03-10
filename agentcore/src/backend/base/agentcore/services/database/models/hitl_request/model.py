@@ -12,7 +12,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import JSON, Column, DateTime, Enum as SQLEnum, Index, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Enum as SQLEnum, Index, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -41,6 +41,23 @@ class HITLRequest(SQLModel, table=True):  # type: ignore[call-arg]
     agent_id: UUID = Field(nullable=False)
     session_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     user_id: UUID | None = Field(default=None, nullable=True)
+
+    # ── Routing fields (added for department-admin-based HIL approval) ───
+    # For published/deployed runs, assigned_to points to the department admin
+    # (or a delegatee).  For playground runs this stays None.
+    assigned_to: UUID | None = Field(default=None, nullable=True)
+    dept_id: UUID | None = Field(default=None, nullable=True)
+    org_id: UUID | None = Field(default=None, nullable=True)
+    is_deployed_run: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
+    # Delegation tracking — set when the department admin delegates to another user.
+    delegated_by: UUID | None = Field(default=None, nullable=True)
+    delegated_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
 
     # Payload produced by interrupt() — includes question, context, and action list.
     interrupt_data: dict | None = Field(
@@ -96,6 +113,7 @@ class HITLRequest(SQLModel, table=True):  # type: ignore[call-arg]
         Index("ix_hitl_status", "status"),
         Index("ix_hitl_user_id", "user_id"),
         Index("ix_hitl_requested_at", "requested_at"),
+        Index("ix_hitl_assigned_to", "assigned_to"),
     )
 
 
@@ -117,6 +135,14 @@ class HITLRequestRead(BaseModel):
     requested_at: datetime
     decided_at: Optional[datetime] = None
     timeout_at: Optional[datetime] = None
+    # Routing fields
+    assigned_to: Optional[UUID] = None
+    assigned_to_name: Optional[str] = None
+    dept_id: Optional[UUID] = None
+    org_id: Optional[UUID] = None
+    is_deployed_run: bool = False
+    delegated_by: Optional[UUID] = None
+    delegated_at: Optional[datetime] = None
 
 
 class HITLResumeRequest(BaseModel):
@@ -125,3 +151,9 @@ class HITLResumeRequest(BaseModel):
     action: str
     feedback: Optional[str] = None
     edited_value: Optional[str] = None
+
+
+class HITLDelegateRequest(BaseModel):
+    """Body for POST /hitl/{thread_id}/delegate."""
+
+    delegate_to_user_id: UUID

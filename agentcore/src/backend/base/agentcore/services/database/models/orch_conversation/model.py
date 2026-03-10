@@ -1,23 +1,20 @@
 # Path: src/backend/agentcore/services/database/models/orch_conversation/model.py
 #
 # Dedicated conversation table for Orchestrator Chat.
-# Stores messages from multi-agent orchestrator sessions against PROD deployments.
+# Stores messages from multi-agent orchestrator sessions against UAT/PROD deployments.
 
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Annotated, Optional
+from typing import Annotated
 from uuid import UUID, uuid4
 
 from pydantic import ConfigDict, field_serializer, field_validator
 from sqlalchemy import ForeignKey as SAForeignKey, Index, Text, Uuid as SAUuid
-from sqlmodel import JSON, Column, Field, Relationship, SQLModel
+from sqlmodel import JSON, Column, Field, SQLModel
 
 from agentcore.schema.content_block import ContentBlock
 from agentcore.schema.properties import Properties
 from agentcore.schema.validators import str_to_naive_timestamp_validator
-
-if TYPE_CHECKING:
-    from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
 
 
 class OrchConversationBase(SQLModel):
@@ -67,15 +64,12 @@ class OrchConversationTable(OrchConversationBase, table=True):  # type: ignore[c
     )
     deployment_id: UUID | None = Field(
         default=None,
-        sa_column=Column(SAUuid(), SAForeignKey("agent_deployment_prod.id", ondelete="SET NULL"), nullable=True),
+        sa_column=Column(SAUuid(), nullable=True),
     )
     files: list[str] = Field(sa_column=Column(JSON))
     properties: dict | Properties = Field(default_factory=lambda: Properties().model_dump(), sa_column=Column(JSON))  # type: ignore[assignment]
     category: str = Field(sa_column=Column(Text))
     content_blocks: list[dict | ContentBlock] = Field(default_factory=list, sa_column=Column(JSON))  # type: ignore[assignment]
-
-    # Relationships
-    deployment: Optional["AgentDeploymentProd"] = Relationship()
 
     __table_args__ = (
         Index("ix_orch_conversation_session", "session_id"),

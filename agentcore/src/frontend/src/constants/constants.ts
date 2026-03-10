@@ -658,22 +658,11 @@ export const priorityFields = new Set(["code", "template", "mode"]);
 
 export const INPUT_TYPES = new Set([
   "ChatInput",
-  // "TextInput",
-  // "KeyPairInput",
-  // "JsonInput",
-  // "StringListInput",
+  "TextInput",
 ]);
 export const OUTPUT_TYPES = new Set([
   "ChatOutput",
-  // "TextOutput",
-  // "PDFOutput",
-  // "ImageOutput",
-  // "CSVOutput",
-  // "JsonOutput",
-  // "KeyPairOutput",
-  // "StringListOutput",
-  // "DataOutput",
-  // "TableOutput",
+  "TextOutput",
 ]);
 
 export const CHAT_FIRST_INITIAL_TEXT =

@@ -595,6 +595,84 @@ async def _persist_hitl_request(
                 "session_id": getattr(graph, "orch_session_id", None),
             }
 
+        # ── Determine if this is a published/deployed run ──
+        # Any of the three deployment context fields being set means the agent
+        # was invoked from a published deployment (orch, direct run, webhook,
+        # trigger, etc.) rather than the playground.
+        is_deployed = bool(
+            orch_deployment_id
+            or getattr(graph, "prod_deployment_id", None)
+            or getattr(graph, "uat_deployment_id", None)
+        )
+
+        assigned_to: uuid.UUID | None = None
+        dept_id_val: uuid.UUID | None = None
+        org_id_val: uuid.UUID | None = None
+
+        if is_deployed:
+            # Extract dept_id / org_id from the deployment context already
+            # available on the graph — no extra DB query needed for these.
+            raw_dept = (
+                getattr(graph, "orch_dept_id", None)
+                or getattr(graph, "prod_dept_id", None)
+                or getattr(graph, "uat_dept_id", None)
+            )
+            raw_org = (
+                getattr(graph, "orch_org_id", None)
+                or getattr(graph, "prod_org_id", None)
+                or getattr(graph, "uat_org_id", None)
+            )
+            logger.info(
+                f"[HITL] Deployment context — "
+                f"orch_dept_id={getattr(graph, 'orch_dept_id', None)}, "
+                f"prod_dept_id={getattr(graph, 'prod_dept_id', None)}, "
+                f"uat_dept_id={getattr(graph, 'uat_dept_id', None)}, "
+                f"raw_dept={raw_dept}, raw_org={raw_org}"
+            )
+            dept_id_val = uuid.UUID(str(raw_dept)) if raw_dept else None
+            org_id_val = uuid.UUID(str(raw_org)) if raw_org else None
+
+            # Fallback: if dept_id not on graph, look it up from the agent record
+            if not dept_id_val and agent_id_raw:
+                try:
+                    from sqlmodel import select as _sel
+                    from agentcore.services.database.models.agent.model import Agent
+
+                    async with _session_scope() as _agent_db:
+                        _agent_row = (
+                            await _agent_db.exec(
+                                _sel(Agent.dept_id).where(
+                                    Agent.id == uuid.UUID(str(agent_id_raw))
+                                )
+                            )
+                        ).first()
+                        if _agent_row:
+                            dept_id_val = _agent_row
+                            logger.info(f"[HITL] Resolved dept_id={dept_id_val} from agent record (fallback)")
+                except Exception as _agent_err:
+                    logger.warning(f"[HITL] Could not resolve dept_id from agent: {_agent_err}")
+
+            # Resolve the department admin to route the HIL request to them.
+            if dept_id_val:
+                try:
+                    from sqlmodel import select
+                    from agentcore.services.database.models.department.model import Department
+
+                    async with _session_scope() as _dept_db:
+                        dept_row = (
+                            await _dept_db.exec(
+                                select(Department).where(Department.id == dept_id_val)
+                            )
+                        ).first()
+                        if dept_row and dept_row.admin_user_id:
+                            assigned_to = dept_row.admin_user_id
+                            logger.info(
+                                f"[HITL] Routed deployed-run HIL to dept admin "
+                                f"{assigned_to} (dept={dept_id_val})"
+                            )
+                except Exception as _dept_err:
+                    logger.warning(f"[HITL] Could not resolve dept admin: {_dept_err}")
+
         async with _session_scope() as _db:
             _hitl = HITLRequest(
                 thread_id=thread_id,
@@ -604,10 +682,14 @@ async def _persist_hitl_request(
                 interrupt_data=interrupt_value,
                 status=HITLStatus.PENDING,
                 checkpoint_data=None,  # filled in by save_hitl_checkpoint_after_interrupt()
+                assigned_to=assigned_to,
+                dept_id=dept_id_val,
+                org_id=org_id_val,
+                is_deployed_run=is_deployed,
             )
             _db.add(_hitl)
             await _db.commit()
-            logger.info(f"[HITL] Persisted HITLRequest for thread_id={thread_id!r}")
+            logger.info(f"[HITL] Persisted HITLRequest for thread_id={thread_id!r} (deployed={is_deployed})")
     except Exception as _err:
         logger.warning(f"[HITL] Could not persist HITLRequest: {_err}")
 

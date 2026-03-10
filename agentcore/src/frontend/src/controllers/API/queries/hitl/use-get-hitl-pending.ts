@@ -32,6 +32,14 @@ export interface HITLRequestItem {
   } | null;
   requested_at: string;
   decided_at: string | null;
+  // Routing fields
+  assigned_to: string | null;
+  assigned_to_name: string | null;
+  dept_id: string | null;
+  org_id: string | null;
+  is_deployed_run: boolean;
+  delegated_by: string | null;
+  delegated_at: string | null;
 }
 
 interface GetHitlPendingParams {
