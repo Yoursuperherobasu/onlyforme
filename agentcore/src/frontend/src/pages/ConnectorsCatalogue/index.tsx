@@ -16,8 +16,12 @@ import {
   CheckCircle2,
   XCircle,
   Cloud,
+  Mail,
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import OutlookConnectorForm from "./components/OutlookConnectorForm";
+import { ENABLE_OUTLOOK_CONNECTOR } from "@/customization/feature-flags";
 import Loading from "@/components/ui/loading";
 import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
@@ -43,7 +47,8 @@ type ProviderFilter =
   | "sqlserver"
   | "mysql"
   | "azure_blob"
-  | "sharepoint";
+  | "sharepoint"
+  | "outlook";
 
 const PROVIDER_LABELS: Record<string, string> = {
   postgresql: "PostgreSQL",
@@ -52,6 +57,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   mysql: "MySQL",
   azure_blob: "Azure Blob Storage",
   sharepoint: "SharePoint",
+  outlook: "Microsoft Outlook",
 };
 
 const PROVIDER_PORTS: Record<string, number> = {
@@ -63,6 +69,7 @@ const PROVIDER_PORTS: Record<string, number> = {
 
 const DB_PROVIDERS = new Set(["postgresql", "oracle", "sqlserver", "mysql"]);
 const STORAGE_PROVIDERS = new Set(["azure_blob", "sharepoint"]);
+const EMAIL_PROVIDERS = new Set(["outlook"]);
 const DEFAULT_CONNECTOR_HOST =
   process.env.DEFAULT_CONNECTOR_HOST ||
   process.env.HOST_IP ||
@@ -95,6 +102,10 @@ const BLANK_FORM = {
   sharepoint_client_id: "",
   sharepoint_client_secret: "",
   sharepoint_tenant_id: "",
+  // Outlook fields
+  outlook_tenant_id: "",
+  outlook_client_id: "",
+  outlook_client_secret: "",
   visibility: "private",
   public_scope: "department",
   org_id: "",
@@ -116,6 +127,31 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     success: boolean;
     message: string;
   } | null>(null);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Handle OAuth redirect results on mount
+  useEffect(() => {
+    const success = searchParams.get("success");
+    const errorParam = searchParams.get("error");
+
+    if (success === "outlook_account_linked") {
+      const email = searchParams.get("email") || "";
+      setTestResult({ success: true, message: `Outlook mailbox linked successfully${email ? `: ${email}` : ""}` });
+    } else if (errorParam) {
+      const detail = searchParams.get("detail") || errorParam;
+      setTestResult({ success: false, message: `Outlook OAuth failed: ${detail}` });
+    }
+
+    if (success || errorParam) {
+      // Clean OAuth params from URL without triggering navigation
+      searchParams.delete("success");
+      searchParams.delete("error");
+      searchParams.delete("detail");
+      searchParams.delete("email");
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { role, permissions } = useContext(AuthContext);
   const canViewConnectorPage =
@@ -275,6 +311,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       sharepoint_client_id: cfg.client_id ?? "",
       sharepoint_client_secret: "",
       sharepoint_tenant_id: cfg.tenant_id ?? "",
+      // Outlook (client_secret is masked; user must re-enter to update)
+      outlook_tenant_id: cfg.tenant_id ?? "",
+      outlook_client_id: cfg.client_id ?? "",
+      outlook_client_secret: "",
       visibility: connector.visibility ?? "private",
       public_scope: connector.public_scope ?? "department",
       org_id: connector.org_id ?? "",
@@ -326,6 +366,23 @@ export default function ConnectorsCatalogueView(): JSX.Element {
           ? form.shared_user_emails
           : [],
     };
+
+    if (form.provider === "outlook") {
+      const provider_config: Record<string, string> = {
+        tenant_id: form.outlook_tenant_id,
+        client_id: form.outlook_client_id,
+      };
+      if (form.outlook_client_secret) {
+        provider_config.client_secret = form.outlook_client_secret;
+      }
+      return {
+        name: form.name,
+        description: form.description || undefined,
+        provider: "outlook",
+        provider_config,
+        ...scopePayload,
+      };
+    }
 
     if (form.provider === "azure_blob") {
       const provider_config: Record<string, string> = {
@@ -409,6 +466,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     } else if (form.provider === "sharepoint") {
       if (!form.sharepoint_site_url || !form.sharepoint_client_id) return true;
       if (!editingConnector && !form.sharepoint_client_secret) return true;
+    } else if (form.provider === "outlook") {
+      if (!form.outlook_tenant_id || !form.outlook_client_id) return true;
+      if (!editingConnector && !form.outlook_client_secret) return true;
     } else {
       // DB provider
       if (!form.host || !form.database_name || !form.username) return true;
@@ -489,6 +549,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             ...(form.sharepoint_folder ? { folder: form.sharepoint_folder } : {}),
           },
         };
+      } else if (form.provider === "outlook") {
+        payload = {
+          provider: form.provider,
+          provider_config: {
+            tenant_id: form.outlook_tenant_id,
+            client_id: form.outlook_client_id,
+            client_secret: form.outlook_client_secret,
+          },
+        };
       } else {
         payload = {
           provider: form.provider,
@@ -521,6 +590,22 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     }
   };
 
+  const [linkingMailbox, setLinkingMailbox] = useState(false);
+  const handleLinkMailbox = async (connectorId: string) => {
+    try {
+      setLinkingMailbox(true);
+      const res = await api.get(`/api/outlook/${connectorId}/oauth/start`);
+      const { authorize_url } = res.data;
+      if (authorize_url) {
+        window.location.href = authorize_url;
+      }
+    } catch (err: any) {
+      console.error("Link mailbox failed:", err);
+      setTestResult({ success: false, message: err?.response?.data?.detail || "Failed to start OAuth flow" });
+      setLinkingMailbox(false);
+    }
+  };
+
   /* ---- Filtering ---- */
   const displayConnectors = connectors ?? [];
   const filteredConnectors = displayConnectors.filter((c) => {
@@ -532,7 +617,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       c.provider.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.database_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.provider_config?.container_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.provider_config?.site_url?.toLowerCase().includes(searchQuery.toLowerCase());
+      c.provider_config?.site_url?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.provider_config?.client_id?.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesFilter && matchesSearch;
   });
 
@@ -565,6 +651,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       mysql: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
       azure_blob: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400",
       sharepoint: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+      outlook: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
     };
     return styles[provider] || "bg-gray-100 text-gray-700";
   };
@@ -576,16 +663,19 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     if (c.provider === "sharepoint") {
       return c.provider_config?.site_url ?? "—";
     }
+    if (c.provider === "outlook") {
+      return c.provider_config?.client_id ?? "—";
+    }
     return c.host ? `${c.host}:${c.port}` : "—";
   };
 
   const getConnectorDb = (c: ConnectorInfo): string => {
-    if (STORAGE_PROVIDERS.has(c.provider)) return "—";
+    if (STORAGE_PROVIDERS.has(c.provider) || EMAIL_PROVIDERS.has(c.provider)) return "—";
     return c.database_name ?? "—";
   };
 
   const getConnectorSchema = (c: ConnectorInfo): string => {
-    if (STORAGE_PROVIDERS.has(c.provider)) return "—";
+    if (STORAGE_PROVIDERS.has(c.provider) || EMAIL_PROVIDERS.has(c.provider)) return "—";
     return c.schema_name ?? "—";
   };
 
@@ -603,7 +693,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     return "Private";
   };
 
-  const FILTER_TABS: ProviderFilter[] = ["all", "postgresql", "oracle", "sqlserver", "mysql", "azure_blob", "sharepoint"];
+  const FILTER_TABS: ProviderFilter[] = ["all", "postgresql", "oracle", "sqlserver", "mysql", "azure_blob", "sharepoint", ...(ENABLE_OUTLOOK_CONNECTOR ? ["outlook" as const] : [])];
 
   /* ---- JSX ---- */
   if (!canViewConnectorPage) {
@@ -623,7 +713,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             <h1 className="text-2xl font-semibold">Connectors</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Configure and manage connections for agents (databases, Azure Blob, SharePoint)
+            Configure and manage connections for agents (databases, Azure Blob, SharePoint, Outlook)
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -776,7 +866,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-sm font-medium">
-                            {STORAGE_PROVIDERS.has(c.provider)
+                            {STORAGE_PROVIDERS.has(c.provider) || EMAIL_PROVIDERS.has(c.provider)
                               ? "—"
                               : (c.tables_metadata?.length ?? "—")}
                           </span>
@@ -810,6 +900,20 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                               >
                                 <Zap className="h-4 w-4" />
                               </button>
+                              {EMAIL_PROVIDERS.has(c.provider) && (
+                                <button
+                                  onClick={() => handleLinkMailbox(c.id)}
+                                  disabled={linkingMailbox}
+                                  className="rounded p-1.5 text-muted-foreground hover:bg-sky-50 hover:text-sky-600 dark:hover:bg-sky-900/20 transition-colors"
+                                  title="Link Mailbox (OAuth)"
+                                >
+                                  {linkingMailbox ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Mail className="h-4 w-4" />
+                                  )}
+                                </button>
+                              )}
                               <button
                                 onClick={() => openEditModal(c)}
                                 className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
@@ -1034,6 +1138,11 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     <option value="azure_blob">Azure Blob Storage</option>
                     <option value="sharepoint">SharePoint</option>
                   </optgroup>
+                  {ENABLE_OUTLOOK_CONNECTOR && (
+                  <optgroup label="Email">
+                    <option value="outlook">Microsoft Outlook</option>
+                  </optgroup>
+                  )}
                 </select>
               </div>
 
@@ -1278,6 +1387,16 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     />
                   </div>
                 </>
+              )}
+
+              {/* ── Outlook fields ── */}
+              {form.provider === "outlook" && (
+                <OutlookConnectorForm
+                  form={form}
+                  onChange={(field, value) => setForm({ ...form, [field]: value })}
+                  isEditing={!!editingConnector}
+                  connectorId={editingConnector?.id}
+                />
               )}
 
               {/* Test Result */}
