@@ -338,13 +338,13 @@ class OutlookMailComponent(Node):
     """Read emails and send replies via a linked Outlook mailbox.
 
     Select an Outlook connector from the dropdown (configured on the Connectors
-    page with OAuth-linked mailboxes). The agent can then read inbox messages
-    and send replies at runtime.
+    page with OAuth-linked mailboxes). The agent can then read inbox messages,
+    reply, reply-all, and send new emails at runtime.
     """
 
     display_name = "Outlook Mail"
     description = (
-        "Read and reply to emails through a linked Outlook mailbox. "
+        "Read, reply, reply-all, and send emails through a linked Outlook mailbox. "
         "Connect to the Connectors Catalogue to use OAuth-linked accounts."
     )
     icon = "mail"
@@ -420,6 +420,14 @@ class OutlookMailComponent(Node):
             tool_mode=True,
         ),
         MessageTextInput(
+            name="cc_recipients",
+            display_name="CC Recipients",
+            info="Comma-separated CC email addresses (used with send_mail).",
+            value="",
+            tool_mode=True,
+            advanced=True,
+        ),
+        MessageTextInput(
             name="email_subject",
             display_name="Email Subject",
             info="Subject line for a new email (used with send_mail).",
@@ -446,6 +454,12 @@ class OutlookMailComponent(Node):
             display_name="Send Reply",
             name="send_reply",
             method="send_reply",
+            types=["Message"],
+        ),
+        Output(
+            display_name="Reply All",
+            name="reply_all",
+            method="reply_all",
             types=["Message"],
         ),
         Output(
@@ -743,10 +757,77 @@ class OutlookMailComponent(Node):
         self.status = f"Reply sent from {account_email}"
         return Message(text=f"Reply sent successfully from {account_email} (ref: {raw_id}).")
 
-    def send_mail(self) -> Message:
-        """Send a new email via the linked Outlook mailbox."""
+    def reply_all(self) -> Message:
+        """Reply-all to an email via the linked Outlook mailbox."""
         from urllib.parse import quote
 
+        raw_id = self.message_id.strip() if self.message_id else ""
+        body = self.reply_body.strip() if self.reply_body else ""
+
+        if not raw_id:
+            self.status = "Error: no message_id"
+            return Message(text="message_id is required. Use read_mail first to get message IDs (e.g. MSG-1).")
+
+        msg_id = _resolve_message_id(raw_id)
+
+        try:
+            msg_id = _validate_path_segment(msg_id, "message_id")
+        except ValueError as e:
+            self.status = f"Error: {e!s}"
+            return Message(text=str(e))
+
+        if not body:
+            self.status = "Error: no reply body"
+            return Message(text="reply_body is required. Provide the text content for the reply.")
+
+        try:
+            config = self._get_selected_config()
+            acct = self._resolve_account(config)
+            access_token = _refresh_token_sync(config, acct)
+        except Exception as e:
+            self.status = f"Error: {e!s}"
+            return Message(text=f"Failed to connect to Outlook: {e!s}")
+
+        import httpx
+
+        safe_id = quote(msg_id, safe="")
+        url = f"{GRAPH_BASE}/me/messages/{safe_id}/replyAll"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {"message": {"body": {"contentType": "Text", "content": body}}}
+
+        try:
+            resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+        except Exception as e:
+            self.status = f"Request failed: {e!s}"
+            return Message(text=f"Reply-all request failed: {e!s}")
+
+        if resp.status_code == 401:
+            logger.warning("Graph API replyAll returned 401, force-refreshing token and retrying...")
+            try:
+                access_token = _refresh_token_sync(config, acct, force=True)
+                headers = {
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                }
+                resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+            except Exception as e:
+                self.status = f"Token refresh failed: {e!s}"
+                return Message(text=f"Authentication failed after retry: {e!s}. Re-link the mailbox on the Connectors page.")
+
+        if resp.status_code not in (200, 202):
+            self.status = f"Reply-all failed ({resp.status_code})"
+            error_detail = resp.text[:300] if resp.text else "No details"
+            return Message(text=f"Reply-all failed ({resp.status_code}): {error_detail}")
+
+        account_email = acct.get("email", "")
+        self.status = f"Reply-all sent from {account_email}"
+        return Message(text=f"Reply-all sent successfully from {account_email} (ref: {raw_id}).")
+
+    def send_mail(self) -> Message:
+        """Send a new email via the linked Outlook mailbox."""
         to_raw = self.to_recipients.strip() if self.to_recipients else ""
         subject = self.email_subject.strip() if self.email_subject else ""
         body = self.email_body.strip() if self.email_body else ""
@@ -783,11 +864,16 @@ class OutlookMailComponent(Node):
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
+        cc_raw = self.cc_recipients.strip() if self.cc_recipients else ""
+        cc_list = [r.strip() for r in cc_raw.split(",") if r.strip()] if cc_raw else []
+
         message: dict = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
             "toRecipients": [{"emailAddress": {"address": r}} for r in recipients],
         }
+        if cc_list:
+            message["ccRecipients"] = [{"emailAddress": {"address": r}} for r in cc_list]
         payload = {"message": message, "saveToSentItems": True}
 
         try:
@@ -814,4 +900,5 @@ class OutlookMailComponent(Node):
 
         account_email = acct.get("email", "")
         self.status = f"Email sent from {account_email}"
-        return Message(text=f"Email sent successfully from {account_email} to {', '.join(recipients)}.")
+        cc_info = f" (CC: {', '.join(cc_list)})" if cc_list else ""
+        return Message(text=f"Email sent successfully from {account_email} to {', '.join(recipients)}{cc_info}.")
