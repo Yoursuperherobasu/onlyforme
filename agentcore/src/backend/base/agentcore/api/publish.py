@@ -259,6 +259,7 @@ class PublishNotifyRequest(BaseModel):
     agent_id: UUID
     environment: str
     version_number: str
+    deployment_id: UUID
 
 
 class PublishNotifyResponse(BaseModel):
@@ -267,6 +268,7 @@ class PublishNotifyResponse(BaseModel):
     agent_id: UUID
     environment: str
     version_number: str
+    deployment_id: UUID
 
 
 class ValidatePublishEmailResponse(BaseModel):
@@ -293,6 +295,49 @@ class PublishEmailSuggestion(BaseModel):
     display_name: str | None = None
 
 
+async def _notify_publish_event(
+    session,
+    *,
+    agent_id: UUID,
+    agent_name: str,
+    environment: str,
+    version_number: int,
+    publish_id: UUID,
+    published_by: UUID,
+    published_at: datetime,
+) -> PublishNotifyResponse | None:
+    """Fire notification after a successful publish — with DB verification.
+
+    Re-queries the deployment record to confirm status=PUBLISHED before emitting.
+    """
+    try:
+        # ── DB double-confirmation ──
+        if environment == "uat":
+            record = await session.get(AgentDeploymentUAT, publish_id)
+            if not record or record.status != DeploymentUATStatusEnum.PUBLISHED:
+                logger.warning(f"[PublishNotify] SKIPPED — UAT record {publish_id} not in PUBLISHED state")
+                return None
+        else:
+            record = await session.get(AgentDeploymentProd, publish_id)
+            if not record or record.status != DeploymentPRODStatusEnum.PUBLISHED:
+                logger.warning(f"[PublishNotify] SKIPPED — PROD record {publish_id} not in PUBLISHED state")
+                return None
+
+        logger.info(
+            f"[PublishNotify] agent={agent_id} env={environment} "
+            f"version=v{version_number} deployment_id={publish_id}"
+        )
+        return PublishNotifyResponse(
+            agent_id=agent_id,
+            environment=environment,
+            version_number=f"v{version_number}",
+            deployment_id=publish_id,
+        )
+    except Exception as e:
+        logger.warning(f"Publish notification failed: {e}")
+        return None
+
+
 async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set[UUID]:
     rows = (
         await session.exec(
@@ -302,7 +347,7 @@ async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set
             )
         )
     ).all()
-    return set(rows)    
+    return set(rows)
 
 
 async def _resolve_publish_scope(
@@ -1154,6 +1199,7 @@ async def publish_notification(*, body: PublishNotifyRequest):
         agent_id=body.agent_id,
         environment=body.environment,
         version_number=body.version_number,
+        deployment_id=body.deployment_id,
     )
 
 
