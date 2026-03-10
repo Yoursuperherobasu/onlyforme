@@ -19,7 +19,7 @@ from agentcore.services.deps import session_scope
 # Paths
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[5]  # agentcore_clean_code/agentcore
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]  # agentcore_clean_code/agentcore
 _PYPROJECT = _PROJECT_ROOT / "pyproject.toml"
 _UV_LOCK = _PROJECT_ROOT / "uv.lock"
 
