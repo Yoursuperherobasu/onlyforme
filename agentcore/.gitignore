@@ -169,6 +169,7 @@ __pypackages__/
 .venv
 env/
 venv/
+myenv/
 ENV/
 env.bak/
 venv.bak/
