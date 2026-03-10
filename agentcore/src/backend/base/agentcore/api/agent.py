@@ -443,13 +443,6 @@ async def acquire_agent_session(
     now = datetime.now(timezone.utc)
     expires_at = now + AGENT_EDIT_LOCK_TTL
 
-    # Auto-clean expired locks to prevent stale-lock race conditions.
-    # This avoids IntegrityError + MissingGreenlet on rollback.
-    from sqlalchemy import delete as sa_delete
-    await session.exec(
-        sa_delete(AgentEditLock).where(AgentEditLock.expires_at <= now)  # type: ignore[arg-type]
-    )
-
     lock_row = (await session.exec(select(AgentEditLock).where(AgentEditLock.agent_id == agent_id))).first()
     if lock_row:
         if lock_row.locked_by == current_user.id or lock_row.expires_at <= now:

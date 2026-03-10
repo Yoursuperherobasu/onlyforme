@@ -1019,11 +1019,10 @@ export const setAuthCookie = (
   tokenName: string,
   value: string,
 ) => {
-  const isSecure = window.location.protocol === "https:";
   cookies.set(tokenName, value, {
     path: "/",
-    secure: isSecure,
-    sameSite: isSecure ? "strict" : "lax",
+    secure: true,
+    sameSite: "strict",
   });
 };
 

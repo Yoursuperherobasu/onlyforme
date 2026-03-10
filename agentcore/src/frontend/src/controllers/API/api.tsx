@@ -19,16 +19,6 @@ import useAgentStore from "@/stores/agentStore";
 import { BuildStatus, type EventDeliveryType } from "../../constants/enums";
 import { checkDuplicateRequestAndStoreRequest } from "./helpers/check-duplicate-requests";
 import { useLogout, useRefreshAccessToken } from "./queries/auth";
-import { getAppInsights, getTraceparentHeader } from "../../telemetry/appInsights";
-
-/* Map<url, startTime[]> for fetch duration tracking (FIFO per URL) */
-const fetchStartTimes = new Map<string, number[]>();
-
-function depId(): string {
-  return typeof crypto?.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `dep-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
 
 /* =========================================================
    AXIOS INSTANCE
@@ -89,13 +79,7 @@ function ApiInterceptor() {
 
     const unregister = fetchIntercept.register({
       request: (url, config) => {
-        if (import.meta.env.VITE_FE_API_TELEMETRY_ENABLED === "true") {
-          const arr = fetchStartTimes.get(url) ?? [];
-          arr.push(performance.now());
-          fetchStartTimes.set(url, arr);
-        }
         const accessToken = customGetAccessToken();
-        config.headers = config?.headers ?? {};
 
         if (!isExternalURL(url)) {
           if (accessToken && !isAuthorizedURL(config?.url)) {
@@ -105,68 +89,9 @@ function ApiInterceptor() {
           for (const [key, value] of Object.entries(customHeaders)) {
             config.headers[key] = value;
           }
-
-          const traceparent = getTraceparentHeader();
-          if (traceparent) {
-            config.headers["traceparent"] = traceparent;
-          }
         }
 
         return [url, config];
-      },
-      response: (response) => {
-        try {
-          if (import.meta.env.VITE_FE_API_TELEMETRY_ENABLED === "true" && response.status >= 400) {
-            const appInsights = getAppInsights();
-            if (appInsights) {
-              const url = response.url ?? response.request?.url ?? "";
-              const arr = fetchStartTimes.get(url);
-              const startTime = arr?.shift();
-              if (arr?.length === 0) fetchStartTimes.delete(url);
-              const durationMs = typeof startTime === "number" ? performance.now() - startTime : 0;
-              appInsights.trackDependencyData({
-                id: depId(),
-                name: url,
-                duration: durationMs,
-                success: false,
-                responseCode: response.status,
-                type: "Fetch",
-              });
-            }
-          }
-        } catch {
-          // Do nothing
-        }
-        return response;
-      },
-      responseError: (error) => {
-        try {
-          if (import.meta.env.VITE_FE_API_TELEMETRY_ENABLED === "true") {
-            const appInsights = getAppInsights();
-            if (appInsights) {
-              appInsights.trackException({
-                exception: error instanceof Error ? error : new Error(String(error)),
-                properties: { type: "fetch.error" },
-              });
-              const url = error?.request?.url ?? "";
-              const arr = url ? fetchStartTimes.get(url) : undefined;
-              const startTime = arr?.shift();
-              if (arr?.length === 0 && url) fetchStartTimes.delete(url);
-              const durationMs = typeof startTime === "number" ? performance.now() - startTime : 0;
-              appInsights.trackDependencyData({
-                id: depId(),
-                name: url || "fetch",
-                duration: durationMs,
-                success: false,
-                responseCode: 0,
-                type: "Fetch",
-              });
-            }
-          }
-        } catch {
-          // Do nothing
-        }
-        return Promise.reject(error);
       },
     });
 
@@ -176,29 +101,6 @@ function ApiInterceptor() {
         return response;
       },
       async (error: AxiosError) => {
-        try {
-          if (import.meta.env.VITE_FE_API_TELEMETRY_ENABLED === "true") {
-            const appInsights = getAppInsights();
-            if (appInsights) {
-              const cfg = error?.config as { __aiStartTime?: number } | undefined;
-              const startTime = cfg?.__aiStartTime;
-              const durationMs = typeof startTime === "number" ? performance.now() - startTime : 0;
-              const url = error?.config?.url ?? "";
-              const method = error?.config?.method ?? "GET";
-              const status = error?.response?.status ?? 0;
-              appInsights.trackDependencyData({
-                id: depId(),
-                name: `${method} ${url}`,
-                duration: durationMs,
-                success: false,
-                responseCode: status,
-                type: "HTTP",
-              });
-            }
-          }
-        } catch {
-          // Do nothing
-        }
         const isAuthenticationError =
           error?.response?.status === 403 || error?.response?.status === 401;
 
@@ -256,16 +158,6 @@ function ApiInterceptor() {
           for (const [key, value] of Object.entries(customHeaders)) {
             config.headers[key] = value;
           }
-        }
-
-        const traceparent = getTraceparentHeader();
-        if (traceparent) {
-          config.headers = config.headers ?? {};
-          config.headers["traceparent"] = traceparent;
-        }
-
-        if (import.meta.env.VITE_FE_API_TELEMETRY_ENABLED === "true") {
-          (config as { __aiStartTime?: number }).__aiStartTime = performance.now();
         }
 
         return {

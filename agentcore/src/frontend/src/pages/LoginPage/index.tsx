@@ -102,9 +102,10 @@ export default function LoginPage(): JSX.Element {
       const idToken = response.idToken;
 
       console.log("🟣 [SSO] Sending token to backend...");
+      const backendBaseUrl = getBackendBaseUrl();
 
       const res = await fetch(
-        "/api/azure/sso",
+        `${backendBaseUrl}/api/azure/sso`,
         {
           method: "POST",
           credentials: "include",

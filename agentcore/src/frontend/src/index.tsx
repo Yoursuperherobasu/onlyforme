@@ -1,8 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import reportWebVitals from "./reportWebVitals";
-import { initAppInsights } from "./telemetry/appInsights";
-import { initFrontendErrorTracking } from "./telemetry/errors";
 import { I18nextProvider } from "react-i18next";
 import i18n from "./i18n";
 
@@ -47,9 +45,6 @@ msalInstance.addEventCallback((event) => {
 });
 
 /* ============== REACT ROOT ================= */
-
-initAppInsights();
-initFrontendErrorTracking();
 
 const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement

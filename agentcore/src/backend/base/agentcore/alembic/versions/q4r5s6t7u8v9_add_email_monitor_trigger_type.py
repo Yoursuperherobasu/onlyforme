@@ -1,7 +1,7 @@
 """Add email_monitor to trigger_type_enum
 
 Revision ID: q4r5s6t7u8v9
-Revises: p2q3r4s5t6u7
+Revises: 02ab22100132
 Create Date: 2026-03-03 00:00:00.000000
 """
 
@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 # revision identifiers, used by Alembic.
 revision: str = "q4r5s6t7u8v9"
-down_revision: str | Sequence[str] | None = "p2q3r4s5t6u7"
+down_revision: str | Sequence[str] | None = "02ab22100132"
 branch_labels = None
 depends_on = None
 
