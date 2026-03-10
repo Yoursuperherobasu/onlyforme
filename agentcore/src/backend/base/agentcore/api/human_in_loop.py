@@ -25,11 +25,13 @@ from agentcore.api.utils import CurrentActiveUser, DbSession, build_graph_from_d
 from agentcore.graph_langgraph.checkpointer import get_checkpointer
 from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.database.models.hitl_request.model import (
+    HITLDelegateRequest,
     HITLRequest,
     HITLRequestRead,
     HITLResumeRequest,
     HITLStatus,
 )
+from agentcore.services.database.models.user.model import User
 
 router = APIRouter(prefix="/v1/hitl", tags=["Human-in-the-Loop"])
 
@@ -101,7 +103,7 @@ async def _get_pending_request(thread_id: str, session) -> HITLRequest:
 
 
 async def _enrich_with_agent_names(rows: list[HITLRequest], session) -> list[dict]:
-    """Batch-load agent names and merge into HITLRequestRead dicts."""
+    """Batch-load agent names and assignee names, merge into HITLRequestRead dicts."""
     agent_ids = {r.agent_id for r in rows}
     agent_map: dict[UUID, str] = {}
     if agent_ids:
@@ -110,10 +112,23 @@ async def _enrich_with_agent_names(rows: list[HITLRequest], session) -> list[dic
         ).all()
         agent_map = {a.id: a.name for a in agent_rows}
 
+    # Batch-load assigned-to user names for display in the HITL table.
+    assigned_user_ids = {r.assigned_to for r in rows if r.assigned_to}
+    user_map: dict[UUID, str] = {}
+    if assigned_user_ids:
+        user_rows = (
+            await session.exec(select(User).where(User.id.in_(assigned_user_ids)))
+        ).all()
+        user_map = {
+            u.id: getattr(u, "display_name", None) or getattr(u, "username", str(u.id))
+            for u in user_rows
+        }
+
     return [
         {
             **HITLRequestRead.model_validate(r, from_attributes=True).model_dump(),
             "agent_name": agent_map.get(r.agent_id),
+            "assigned_to_name": user_map.get(r.assigned_to) if r.assigned_to else None,
         }
         for r in rows
     ]
@@ -133,24 +148,33 @@ async def list_pending_hitl(
         status: "pending" (default) — only PENDING requests
                 "all"              — all requests regardless of status
 
-    Only returns requests whose agent was created by the current user.
-    Admin/superuser see all requests.
+    Returns only requests explicitly assigned to or created by the current user.
+    No user (including superusers) sees all requests by default — they must be
+    assigned or delegated to see deployed-run HIL requests.
     """
     stmt = select(HITLRequest).order_by(col(HITLRequest.requested_at).desc())
 
     if status_filter != "all":
         stmt = stmt.where(HITLRequest.status == HITLStatus.PENDING)
 
-    if not getattr(current_user, "is_superuser", False):
-        # Include records where user_id matches OR user_id is NULL
-        # (NULL can happen if the persistence path didn't have user context)
-        from sqlalchemy import or_
-        stmt = stmt.where(
-            or_(
-                HITLRequest.user_id == current_user.id,
-                HITLRequest.user_id.is_(None),
-            )
+    from sqlalchemy import and_, or_
+    stmt = stmt.where(
+        or_(
+            # Published/deployed runs: only the assigned approver sees them
+            and_(
+                HITLRequest.is_deployed_run == True,  # noqa: E712
+                HITLRequest.assigned_to == current_user.id,
+            ),
+            # Playground runs: creator sees their own (current behavior)
+            and_(
+                HITLRequest.is_deployed_run == False,  # noqa: E712
+                or_(
+                    HITLRequest.user_id == current_user.id,
+                    HITLRequest.user_id.is_(None),
+                ),
+            ),
         )
+    )
 
     result = await session.exec(stmt)
     rows = result.all()
@@ -192,6 +216,7 @@ async def resume_hitl(
         edited_value: Optional edited value (for "Edit" action paths)
     """
     hitl_req = await _get_pending_request(thread_id, session)
+    _check_hitl_authorization(hitl_req, current_user)
 
     if hitl_req.status != HITLStatus.PENDING:
         raise HTTPException(
@@ -331,6 +356,12 @@ async def resume_hitl(
                 user_id=hitl_req.user_id,
                 interrupt_data=next_interrupt_data,
                 status=HITLStatus.PENDING,
+                # Carry forward routing fields so re-interrupts stay with
+                # the same approver / department context.
+                assigned_to=hitl_req.assigned_to,
+                dept_id=hitl_req.dept_id,
+                org_id=hitl_req.org_id,
+                is_deployed_run=hitl_req.is_deployed_run,
             )
             session.add(new_req)
             await session.commit()
@@ -421,6 +452,7 @@ async def cancel_hitl(
     marked as cancelled.  The run cannot be resumed after cancellation.
     """
     hitl_req = await _get_pending_request(thread_id, session)
+    _check_hitl_authorization(hitl_req, current_user)
 
     if hitl_req.status != HITLStatus.PENDING:
         raise HTTPException(
@@ -438,7 +470,101 @@ async def cancel_hitl(
     return {"status": "cancelled", "thread_id": thread_id}
 
 
+@router.post("/{thread_id}/delegate")
+async def delegate_hitl(
+    thread_id: str,
+    body: HITLDelegateRequest,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict[str, Any]:
+    """Delegate a pending HITL request to another user.
+
+    Only the current assignee (or a superuser) can delegate.  The request
+    is reassigned so it disappears from the delegator's list and appears
+    for the new assignee.
+    """
+    hitl_req = await _get_pending_request(thread_id, session)
+    _check_hitl_authorization(hitl_req, current_user)
+
+    # Validate target user exists and is active.
+    target_user = (
+        await session.exec(select(User).where(User.id == body.delegate_to_user_id))
+    ).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Target user not found",
+        )
+    if not getattr(target_user, "is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target user is not active",
+        )
+
+    hitl_req.assigned_to = body.delegate_to_user_id
+    hitl_req.delegated_by = current_user.id
+    hitl_req.delegated_at = datetime.now(timezone.utc)
+    session.add(hitl_req)
+    await session.commit()
+
+    logger.info(
+        f"[HITL] Request {thread_id!r} delegated from {current_user.id} "
+        f"to {body.delegate_to_user_id}"
+    )
+    return {
+        "status": "delegated",
+        "thread_id": thread_id,
+        "delegated_to": str(body.delegate_to_user_id),
+    }
+
+
+@router.get("/delegatable-users")
+async def get_delegatable_users(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+    dept_id: UUID = Query(..., description="Department ID to list users from"),
+) -> list[dict]:
+    """Return active users in the given department who can receive delegated HITL requests."""
+    from agentcore.services.database.models.user_department_membership.model import (
+        UserDepartmentMembership,
+    )
+
+    stmt = (
+        select(User)
+        .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
+        .where(
+            UserDepartmentMembership.department_id == dept_id,
+            UserDepartmentMembership.status == "active",
+            User.id != current_user.id,
+        )
+    )
+    users = (await session.exec(stmt)).all()
+    return [
+        {
+            "id": str(u.id),
+            "display_name": getattr(u, "display_name", None) or getattr(u, "username", str(u.id)),
+            "email": getattr(u, "email", None),
+        }
+        for u in users
+    ]
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _check_hitl_authorization(hitl_req: HITLRequest, current_user) -> None:
+    """Verify the current user is allowed to act on this HITL request.
+
+    For deployed runs with an assigned approver, only that approver may
+    resume / cancel / delegate.  No superuser bypass — superusers must be
+    explicitly assigned or delegated by the department admin.
+    Playground requests (no assigned_to) remain accessible to the original
+    creator.
+    """
+    if hitl_req.assigned_to and hitl_req.assigned_to != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to this approval request",
+        )
 
 async def _store_orch_agent_response(
     agent_id: str,

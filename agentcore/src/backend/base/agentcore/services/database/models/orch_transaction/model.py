@@ -1,20 +1,17 @@
 # Path: src/backend/agentcore/services/database/models/orch_transaction/model.py
 #
 # Dedicated transaction table for Orchestrator Chat.
-# Logs node execution details for orchestrator sessions against PROD deployments.
+# Logs node execution details for orchestrator sessions against UAT/PROD deployments.
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+
 from uuid import UUID, uuid4
 
 from pydantic import field_serializer, field_validator
 from sqlalchemy import ForeignKey as SAForeignKey, Index, Uuid as SAUuid
-from sqlmodel import JSON, Column, Field, Relationship, SQLModel
+from sqlmodel import JSON, Column, Field, SQLModel
 
 from agentcore.serialization.serialization import get_max_items_length, get_max_text_length, serialize
-
-if TYPE_CHECKING:
-    from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
 
 
 class OrchTransactionBase(SQLModel):
@@ -63,11 +60,8 @@ class OrchTransactionTable(OrchTransactionBase, table=True):  # type: ignore[cal
     )
     deployment_id: UUID | None = Field(
         default=None,
-        sa_column=Column(SAUuid(), SAForeignKey("agent_deployment_prod.id", ondelete="SET NULL"), nullable=True),
+        sa_column=Column(SAUuid(), nullable=True),
     )
-
-    # Relationships
-    deployment: Optional["AgentDeploymentProd"] = Relationship()
 
     __table_args__ = (
         Index("ix_orch_transaction_agent", "agent_id"),

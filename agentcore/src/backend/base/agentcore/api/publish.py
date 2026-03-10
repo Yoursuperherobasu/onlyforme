@@ -1708,6 +1708,7 @@ async def publish_agent(
             new_record = AgentDeploymentUAT(
                 agent_id=agent_id,
                 org_id=agent.org_id,
+                dept_id=resolved_department_id,
                 version_number=next_version,
                 agent_snapshot=snapshot,
                 agent_name=agent.name,
@@ -1823,6 +1824,7 @@ async def publish_agent(
                 new_record = AgentDeploymentProd(
                     agent_id=agent_id,
                     org_id=agent.org_id,
+                    dept_id=resolved_department_id,
                     promoted_from_uat_id=promoted_from_uat_id,
                     version_number=next_version,
                     agent_snapshot=snapshot,
@@ -1928,6 +1930,7 @@ async def publish_agent(
                 new_record = AgentDeploymentProd(
                     agent_id=agent_id,
                     org_id=agent.org_id,
+                    dept_id=resolved_department_id,
                     promoted_from_uat_id=promoted_from_uat_id,
                     version_number=next_version,
                     agent_snapshot=snapshot,
