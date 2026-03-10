@@ -252,6 +252,23 @@ class PublishActionResponse(BaseModel):
     version_number: str
     promoted_from_uat_id: UUID | None = None
 
+
+class PublishNotifyRequest(BaseModel):
+    """Payload for publish notification events."""
+
+    agent_id: UUID
+    environment: str
+    version_number: str
+
+
+class PublishNotifyResponse(BaseModel):
+    """Response for publish notification events."""
+
+    agent_id: UUID
+    environment: str
+    version_number: str
+
+
 class ValidatePublishEmailResponse(BaseModel):
     """Validation response for publish recipient emails."""
 
