@@ -1,6 +1,6 @@
 """HTTP client for the Graph RAG microservice.
 
-Bridges agentcore backend to the standalone Graph RAG microservice by
+Bridges agentcore backend to the standalone RAG microservice by
 proxying Neo4j entity ingestion, search, community detection, and stats.
 """
 
@@ -22,11 +22,12 @@ def _get_graph_rag_service_settings() -> tuple[str, str]:
     from agentcore.services.deps import get_settings_service
 
     settings = get_settings_service().settings
-    url = getattr(settings, "graph_rag_service_url", "")
-    api_key = getattr(settings, "graph_rag_service_api_key", "")
+    # Prefer unified RAG_SERVICE_URL, fall back to legacy GRAPH_RAG_SERVICE_URL
+    url = getattr(settings, "rag_service_url", "") or getattr(settings, "graph_rag_service_url", "")
+    api_key = getattr(settings, "rag_service_api_key", "") or getattr(settings, "graph_rag_service_api_key", "")
 
     if not url:
-        msg = "GRAPH_RAG_SERVICE_URL is not configured. Set it in your environment or .env file."
+        msg = "RAG_SERVICE_URL (or GRAPH_RAG_SERVICE_URL) is not configured. Set it in your environment or .env file."
         raise ValueError(msg)
 
     return url.rstrip("/"), api_key or ""
@@ -37,6 +38,22 @@ def _headers(api_key: str) -> dict[str, str]:
     if api_key:
         h["x-api-key"] = api_key
     return h
+
+
+def _raise_with_detail(resp: httpx.Response) -> None:
+    """Raise an error that includes the actual detail message from the microservice."""
+    if resp.is_success:
+        return
+    try:
+        body = resp.json()
+        detail = body.get("detail", resp.text)
+    except Exception:
+        detail = resp.text
+    raise httpx.HTTPStatusError(
+        message=detail,
+        request=resp.request,
+        response=resp,
+    )
 
 
 def is_service_configured() -> bool:
@@ -60,7 +77,7 @@ def ingest_via_service(entities: list[dict], graph_kb_id: str = "default") -> di
             headers=_headers(api_key),
             json={"entities": entities, "graph_kb_id": graph_kb_id},
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -77,7 +94,7 @@ def fetch_unembedded_via_service(graph_kb_id: str = "default", batch_size: int =
             headers=_headers(api_key),
             json={"graph_kb_id": graph_kb_id, "batch_size": batch_size},
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -97,7 +114,7 @@ def store_embeddings_via_service(
             headers=_headers(api_key),
             json={"graph_kb_id": graph_kb_id, "embeddings": embeddings},
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -114,7 +131,7 @@ def ensure_vector_index_via_service(graph_kb_id: str = "default") -> dict:
             headers=_headers(api_key),
             json={"graph_kb_id": graph_kb_id},
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -147,7 +164,7 @@ def search_via_service(
                 "include_source_chunks": include_source_chunks,
             },
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -164,7 +181,7 @@ def get_stats_via_service(graph_kb_id: str = "default") -> dict:
             headers=_headers(api_key),
             json={"graph_kb_id": graph_kb_id},
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -189,7 +206,7 @@ def detect_communities_via_service(
                 "min_community_size": min_community_size,
             },
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -209,7 +226,7 @@ def store_communities_via_service(
             headers=_headers(api_key),
             json={"graph_kb_id": graph_kb_id, "communities": communities},
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -236,5 +253,5 @@ def test_connection_via_service(
                 "neo4j_database": neo4j_database,
             },
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()

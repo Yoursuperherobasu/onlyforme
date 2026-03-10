@@ -248,7 +248,14 @@ class Settings(BaseSettings):
     pinecone_service_api_key: str = ""
     """API key for authenticating with the Pinecone microservice (sent as x-api-key header)."""
 
-    # Graph RAG Microservice
+    # Unified RAG Microservice (Pinecone + Graph RAG)
+    rag_service_url: str = ""
+    """Base URL of the unified RAG microservice (e.g. http://localhost:8005).
+    When set, both Pinecone and Neo4j operations are proxied through this service."""
+    rag_service_api_key: str = ""
+    """API key for authenticating with the RAG microservice (sent as x-api-key header)."""
+
+    # Graph RAG Microservice (legacy — use rag_service_url instead)
     graph_rag_service_url: str = ""
     """Base URL of the Graph RAG microservice (e.g. http://localhost:8004).
     When set, Neo4j graph operations are proxied through the microservice."""

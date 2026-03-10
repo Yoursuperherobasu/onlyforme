@@ -1,4 +1,4 @@
-"""Async database engine and session factory for the Graph RAG microservice."""
+"""Async database engine and session factory for the RAG microservice."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ async def init_db(database_url: str) -> None:
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     if _async_session_factory is None:
-        msg = "Database not initialised. Set GRAPH_RAG_SERVICE_DATABASE_URL in .env."
+        msg = "Database not initialised. Set RAG_SERVICE_DATABASE_URL in .env."
         raise RuntimeError(msg)
     async with _async_session_factory() as session:
         yield session

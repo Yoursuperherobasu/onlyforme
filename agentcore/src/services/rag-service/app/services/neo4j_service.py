@@ -19,17 +19,17 @@ from app.schemas import (
     EnsureVectorIndexResponse,
     FetchUnembeddedRequest,
     FetchUnembeddedResponse,
-    IngestRequest,
-    IngestResponse,
-    SearchRequest,
-    SearchResponse,
-    SearchResultItem,
+    GraphIngestRequest,
+    GraphIngestResponse,
+    GraphSearchRequest,
+    GraphSearchResponse,
+    GraphSearchResultItem,
+    GraphTestConnectionRequest,
+    GraphTestConnectionResponse,
     StatsRequest,
     StatsResponse,
     StoreCommunityRequest,
     StoreCommunityResponse,
-    TestConnectionRequest,
-    TestConnectionResponse,
     UnembeddedEntity,
 )
 
@@ -54,7 +54,7 @@ def get_driver():
     settings = get_settings()
     if not settings.neo4j_uri:
         raise ValueError(
-            "Neo4j URI is required. Set NEO4J_URI or GRAPH_RAG_SERVICE_NEO4J_URI in .env."
+            "Neo4j URI is required. Set NEO4J_URI or RAG_SERVICE_NEO4J_URI in .env."
         )
 
     _driver = GraphDatabase.driver(
@@ -101,8 +101,6 @@ def _get_database(db: str | None = None) -> str:
 
 # ---------------------------------------------------------------------------
 # Cypher templates for variable-length paths (hops)
-# Neo4j does not support parameterised path lengths, so we use a
-# pre-validated integer inserted into a template dict.
 # ---------------------------------------------------------------------------
 
 _VECTOR_SEARCH_TEMPLATES = {
@@ -294,11 +292,11 @@ _KEYWORD_SEARCH_TEMPLATES = {
 # ---------------------------------------------------------------------------
 
 
-def ingest_entities(req: IngestRequest) -> IngestResponse:
+def ingest_entities(req: GraphIngestRequest) -> GraphIngestResponse:
     driver = get_driver()
     db = _get_database()
     graph_kb_id = req.graph_kb_id or "default"
-    batch_size = get_settings().ingest_batch_size
+    batch_size = get_settings().neo4j_ingest_batch_size
 
     entity_rows = []
     relationship_rows = []
@@ -333,7 +331,7 @@ def ingest_entities(req: IngestRequest) -> IngestResponse:
             })
 
     if not entity_rows:
-        return IngestResponse(entities_created=0, relationships_created=0, graph_kb_id=graph_kb_id)
+        return GraphIngestResponse(entities_created=0, relationships_created=0, graph_kb_id=graph_kb_id)
 
     entities_created = 0
     for i in range(0, len(entity_rows), batch_size):
@@ -395,7 +393,7 @@ def ingest_entities(req: IngestRequest) -> IngestResponse:
                 )
                 rels_created += len(batch)
 
-    return IngestResponse(
+    return GraphIngestResponse(
         entities_created=entities_created,
         relationships_created=rels_created,
         graph_kb_id=graph_kb_id,
@@ -497,7 +495,7 @@ def ensure_vector_index(req: EnsureVectorIndexRequest) -> EnsureVectorIndexRespo
 # ---------------------------------------------------------------------------
 
 
-def search_graph(req: SearchRequest) -> SearchResponse:
+def search_graph(req: GraphSearchRequest) -> GraphSearchResponse:
     search_type = (req.search_type or "vector_similarity").lower()
 
     if "keyword" in search_type:
@@ -517,14 +515,14 @@ def search_graph(req: SearchRequest) -> SearchResponse:
         else:
             results = _vector_search(req)
 
-    return SearchResponse(
+    return GraphSearchResponse(
         results=results,
         search_type=search_type,
         graph_kb_id=req.graph_kb_id,
     )
 
 
-def _build_result_item(rec: dict, search_type: str, graph_kb_id: str, include_source_chunks: bool) -> SearchResultItem:
+def _build_result_item(rec: dict, search_type: str, graph_kb_id: str, include_source_chunks: bool) -> GraphSearchResultItem:
     context_parts = [
         f"**{rec['entity_name']}** ({rec['entity_type']})",
         rec.get("entity_description") or "",
@@ -545,7 +543,7 @@ def _build_result_item(rec: dict, search_type: str, graph_kb_id: str, include_so
             for c in valid_chunks:
                 context_parts.append(f"  {c[:500]}")
 
-    return SearchResultItem(
+    return GraphSearchResultItem(
         text="\n".join(context_parts),
         entity_name=rec["entity_name"],
         entity_type=rec["entity_type"],
@@ -558,7 +556,7 @@ def _build_result_item(rec: dict, search_type: str, graph_kb_id: str, include_so
     )
 
 
-def _vector_search(req: SearchRequest) -> list[SearchResultItem]:
+def _vector_search(req: GraphSearchRequest) -> list[GraphSearchResultItem]:
     driver = get_driver()
     db = _get_database()
     graph_kb_id = req.graph_kb_id or "default"
@@ -567,7 +565,7 @@ def _vector_search(req: SearchRequest) -> list[SearchResultItem]:
 
     cypher = _VECTOR_SEARCH_TEMPLATES[hops]
 
-    results: list[SearchResultItem] = []
+    results: list[GraphSearchResultItem] = []
     try:
         with driver.session(database=db) as session:
             records = session.run(
@@ -600,7 +598,7 @@ def _tokenize_query(query: str) -> list[str]:
     return unique
 
 
-def _keyword_search(req: SearchRequest) -> list[SearchResultItem]:
+def _keyword_search(req: GraphSearchRequest) -> list[GraphSearchResultItem]:
     driver = get_driver()
     db = _get_database()
     graph_kb_id = req.graph_kb_id or "default"
@@ -613,7 +611,7 @@ def _keyword_search(req: SearchRequest) -> list[SearchResultItem]:
 
     cypher = _KEYWORD_SEARCH_TEMPLATES[hops]
 
-    results: list[SearchResultItem] = []
+    results: list[GraphSearchResultItem] = []
     try:
         with driver.session(database=db) as session:
             records = session.run(
@@ -679,7 +677,6 @@ def detect_communities(req: CommunityDetectRequest) -> CommunityDetectResponse:
     max_communities = max(1, min(req.max_communities or 10, 50))
     min_community_size = max(2, req.min_community_size or 2)
 
-    # Check for existing communities
     with driver.session(database=db) as session:
         existing = session.run(
             """
@@ -707,7 +704,6 @@ def detect_communities(req: CommunityDetectRequest) -> CommunityDetectResponse:
         ]
         return CommunityDetectResponse(communities=communities)
 
-    # No existing — detect via Union-Find
     with driver.session(database=db) as session:
         edge_result = session.run(
             """
@@ -733,7 +729,6 @@ def detect_communities(req: CommunityDetectRequest) -> CommunityDetectResponse:
     if not all_names:
         return CommunityDetectResponse(communities=[])
 
-    # Union-Find
     parent: dict[str, str] = {n: n for n in all_names}
 
     def find(x: str) -> str:
@@ -755,7 +750,6 @@ def detect_communities(req: CommunityDetectRequest) -> CommunityDetectResponse:
     for name in all_names:
         components[find(name)].append(name)
 
-    # Assign community IDs back to Neo4j
     for root, members in components.items():
         cid = _community_hash(root)
         with driver.session(database=db) as session:
@@ -770,7 +764,6 @@ def detect_communities(req: CommunityDetectRequest) -> CommunityDetectResponse:
                 cid=cid,
             )
 
-    # Get community groupings
     with driver.session(database=db) as session:
         community_result = session.run(
             """
@@ -849,7 +842,7 @@ def store_communities(req: StoreCommunityRequest) -> StoreCommunityResponse:
 # ---------------------------------------------------------------------------
 
 
-def test_connection(req: TestConnectionRequest) -> TestConnectionResponse:
+def test_connection(req: GraphTestConnectionRequest) -> GraphTestConnectionResponse:
     try:
         driver = _get_driver_for_test(
             uri=req.neo4j_uri,
@@ -863,14 +856,13 @@ def test_connection(req: TestConnectionRequest) -> TestConnectionResponse:
             )
             rec = result.single()
             count = rec["cnt"] if rec else 0
-        # Close only if it's a temporary driver (not the singleton)
         if driver is not _driver:
             driver.close()
-        return TestConnectionResponse(
+        return GraphTestConnectionResponse(
             success=True,
             message=f"Connected. {count} node(s) in database.",
             node_count=count,
         )
     except Exception as e:
         logger.warning("Neo4j test-connection failed: %s", e)
-        return TestConnectionResponse(success=False, message=str(e))
+        return GraphTestConnectionResponse(success=False, message=str(e))

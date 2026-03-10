@@ -1,6 +1,6 @@
 """HTTP client for the Pinecone microservice.
 
-Bridges agentcore backend to the standalone Pinecone microservice by
+Bridges agentcore backend to the standalone RAG microservice by
 proxying index management, document ingestion, and search requests.
 """
 
@@ -22,11 +22,12 @@ def _get_pinecone_service_settings() -> tuple[str, str]:
     from agentcore.services.deps import get_settings_service
 
     settings = get_settings_service().settings
-    url = getattr(settings, "pinecone_service_url", "")
-    api_key = getattr(settings, "pinecone_service_api_key", "")
+    # Prefer unified RAG_SERVICE_URL, fall back to legacy PINECONE_SERVICE_URL
+    url = getattr(settings, "rag_service_url", "") or getattr(settings, "pinecone_service_url", "")
+    api_key = getattr(settings, "rag_service_api_key", "") or getattr(settings, "pinecone_service_api_key", "")
 
     if not url:
-        msg = "PINECONE_SERVICE_URL is not configured. Set it in your environment or .env file."
+        msg = "RAG_SERVICE_URL (or PINECONE_SERVICE_URL) is not configured. Set it in your environment or .env file."
         raise ValueError(msg)
 
     return url.rstrip("/"), api_key or ""
@@ -37,6 +38,22 @@ def _headers(api_key: str) -> dict[str, str]:
     if api_key:
         h["x-api-key"] = api_key
     return h
+
+
+def _raise_with_detail(resp: httpx.Response) -> None:
+    """Raise an error that includes the actual detail message from the microservice."""
+    if resp.is_success:
+        return
+    try:
+        body = resp.json()
+        detail = body.get("detail", resp.text)
+    except Exception:
+        detail = resp.text
+    raise httpx.HTTPStatusError(
+        message=detail,
+        request=resp.request,
+        response=resp,
+    )
 
 
 def is_service_configured() -> bool:
@@ -70,7 +87,7 @@ def ensure_index_via_service(
                 "cloud_region": cloud_region,
             },
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -111,7 +128,7 @@ def ingest_via_service(
                 "sparse_model": sparse_model,
             },
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -154,7 +171,7 @@ def search_via_service(
                 "rerank_top_n": rerank_top_n,
             },
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()
 
 
@@ -171,5 +188,5 @@ def test_connection_via_service(pinecone_api_key: str | None = None) -> dict:
             headers=_headers(api_key),
             json={"pinecone_api_key": pinecone_api_key},
         )
-        resp.raise_for_status()
+        _raise_with_detail(resp)
         return resp.json()

@@ -8,16 +8,15 @@ import time
 
 from app.config import get_settings
 from app.schemas import (
-    DocumentItem,
     EnsureIndexRequest,
     EnsureIndexResponse,
-    IngestRequest,
-    IngestResponse,
-    SearchRequest,
-    SearchResponse,
-    SearchResultItem,
-    TestConnectionRequest,
-    TestConnectionResponse,
+    PineconeIngestRequest,
+    PineconeIngestResponse,
+    PineconeSearchRequest,
+    PineconeSearchResponse,
+    PineconeSearchResultItem,
+    PineconeTestConnectionRequest,
+    PineconeTestConnectionResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,7 +34,6 @@ def _get_pinecone_client(api_key: str | None = None):
     from pinecone import Pinecone
 
     if api_key:
-        # Custom key: always create fresh (used by test-connection)
         return Pinecone(api_key=api_key)
 
     if _pinecone_client is not None:
@@ -45,7 +43,7 @@ def _get_pinecone_client(api_key: str | None = None):
     if not key:
         raise ValueError(
             "Pinecone API key not configured. "
-            "Set PINECONE_API_KEY or PINECONE_SERVICE_PINECONE_API_KEY in .env."
+            "Set PINECONE_API_KEY or RAG_SERVICE_PINECONE_API_KEY in .env."
         )
     _pinecone_client = Pinecone(api_key=key)
     logger.info("Pinecone client initialised")
@@ -119,7 +117,7 @@ def _generate_sparse_vectors(pc, texts: list[str], sparse_model: str, input_type
 # ---------------------------------------------------------------------------
 
 
-def ingest_documents(req: IngestRequest) -> IngestResponse:
+def ingest_documents(req: PineconeIngestRequest) -> PineconeIngestResponse:
     pc = _get_pinecone_client()
     index = pc.Index(req.index_name)
     settings = get_settings()
@@ -152,7 +150,7 @@ def ingest_documents(req: IngestRequest) -> IngestResponse:
         batch = vectors[i : i + batch_size]
         index.upsert(vectors=batch, namespace=req.namespace or "")
 
-    return IngestResponse(
+    return PineconeIngestResponse(
         vectors_upserted=len(vectors),
         index_name=req.index_name,
         namespace=req.namespace,
@@ -176,7 +174,7 @@ def _hybrid_score_norm(dense: list[float], sparse: dict, alpha: float):
 # ---------------------------------------------------------------------------
 
 
-def search_documents(req: SearchRequest) -> SearchResponse:
+def search_documents(req: PineconeSearchRequest) -> PineconeSearchResponse:
     pc = _get_pinecone_client()
     index = pc.Index(req.index_name)
 
@@ -206,7 +204,7 @@ def search_documents(req: SearchRequest) -> SearchResponse:
     # Build results
     results = []
     for rank, (doc, score_info) in enumerate(zip(docs, scores)):
-        results.append(SearchResultItem(
+        results.append(PineconeSearchResultItem(
             text=doc["text"],
             metadata=doc["metadata"],
             score=score_info.get("score", score_info.get("rerank_score", 0.0)),
@@ -214,10 +212,10 @@ def search_documents(req: SearchRequest) -> SearchResponse:
             rank=rank + 1,
         ))
 
-    return SearchResponse(results=results, search_method=search_method, rerank_info=rerank_info)
+    return PineconeSearchResponse(results=results, search_method=search_method, rerank_info=rerank_info)
 
 
-def _dense_search(index, req: SearchRequest, k: int):
+def _dense_search(index, req: PineconeSearchRequest, k: int):
     results = index.query(
         namespace=req.namespace or "",
         top_k=k,
@@ -235,7 +233,7 @@ def _dense_search(index, req: SearchRequest, k: int):
     return docs, scores
 
 
-def _hybrid_search(pc, index, req: SearchRequest, k: int):
+def _hybrid_search(pc, index, req: PineconeSearchRequest, k: int):
     sparse_vector = _generate_sparse_vectors(pc, [req.query], req.sparse_model, input_type="query")
     sparse = sparse_vector[0] if sparse_vector else {"indices": [], "values": []}
 
@@ -295,16 +293,16 @@ def _rerank_documents(pc, query: str, docs: list[dict], rerank_model: str, top_n
 # ---------------------------------------------------------------------------
 
 
-def test_connection(req: TestConnectionRequest) -> TestConnectionResponse:
+def test_connection(req: PineconeTestConnectionRequest) -> PineconeTestConnectionResponse:
     try:
         pc = _get_pinecone_client(api_key=req.pinecone_api_key)
         existing = pc.list_indexes()
         names = [idx.name for idx in existing] if existing else []
-        return TestConnectionResponse(
+        return PineconeTestConnectionResponse(
             success=True,
             message=f"Connected. {len(names)} index(es) found.",
             indexes=names,
         )
     except Exception as e:
         logger.warning("Pinecone test-connection failed: %s", e)
-        return TestConnectionResponse(success=False, message=str(e))
+        return PineconeTestConnectionResponse(success=False, message=str(e))
