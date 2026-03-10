@@ -4,7 +4,7 @@ import { getURL } from "../../helpers/constants";
 import type { TriggerInfo } from "./use-get-all-triggers";
 
 export interface CreateTriggerPayload {
-  trigger_type: "schedule" | "folder_monitor";
+  trigger_type: "schedule" | "folder_monitor" | "email_monitor";
   trigger_config: Record<string, any>;
   environment: string;
   version?: string | null;

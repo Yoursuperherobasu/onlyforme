@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 from collections import deque
+from contextvars import ContextVar
 from pathlib import Path
 from threading import Lock, Semaphore
 from typing import TypedDict
@@ -14,6 +15,41 @@ from rich.logging import RichHandler
 from typing_extensions import NotRequired, override
 
 from agentcore.settings import DEV
+
+# Request-scoped correlation context (contextvars)
+_LOG_CONTEXT: ContextVar[dict] = ContextVar("log_context", default={})
+
+
+def reset_log_context() -> None:
+    """Reset the request-scoped log context at request start."""
+    _LOG_CONTEXT.set({})
+
+
+def update_log_context(**fields: str | int | float | None) -> None:
+    """Update the request-scoped log context with additional fields."""
+    ctx = _LOG_CONTEXT.get().copy()
+    ctx.update({k: v for k, v in fields.items() if v is not None})
+    _LOG_CONTEXT.set(ctx)
+
+
+def get_log_context() -> dict:
+    """Get the current request-scoped log context."""
+    return _LOG_CONTEXT.get().copy()
+
+
+def _get_otel_trace_ids() -> tuple[str | None, str | None]:
+    """Best-effort: read trace_id and span_id from OpenTelemetry current span. Returns (None, None) if OTel not active."""
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        if span and span.is_recording():
+            ctx = span.get_span_context()
+            if ctx:
+                return (format(ctx.trace_id, "032x") if ctx.trace_id else None, format(ctx.span_id, "016x") if ctx.span_id else None)
+    except Exception:
+        pass
+    return (None, None)
 
 
 VALID_LOG_LEVELS = ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -128,19 +164,82 @@ log_buffer = SizedLogBuffer()
 
 
 def serialize_log(record):
+    """Output JSON with correlation keys ALWAYS. One JSON per line for container stdout."""
+    trace_id, span_id = _get_otel_trace_ids()
+    ctx = get_log_context()
+    extra = record.get("extra") or {}
+    for key in ("trace_id", "span_id", "user_id", "session_id", "agent_id", "agent_id_or_name", "project_id", "http_method", "http_route", "status_code", "latency_ms", "event"):
+        if key in extra and extra[key] is not None:
+            ctx = {**ctx, key: extra[key]}
     subset = {
         "timestamp": record["time"].timestamp(),
-        "message": record["message"],
         "level": record["level"].name,
         "module": record["module"],
+        "message": record["message"],
+        "trace_id": ctx.get("trace_id") or trace_id,
+        "span_id": ctx.get("span_id") or span_id,
+        "user_id": ctx.get("user_id"),
+        "session_id": ctx.get("session_id"),
+        "agent_id": ctx.get("agent_id"),
+        "agent_id_or_name": ctx.get("agent_id_or_name"),
+        "project_id": ctx.get("project_id"),
+        "http_method": ctx.get("http_method"),
+        "http_route": ctx.get("http_route"),
+        "status_code": ctx.get("status_code"),
+        "latency_ms": ctx.get("latency_ms"),
+        "event": ctx.get("event"),
     }
-    return orjson.dumps(subset)
+    return orjson.dumps(subset).decode("utf-8")
 
 
 def patching(record) -> None:
-    record["extra"]["serialized"] = serialize_log(record)
+    try:
+        serialized = serialize_log(record)
+    except Exception:
+        serialized = "{}"
+    try:
+        record["extra"] = {**(record.get("extra") or {}), "serialized": serialized}
+    except (TypeError, ValueError):
+        pass
     if DEV is False:
         record.pop("exception", None)
+
+
+def _jsonl_from_record(record) -> str:
+    """Build JSON line from record. Never raises."""
+    serialized = (record.get("extra") or {}).get("serialized")
+    if serialized:
+        return serialized
+    try:
+        return serialize_log(record)
+    except Exception:
+        t, l = record.get("time"), record.get("level")
+        ts = t.timestamp() if t and hasattr(t, "timestamp") else 0.0
+        lvl = l.name if l and hasattr(l, "name") else "INFO"
+        return orjson.dumps({
+            "timestamp": ts, "level": lvl, "module": record.get("module", ""),
+            "message": record.get("message", ""),
+            "trace_id": None, "span_id": None, "user_id": None, "session_id": None,
+            "agent_id": None, "agent_id_or_name": None, "project_id": None,
+            "http_method": None, "http_route": None, "status_code": None, "latency_ms": None,
+            "event": None,
+        }).decode("utf-8")
+
+
+def _make_jsonl_sink(filepath: Path):
+    """Return a sink that writes JSON lines to file. Bypasses format_map entirely."""
+
+    def sink(message) -> None:
+        try:
+            record = message.record
+            json_str = _jsonl_from_record(record)
+            with open(filepath, "a", encoding="utf-8") as f:
+                f.write(json_str + "\n")
+                f.flush()
+        except Exception:
+            pass
+
+    return sink
 
 
 class LogConfig(TypedDict):
@@ -202,7 +301,14 @@ def configure(
     logger.remove()  # Remove default handlers
     logger.patch(patching)
     if log_env.lower() == "container" or log_env.lower() == "container_json":
-        logger.add(sys.stdout, format="{message}", serialize=True)
+        def _stdout_jsonl_sink(message) -> None:
+            try:
+                json_str = _jsonl_from_record(message.record)
+                sys.stdout.write(json_str + "\n")
+                sys.stdout.flush()
+            except Exception:
+                pass
+        logger.add(sink=_stdout_jsonl_sink, format="{message}", level=log_level.upper())
     elif log_env.lower() == "container_csv":
         logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss.SSS} {level} {file} {line} {function} {message}")
     else:
@@ -253,6 +359,13 @@ def configure(
     if log_buffer.enabled():
         logger.add(sink=log_buffer.write, format="{time} {level} {message}", serialize=True)
 
+    _log_file_sink_enabled = os.getenv("AGENTCORE_LOG_FILE_SINK_ENABLED", "true").lower() not in ("false", "0")
+    if _log_file_sink_enabled:
+        _loguru_dir = Path.cwd() / "loguru" if (Path.cwd() / "pyproject.toml").exists() else Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "loguru"
+        _loguru_dir.mkdir(parents=True, exist_ok=True)
+        _loguru_file = _loguru_dir / "agentcore.jsonl"
+        logger.add(sink=_make_jsonl_sink(_loguru_file), format="{message}", level=log_level.upper())
+
     logger.debug(f"Logger set up with log level: {log_level}")
 
     setup_uvicorn_logger()
@@ -299,4 +412,6 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        ctx = get_log_context()
+        ctx_filtered = {k: v for k, v in ctx.items() if v is not None}
+        logger.opt(depth=depth, exception=record.exc_info).bind(**ctx_filtered).log(level, record.getMessage())

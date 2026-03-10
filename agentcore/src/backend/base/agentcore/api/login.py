@@ -182,11 +182,15 @@ async def login_to_get_access_token(
         _apply_auth_cookies(response, tokens, auth_settings, user)
         current_role = normalize_role(getattr(user, "role", "developer"))
         permissions = await get_permissions_for_role(current_role)
+        from agentcore.observability.metrics_registry import record_login_attempt
+        record_login_attempt("success")
         return {
             **tokens,
             "role": current_role,
             "permissions": permissions
         }
+    from agentcore.observability.metrics_registry import record_login_attempt
+    record_login_attempt("failure")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Incorrect username or password",
@@ -218,6 +222,8 @@ async def azure_sso_login(
             issuer=f"https://login.microsoftonline.com/{auth_settings.AZURE_TENANT_ID}/v2.0",
         )
     except Exception as e:
+        from agentcore.observability.metrics_registry import record_login_attempt
+        record_login_attempt("failure")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Azure token",
@@ -303,6 +309,8 @@ async def azure_sso_login(
 
     tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
     _apply_auth_cookies(response, tokens, auth_settings, user)
+    from agentcore.observability.metrics_registry import record_login_attempt
+    record_login_attempt("success")
     return {
         **tokens,
         "role": resolved_role,
