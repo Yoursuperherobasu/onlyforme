@@ -76,9 +76,9 @@ async def create_server(
     )
 
     if data.env_vars and enc_key:
-        row.env_vars_encrypted = _encrypt_json(data.env_vars, enc_key)
+        row.env_vars_secret_ref = _encrypt_json(data.env_vars, enc_key)
     if data.headers and enc_key:
-        row.headers_encrypted = _encrypt_json(data.headers, enc_key)
+        row.headers_secret_ref = _encrypt_json(data.headers, enc_key)
 
     session.add(row)
     await session.commit()
@@ -140,11 +140,11 @@ async def update_server(
     # Handle secrets separately
     plain_env_vars = update_fields.pop("env_vars", None)
     if plain_env_vars is not None and enc_key:
-        row.env_vars_encrypted = _encrypt_json(plain_env_vars, enc_key) if plain_env_vars else None
+        row.env_vars_secret_ref = _encrypt_json(plain_env_vars, enc_key) if plain_env_vars else None
 
     plain_headers = update_fields.pop("headers", None)
     if plain_headers is not None and enc_key:
-        row.headers_encrypted = _encrypt_json(plain_headers, enc_key) if plain_headers else None
+        row.headers_secret_ref = _encrypt_json(plain_headers, enc_key) if plain_headers else None
 
     for field, value in update_fields.items():
         setattr(row, field, value)
@@ -183,16 +183,16 @@ async def get_decrypted_config_by_id(
     if row.mode == "sse":
         if row.url:
             config["url"] = row.url
-        if row.headers_encrypted and enc_key:
-            config["headers"] = _decrypt_json(row.headers_encrypted, enc_key)
+        if row.headers_secret_ref and enc_key:
+            config["headers"] = _decrypt_json(row.headers_secret_ref, enc_key)
     elif row.mode == "stdio":
         if row.command:
             config["command"] = row.command
         if row.args:
             config["args"] = row.args
 
-    if row.env_vars_encrypted and enc_key:
-        config["env"] = _decrypt_json(row.env_vars_encrypted, enc_key)
+    if row.env_vars_secret_ref and enc_key:
+        config["env"] = _decrypt_json(row.env_vars_secret_ref, enc_key)
 
     return row.server_name, config
 
@@ -216,8 +216,8 @@ async def get_decrypted_config(
     if row.mode == "sse":
         if row.url:
             config["url"] = row.url
-        if row.headers_encrypted and enc_key:
-            config["headers"] = _decrypt_json(row.headers_encrypted, enc_key)
+        if row.headers_secret_ref and enc_key:
+            config["headers"] = _decrypt_json(row.headers_secret_ref, enc_key)
     elif row.mode == "stdio":
         if row.command:
             config["command"] = row.command
@@ -225,7 +225,7 @@ async def get_decrypted_config(
             config["args"] = row.args
 
     # Env vars apply to both modes
-    if row.env_vars_encrypted and enc_key:
-        config["env"] = _decrypt_json(row.env_vars_encrypted, enc_key)
+    if row.env_vars_secret_ref and enc_key:
+        config["env"] = _decrypt_json(row.env_vars_secret_ref, enc_key)
 
     return config
