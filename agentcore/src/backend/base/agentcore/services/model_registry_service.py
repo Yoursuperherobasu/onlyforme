@@ -16,26 +16,17 @@ from agentcore.services.database.models.model_registry.model import (
     ModelRegistryRead,
     ModelRegistryUpdate,
 )
-from agentcore.utils.crypto import decrypt_api_key, encrypt_api_key
+from agentcore.utils.crypto import decrypt_api_key, decrypt_api_key_with_fallback, derive_fernet_key, encrypt_api_key
 
 logger = logging.getLogger(__name__)
 
 
 def _encryption_key() -> str:
-    """Return the encryption key from environment."""
+    """Return the primary encryption key from environment."""
     key = os.getenv("MODEL_REGISTRY_ENCRYPTION_KEY", "")
     if not key:
-        # Fallback: derive a Fernet-compatible key from WEBUI_SECRET_KEY or use a default
-        # In production, MODEL_REGISTRY_ENCRYPTION_KEY should always be set
-        from cryptography.fernet import Fernet
-
         raw = os.getenv("WEBUI_SECRET_KEY", "default-agentcore-registry-key")
-        import base64
-        import hashlib
-
-        # Derive a 32-byte key from the secret and base64-encode it for Fernet
-        derived = hashlib.sha256(raw.encode()).digest()
-        key = base64.urlsafe_b64encode(derived).decode()
+        key = derive_fernet_key(raw)
     return key
 
 
@@ -53,6 +44,20 @@ async def create_model(
         model_type=data.model_type,
         base_url=data.base_url,
         environment=data.environment,
+        source_model_id=getattr(data, "source_model_id", None),
+        org_id=getattr(data, "org_id", None),
+        dept_id=getattr(data, "dept_id", None),
+        public_dept_ids=[str(v) for v in (getattr(data, "public_dept_ids", None) or [])] or None,
+        created_by_id=getattr(data, "created_by_id", None),
+        visibility_scope=getattr(data, "visibility_scope", "private"),
+        approval_status=getattr(data, "approval_status", "approved"),
+        requested_by=getattr(data, "requested_by", None),
+        request_to=getattr(data, "request_to", None),
+        requested_at=getattr(data, "requested_at", None),
+        reviewed_at=getattr(data, "reviewed_at", None),
+        reviewed_by=getattr(data, "reviewed_by", None),
+        review_comments=getattr(data, "review_comments", None),
+        review_attachments=getattr(data, "review_attachments", None),
         provider_config=data.provider_config,
         capabilities=data.capabilities,
         default_params=data.default_params,
@@ -114,6 +119,8 @@ async def update_model(
         return None
 
     update_fields = data.model_dump(exclude_unset=True)
+    if "public_dept_ids" in update_fields:
+        update_fields["public_dept_ids"] = [str(v) for v in (update_fields.get("public_dept_ids") or [])] or None
 
     # Handle API key separately
     plain_key = update_fields.pop("api_key", None)
@@ -161,7 +168,7 @@ async def get_decrypted_config(
     }
 
     if row.api_key_encrypted and enc_key:
-        config["api_key"] = decrypt_api_key(row.api_key_encrypted, enc_key)
+        config["api_key"] = decrypt_api_key_with_fallback(row.api_key_encrypted, enc_key)
     else:
         config["api_key"] = ""
 

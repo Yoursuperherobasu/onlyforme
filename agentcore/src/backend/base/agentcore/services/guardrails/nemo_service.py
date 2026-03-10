@@ -49,7 +49,7 @@ _DEFAULT_RAILS_CO = 'define bot refuse to respond\n  ""\n'
 
 def _to_uuid(value: str) -> UUID:
     try:
-        return UUID(str(value))
+        return UUID(value)
     except Exception as exc:  # noqa: BLE001
         msg = f"Invalid guardrail id '{value}'. Expected a UUID."
         raise ValueError(msg) from exc
@@ -133,7 +133,7 @@ def _normalize_runtime_config(runtime_config: dict[str, Any] | None) -> dict[str
         raise ValueError(msg)
 
     config_yml = _extract_first_str(runtime_config, ("config_yml", "configYml", "config.yml"))
-    rails_co = _extract_first_str(runtime_config, ("rails_co", "railsCo", "rails.co"))
+    rails_co = _extract_first_str(runtime_config, ("rails_co", "railsCo", "rails.co", "rails_yml", "railsYml", "rails.yml"))
     prompts_yml = _extract_first_str(runtime_config, ("prompts_yml", "promptsYml", "prompts.yml"))
     extra_files = runtime_config.get("files", {})
 
@@ -186,22 +186,110 @@ def is_nemo_runtime_config_ready(
     return bool(model_registry_id)
 
 
+# Cache for provider to engine mapping to avoid repeated dict creation
+_PROVIDER_ENGINE_MAPPING = {
+    "openai": "openai",
+    "azure": "azure_openai",
+    "anthropic": "anthropic",
+    "google": "google_genai",
+    "groq": "groq",
+    "openai_compatible": "openai",
+}
+
+
+def _coerce_temperature(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _should_strip_temperature_for_model(
+    provider: str | None,
+    model_name: str | None,
+    temperature: Any,
+) -> bool:
+    provider_normalized = (provider or "").strip().lower()
+    model_normalized = (model_name or "").strip().lower()
+    temp_value = _coerce_temperature(temperature)
+
+    if provider_normalized not in {"openai", "azure", "openai_compatible"}:
+        return False
+    if temp_value is None or temp_value == 1.0:
+        return False
+
+    # Azure/OpenAI reasoning-like models reject custom temperature values.
+    # In practice this includes o1/o3 and gpt-5 variants (including *-chat deployments).
+    return (
+        model_normalized.startswith("o1")
+        or model_normalized.startswith("o3")
+        or model_normalized.startswith("gpt-5")
+    )
+
 def _map_registry_provider_to_nemo_engine(provider: str) -> str:
     normalized = (provider or "").strip().lower()
-    mapping = {
-        "openai": "openai",
-        "azure": "azure_openai",
-        "anthropic": "anthropic",
-        "google": "google_genai",
-        "groq": "groq",
-        "openai_compatible": "openai",
-    }
-    engine = mapping.get(normalized)
+    engine = _PROVIDER_ENGINE_MAPPING.get(normalized)
     if not engine:
         msg = f"Unsupported model registry provider for NeMo guardrails: {provider}"
         logger.warning(f"NeMo model config invalid: {msg}")
         raise ValueError(msg)
     return engine
+
+
+def _normalize_default_params_for_provider(provider: str, default_params: dict[str, Any]) -> dict[str, Any]:
+    """Normalize default_params to use provider-specific parameter names.
+    
+    Different providers expect different parameter names:
+    - OpenAI/Azure/Anthropic/Groq/OpenAI-compatible: max_tokens
+    - Google: max_output_tokens
+    
+    Some models (like Azure o1-preview, o1-mini) don't support max_tokens at all.
+    
+    This function ensures parameters from the model registry are properly
+    translated to what each provider expects, and removes unsupported parameters.
+    """
+    if not isinstance(default_params, dict) or not default_params:
+        return {}
+    
+    if not provider or not isinstance(provider, str):
+        logger.warning(f"Invalid provider type for normalization: {type(provider)}")
+        return {}
+    
+    normalized = dict(default_params)
+    provider_lower = provider.strip().lower()
+    
+    # Google uses max_output_tokens, others use max_tokens
+    if provider_lower == "google":
+        # Convert max_tokens -> max_output_tokens for Google
+        if "max_tokens" in normalized and "max_output_tokens" not in normalized:
+            normalized["max_output_tokens"] = normalized.pop("max_tokens")
+    else:
+        # Convert max_output_tokens -> max_tokens for non-Google providers
+        if "max_output_tokens" in normalized and "max_tokens" not in normalized:
+            normalized["max_tokens"] = normalized.pop("max_output_tokens")
+    
+    # Remove None, empty string, or zero values for token limits
+    # This allows models that don't support max_tokens to work without errors
+    for token_param in ["max_tokens", "max_output_tokens"]:
+        if token_param in normalized:
+            value = normalized[token_param]
+            if value is None or value == "" or (isinstance(value, (int, float)) and value <= 0):
+                normalized.pop(token_param, None)
+    
+    # Remove parameters that NeMo or providers might reject
+    # stream_usage is problematic for Groq/Google (already handled in compatibility shim)
+    # Remove any provider-specific auth params that should come from model_config
+    params_to_exclude = {
+        "api_key", "openai_api_key", "anthropic_api_key", "google_api_key", "groq_api_key",
+        "base_url", "openai_api_base", "groq_api_base", "azure_endpoint",
+        "deployment_name", "azure_deployment", "openai_api_version", "api_version",
+    }
+    for key in params_to_exclude:
+        normalized.pop(key, None)
+    
+    return normalized
 
 
 def _build_model_parameters(model_config: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -221,6 +309,9 @@ def _build_model_parameters(model_config: dict[str, Any]) -> tuple[str, str, dic
 
     engine = _map_registry_provider_to_nemo_engine(provider)
     params: dict[str, Any] = {}
+
+    # Normalize default_params to handle provider-specific parameter names
+    normalized_default_params = _normalize_default_params_for_provider(provider, default_params)
 
     if provider == "openai":
         if api_key:
@@ -259,13 +350,29 @@ def _build_model_parameters(model_config: dict[str, Any]) -> tuple[str, str, dic
         if isinstance(custom_headers, dict) and custom_headers:
             params["default_headers"] = custom_headers
 
-    if isinstance(default_params, dict):
-        params.update({k: v for k, v in default_params.items() if k not in {"model", "model_name", "engine"}})
+    # Merge normalized default_params, excluding provider-agnostic keys
+    if normalized_default_params:
+        params.update({
+            k: v for k, v in normalized_default_params.items()
+            if k not in {"model", "model_name", "engine", "api_key", "base_url"}
+        })
+
+    if "temperature" in params and _should_strip_temperature_for_model(
+        provider=provider,
+        model_name=model_name,
+        temperature=params.get("temperature"),
+    ):
+        stripped_temp = params.pop("temperature", None)
+        logger.info(
+            "NeMo model parameters adjusted: removed unsupported temperature "
+            f"for provider={provider}, model={model_name}, temperature={stripped_temp}"
+        )
 
     logger.info(
         "NeMo model parameters built: "
         f"provider={provider}, engine={engine}, model={model_name}, has_base_url={bool(base_url)}, "
-        f"default_params_count={len(default_params) if isinstance(default_params, dict) else 0}"
+        f"default_params_count={len(default_params) if isinstance(default_params, dict) else 0}, "
+        f"normalized_params_count={len(normalized_default_params)}, final_params_keys={sorted(params.keys())}"
     )
     return engine, model_name, params
 
@@ -333,13 +440,19 @@ def _build_effective_runtime_config(
 
 
 def _write_safe_file(base_dir: Path, relative_path: str, content: str) -> None:
+    """Write file safely with path traversal protection."""
     if not relative_path or relative_path.strip() in {".", ".."}:
         msg = f"Invalid runtimeConfig file path: '{relative_path}'"
+        raise ValueError(msg)
+    
+    # Check for obvious path traversal attempts before resolution
+    if ".." in relative_path or relative_path.startswith("/"):
+        msg = f"Invalid runtimeConfig file path (path traversal detected): '{relative_path}'"
         raise ValueError(msg)
 
     base_resolved = base_dir.resolve()
     destination = (base_dir / relative_path).resolve()
-    if base_resolved not in destination.parents:
+    if base_resolved not in destination.parents and destination != base_resolved:
         msg = f"Invalid runtimeConfig file path outside config directory: '{relative_path}'"
         raise ValueError(msg)
 
@@ -484,6 +597,7 @@ def _build_rails_from_config_path(config_dir: Path) -> Any:
         from nemoguardrails.library.content_safety import actions as content_safety_actions
         from nemoguardrails.library.self_check.input_check import actions as self_check_input_actions
         from nemoguardrails.library.self_check.output_check import actions as self_check_output_actions
+        from nemoguardrails.library.topic_safety import actions as topic_safety_actions
     except ImportError as exc:
         msg = "nemoguardrails is not installed. Install it before enabling the NeMo guardrail component."
         logger.exception(msg)
@@ -515,6 +629,23 @@ def _build_rails_from_config_path(config_dir: Path) -> Any:
                 elif provider in {"groq"}:
                     params.pop("stream_usage", None)
 
+                resolved_model_name = (
+                    model_name
+                    or getattr(llm, "model", None)
+                    or getattr(llm, "model_name", None)
+                    or ""
+                )
+                if _should_strip_temperature_for_model(
+                    provider=provider,
+                    model_name=str(resolved_model_name),
+                    temperature=params.get("temperature"),
+                ):
+                    stripped_temp = params.pop("temperature", None)
+                    logger.info(
+                        "NeMo llm_call adjusted: removed unsupported temperature "
+                        f"for provider={provider}, model={resolved_model_name}, temperature={stripped_temp}"
+                    )
+
             return await original_llm_call(
                 llm=llm,
                 prompt=prompt,
@@ -531,6 +662,7 @@ def _build_rails_from_config_path(config_dir: Path) -> Any:
         content_safety_actions.llm_call = _compat_llm_call
         self_check_input_actions.llm_call = _compat_llm_call
         self_check_output_actions.llm_call = _compat_llm_call
+        topic_safety_actions.llm_call = _compat_llm_call
 
     rails_config = RailsConfig.from_path(str(config_dir))
     logger.info(f"NeMo rails config loaded from path: config_dir={config_dir}")
@@ -601,59 +733,69 @@ async def _get_or_create_rails(
                 "NeMo rails cache race resolved with existing entry: "
                 f"guardrail_id={guardrail_id}, cache_key_prefix={cache_key[:8]}"
             )
-            _cleanup_cached_entry(new_entry)
+            # Clean up the newly created entry we don't need
+            asyncio.create_task(asyncio.to_thread(_cleanup_cached_entry, new_entry))
             return cached.rails
-        old_entry = _RAILS_CACHE.get(cache_id)
+        old_entry = _RAILS_CACHE.pop(cache_id, None)
         _RAILS_CACHE[cache_id] = new_entry
 
+    # Cleanup old entry outside the lock to avoid blocking
     if old_entry:
         logger.info(
             "NeMo rails cache entry replaced: "
             f"guardrail_id={guardrail_id}, old_key_prefix={old_entry.cache_key[:8]}, new_key_prefix={cache_key[:8]}"
         )
+        asyncio.create_task(asyncio.to_thread(_cleanup_cached_entry, old_entry))
     else:
         logger.info(
             "NeMo rails cache entry created: "
             f"guardrail_id={guardrail_id}, cache_key_prefix={cache_key[:8]}"
         )
-    _cleanup_cached_entry(old_entry)
     return new_entry.rails
 
 
 def _extract_generated_text(result: Any) -> str:
+    """Extract text from various result formats with optimized type checking."""
     if result is None:
         return ""
     if isinstance(result, str):
         return result
+    
+    # Try dict-based extraction first (most common)
     if isinstance(result, dict):
+        # Direct string values
         for key in ("content", "text", "response", "output"):
             value = result.get(key)
             if isinstance(value, str):
                 return value
-            if key == "response" and isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict):
-                        content = item.get("content")
-                        if isinstance(content, str):
-                            return content
-                return ""
+        
+        # List response format
+        response_list = result.get("response")
+        if isinstance(response_list, list) and response_list:
+            for item in response_list:
+                if isinstance(item, dict):
+                    content = item.get("content")
+                    if isinstance(content, str):
+                        return content
         return str(result)
-
+    
+    # Try object attribute extraction
+    # Check for response attribute
     response = getattr(result, "response", None)
     if isinstance(response, str):
         return response
-    if isinstance(response, list):
+    if isinstance(response, list) and response:
         for item in response:
             if isinstance(item, dict):
                 content = item.get("content")
                 if isinstance(content, str):
                     return content
-        return ""
-
+    
+    # Check for content attribute
     content = getattr(result, "content", None)
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
+    if isinstance(content, list) and content:
         chunks: list[str] = []
         for chunk in content:
             if isinstance(chunk, str):
@@ -664,11 +806,12 @@ def _extract_generated_text(result: Any) -> str:
                     chunks.append(value)
         if chunks:
             return " ".join(chunks)
-
+    
+    # Check for text attribute
     text = getattr(result, "text", None)
     if isinstance(text, str):
         return text
-
+    
     return str(result)
 
 
@@ -802,11 +945,24 @@ def _is_input_rail_blocked(activated_rails: list[dict[str, Any]]) -> tuple[bool,
 
 
 def _classify_action(input_text: str, output_text: str, blocked_by_input_rail: bool) -> str:
+    input_text_norm = (input_text or "").strip()
+    output_text_norm = (output_text or "").strip()
+
     if blocked_by_input_rail:
-        return "blocked"
-    if not output_text.strip():
+        # Some NeMo flows can mark input rails as "stop" in logs while still returning
+        # the original input unchanged. Treat that case as passthrough to avoid false blocks.
+        if not output_text_norm:
+            return "blocked"
+        if output_text_norm != input_text_norm:
+            return "blocked"
+        logger.warning(
+            "NeMo input rail marked as blocked but output matched input; treating as passthrough."
+        )
         return "passthrough"
-    if output_text.strip() == input_text.strip():
+
+    if not output_text_norm:
+        return "passthrough"
+    if output_text_norm == input_text_norm:
         return "passthrough"
     return "rewritten"
 

@@ -24,9 +24,9 @@ class McpRegistry(SQLModel, table=True):
     description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     mode: str = Field(nullable=False)  # "sse" or "stdio"
     deployment_env: str = Field(
-        default="PROD",
-        sa_column=Column(String(10), nullable=False, default="PROD", index=True),
-    )  # UAT | PROD
+        default="DEV",
+        sa_column=Column(String(10), nullable=False, default="DEV", index=True),
+    )  # DEV | UAT | PROD
 
     # SSE-specific
     url: str | None = Field(default=None)
@@ -90,7 +90,7 @@ class McpRegistryCreate(BaseModel):
     server_name: str
     description: str | None = None
     mode: str  # "sse" or "stdio"
-    deployment_env: str = "PROD"
+    deployment_env: str = "DEV"
     url: str | None = None
     command: str | None = None
     args: list[str] | None = None
@@ -158,7 +158,7 @@ class McpRegistryRead(BaseModel):
     server_name: str
     description: str | None = None
     mode: str
-    deployment_env: str = "PROD"
+    deployment_env: str = "DEV"
     url: str | None = None
     command: str | None = None
     args: list[str] | None = None

@@ -1,5 +1,5 @@
-name: LangBuilder Release
-run-name: LangBuilder Release by @${{ github.actor }}
+name: AgentCore Release
+run-name: AgentCore Release by @${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -9,27 +9,27 @@ on:
         required: true
         type: string
       release_package_base:
-        description: "Release LangBuilder Base"
+        description: "Release AgentCore Base"
         required: true
         type: boolean
         default: false
       release_package_main:
-        description: "Release LangBuilder"
+        description: "Release AgentCore"
         required: true
         type: boolean
         default: false
       build_docker_base:
-        description: "Build Docker Image for LangBuilder Base"
+        description: "Build Docker Image for AgentCore Base"
         required: true
         type: boolean
         default: false
       build_docker_main:
-        description: "Build Docker Image for LangBuilder"
+        description: "Build Docker Image for AgentCore"
         required: true
         type: boolean
         default: false
       build_docker_ep:
-        description: "Build Docker Image for LangBuilder with Entrypoint"
+        description: "Build Docker Image for AgentCore with Entrypoint"
         required: false
         type: boolean
         default: false
@@ -60,7 +60,7 @@ jobs:
 
 
   build-base:
-    name: Build LangBuilder Base
+    name: Build AgentCore Base
     needs: [ci]
     if: inputs.release_package_base == true
     runs-on: ubuntu-latest
@@ -137,7 +137,7 @@ jobs:
           path: src/backend/base/dist
 
   build-main:
-    name: Build LangBuilder Main
+    name: Build AgentCore Main
     if: inputs.release_package_main == true
     needs: [build-base]
     runs-on: ubuntu-latest
@@ -231,7 +231,7 @@ jobs:
       main-artifact-name: "dist-main"
 
   publish-base:
-    name: Publish LangBuilder Base to PyPI
+    name: Publish AgentCore Base to PyPI
     if: inputs.release_package_base == true
     needs: [build-base, test-cross-platform]
     runs-on: ubuntu-latest
@@ -254,7 +254,7 @@ jobs:
           cd src/backend/base && uv publish dist/*.whl
 
   publish-main:
-    name: Publish LangBuilder Main to PyPI
+    name: Publish AgentCore Main to PyPI
     if: inputs.release_package_main == true
     needs: [build-main, test-cross-platform, publish-base]
     runs-on: ubuntu-latest
@@ -276,7 +276,7 @@ jobs:
           uv publish dist/*.whl
 
   call_docker_build_base:
-    name: Call Docker Build Workflow for LangBuilder Base
+    name: Call Docker Build Workflow for AgentCore Base
     if: inputs.build_docker_base == true
     needs: [build-base, build-main, publish-base, publish-main]
     uses: ./.github/workflows/docker-build.yml
@@ -289,7 +289,7 @@ jobs:
     secrets: inherit
 
   call_docker_build_main_ep:
-    name: Call Docker Build Workflow for LangBuilder with Entrypoint
+    name: Call Docker Build Workflow for AgentCore with Entrypoint
     if: inputs.build_docker_ep == true
     needs: [build-main, publish-main, call_docker_build_base]
     uses: ./.github/workflows/docker-build.yml
@@ -301,7 +301,7 @@ jobs:
     secrets: inherit
 
   call_docker_build_main:
-    name: Call Docker Build Workflow for LangBuilder
+    name: Call Docker Build Workflow for AgentCore
     if: inputs.build_docker_main == true
     needs: [build-main, publish-main, call_docker_build_main_ep]
     uses: ./.github/workflows/docker-build.yml

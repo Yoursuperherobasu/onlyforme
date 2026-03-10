@@ -7,6 +7,7 @@ export type ModelProvider =
   | "openai_compatible";
 
 export type ModelEnvironment = "test" | "uat" | "prod";
+export type ModelVisibilityScope = "private" | "department" | "organization";
 
 export type ModelTypeFilter = "llm" | "embedding";
 
@@ -27,6 +28,11 @@ export interface ModelType {
   model_type: ModelTypeFilter;
   base_url?: string | null;
   environment: ModelEnvironment;
+  visibility_scope?: ModelVisibilityScope;
+  org_id?: string | null;
+  dept_id?: string | null;
+  public_dept_ids?: string[] | null;
+  approval_status?: "pending" | "approved" | "rejected";
   has_api_key: boolean;
   provider_config?: Record<string, any> | null;
   capabilities?: ModelCapabilities | null;
@@ -46,6 +52,10 @@ export interface ModelCreateRequest {
   base_url?: string | null;
   api_key?: string | null;
   environment?: ModelEnvironment;
+  visibility_scope?: ModelVisibilityScope;
+  org_id?: string | null;
+  dept_id?: string | null;
+  public_dept_ids?: string[] | null;
   provider_config?: Record<string, any> | null;
   capabilities?: ModelCapabilities | null;
   default_params?: Record<string, any> | null;
@@ -61,6 +71,10 @@ export interface ModelUpdateRequest {
   base_url?: string | null;
   api_key?: string | null;
   environment?: ModelEnvironment;
+  visibility_scope?: ModelVisibilityScope;
+  org_id?: string | null;
+  dept_id?: string | null;
+  public_dept_ids?: string[] | null;
   provider_config?: Record<string, any> | null;
   capabilities?: ModelCapabilities | null;
   default_params?: Record<string, any> | null;

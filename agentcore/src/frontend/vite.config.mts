@@ -62,6 +62,11 @@ export default defineConfig(({ mode }) => {
     "5839";
   const backendUrlDefault = ensureHttpUrl(`http://${hostIp}:${backendPort}`, "http://127.0.0.1:7860");
   const msalRedirectUriDefault = ensureHttpUrl(`http://${hostIp}:${frontendPort}/agents`, "http://127.0.0.1:3000/agents");
+  const msalPostLogoutRedirectUriDefault = ensureHttpUrl(`http://${hostIp}:${frontendPort}`, "http://127.0.0.1:3000");
+  const msalAuthorityDefault =
+    envAgentCore.AZURE_TENANT_ID
+      ? `https://login.microsoftonline.com/${envAgentCore.AZURE_TENANT_ID}`
+      : undefined;
   const agentcorePublishUrlDefault = ensureHttpUrl(`http://${hostIp}:${publishPort}`, "http://127.0.0.1:5839");
 
   const apiRoutes = API_ROUTES || ["^/api/", "^/api/", "/health"];
@@ -120,6 +125,24 @@ export default defineConfig(({ mode }) => {
       ),
       "process.env.MSAL_REDIRECT_URI": JSON.stringify(
         envAgentCore.MSAL_REDIRECT_URI ?? msalRedirectUriDefault,
+      ),
+      "process.env.MSAL_POST_LOGOUT_REDIRECT_URI": JSON.stringify(
+        envAgentCore.MSAL_POST_LOGOUT_REDIRECT_URI ?? msalPostLogoutRedirectUriDefault,
+      ),
+      "process.env.AZURE_CLIENT_ID": JSON.stringify(
+        envAgentCore.AZURE_CLIENT_ID ?? "",
+      ),
+      "process.env.AZURE_TENANT_ID": JSON.stringify(
+        envAgentCore.AZURE_TENANT_ID ?? "",
+      ),
+      "process.env.AZURE_REDIRECT_URI": JSON.stringify(
+        envAgentCore.AZURE_REDIRECT_URI ?? msalRedirectUriDefault,
+      ),
+      "process.env.MSAL_AUTHORITY": JSON.stringify(
+        envAgentCore.MSAL_AUTHORITY ?? msalAuthorityDefault ?? "",
+      ),
+      "process.env.MSAL_SCOPES": JSON.stringify(
+        envAgentCore.MSAL_SCOPES ?? "openid,profile,email",
       ),
       "process.env.AGENTCORE_PUBLISH_URL": JSON.stringify(
         envAgentCore.AGENTCORE_PUBLISH_URL ?? agentcorePublishUrlDefault,

@@ -972,6 +972,7 @@ function AddSchedulerModal({
               folderForm={folderForm}
               emailForm={emailForm}
               environment={environment}
+              isEditing={!!editing}
               onScheduleChange={(k, v) =>
                 setScheduleForm((f) => ({ ...f, [k]: v }))
               }
@@ -1150,6 +1151,7 @@ function Step2({
   folderForm,
   emailForm,
   environment,
+  isEditing,
   onScheduleChange,
   onFolderChange,
   onEmailChange,
@@ -1160,6 +1162,7 @@ function Step2({
   folderForm: typeof BLANK_FOLDER;
   emailForm: typeof BLANK_EMAIL;
   environment: "uat" | "prod";
+  isEditing: boolean;
   onScheduleChange: (k: keyof typeof BLANK_SCHEDULE, v: any) => void;
   onFolderChange: (k: keyof typeof BLANK_FOLDER, v: any) => void;
   onEmailChange: (k: keyof typeof BLANK_EMAIL, v: any) => void;
@@ -1175,27 +1178,29 @@ function Step2({
         <FileTriggerConfig form={folderForm} onChange={onFolderChange} />
       )}
 
-      {/* Environment */}
-      <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">
-          Environment
-        </label>
-        <div className="flex gap-3">
-          {(["uat", "prod"] as const).map((e) => (
-            <button
-              key={e}
-              onClick={() => onEnvChange(e)}
-              className={`rounded-md border px-4 py-1.5 text-sm font-medium ${
-                environment === e
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:border-muted-foreground"
-              }`}
-            >
-              {e.toUpperCase()}
-            </button>
-          ))}
+      {/* Environment — only shown when adding, not when editing */}
+      {!isEditing && (
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-foreground">
+            Environment
+          </label>
+          <div className="flex gap-3">
+            {(["uat", "prod"] as const).map((e) => (
+              <button
+                key={e}
+                onClick={() => onEnvChange(e)}
+                className={`rounded-md border px-4 py-1.5 text-sm font-medium ${
+                  environment === e
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:border-muted-foreground"
+                }`}
+              >
+                {e.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

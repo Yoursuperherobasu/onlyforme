@@ -15,7 +15,7 @@ from agentcore.services.deps import get_settings_service, session_scope
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from agentcore.graph_langgraph import LangGraphAdapter as Graph, LangGraphVertex as Vertex, RunOutputs
+    from agentcore.graph_langgraph import LangGraphAdapter, LangGraphVertex, RunOutputs
     from agentcore.schema.data import Data
 
 INPUT_TYPE_MAP = {
@@ -43,8 +43,8 @@ async def list_agents(*, user_id: str | None = None) -> list[Data]:
 
 async def load_agent(
     user_id: str, agent_id: str | None = None, agent_name: str | None = None, tweaks: dict | None = None
-) -> Graph:
-    from agentcore.graph_langgraph import LangGraphAdapter as Graph
+) -> LangGraphAdapter:
+    from agentcore.graph_langgraph import LangGraphAdapter
     from agentcore.processing.process import process_tweaks
 
     if not agent_id and not agent_name:
@@ -63,14 +63,22 @@ async def load_agent(
         raise ValueError(msg)
     if tweaks:
         graph_data = process_tweaks(graph_data=graph_data, tweaks=tweaks)
-    return Graph.from_payload(graph_data, agent_id=agent_id, user_id=user_id)
+    return LangGraphAdapter.from_payload(graph_data, agent_id=agent_id, user_id=user_id)
 
 
 async def find_agent(agent_name: str, user_id: str) -> str | None:
     async with session_scope() as session:
         uuid_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
+        # Try same-user match first
         stmt = select(Agent).where(Agent.name == agent_name).where(Agent.user_id == uuid_user_id)
         agent = (await session.exec(stmt)).first()
+        # Fallback: cross-user lookup (child agents may be owned by the agent creator)
+        if not agent:
+            logger.info(
+                f"Agent '{agent_name}' not found for user {user_id}, trying cross-user lookup"
+            )
+            stmt = select(Agent).where(Agent.name == agent_name)
+            agent = (await session.exec(stmt)).first()
         return agent.id if agent else None
 
 
@@ -83,7 +91,7 @@ async def run_agent(
     user_id: str | None = None,
     run_id: str | None = None,
     session_id: str | None = None,
-    graph: Graph | None = None,
+    graph: LangGraphAdapter | None = None,
 ) -> list[RunOutputs]:
     if user_id is None:
         msg = "Session is invalid"
@@ -130,12 +138,12 @@ async def run_agent(
 
 
 def generate_function_for_agent(
-    inputs: list[Vertex], agent_id: str, user_id: str | UUID | None
+    inputs: list[LangGraphVertex], agent_id: str, user_id: str | UUID | None
 ) -> Callable[..., Awaitable[Any]]:
     """Generate a dynamic agent function based on the given inputs and agent ID.
 
     Args:
-        inputs (List[Vertex]): The list of input vertices for the agent.
+        inputs (List[LangGraphVertex]): The list of input vertices for the agent.
         agent_id (str): The ID of the agent.
         user_id (str | UUID | None): The user ID associated with the agent.
 
@@ -206,13 +214,13 @@ async def agent_function({func_args}):
 
 
 def build_function_and_schema(
-    agent_data: Data, graph: Graph, user_id: str | UUID | None
+    agent_data: Data, graph: LangGraphAdapter, user_id: str | UUID | None
 ) -> tuple[Callable[..., Awaitable[Any]], type[BaseModel]]:
     """Builds a dynamic function and schema for a given agent.
 
     Args:
         agent_data (Data): The agent record containing information about the agent.
-        graph (Graph): The graph representing the agent.
+        graph (LangGraphAdapter): The graph representing the agent.
         user_id (str): The user ID associated with the agent.
 
     Returns:
@@ -225,11 +233,11 @@ def build_function_and_schema(
     return dynamic_agent_function, schema
 
 
-def get_agent_inputs(graph: Graph) -> list[Vertex]:
+def get_agent_inputs(graph: LangGraphAdapter) -> list[LangGraphVertex]:
     """Retrieves the agent inputs from the given graph.
 
     Args:
-        graph (Graph): The graph object representing the agent.
+        graph (LangGraphAdapter): The graph object representing the agent.
 
     Returns:
         List[Data]: A list of input data, where each record contains the ID, name, and description of the input vertex.
@@ -237,7 +245,7 @@ def get_agent_inputs(graph: Graph) -> list[Vertex]:
     return [vertex for vertex in graph.vertices if vertex.is_input]
 
 
-def build_schema_from_inputs(name: str, inputs: list[Vertex]) -> type[BaseModel]:
+def build_schema_from_inputs(name: str, inputs: list[LangGraphVertex]) -> type[BaseModel]:
     """Builds a schema from the given inputs.
 
     Args:
@@ -257,11 +265,11 @@ def build_schema_from_inputs(name: str, inputs: list[Vertex]) -> type[BaseModel]
     return create_model(name, **fields)
 
 
-def get_arg_names(inputs: list[Vertex]) -> list[dict[str, str]]:
+def get_arg_names(inputs: list[LangGraphVertex]) -> list[dict[str, str]]:
     """Returns a list of dictionaries containing the component name and its corresponding argument name.
 
     Args:
-        inputs (List[Vertex]): A list of Vertex objects representing the inputs.
+        inputs (List[LangGraphVertex]): A list of Vertex objects representing the inputs.
 
     Returns:
         List[dict[str, str]]: A list of dictionaries, where each dictionary contains the component name and its
@@ -315,12 +323,12 @@ async def generate_unique_agent_name(agent_name, user_id, session):
 
 def json_schema_from_agent(agent: Agent) -> dict:
     """Generate JSON schema from agent input nodes."""
-    from agentcore.graph_langgraph import LangGraphAdapter as Graph
+    from agentcore.graph_langgraph import LangGraphAdapter
 
     # Get the agent's data which contains the nodes and their configurations
     agent_data = agent.data or {}
 
-    graph = Graph.from_payload(agent_data)
+    graph = LangGraphAdapter.from_payload(agent_data)
     input_nodes = [vertex for vertex in graph.vertices if vertex.is_input]
 
     properties = {}

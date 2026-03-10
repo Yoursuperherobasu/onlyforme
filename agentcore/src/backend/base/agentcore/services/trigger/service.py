@@ -1161,12 +1161,14 @@ class TriggerService(Service):
                     "_trigger_files": json.dumps(payload["files"]),
                 }
 
+        from uuid import uuid4
+
         input_request = SimplifiedAPIRequest(
             input_value=json.dumps(payload),
             input_type="chat",
             output_type="chat",
             tweaks=tweaks,
-            session_id=None,
+            session_id=str(uuid4()),
         )
 
         await simple_run_agent_task(

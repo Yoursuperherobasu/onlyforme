@@ -202,4 +202,17 @@ member_servers.json
 myenv/
 
 .DS_Store
-nohup.out
+nohup.outagentcore/pii_masking_templates/
+
+# Azure deployment files (local testing only)
+agentcore/Dockerfile
+agentcore/agentcore-deployment.yaml
+
+# Basu personal reference files (never push)
+agentcore/Basu_only/
+
+# Knowledge base storage (runtime data, not code)
+agentcore/src/backend/src/backend/knowledge_base_storage/
+
+# Loguru runtime logs
+loguru/

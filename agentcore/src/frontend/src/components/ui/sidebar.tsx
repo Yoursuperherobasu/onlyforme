@@ -534,7 +534,7 @@ const SidebarContent = React.forwardRef<
       ref={ref}
       data-sidebar="content"
       className={cn(
-        "flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
+        "flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-y-auto group-data-[collapsible=icon]:overflow-x-hidden",
         segmentedSidebar && "sidebar-segmented",
         className,
       )}
@@ -644,6 +644,22 @@ const SidebarMenuItem = React.forwardRef<
 ));
 SidebarMenuItem.displayName = "SidebarMenuItem";
 
+function getTextFromNode(node: React.ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node).trim();
+  }
+
+  if (Array.isArray(node)) {
+    return node.map(getTextFromNode).filter(Boolean).join(" ").trim();
+  }
+
+  if (React.isValidElement(node)) {
+    return getTextFromNode(node.props?.children);
+  }
+
+  return "";
+}
+
 const sidebarMenuButtonVariants = cva(
   "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-ring transition-[width,height,padding] hover:bg-accent hover:text-accent-foreground focus-visible:ring-1 active:bg-accent active:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-accent data-[active=true]:font-medium data-[active=true]:text-accent-foreground data-[state=open]:hover:bg-accent data-[state=open]:hover:text-accent-foreground group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
   {
@@ -690,6 +706,19 @@ const SidebarMenuButton = React.forwardRef<
   ) => {
     const Comp = asChild ? Slot : "button";
     const { state } = useSidebar();
+    const inferredTooltip = React.useMemo(() => {
+      if (tooltip) return tooltip;
+
+      const ariaLabel =
+        typeof props["aria-label"] === "string" ? props["aria-label"] : "";
+      if (ariaLabel.trim()) return ariaLabel;
+
+      const title = typeof props.title === "string" ? props.title : "";
+      if (title.trim()) return title;
+
+      const childText = getTextFromNode(props.children);
+      return childText || undefined;
+    }, [tooltip, props]);
 
     const button = (
       <Comp
@@ -702,14 +731,14 @@ const SidebarMenuButton = React.forwardRef<
       />
     );
 
-    if (!tooltip) {
+    if (!inferredTooltip) {
       return button;
     }
 
     return (
       <ShadTooltip
         side="right"
-        content={state == "collapsed" ? tooltip : undefined}
+        content={state === "collapsed" ? inferredTooltip : undefined}
       >
         {button}
       </ShadTooltip>

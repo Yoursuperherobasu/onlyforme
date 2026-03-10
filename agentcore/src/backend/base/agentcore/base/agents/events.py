@@ -69,7 +69,7 @@ async def handle_on_chain_start(
             # Cast the input_data to InputDict
             input_message = input_data.get("input", "")
             if isinstance(input_message, BaseMessage):
-                input_message = input_message.text()
+                input_message = input_message.text  # .text is a property, not a method
             elif not isinstance(input_message, str):
                 input_message = str(input_message)
 

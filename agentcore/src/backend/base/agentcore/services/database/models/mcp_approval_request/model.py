@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import JSON, Column, Index, String, Text, text
+from sqlalchemy import JSON, Column, DateTime, Index, String, Text, text
 from sqlmodel import Field, SQLModel
 
 from agentcore.services.database.models.approval_request.model import ApprovalDecisionEnum
@@ -15,18 +15,27 @@ class McpApprovalRequestBase(SQLModel):
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
     requested_by: UUID = Field(foreign_key="user.id", nullable=False)
     request_to: UUID = Field(foreign_key="user.id", nullable=False)
-    requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
-    reviewed_at: datetime | None = Field(default=None, nullable=True)
+    requested_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    reviewed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     decision: ApprovalDecisionEnum | None = Field(default=None, sa_column=Column(String(20), nullable=True))
     justification: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     file_path: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     deployment_env: str = Field(
-        default="PROD",
-        sa_column=Column(String(10), nullable=False, server_default=text("'PROD'")),
-        description="Environment discriminator: UAT or PROD",
+        default="DEV",
+        sa_column=Column(String(10), nullable=False, server_default=text("'DEV'")),
+        description="Environment discriminator: DEV, UAT, or PROD",
     )
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    )
 
 
 class McpApprovalRequest(McpApprovalRequestBase, table=True):  # type: ignore[call-arg]
@@ -49,7 +58,7 @@ class McpApprovalRequestCreate(SQLModel):
     request_to: UUID
     org_id: UUID | None = None
     dept_id: UUID | None = None
-    deployment_env: str = "PROD"
+    deployment_env: str = "DEV"
 
 
 class McpApprovalRequestRead(BaseModel):
@@ -74,4 +83,3 @@ class McpApprovalRequestUpdate(BaseModel):
     decision: ApprovalDecisionEnum | None = None
     justification: str | None = None
     file_path: dict | None = None
-

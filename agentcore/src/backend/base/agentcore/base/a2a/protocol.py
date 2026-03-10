@@ -26,9 +26,9 @@ class MessageType(Enum):
     TASK_UPDATE = "task_update"
     ERROR = "error"
     ACKNOWLEDGMENT = "acknowledgment"
-    # Child flow message types for cross-flow communication
-    CHILD_FLOW_INVOKE = "child_flow_invoke"
-    CHILD_FLOW_RESULT = "child_flow_result"
+    # Child agent message types for cross-agent communication
+    CHILD_AGENT_INVOKE = "child_agent_invoke"
+    CHILD_AGENT_RESULT = "child_agent_result"
 
 
 class TaskStatus(Enum):

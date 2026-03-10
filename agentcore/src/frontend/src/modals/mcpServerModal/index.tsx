@@ -64,8 +64,12 @@ export default function AddMcpServerModal({
   const [type, setType] = useState(
     initialData ? (initialData.mode === "stdio" ? "STDIO" : "SSE") : "SSE",
   );
-  const [deploymentEnv, setDeploymentEnv] = useState<"uat" | "prod">(
-    String(initialData?.deployment_env || "PROD").toLowerCase() === "uat" ? "uat" : "prod",
+  const [deploymentEnv, setDeploymentEnv] = useState<"dev" | "uat" | "prod">(
+    (() => {
+      const normalized = String(initialData?.deployment_env || "DEV").toLowerCase();
+      if (normalized === "uat" || normalized === "prod" || normalized === "dev") return normalized;
+      return "dev";
+    })(),
   );
   const [error, setError] = useState<string | null>(null);
   const addMutation = useAddMCPServer();
@@ -100,12 +104,12 @@ export default function AddMcpServerModal({
   const isNameTaken = nameAvailability.isNameTaken;
 
   const [jsonInput, setJsonInput] = useState("");
-  const [visibility, setVisibility] = useState<"private" | "public">(
-    (initialData?.visibility as "private" | "public") || "private",
-  );
-  const [publicScope, setPublicScope] = useState<"organization" | "department">(
-    (initialData?.public_scope as "organization" | "department") || "department",
-  );
+  const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">(() => {
+    if (initialData?.visibility === "public") {
+      return initialData?.public_scope === "organization" ? "organization" : "department";
+    }
+    return "private";
+  });
   const [orgId, setOrgId] = useState(initialData?.org_id || "");
   const [deptId, setDeptId] = useState(initialData?.dept_id || "");
   const [publicDeptIds, setPublicDeptIds] = useState<string[]>(
@@ -136,17 +140,18 @@ export default function AddMcpServerModal({
   }
 
   function buildTenancyPayload() {
+    const isPublic = visibilityScope !== "private";
     return {
-      visibility,
-      public_scope: visibility === "public" ? publicScope : null,
+      visibility: isPublic ? "public" : "private",
+      public_scope: isPublic ? visibilityScope : null,
       org_id: orgId || undefined,
       dept_id: deptId || undefined,
       public_dept_ids:
-        visibility === "public" && publicScope === "department"
+        visibilityScope === "department"
           ? publicDeptIds
           : [],
       shared_user_emails:
-        role === "department_admin" && visibility === "private"
+        role === "department_admin" && visibilityScope === "private"
           ? sharedUserEmails
           : [],
     };
@@ -302,9 +307,8 @@ export default function AddMcpServerModal({
     setSseHeaders([]);
     setSseDescription("");
     setJsonInput("");
-    setDeploymentEnv("prod");
-    setVisibility("private");
-    setPublicScope("department");
+    setDeploymentEnv("dev");
+    setVisibilityScope("private");
     setOrgId("");
     setDeptId("");
     setPublicDeptIds([]);
@@ -327,9 +331,15 @@ export default function AddMcpServerModal({
     setSseEnv([]);
     setSseHeaders([]);
     setSseDescription(initialData?.description || "");
-    setDeploymentEnv(String(initialData?.deployment_env || "PROD").toLowerCase() === "uat" ? "uat" : "prod");
-    setVisibility((initialData?.visibility as "private" | "public") || "private");
-    setPublicScope((initialData?.public_scope as "organization" | "department") || "department");
+    {
+      const normalized = String(initialData?.deployment_env || "DEV").toLowerCase();
+      setDeploymentEnv(normalized === "uat" || normalized === "prod" || normalized === "dev" ? (normalized as "dev" | "uat" | "prod") : "dev");
+    }
+    setVisibilityScope(
+      initialData?.visibility === "public"
+        ? (initialData?.public_scope === "organization" ? "organization" : "department")
+        : "private",
+    );
     setOrgId(initialData?.org_id || "");
     setDeptId(initialData?.dept_id || "");
     setPublicDeptIds(initialData?.public_dept_ids || []);
@@ -351,9 +361,9 @@ export default function AddMcpServerModal({
   }, [open]);
 
   useEffect(() => {
-    if (!open || visibility !== "public") return;
+    if (!open || visibilityScope === "private") return;
     const canMultiDept = role === "super_admin" || role === "root";
-    if (publicScope === "organization") {
+    if (visibilityScope === "organization") {
       if ((role === "developer" || role === "department_admin") && !orgId && visibilityOptions.organizations.length > 0) {
         setOrgId(visibilityOptions.organizations[0].id);
       }
@@ -364,7 +374,7 @@ export default function AddMcpServerModal({
       setDeptId(firstDept.id);
       if (!orgId) setOrgId(firstDept.org_id);
     }
-  }, [open, visibility, publicScope, role, orgId, deptId, visibilityOptions]);
+  }, [open, visibilityScope, role, orgId, deptId, visibilityOptions]);
 
   const handleTypeChange = (val: string) => {
     setType(val);
@@ -400,11 +410,12 @@ export default function AddMcpServerModal({
               </div>
               <div className="flex flex-col gap-2">
                 <Label className="!text-mmd">Environment</Label>
-                <Select value={deploymentEnv} onValueChange={(value) => setDeploymentEnv(value as "uat" | "prod")} disabled={isPending}>
+                <Select value={deploymentEnv} onValueChange={(value) => setDeploymentEnv(value as "dev" | "uat" | "prod")} disabled={isPending}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select environment..." />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="dev">DEV</SelectItem>
                     <SelectItem value="uat">UAT</SelectItem>
                     <SelectItem value="prod">PROD</SelectItem>
                   </SelectContent>
@@ -472,25 +483,22 @@ export default function AddMcpServerModal({
                 <div className="flex flex-col gap-4 rounded-md border p-3">
                   <Label className="!text-mmd">Tenancy</Label>
                   <div className="flex flex-col gap-2">
-                    <Label className="!text-mmd">Visibility</Label>
-                    <select value={visibility} onChange={(event) => setVisibility(event.target.value as "private" | "public")} className="h-10 rounded-md border bg-background px-3 text-sm" disabled={isPending}>
+                    <Label className="!text-mmd">Visibility Scope</Label>
+                    <select
+                      value={visibilityScope}
+                      onChange={(e) => setVisibilityScope(e.target.value as "private" | "department" | "organization")}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      disabled={isPending}
+                    >
                       <option value="private">private</option>
-                      <option value="public">public</option>
+                      <option value="department">department</option>
+                      <option value="organization">organization</option>
                     </select>
                   </div>
-                  {visibility === "public" && (
-                    <div className="flex flex-col gap-2">
-                      <Label className="!text-mmd">Public Scope</Label>
-                      <select value={publicScope} onChange={(event) => setPublicScope(event.target.value as "organization" | "department")} className="h-10 rounded-md border bg-background px-3 text-sm" disabled={isPending}>
-                        <option value="organization">organization</option>
-                        <option value="department">department</option>
-                      </select>
-                    </div>
-                  )}
-                  {visibility === "public" && publicScope === "organization" && (
+                  {visibilityScope === "organization" && (
                     <div className="flex flex-col gap-2">
                       <Label className="!text-mmd">Organization</Label>
-                      <select value={orgId} onChange={(event) => setOrgId(event.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm" disabled={isPending || role === "developer" || role === "department_admin"}>
+                      <select value={orgId} onChange={(event) => setOrgId(event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending || role === "developer" || role === "department_admin"}>
                         <option value="">Select organization</option>
                         {visibilityOptions.organizations.map((org) => (
                           <option key={org.id} value={org.id}>{org.name}</option>
@@ -498,12 +506,12 @@ export default function AddMcpServerModal({
                       </select>
                     </div>
                   )}
-                  {visibility === "public" && publicScope === "department" && (
+                  {visibilityScope === "department" && (
                     <>
                       {(role === "super_admin" || role === "root") && (
                         <div className="flex flex-col gap-2">
                           <Label className="!text-mmd">Organization</Label>
-                          <select value={orgId} onChange={(event) => { setOrgId(event.target.value); setPublicDeptIds([]); }} className="h-10 rounded-md border bg-background px-3 text-sm" disabled={isPending}>
+                          <select value={orgId} onChange={(event) => { setOrgId(event.target.value); setPublicDeptIds([]); }} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending}>
                             <option value="">Select organization</option>
                             {visibilityOptions.organizations.map((org) => (
                               <option key={org.id} value={org.id}>{org.name}</option>
@@ -514,13 +522,13 @@ export default function AddMcpServerModal({
                       <div className="flex flex-col gap-2">
                         <Label className="!text-mmd">Department{role === "super_admin" || role === "root" ? "s" : ""}</Label>
                         {role === "super_admin" || role === "root" ? (
-                          <select multiple value={publicDeptIds} onChange={(event) => setPublicDeptIds(Array.from(event.target.selectedOptions).map((o) => o.value))} className="min-h-[88px] rounded-md border bg-background px-3 py-2 text-sm" disabled={isPending}>
+                          <select multiple value={publicDeptIds} onChange={(event) => setPublicDeptIds(Array.from(event.target.selectedOptions).map((o) => o.value))} className="min-h-[88px] rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending}>
                             {departmentsForSelectedOrg.map((dept) => (
                               <option key={dept.id} value={dept.id}>{dept.name}</option>
                             ))}
                           </select>
                         ) : (
-                          <select value={deptId} onChange={(event) => setDeptId(event.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm" disabled={isPending || role === "developer" || role === "department_admin"}>
+                          <select value={deptId} onChange={(event) => setDeptId(event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending || role === "developer" || role === "department_admin"}>
                             <option value="">Select department</option>
                             {visibilityOptions.departments.map((dept) => (
                               <option key={dept.id} value={dept.id}>{dept.name}</option>
@@ -530,10 +538,10 @@ export default function AddMcpServerModal({
                       </div>
                     </>
                   )}
-                  {visibility === "private" && role === "department_admin" && (
+                  {visibilityScope === "private" && role === "department_admin" && (
                     <div className="flex flex-col gap-2">
                       <Label className="!text-mmd">Additional Users (optional)</Label>
-                      <select multiple value={sharedUserEmails} onChange={(event) => setSharedUserEmails(Array.from(event.target.selectedOptions).map((o) => o.value))} className="min-h-[88px] rounded-md border bg-background px-3 py-2 text-sm" disabled={isPending}>
+                      <select multiple value={sharedUserEmails} onChange={(event) => setSharedUserEmails(Array.from(event.target.selectedOptions).map((o) => o.value))} className="min-h-[88px] rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending}>
                         {visibilityOptions.private_share_users.map((u) => (
                           <option key={u.id} value={u.email}>{u.email}</option>
                         ))}
@@ -592,4 +600,3 @@ export default function AddMcpServerModal({
     </BaseModal>
   );
 }
-

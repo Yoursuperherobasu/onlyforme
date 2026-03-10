@@ -18,7 +18,7 @@ a2a_logs
 .vscode/settings.json
 .chroma
 .ruff_cache
-
+.venvmodel/
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
@@ -204,3 +204,4 @@ src/frontend/temp
 
 member_servers.json
 src/backend/knowledge_base_storage/
+pii_masking_templates/

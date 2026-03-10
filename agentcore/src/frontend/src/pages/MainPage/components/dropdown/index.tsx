@@ -10,6 +10,7 @@ type DropdownComponentProps = {
   setOpenDelete: (open: boolean) => void;
   handleExport: () => void;
   handleEdit: () => void;
+  canModifyAgent: boolean;
 };
 
 const DropdownComponent = ({
@@ -17,6 +18,7 @@ const DropdownComponent = ({
   setOpenDelete,
   handleExport,
   handleEdit,
+  canModifyAgent,
 }: DropdownComponentProps) => {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -41,22 +43,24 @@ const DropdownComponent = ({
 
   return (
     <>
-      <DropdownMenuItem
-        onClick={(e) => {
-          e.stopPropagation();
-          handleSelectOptionsChange("edit");
-        }}
-        className="cursor-pointer"
-        data-testid="btn-edit-agent"
-      >
-        <ForwardedIconComponent
-          name="SquarePen"
-          aria-hidden="true"
-          className="mr-2 h-4 w-4"
-        />
-        Edit details
-      </DropdownMenuItem>
-      <DropdownMenuItem
+      {canModifyAgent && (
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            handleSelectOptionsChange("edit");
+          }}
+          className="cursor-pointer"
+          data-testid="btn-edit-agent"
+        >
+          <ForwardedIconComponent
+            name="SquarePen"
+            aria-hidden="true"
+            className="mr-2 h-4 w-4"
+          />
+          Edit details
+        </DropdownMenuItem>
+      )}
+      {/* <DropdownMenuItem
         onClick={(e) => {
           e.stopPropagation();
           handleSelectOptionsChange("export");
@@ -70,7 +74,7 @@ const DropdownComponent = ({
           className="mr-2 h-4 w-4"
         />
         Export
-      </DropdownMenuItem>
+      </DropdownMenuItem> */}
       <DropdownMenuItem
         onClick={(e) => {
           e.stopPropagation();
@@ -86,21 +90,23 @@ const DropdownComponent = ({
         />
         Duplicate
       </DropdownMenuItem>
-      <DropdownMenuItem
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpenDelete(true);
-        }}
-        className="cursor-pointer text-destructive"
-        data-testid="btn_delete_dropdown_menu"
-      >
-        <ForwardedIconComponent
-          name="Trash2"
-          aria-hidden="true"
-          className="mr-2 h-4 w-4"
-        />
-        Delete
-      </DropdownMenuItem>
+      {canModifyAgent && (
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenDelete(true);
+          }}
+          className="cursor-pointer text-destructive"
+          data-testid="btn_delete_dropdown_menu"
+        >
+          <ForwardedIconComponent
+            name="Trash2"
+            aria-hidden="true"
+            className="mr-2 h-4 w-4"
+          />
+          Delete
+        </DropdownMenuItem>
+      )}
     </>
   );
 };

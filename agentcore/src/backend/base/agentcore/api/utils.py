@@ -290,7 +290,7 @@ def get_top_level_vertices(graph, vertices_ids):
     """Retrieves the top-level vertices from the given graph based on the provided vertex IDs.
 
     Args:
-        graph (Graph): The graph object containing the vertices.
+        graph (LangGraphAdapter): The graph object containing the vertices.
         vertices_ids (list): A list of vertex IDs.
 
     Returns:

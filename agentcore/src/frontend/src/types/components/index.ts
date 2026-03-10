@@ -646,6 +646,8 @@ export type chatMessagePropsType = {
   ) => void;
   closeChat?: () => void;
   playgroundPage?: boolean;
+  hitlDoneMap?: Record<string, string>;
+  onHitlDone?: (chatId: string, action: string) => void;
 };
 
 export type genericModalPropsType = {

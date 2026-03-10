@@ -26,7 +26,11 @@ export default function ViewPage() {
     const load = async () => {
       // Fast path: agent already in store's agents list
       const fromStore = agents?.find((a) => a.id === id);
-      if (fromStore) {
+      const hasFlowData =
+        !!fromStore?.data &&
+        Array.isArray((fromStore.data as any).nodes) &&
+        Array.isArray((fromStore.data as any).edges);
+      if (fromStore && hasFlowData) {
         setCurrentAgent(fromStore);
         setReady(true);
         setIsLoading(false);
@@ -95,7 +99,7 @@ export default function ViewPage() {
 
   return (
     <div className="agent-page-positioning">
-      <Page view />
+      <Page view setIsLoading={() => undefined} />
     </div>
   );
 }

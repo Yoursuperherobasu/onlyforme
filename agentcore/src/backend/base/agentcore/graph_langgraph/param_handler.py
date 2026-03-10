@@ -15,15 +15,15 @@ from agentcore.utils.constants import DIRECT_TYPES
 from agentcore.utils.util import unescape_string
 
 if TYPE_CHECKING:
-    from agentcore.graph_langgraph.edge import LangGraphEdge as CycleEdge
-    from agentcore.graph_langgraph.vertex_wrapper import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph.edge import LangGraphEdge
+    from agentcore.graph_langgraph.vertex_wrapper import LangGraphVertex
     from agentcore.services.storage.service import StorageService
 
 
 class ParameterHandler:
     """Handles parameter processing for vertices."""
 
-    def __init__(self, vertex: Vertex, storage_service: StorageService) -> None:
+    def __init__(self, vertex: LangGraphVertex, storage_service: StorageService) -> None:
         """Initialize the parameter handler.
 
         Args:
@@ -38,7 +38,7 @@ class ParameterHandler:
         self.load_from_db_fields: list[str] = []
         self.storage_service = storage_service or get_storage_service()
 
-    def process_edge_parameters(self, edges: list[CycleEdge]) -> dict[str, Any]:
+    def process_edge_parameters(self, edges: list[LangGraphEdge]) -> dict[str, Any]:
         """Process parameters from edges.
 
         Some params are required, some are optional, and some params are Python base classes
@@ -58,7 +58,7 @@ class ParameterHandler:
             params = self._set_params_from_normal_edge(params, edge)
         return params
 
-    def _set_params_from_normal_edge(self, params: dict[str, Any], edge: CycleEdge) -> dict[str, Any]:
+    def _set_params_from_normal_edge(self, params: dict[str, Any], edge: LangGraphEdge) -> dict[str, Any]:
         param_key = edge.target_param
 
         if param_key in self.template_dict and edge.target_id == self.vertex.id:
@@ -76,7 +76,7 @@ class ParameterHandler:
             params[param_key] = self.vertex.graph.get_vertex(edge.source_id)
         return params
 
-    def process_non_list_edge_param(self, field: dict, edge: CycleEdge) -> Any:
+    def process_non_list_edge_param(self, field: dict, edge: LangGraphEdge) -> Any:
         """Process non-list edge parameters."""
         param_dict = field.get("value")
         if isinstance(param_dict, dict) and len(param_dict) == 1:

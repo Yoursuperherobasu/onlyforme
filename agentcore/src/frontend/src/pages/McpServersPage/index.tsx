@@ -37,7 +37,7 @@ import { useTranslation } from "react-i18next";
 
 export default function MCPServersPage() {
   const { t } = useTranslation();
-  const { permissions } = useContext(AuthContext);
+  const { permissions, userData } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const { data: servers, isLoading } = useGetMCPServers({ active_only: false });
   const deleteMutation = useDeleteMCPServer();
@@ -159,6 +159,7 @@ export default function MCPServersPage() {
   );
   const canAddMcp = can("add_new_mcp");
   const canRequestMcp = can("request_new_mcp");
+  const currentUserId = userData?.id;
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
@@ -251,6 +252,17 @@ export default function MCPServersPage() {
 
                 <tbody className="divide-y divide-border">
                   {filteredServers?.map((server) => (
+                    (() => {
+                      const isRequester = Boolean(currentUserId && server.requested_by === currentUserId);
+                      const isAwaitingApproval = isRequester && server.approval_status === "pending";
+                      const controlsDisabled = isAwaitingApproval;
+                      const approvalBadge =
+                        server.approval_status === "pending"
+                          ? { label: t("Awaiting Approval"), cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" }
+                          : server.approval_status === "rejected"
+                            ? { label: t("Rejected"), cls: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" }
+                            : { label: t("Approved"), cls: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" };
+                      return (
                     <>
                       <tr key={server.id} className="group hover:bg-muted/50">
                         {/* Server Name */}
@@ -263,7 +275,14 @@ export default function MCPServersPage() {
                               />
                             </div>
                             <div className={server.is_active ? "" : "opacity-50"}>
-                              <div className="font-semibold">{server.server_name}</div>
+                              <div className="flex items-center gap-2">
+                                <div className="font-semibold">{server.server_name}</div>
+                                {isRequester && (
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${approvalBadge.cls}`}>
+                                    {approvalBadge.label}
+                                  </span>
+                                )}
+                              </div>
                               {server.description && (
                                 <div className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
                                   {server.description}
@@ -286,18 +305,26 @@ export default function MCPServersPage() {
                             <Switch
                               checked={server.is_active}
                               onCheckedChange={() => handleToggleActive(server)}
-                              disabled={togglingServerId === server.id}
+                              disabled={togglingServerId === server.id || controlsDisabled}
                               className="data-[state=checked]:bg-green-600"
                             />
                             <span className={`text-xs font-medium ${server.is_active ? "text-green-600" : "text-muted-foreground"}`}>
-                              {server.is_active ? t("Connected") : t("Disconnected")}
+                              {controlsDisabled
+                                ? t("Awaiting Approval")
+                                : server.is_active
+                                  ? t("Connected")
+                                  : t("Disconnected")}
                             </span>
                           </div>
                         </td>
 
                         {/* Connection - Probe */}
                         <td className="px-6 py-4">
-                          {!server.is_active ? (
+                          {controlsDisabled ? (
+                            <span className="text-xs text-muted-foreground">
+                              {t("Awaiting approval")}
+                            </span>
+                          ) : !server.is_active ? (
                             <span className="text-xs text-muted-foreground">
                               {t("--")}
                             </span>
@@ -341,6 +368,7 @@ export default function MCPServersPage() {
                               size="sm"
                               onClick={() => handleProbe(server)}
                               className="h-7 text-xs"
+                              disabled={controlsDisabled}
                             >
                               <Plug className="mr-1 h-3.5 w-3.5" />
                               {t("Test Connection")}
@@ -353,8 +381,9 @@ export default function MCPServersPage() {
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <button
-                                className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-accent group-hover:opacity-100"
+                                className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-accent group-hover:opacity-100 disabled:cursor-not-allowed"
                                 data-testid={`mcp-server-menu-button-${server.server_name}`}
+                                disabled={controlsDisabled}
                               >
                                 <MoreVertical className="h-4 w-4 text-foreground" />
                               </button>
@@ -411,6 +440,8 @@ export default function MCPServersPage() {
                           </tr>
                         )}
                     </>
+                      );
+                    })()
                   ))}
                 </tbody>
               </table>

@@ -23,7 +23,7 @@ export interface McpRegistryType {
   server_name: string;
   description?: string | null;
   mode: "sse" | "stdio";
-  deployment_env?: "UAT" | "PROD" | "uat" | "prod";
+  deployment_env?: "DEV" | "UAT" | "PROD" | "dev" | "uat" | "prod";
   url?: string | null;
   command?: string | null;
   args?: string[] | null;
@@ -54,7 +54,7 @@ export interface McpRegistryCreateRequest {
   server_name: string;
   description?: string | null;
   mode: "sse" | "stdio";
-  deployment_env?: "UAT" | "PROD" | "uat" | "prod";
+  deployment_env?: "DEV" | "UAT" | "PROD" | "dev" | "uat" | "prod";
   url?: string | null;
   command?: string | null;
   args?: string[] | null;
@@ -76,7 +76,7 @@ export interface McpRegistryUpdateRequest {
   server_name?: string;
   description?: string | null;
   mode?: "sse" | "stdio";
-  deployment_env?: "UAT" | "PROD" | "uat" | "prod";
+  deployment_env?: "DEV" | "UAT" | "PROD" | "dev" | "uat" | "prod";
   url?: string | null;
   command?: string | null;
   args?: string[] | null;

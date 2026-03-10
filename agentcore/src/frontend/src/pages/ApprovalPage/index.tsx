@@ -4,6 +4,7 @@ import { AgentCard } from "./components/AgentCard";
 import { Button } from "@/components/ui/button";
 import { Search } from "lucide-react";
 import ActionModal from "./components/ActionModal";
+import McpConfigModal from "./components/McpConfigModal";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
@@ -31,12 +32,15 @@ export default function ApprovalPage() {
   const navigate = useCustomNavigate();
   const { permissions } = useContext(AuthContext);
   const setNoticeData = useAlertStore((state) => state.setNoticeData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const [isMcpConfigOpen, setIsMcpConfigOpen] = useState(false);
+  const [selectedMcpApprovalId, setSelectedMcpApprovalId] = useState<string | null>(null);
 
   /* ================= MODAL & ACTIONS MANAGEMENT ================= */
   const { isOpen, selectedAgent, action, openModal, closeModal } =
     useApprovalActionModal();
-  const { handleApprove, handleReject, isLoading } = useApprovalActions();
+  const { handleApprove, handleReject } = useApprovalActions();
 
   /* ================= API QUERIES ================= */
   // Fetch all approvals from backend
@@ -92,6 +96,12 @@ export default function ApprovalPage() {
     openModal(agent, "reject");
   };
 
+  const handleMcpConfigClick = (agent: ApprovalAgent) => {
+    if ((agent.entityType || "agent") !== "mcp") return;
+    setSelectedMcpApprovalId(agent.id);
+    setIsMcpConfigOpen(true);
+  };
+
   /**
    * Handle the final action submission from the modal
    * Calls either handleApprove or handleReject based on the action type
@@ -108,8 +118,6 @@ export default function ApprovalPage() {
       await handleReject(selectedAgent, data.comments, data.attachments);
     }
 
-    // Close modal after action completes
-    closeModal();
   };
 
   return (
@@ -121,7 +129,7 @@ export default function ApprovalPage() {
             <h1 className="text-2xl font-semibold">{t("Review & Approval")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("Review and approve AI agents before deployment")}
+            {t("Review and approve model, MCP, and AI agent requests")}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -188,12 +196,15 @@ export default function ApprovalPage() {
                 <AgentCard
                   key={agent.id}
                   {...agent}
+                  entityType={agent.entityType}
                   onReject={() => handleRejectClick(agent)}
                   onApprove={() => handleApproveClick(agent)}
                   onReviewDetails={() =>
-                    navigate(`/approval/${agent.id}/review`)
+                    agent.entityType === "mcp"
+                      ? setErrorData({ title: t("Use MCP Config for MCP approvals") })
+                      : navigate(`/approval/${agent.id}/review`)
                   }
-                  onRunTest={() => console.log("Run Test", agent.id)}
+                  onViewMcpConfig={() => handleMcpConfigClick(agent)}
                 />
               ))
             )}
@@ -207,9 +218,14 @@ export default function ApprovalPage() {
         open={isOpen}
         setOpen={closeModal}
         action={action}
+        entityType={selectedAgent?.entityType}
         agentTitle={selectedAgent?.title || ""}
         onSubmit={handleSubmitAction}
-        isLoading={isLoading}
+      />
+      <McpConfigModal
+        open={isMcpConfigOpen}
+        setOpen={setIsMcpConfigOpen}
+        approvalId={selectedMcpApprovalId}
       />
     </div>
   );

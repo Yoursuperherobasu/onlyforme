@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import inspect
 import os
 import warnings
@@ -18,11 +19,71 @@ if TYPE_CHECKING:
     from agentcore.custom.custom_node.node import Node
     from agentcore.custom.custom_node.custom_node import ExecutableNode
     from agentcore.events.event_manager import EventManager
-    from agentcore.graph_langgraph import LangGraphVertex as Vertex
+    from agentcore.graph_langgraph import LangGraphVertex
+
+
+def _get_builtin_source_code(vertex: LangGraphVertex) -> str | None:
+    """For built-in agentcore components, get the latest source code.
+
+    Uses two strategies:
+    1. Component cache lookup — the cache is populated from .py files at startup.
+    2. Metadata-based module reload — reads the module from disk.
+
+    Returns the source code string if the component is a built-in, else None.
+    """
+    comp_name = vertex.base_name  # e.g. "HumanApproval" (from node ID prefix)
+    display_name = vertex.display_name  # e.g. "Human Approval"
+
+    # ── Strategy 1: Look up in the component cache ──
+    # The cache is populated from the actual .py source files at startup,
+    # so it always has the latest code even if the flow JSON is stale.
+    try:
+        from agentcore.interface.components import component_cache
+
+        if component_cache.all_types_dict:
+            for _category, components in component_cache.all_types_dict.items():
+                if not isinstance(components, dict):
+                    continue
+                for cached_name, comp_data in components.items():
+                    if not isinstance(comp_data, dict):
+                        continue
+                    # Match by class name (e.g. "HumanApproval") or display name
+                    if cached_name == comp_name or cached_name == display_name:
+                        template = comp_data.get("template", {})
+                        code_field = template.get("code", {})
+                        if isinstance(code_field, dict) and code_field.get("value"):
+                            cache_code = code_field["value"]
+                            logger.debug(
+                                f"Refreshed built-in component '{comp_name}' from component cache "
+                                f"(code_len={len(cache_code)})"
+                            )
+                            return cache_code
+    except Exception as exc:
+        logger.debug(f"Component cache lookup failed for '{comp_name}': {exc}")
+
+    # ── Strategy 2: Metadata-based module reload ──
+    node_info = vertex.data.get("node", {})
+    metadata = node_info.get("metadata", {})
+    module_path = metadata.get("module", "")
+
+    if module_path.startswith("agentcore.components."):
+        parts = module_path.rsplit(".", 1)
+        if len(parts) == 2:
+            py_module_path, _class_name = parts
+            try:
+                mod = importlib.import_module(py_module_path)
+                importlib.reload(mod)
+                source = inspect.getsource(mod)
+                logger.info(f"Refreshed built-in component '{comp_name}' from {py_module_path}")
+                return source
+            except Exception as exc:
+                logger.warning(f"Could not refresh built-in code for {module_path}: {exc}")
+
+    return None
 
 
 def instantiate_class(
-    vertex: Vertex,
+    vertex: LangGraphVertex,
     user_id=None,
     event_manager: EventManager | None = None,
 ) -> Any:
@@ -38,6 +99,12 @@ def instantiate_class(
     custom_params = get_params(vertex.params)
 
     code = custom_params.pop("code")
+
+    # For built-in components, always use the latest source from disk
+    refreshed_code = _get_builtin_source_code(vertex)
+    if refreshed_code is not None:
+        code = refreshed_code
+
     class_object: type[ExecutableNode | Node] = eval_custom_component_code(code)
     custom_component: ExecutableNode | Node = class_object(
         _user_id=user_id,
@@ -54,7 +121,7 @@ def instantiate_class(
 async def get_instance_results(
     custom_component,
     custom_params: dict,
-    vertex: Vertex,
+    vertex: LangGraphVertex,
     *,
     fallback_to_env_vars: bool = False,
     base_type: str = "component",

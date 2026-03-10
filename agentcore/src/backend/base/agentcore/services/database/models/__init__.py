@@ -25,6 +25,8 @@ from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
 from .mcp_approval_request import McpApprovalRequest
+from .model_approval_request import ModelApprovalRequest
+from .model_audit_log import ModelAuditLog
 from .orch_conversation import OrchConversationTable
 from .orch_transaction import OrchTransactionTable
 from .timeout_settings import TimeoutSettings
@@ -32,8 +34,12 @@ from .guardrail_catalogue import GuardrailCatalogue
 from .help_support import HelpSupportQuestion
 from .package import Package
 from .teams_app import TeamsApp
+from .hitl_request import HITLRequest
 from .evaluator.model import Evaluator
 from .vertex_builds import VertexBuildTable
+from .langfuse_binding import LangfuseBinding
+from .observability_provision_job import ObservabilityProvisionJob
+from .observability_schema_lock import ObservabilitySchemaLock
 
 __all__ = [
     "Agent",
@@ -44,6 +50,8 @@ __all__ = [
     "AgentRegistry",
     "ApprovalRequest",
     "McpApprovalRequest",
+    "ModelApprovalRequest",
+    "ModelAuditLog",
     "ConversationProdTable",
     "ConversationTable",
     "ConversationProdTable",
@@ -53,6 +61,8 @@ __all__ = [
     "Permission",
     "ApprovalRequest",
     "McpApprovalRequest",
+    "ModelApprovalRequest",
+    "ModelAuditLog",
     "ModelRegistry",
     "AgentBundle",
     "AgentDeploymentProd",
@@ -79,6 +89,10 @@ __all__ = [
     "OrchTransactionTable",
     "Package",
     "User",
+    "HITLRequest",
     "Evaluator",
     "VertexBuildTable",
+    "LangfuseBinding",
+    "ObservabilityProvisionJob",
+    "ObservabilitySchemaLock",
 ]
