@@ -33,7 +33,7 @@ const AgentToolbarOptions = ({
       </div>
       <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
         <PublishStatusBadge />
-        <PublishButton hasIO={hasIO} />
+        <PublishButton />
       </div>
       <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">
         <TeamsButton />
