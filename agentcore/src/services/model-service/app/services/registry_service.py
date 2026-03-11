@@ -183,7 +183,7 @@ async def update_model(
     for field, value in update_fields.items():
         setattr(row, field, value)
 
-    row.updated_at = datetime.now(timezone.utc)
+    row.updated_at = datetime.utcnow()
     session.add(row)
     await session.commit()
     await session.refresh(row)

@@ -180,6 +180,42 @@ class ChatOutput(ChatNode):
             self.message.value = stored_message
             message = stored_message
 
+            # Update STM cache: append this AI response so next STM read gets a cache HIT
+            # with the complete conversation including this response.
+            try:
+                import json
+                from agentcore.services.deps import get_settings_service
+                from agentcore.services.cache.redis_client import get_redis_client
+
+                settings_service = get_settings_service()
+                if settings_service.settings.cache_type == "redis":
+                    redis_client = get_redis_client(settings_service)
+                    stm_prefix = "stm:history:"
+                    ttl = getattr(settings_service.settings, "stm_cache_ttl", 300)
+                    pattern = f"{stm_prefix}{self.session_id}:*"
+                    async for key in redis_client.scan_iter(match=pattern, count=100):
+                        existing = await redis_client.get(key)
+                        if existing:
+                            cached_msgs = json.loads(existing)
+                            # Append the AI response
+                            ai_entry = {
+                                "text": message.text or "",
+                                "sender": message.sender or "",
+                                "sender_name": message.sender_name or "",
+                            }
+                            cached_msgs.append(ai_entry)
+                            # Trim to the n_messages limit (extract from key: stm:history:{sid}:{n})
+                            try:
+                                n_limit = int(str(key).rsplit(":", 1)[-1])
+                                if n_limit and len(cached_msgs) > n_limit:
+                                    cached_msgs = cached_msgs[-n_limit:]
+                            except (ValueError, IndexError):
+                                pass
+                            await redis_client.setex(key, ttl, json.dumps(cached_msgs))
+                            logger.info(f"[ChatOutput] Updated STM cache with AI response for session={self.session_id}, total={len(cached_msgs)} msgs")
+            except Exception as e:
+                logger.debug(f"[ChatOutput] STM cache update skipped: {e}")
+
         self.status = message
         if message.sender == MESSAGE_SENDER_AI:
             preview = (message.text or "")[:150]
