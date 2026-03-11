@@ -37,6 +37,7 @@ from agentcore.api.guardrails_catalogue import router as guardrails_catalogue_ro
 from agentcore.api.help_support import router as help_support_router
 from agentcore.api.connector_catalogue import router as connector_catalogue_router
 from agentcore.api.outlook_connector import router as outlook_connector_router
+from agentcore.api.sharepoint_connector import router as sharepoint_connector_router
 from agentcore.api.a2a import router as a2a_router
 from agentcore.api.packages import router as packages_router
 from agentcore.api.releases import router as releases_router
@@ -85,6 +86,7 @@ router.include_router(guardrails_catalogue_router)
 router.include_router(help_support_router)
 router.include_router(connector_catalogue_router)
 router.include_router(outlook_connector_router)
+router.include_router(sharepoint_connector_router)
 router.include_router(a2a_router)
 router.include_router(packages_router)
 router.include_router(releases_router)
