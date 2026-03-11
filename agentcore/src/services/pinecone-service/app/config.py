@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore
+
 logger = logging.getLogger(__name__)
 
 _ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
@@ -57,6 +59,14 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     database_url: str | None = None
     encryption_key: str = ""
+    key_vault_url: str | None = None
+    key_vault_secret_prefix: str = "agentcore-pinecone"
+    key_vault_tenant_id: str | None = None
+    key_vault_client_id: str | None = None
+    key_vault_client_secret: str | None = None
+    key_vault_api_key_secret_name: str | None = None
+    key_vault_pinecone_api_key_secret_name: str | None = None
+    key_vault_database_url_secret_name: str | None = None
 
     pinecone_api_key: str = ""
     default_cloud: str = "aws"
@@ -68,6 +78,7 @@ class Settings(BaseSettings):
         env_prefix="PINECONE_SERVICE_",
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
 
@@ -79,7 +90,48 @@ def get_settings() -> Settings:
         "your-fernet-key-here",
     ):
         settings.encryption_key = _derive_encryption_key()
-    # Also read PINECONE_API_KEY from root .env if not set
-    if not settings.pinecone_api_key:
-        settings.pinecone_api_key = os.getenv("PINECONE_API_KEY", "") or _read_root_env_key("PINECONE_API_KEY")
+    # Resolve required runtime secrets from Azure Key Vault (no fallback to plain .env values).
+    if settings.key_vault_url:
+        kv_store = KeyVaultSecretStore.from_config(
+            KeyVaultConfig(
+                vault_url=settings.key_vault_url,
+                secret_prefix=settings.key_vault_secret_prefix,
+                tenant_id=settings.key_vault_tenant_id,
+                client_id=settings.key_vault_client_id,
+                client_secret=settings.key_vault_client_secret,
+            )
+        )
+
+        def _resolve_required_secret(secret_name: str, setting_name: str) -> str:
+            if kv_store is None:
+                msg = "Azure Key Vault client is not initialized. Check PINECONE_SERVICE_KEY_VAULT_URL."
+                raise RuntimeError(msg)
+            secret_value = kv_store.get_secret(secret_name)
+            if not secret_value:
+                msg = f"Key Vault secret '{secret_name}' for {setting_name} was not found or is empty."
+                raise RuntimeError(msg)
+            return secret_value
+
+        if not (settings.key_vault_api_key_secret_name or "").strip():
+            msg = "PINECONE_SERVICE_KEY_VAULT_API_KEY_SECRET_NAME is required."
+            raise RuntimeError(msg)
+        if not (settings.key_vault_pinecone_api_key_secret_name or "").strip():
+            msg = "PINECONE_SERVICE_KEY_VAULT_PINECONE_API_KEY_SECRET_NAME is required."
+            raise RuntimeError(msg)
+        if not (settings.key_vault_database_url_secret_name or "").strip():
+            msg = "PINECONE_SERVICE_KEY_VAULT_DATABASE_URL_SECRET_NAME is required."
+            raise RuntimeError(msg)
+
+        settings.api_key = _resolve_required_secret(
+            settings.key_vault_api_key_secret_name.strip(),
+            "PINECONE_SERVICE_API_KEY",
+        )
+        settings.pinecone_api_key = _resolve_required_secret(
+            settings.key_vault_pinecone_api_key_secret_name.strip(),
+            "PINECONE_API_KEY",
+        )
+        settings.database_url = _resolve_required_secret(
+            settings.key_vault_database_url_secret_name.strip(),
+            "PINECONE_SERVICE_DATABASE_URL",
+        )
     return settings
