@@ -5,34 +5,37 @@ import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
-export type TransitivePackage = {
+export type ReleaseRecord = {
   id: string;
-  name: string;
-  resolved_version: string;
-  required_by: string[];
-  required_by_details: { name: string; version: string }[];
+  version: string;
+  major: number;
+  minor: number;
+  patch: number;
+  release_notes: string;
   start_date: string;
   end_date: string;
-  is_current: boolean;
-  source: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  is_active: boolean;
+  package_count?: number;
 };
 
-export const useGetTransitivePackages: useQueryFunctionType<
-  undefined,
-  TransitivePackage[]
-> = (options?) => {
+export const useGetReleases: useQueryFunctionType<undefined, ReleaseRecord[]> = (
+  options?,
+) => {
   const { query } = UseRequestProcessor();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
-  const getTransitivePackagesFn = async (): Promise<TransitivePackage[]> => {
+  const getReleasesFn = async (): Promise<ReleaseRecord[]> => {
     if (!isAuthenticated) return [];
-    const res = await api.get(`${getURL("PACKAGES")}/transitive`);
+    const res = await api.get(`${getURL("RELEASES")}`);
     return res.data;
   };
 
-  const queryResult: UseQueryResult<TransitivePackage[], any> = query(
-    ["useGetTransitivePackages"],
-    getTransitivePackagesFn,
+  const queryResult: UseQueryResult<ReleaseRecord[], any> = query(
+    ["useGetReleases"],
+    getReleasesFn,
     {
       refetchOnWindowFocus: false,
       ...options,

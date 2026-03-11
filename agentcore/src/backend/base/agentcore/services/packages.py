@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import toml
 from loguru import logger
-from sqlalchemy import delete
 from sqlmodel import select
 
 from agentcore.services.database.models.package.model import Package
+from agentcore.services.database.models.product_release.model import ProductRelease
 from agentcore.services.deps import session_scope
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def _parse_uv_lock() -> list[dict[str, Any]]:
 
 
 async def sync_packages_to_db() -> None:
-    """Parse pyproject.toml + uv.lock and replace all rows in the ``package`` table."""
+    """Parse pyproject.toml + uv.lock and SCD-sync the ``package`` table."""
     declared = _parse_pyproject_deps()
     lock_pkgs = _parse_uv_lock()
 
@@ -84,16 +84,37 @@ async def sync_packages_to_db() -> None:
     for pkg in lock_pkgs:
         lock_map[_normalize(pkg["name"])] = pkg
 
-    # Build reverse-dependency map
+    # Build reverse-dependency maps
     required_by_map: dict[str, list[str]] = {}
+    required_by_details_map: dict[str, list[dict[str, str]]] = {}
     for pkg in lock_pkgs:
+        requester_name = pkg.get("name", "")
+        requester_version = pkg.get("version", "unknown")
         for dep in pkg.get("dependencies", []):
             dep_norm = _normalize(dep["name"])
-            required_by_map.setdefault(dep_norm, []).append(pkg["name"])
+            required_by_map.setdefault(dep_norm, []).append(requester_name)
+            required_by_details_map.setdefault(dep_norm, []).append(
+                {"name": requester_name, "version": requester_version}
+            )
 
     now = datetime.now(timezone.utc)
-    rows: list[Package] = []
+    today = now.date()
+    open_end_date = date(9999, 12, 31)
+    rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()  # (normalised_name, package_type) dedup
+    release_id = None
+
+    # Attach latest package sync rows to currently active release, if available.
+    try:
+        async with session_scope() as session:
+            active_release = (
+                await session.exec(
+                    select(ProductRelease).where(ProductRelease.end_date == date(9999, 12, 31))
+                )
+            ).first()
+            release_id = active_release.id if active_release else None
+    except Exception as exc:  # pragma: no cover - defensive only
+        logger.debug("Could not resolve active release for package sync: {}", exc)
 
     # Managed packages (declared in pyproject.toml)
     for dep in declared:
@@ -104,15 +125,16 @@ async def sync_packages_to_db() -> None:
         seen.add(key)
         lock_entry = lock_map.get(norm, {})
         rows.append(
-            Package(
-                name=dep["name"],
-                version=lock_entry.get("version", "unknown"),
-                version_spec=dep["version_spec"] or None,
-                package_type="managed",
-                required_by=None,
-                source=lock_entry.get("source"),
-                synced_at=now,
-            )
+            {
+                "name": dep["name"],
+                "version": lock_entry.get("version", "unknown"),
+                "version_spec": dep["version_spec"] or None,
+                "package_type": "managed",
+                "release_id": release_id,
+                "required_by": None,
+                "required_by_details": None,
+                "source": lock_entry.get("source"),
+            }
         )
 
     # Transitive packages (in uv.lock but NOT declared)
@@ -128,25 +150,88 @@ async def sync_packages_to_db() -> None:
             continue
         seen.add(key)
         rows.append(
-            Package(
-                name=pkg["name"],
-                version=pkg.get("version", "unknown"),
-                version_spec=None,
-                package_type="transitive",
-                required_by=required_by_map.get(norm, []) or None,
-                source=source if source else None,
-                synced_at=now,
-            )
+            {
+                "name": pkg["name"],
+                "version": pkg.get("version", "unknown"),
+                "version_spec": None,
+                "package_type": "transitive",
+                "release_id": release_id,
+                "required_by": required_by_map.get(norm, []) or None,
+                "required_by_details": required_by_details_map.get(norm, []) or None,
+                "source": source if source else None,
+            }
         )
 
     async with session_scope() as session:
-        # Delete old rows and flush so the unique constraint is clear
-        await session.exec(delete(Package))  # type: ignore[call-overload]
-        await session.flush()
+        current_rows = (
+            await session.exec(select(Package).where(Package.end_date == open_end_date))
+        ).all()
+        current_map = {
+            (_normalize(row.name), row.package_type): row
+            for row in current_rows
+        }
+
+        incoming_keys = set()
         for row in rows:
-            session.add(row)
+            key = (_normalize(row["name"]), row["package_type"])
+            incoming_keys.add(key)
+            existing = current_map.get(key)
+            if existing is None:
+                session.add(
+                    Package(
+                        name=row["name"],
+                        version=row["version"],
+                        version_spec=row["version_spec"],
+                        package_type=row["package_type"],
+                        release_id=row["release_id"],
+                        required_by=row["required_by"],
+                        required_by_details=row["required_by_details"],
+                        start_date=today,
+                        end_date=open_end_date,
+                        source=row["source"],
+                        synced_at=now,
+                    )
+                )
+                continue
+
+            same_payload = (
+                existing.version == row["version"]
+                and (existing.version_spec or None) == (row["version_spec"] or None)
+                and (existing.required_by or None) == (row["required_by"] or None)
+                and (existing.required_by_details or None) == (row["required_by_details"] or None)
+                and (existing.source or None) == (row["source"] or None)
+            )
+            if same_payload:
+                existing.synced_at = now
+                existing.release_id = row["release_id"]
+                continue
+
+            existing.end_date = today
+            existing.synced_at = now
+            session.add(
+                Package(
+                    name=row["name"],
+                    version=row["version"],
+                    version_spec=row["version_spec"],
+                    package_type=row["package_type"],
+                    release_id=row["release_id"],
+                    required_by=row["required_by"],
+                    required_by_details=row["required_by_details"],
+                    start_date=today,
+                    end_date=open_end_date,
+                    source=row["source"],
+                    synced_at=now,
+                )
+            )
+
+        # Close packages no longer present in current lock/declaration snapshot.
+        for key, existing in current_map.items():
+            if key in incoming_keys:
+                continue
+            existing.end_date = today
+            existing.synced_at = now
 
     logger.info("Synced {} packages to database ({} managed, {} transitive)",
                 len(rows),
-                sum(1 for r in rows if r.package_type == "managed"),
-                sum(1 for r in rows if r.package_type == "transitive"))
+                sum(1 for r in rows if r["package_type"] == "managed"),
+                sum(1 for r in rows if r["package_type"] == "transitive"))

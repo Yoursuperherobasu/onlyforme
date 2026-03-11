@@ -39,6 +39,7 @@ from agentcore.api.connector_catalogue import router as connector_catalogue_rout
 from agentcore.api.outlook_connector import router as outlook_connector_router
 from agentcore.api.a2a import router as a2a_router
 from agentcore.api.packages import router as packages_router
+from agentcore.api.releases import router as releases_router
 from agentcore.api.teams import router as teams_router
 from agentcore.api.triggers import router as triggers_router
 from agentcore.api.human_in_loop import router as hitl_router
@@ -86,6 +87,7 @@ router.include_router(connector_catalogue_router)
 router.include_router(outlook_connector_router)
 router.include_router(a2a_router)
 router.include_router(packages_router)
+router.include_router(releases_router)
 router.include_router(teams_router)
 router.include_router(triggers_router)
 router.include_router(hitl_router)

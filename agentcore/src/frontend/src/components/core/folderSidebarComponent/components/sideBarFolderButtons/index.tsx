@@ -724,6 +724,23 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
+        {can("view_packages_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/release-management")}
+              onClick={() => _navigate("/release-management")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Tag"
+                className="h-4 w-4"
+              />
+              {t("Release Management")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
+
         {role === "root" && can("view_platform_configs") && (
           <SidebarMenuItem>
             <SidebarMenuButton

@@ -180,31 +180,7 @@ export const EditAgentSettings: React.FC<
           Please enter a description
         </Form.Message>
         <div className="mt-3">
-          <div className="flex items-center gap-2">
-            <div>
-              <div className="flex items-center gap-2">
-                <Form.Label className="text-mmd font-medium">
-                  Lock agent
-                </Form.Label>
-
-                <ForwardedIconComponent
-                  name={locked ? "Lock" : "Unlock"}
-                  className="text-muted-foreground !w-5 !h-5"
-                />
-              </div>
-
-              <p className="text-xs text-muted-foreground/70 mt-1 font-normal">
-                Lock your agent to prevent edits or accidental changes.
-              </p>
-            </div>
-
-            <Switch
-              checked={!!locked}
-              onCheckedChange={(v) => setLocked?.(v)}
-              className="data-[state=checked]:bg-primary ml-auto"
-              data-testid="lock-agent-switch"
-            />
-          </div>
+          
         </div>
       </Form.Field>
     </>

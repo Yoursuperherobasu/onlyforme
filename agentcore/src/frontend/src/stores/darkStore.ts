@@ -12,8 +12,12 @@ export const useDarkStore = create<DarkStoreType>((set, get) => ({
   stars: startedStars,
   version: "",
   latestVersion: "",
+  currentReleaseVersion: "",
   refreshLatestVersion: (v: string) => {
     set(() => ({ latestVersion: v }));
+  },
+  refreshCurrentReleaseVersion: (v: string) => {
+    set(() => ({ currentReleaseVersion: v }));
   },
   setDark: (dark) => {
     set(() => ({ dark: dark }));

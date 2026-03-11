@@ -26,6 +26,7 @@ from agentcore.api.mcp_config import router as mcp_router_v2
 from agentcore.api.help_support import router as help_support_router
 from agentcore.api.a2a import router as a2a_router
 from agentcore.api.packages import router as packages_router
+from agentcore.api.releases import router as releases_router
 from agentcore.api.teams import router as teams_router
 from agentcore.api.triggers import router as triggers_router
 
@@ -58,6 +59,7 @@ __all__ = [
     "help_support_router",
     "a2a_router",
     "packages_router",
+    "releases_router",
     "teams_router",
     "triggers_router",
 ]

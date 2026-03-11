@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import date
 from collections.abc import AsyncGenerator
 
 from collections.abc import AsyncGenerator
@@ -47,6 +48,7 @@ from agentcore.services.database.models.agent.model import Agent, AgentRead
 from agentcore.services.database.models.agent.utils import get_all_webhook_components_in_agent
 from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
 from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
+from agentcore.services.database.models.product_release.model import ProductRelease
 from agentcore.services.database.models.user.model import User, UserRead
 from agentcore.services.deps import get_settings_service, get_telemetry_service, session_scope
 from agentcore.services.telemetry.schema import RunPayload
@@ -630,6 +632,27 @@ async def webhook_run_agent(
 @router.get("/version")
 async def get_version():
     return get_version_info()
+
+
+@router.get("/version/current-release")
+async def get_current_release_version():
+    active_end_date = date(9999, 12, 31)
+    async with session_scope() as session:
+        release = (
+            await session.exec(
+                select(ProductRelease)
+                .where(ProductRelease.end_date == active_end_date)
+                .order_by(ProductRelease.start_date.desc(), ProductRelease.created_at.desc())
+            )
+        ).first()
+    if release is None:
+        return None
+    return {
+        "version": release.version,
+        "start_date": release.start_date.isoformat(),
+        "end_date": release.end_date.isoformat(),
+        "is_active": release.end_date == active_end_date,
+    }
 
 
 @router.post("/custom_component", status_code=HTTPStatus.OK)
