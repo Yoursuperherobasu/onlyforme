@@ -124,7 +124,8 @@ class Settings(BaseSettings):
     redis_ssl: bool = os.getenv("REDIS_SSL")
     cache_expire: int = os.getenv("REDIS_CACHE_EXPIRE")
     redis_cache_expire: int = os.getenv("REDIS_CACHE_EXPIRE")
-    
+    stm_cache_ttl: int = int(os.getenv("STM_CACHE_TTL", "300"))
+    """STM (Short Term Memory) cache TTL in seconds. Default is 300 (5 minutes)."""
 
     """The cache expire in seconds."""
     # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault

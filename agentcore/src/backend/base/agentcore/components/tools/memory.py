@@ -1,3 +1,4 @@
+import json
 from typing import Any, cast
 
 from loguru import logger
@@ -13,6 +14,9 @@ from agentcore.schema.message import Message
 from agentcore.template.field.base import Output
 from agentcore.utils.component_utils import set_current_fields, set_field_display
 from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI, MESSAGE_SENDER_USER
+
+# STM Redis cache settings
+STM_CACHE_PREFIX = "stm:history:"
 
 
 class MemoryComponent(Node):
@@ -57,6 +61,7 @@ class MemoryComponent(Node):
             input_types=["Memory"],
             info="Retrieve messages from an external memory. If empty, it will use the AgentCore tables.",
             advanced=True,
+            show=True,
         ),
         DropdownInput(
             name="sender_type",
@@ -65,6 +70,7 @@ class MemoryComponent(Node):
             value="Machine and User",
             info="Filter by sender type.",
             advanced=True,
+            show=True,
         ),
         MessageTextInput(
             name="sender",
@@ -72,6 +78,7 @@ class MemoryComponent(Node):
             info="The sender of the message. Might be Machine or User. "
             "If empty, the current sender parameter will be used.",
             advanced=True,
+            show=True,
         ),
         MessageTextInput(
             name="sender_name",
@@ -82,10 +89,12 @@ class MemoryComponent(Node):
         ),
         IntInput(
             name="n_messages",
-            display_name="Number of Messages",
+            display_name="Top K (Number of Messages)",
             value=10,
             info="Number of recent messages to retrieve. In Short Term Memory mode, these are the top K latest conversations prepended to the input.",
             show=True,
+            advanced=False,
+            real_time_refresh=True,
         ),
         MessageTextInput(
             name="session_id",
@@ -93,6 +102,7 @@ class MemoryComponent(Node):
             info="The session ID of the chat. If empty, the current session ID parameter will be used.",
             value="",
             advanced=True,
+            show=True,
         ),
         DropdownInput(
             name="order",
@@ -103,6 +113,7 @@ class MemoryComponent(Node):
             advanced=True,
             tool_mode=True,
             required=True,
+            show=True,
         ),
         MultilineInput(
             name="template",
@@ -155,6 +166,65 @@ class MemoryComponent(Node):
                     ),
                 ]
         return frontend_node
+
+    def _get_redis_client_and_ttl(self):
+        """Get the Redis client and STM TTL from settings. Returns (None, 300) if Redis is unavailable."""
+        try:
+            from agentcore.services.deps import get_settings_service
+            from agentcore.services.cache.redis_client import get_redis_client
+
+            settings_service = get_settings_service()
+            ttl = getattr(settings_service.settings, "stm_cache_ttl", 300)
+            if settings_service.settings.cache_type == "redis":
+                return get_redis_client(settings_service), ttl
+        except Exception:
+            logger.debug("[STM] Redis not available, skipping cache layer")
+        return None, 300
+
+    async def _get_stm_cache(self, session_id: str, n_messages: int) -> list[dict] | None:
+        """Try to get cached STM history from Redis."""
+        redis, _ = self._get_redis_client_and_ttl()
+        if not redis:
+            return None
+        try:
+            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
+            data = await redis.get(cache_key)
+            if data:
+                logger.info(f"[STM] Cache HIT for session={session_id}, n={n_messages}")
+                return json.loads(data)
+            logger.debug(f"[STM] Cache MISS for session={session_id}, n={n_messages}")
+        except Exception as e:
+            logger.warning(f"[STM] Redis cache read failed: {e}")
+        return None
+
+    async def _set_stm_cache(self, session_id: str, n_messages: int, messages: list[Message]) -> None:
+        """Cache STM history in Redis with TTL from settings (STM_CACHE_TTL env var)."""
+        redis, ttl = self._get_redis_client_and_ttl()
+        if not redis:
+            return
+        try:
+            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
+            data = [{"text": m.text or "", "sender": m.sender or "", "sender_name": m.sender_name or ""} for m in messages]
+            await redis.setex(cache_key, ttl, json.dumps(data))
+            logger.debug(f"[STM] Cached {len(messages)} messages for session={session_id}, ttl={ttl}s")
+        except Exception as e:
+            logger.warning(f"[STM] Redis cache write failed: {e}")
+
+    async def _invalidate_stm_cache(self, session_id: str) -> None:
+        """Invalidate all STM cache entries for a session (any n_messages value)."""
+        redis, _ = self._get_redis_client_and_ttl()
+        if not redis:
+            return
+        try:
+            pattern = f"{STM_CACHE_PREFIX}{session_id}:*"
+            keys = []
+            async for key in redis.scan_iter(match=pattern, count=100):
+                keys.append(key)
+            if keys:
+                await redis.delete(*keys)
+                logger.debug(f"[STM] Invalidated {len(keys)} cache entries for session={session_id}")
+        except Exception as e:
+            logger.warning(f"[STM] Redis cache invalidation failed: {e}")
 
     def _effective_session_id(self) -> str | None:
         """Return the session_id to use: explicit input field → graph session → None."""
@@ -278,6 +348,10 @@ class MemoryComponent(Node):
         session_id = self._effective_session_id()
         n_messages = self.n_messages or 10
 
+        # NOTE: Cache invalidation is handled by ChatOutput (after storing AI response).
+        # We do NOT invalidate here — otherwise the cache would never get a HIT
+        # since ChatInput → Memory(STM) runs sequentially in the same request.
+
         # Get the current input text from ChatInput
         current_input = self.input_value
         if current_input is None:
@@ -318,23 +392,63 @@ class MemoryComponent(Node):
                 else:
                     await astore_message(user_message, agent_id=self.graph.agent_id if hasattr(self, "graph") else None)
 
-        # Fetch the top K latest messages from the session (includes the just-stored user message)
+        # Fetch the top K latest messages — try Redis cache first, fall back to DB
         history_messages: list[Message] = []
+        history_source = "none"
         if session_id:
             if self.memory:
+                # External memory — always fetch directly, no Redis caching
                 self.memory.session_id = session_id
                 lc_messages = await self.memory.aget_messages()
                 history_messages = [Message.from_lc_message(m) for m in lc_messages] if lc_messages else []
-                # Take the latest N messages
                 history_messages = history_messages[-n_messages:]
+                history_source = "external_memory"
             else:
-                history_messages = await aget_messages(
-                    session_id=session_id,
-                    order="DESC",
-                    limit=n_messages,
-                )
-                # Reverse to chronological order (oldest first)
-                history_messages = list(reversed(history_messages))
+                # Try Redis cache first
+                cached = await self._get_stm_cache(session_id, n_messages)
+                if cached is not None:
+                    history_messages = [
+                        Message(text=m["text"], sender=m.get("sender", ""), sender_name=m.get("sender_name", ""))
+                        for m in cached
+                    ]
+                    # Check if the current user message is already in the cached history
+                    # (ChatInput stored it in DB but cache may not have it yet)
+                    if current_text and already_stored:
+                        last_cached_text = cached[-1]["text"] if cached else ""
+                        if last_cached_text != current_text:
+                            # Append current user message to cached history
+                            user_msg = Message(
+                                text=current_text,
+                                sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
+                                sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
+                            )
+                            history_messages.append(user_msg)
+                            # Trim to n_messages limit
+                            if len(history_messages) > n_messages:
+                                history_messages = history_messages[-n_messages:]
+                            # Update cache with appended user message
+                            await self._set_stm_cache(session_id, n_messages, history_messages)
+                            logger.info(f"[STM] Appended current user message to cache for session={session_id}")
+                    history_source = "redis_cache"
+                else:
+                    # Cache miss — fetch from DB
+                    history_messages = await aget_messages(
+                        session_id=session_id,
+                        order="DESC",
+                        limit=n_messages,
+                    )
+                    # Reverse to chronological order (oldest first)
+                    history_messages = list(reversed(history_messages))
+                    history_source = "database"
+
+                    # Cache the fresh DB result in Redis for rapid re-fetches
+                    if history_messages:
+                        await self._set_stm_cache(session_id, n_messages, history_messages)
+
+        logger.info(
+            f"[STM] Fetched {len(history_messages)} history messages | "
+            f"source={history_source} | session_id={session_id} | n_messages={n_messages}"
+        )
 
         # Format conversation history using the template
         template = self.template if hasattr(self, "template") and self.template else "{sender_name}: {text}"
@@ -365,6 +479,8 @@ class MemoryComponent(Node):
         logger.info(
             f"[STM] session_id={session_id} | "
             f"n_messages={n_messages} | "
+            f"history_source={history_source} | "
+            f"history_count={len(history_messages)} | "
             f"already_stored={already_stored}"
         )
         logger.debug(f"[STM] Final enriched payload to LLM:\n{enriched_text}")
@@ -378,10 +494,20 @@ class MemoryComponent(Node):
         field_value: Any,  # noqa: ARG002
         field_name: str | None = None,  # noqa: ARG002
     ) -> dotdict:
-        return set_current_fields(
+        selected_mode = build_config["mode"]["value"]
+
+        build_config = set_current_fields(
             build_config=build_config,
             action_fields=self.mode_config,
-            selected_action=build_config["mode"]["value"],
+            selected_action=selected_mode,
             default_fields=self.default_keys,
             func=set_field_display,
         )
+
+        # Re-apply selected mode's fields to fix overlap issue
+        # (set_current_fields hides shared fields when processing other modes)
+        if selected_mode in self.mode_config:
+            for field in self.mode_config[selected_mode]:
+                build_config = set_field_display(build_config, field, True)
+
+        return build_config
