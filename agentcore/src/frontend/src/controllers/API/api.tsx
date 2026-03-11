@@ -45,8 +45,8 @@ function ApiInterceptor() {
     (state) => state.setAuthenticationErrorCount,
   );
 
-  const { mutate: mutationLogout } = useLogout();
-  const { mutate: mutationRenewAccessToken } = useRefreshAccessToken();
+  const { mutate: mutationLogout, mutateAsync: mutationLogoutAsync } = useLogout();
+  const { mutateAsync: mutationRenewAccessTokenAsync } = useRefreshAccessToken();
   const isLoginPage = location.pathname.includes("login");
   const customHeaders = useCustomApiHeaders();
 
@@ -59,6 +59,16 @@ function ApiInterceptor() {
     const isAuthorizedURL = (url) => {
       if (!url) return false;
       return url.includes("auto_login");
+    };
+
+    const isAuthEndpoint = (url?: string) => {
+      if (!url) return false;
+      return (
+        url.includes("login") ||
+        url.includes("refresh") ||
+        url.includes("logout") ||
+        url.includes("auto_login")
+      );
     };
 
     const isExternalURL = (url: string): boolean => {
@@ -104,7 +114,8 @@ function ApiInterceptor() {
         const isAuthenticationError =
           error?.response?.status === 403 || error?.response?.status === 401;
 
-        const shouldRetryRefresh = isAuthenticationError;
+        const shouldRetryRefresh =
+          isAuthenticationError && !isAuthEndpoint(error?.config?.url);
 
         if (shouldRetryRefresh) {
           if (
@@ -118,12 +129,9 @@ function ApiInterceptor() {
             return Promise.reject(error);
           }
 
-          await tryToRenewAccessToken(error);
-
-          const accessToken = customGetAccessToken();
-
-          if (!accessToken && error?.config?.url?.includes("login")) {
-            return Promise.reject(error);
+          const retriedResponse = await tryToRenewAccessToken(error);
+          if (retriedResponse) {
+            return retriedResponse;
           }
         }
 
@@ -192,24 +200,28 @@ function ApiInterceptor() {
   }
 
   async function tryToRenewAccessToken(error: AxiosError) {
-    if (isLoginPage) return;
+    if (isLoginPage) return null;
     if (error.config?.headers) {
       for (const [key, value] of Object.entries(customHeaders)) {
         error.config.headers[key] = value;
       }
     }
-    mutationRenewAccessToken(undefined, {
-      onSuccess: async () => {
-        setAuthenticationErrorCount(0);
-        await remakeRequest(error);
-        setAuthenticationErrorCount(0);
-      },
-      onError: (error) => {
-        console.error(error);
-        mutationLogout();
-        return Promise.reject("Authentication error");
-      },
-    });
+    try {
+      await mutationRenewAccessTokenAsync(undefined);
+      setAuthenticationErrorCount(0);
+      return await remakeRequest(error);
+    } catch (refreshError) {
+      console.error(refreshError);
+      setErrorData({
+        title: "Session expired. Please login again.",
+      });
+      try {
+        await mutationLogoutAsync(undefined);
+      } catch {
+        // ignore logout API failure; useLogout handles local state cleanup
+      }
+      return null;
+    }
   }
 
   async function clearBuildVerticesState(error) {

@@ -48,8 +48,6 @@ async def get_message_sessions(
     try:
         stmt = select(ConversationTable.session_id).distinct()
         stmt = stmt.where(col(ConversationTable.session_id).isnot(None))
-        # Exclude orchestrator messages from playground session list
-        stmt = stmt.where(ConversationTable.category != "orch")
 
         if agent_id:
             stmt = stmt.where(ConversationTable.agent_id == agent_id)
@@ -71,8 +69,6 @@ async def get_messages(
 ) -> list[MessageResponse]:
     try:
         stmt = select(ConversationTable)
-        # Exclude orchestrator messages from playground view
-        stmt = stmt.where(ConversationTable.category != "orch")
         if agent_id:
             stmt = stmt.where(ConversationTable.agent_id == agent_id)
         if session_id:

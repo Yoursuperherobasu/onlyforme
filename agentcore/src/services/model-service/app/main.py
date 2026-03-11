@@ -18,6 +18,12 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     logger = logging.getLogger(__name__)
     logger.info("Model Service starting on %s:%s", settings.host, settings.port)
+    if not settings.key_vault_url:
+        msg = (
+            "Model Service requires Azure Key Vault. "
+            "Set MODEL_SERVICE_KEY_VAULT_URL."
+        )
+        raise RuntimeError(msg)
 
     # Import providers to trigger registration
     import app.providers  # noqa: F401

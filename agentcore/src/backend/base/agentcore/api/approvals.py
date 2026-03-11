@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.agent.model import Agent, LifecycleStatusEnum
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
     DeploymentPRODStatusEnum,
@@ -47,6 +47,7 @@ from agentcore.services.database.registry_service import sync_agent_registry
 class SubmittedBy(BaseModel):
     name: str
     avatar: str | None = None
+    email: str | None = None
 
 
 class ApprovalAgent(BaseModel):
@@ -80,7 +81,25 @@ class ApprovalResponse(BaseModel):
     approvedBy: str | None = None
 
 
+class ProdPromotionHandoffResponse(BaseModel):
+    id: UUID
+    agent_id: UUID
+    promoted_from_uat_id: UUID | None = None
+    version_number: int
+
+
 router = APIRouter(prefix="/approvals", tags=["approvals"])
+
+
+def _build_prod_promotion_handoff_payload(
+    deployment: AgentDeploymentProd,
+) -> ProdPromotionHandoffResponse:
+    return ProdPromotionHandoffResponse(
+        id=deployment.id,
+        agent_id=deployment.agent_id,
+        promoted_from_uat_id=deployment.promoted_from_uat_id,
+        version_number=deployment.version_number,
+    )
 
 
 def _normalize_mcp_mode(value: str) -> str:
@@ -402,6 +421,25 @@ async def _collect_attachment_metadata(
     return uploaded_files
 
 
+@router.get(
+    "/prod-deployments/{deployment_id}/handoff",
+    response_model=ProdPromotionHandoffResponse,
+    status_code=200,
+)
+async def get_prod_promotion_handoff(
+    deployment_id: UUID,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> ProdPromotionHandoffResponse:
+    """Return PROD deployment handoff payload for downstream backend processing."""
+    record = await session.get(AgentDeploymentProd, deployment_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="PROD deployment not found")
+
+    return _build_prod_promotion_handoff_payload(record)
+
+
 @router.get("", response_model=list[ApprovalAgent])
 async def get_approvals(
     *,
@@ -436,6 +474,15 @@ async def get_approvals(
                 if requester and requester.display_name
                 else (requester.username if requester else "Unknown")
             )
+            submitter_email = (
+                requester.email
+                if requester and requester.email
+                else (
+                    requester.username
+                    if requester and requester.username and "@" in requester.username
+                    else None
+                )
+            )
 
             payload.append(
                 ApprovalAgent(
@@ -444,7 +491,7 @@ async def get_approvals(
                     title=title,
                     status=_to_status_label(req.decision),
                     description=description,
-                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     project=project_name,
                     submitted=(
                         req.updated_at.replace(tzinfo=timezone.utc).isoformat()
@@ -475,6 +522,15 @@ async def get_approvals(
                 if requester and requester.display_name
                 else (requester.username if requester else "Unknown")
             )
+            submitter_email = (
+                requester.email
+                if requester and requester.email
+                else (
+                    requester.username
+                    if requester and requester.username and "@" in requester.username
+                    else None
+                )
+            )
             submitted_at = req.requested_at
             deployment_env = (req.deployment_env or "DEV").upper()
             payload.append(
@@ -484,7 +540,7 @@ async def get_approvals(
                     title=row.server_name,
                     status=_to_status_label_any(req.decision),
                     description=row.description or "",
-                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     project=dept_name,
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()
@@ -514,6 +570,15 @@ async def get_approvals(
                 if requester and requester.display_name
                 else (requester.username if requester else "Unknown")
             )
+            submitter_email = (
+                requester.email
+                if requester and requester.email
+                else (
+                    requester.username
+                    if requester and requester.username and "@" in requester.username
+                    else None
+                )
+            )
             submitted_at = req.requested_at
             # Extract project name from provider_config.request_meta
             provider_cfg = row.provider_config if isinstance(row.provider_config, dict) else {}
@@ -526,7 +591,7 @@ async def get_approvals(
                     title=row.display_name,
                     status=_to_status_label_any(req.decision),
                     description=row.description or "",
-                    submittedBy=SubmittedBy(name=submitter_name, avatar=None),
+                    submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     project=model_project_name,
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()
@@ -560,6 +625,11 @@ async def approve_agent(
 ) -> ApprovalResponse:
     """Approve a pending deployment request."""
     now = datetime.now(timezone.utc)
+    attachment_count = len(attachments or [])
+    logger.info(
+        f"[APPROVE_REQUEST] target={agent_id} approver={getattr(current_user, 'id', None)} "
+        f"comments_len={len((comments or '').strip())} attachments={attachment_count}",
+    )
     req: ApprovalRequest | None = None
     mcp_req: McpApprovalRequest | None = None
     model_req: ModelApprovalRequest | None = None
@@ -621,7 +691,7 @@ async def approve_agent(
         session.add(mcp_row)
         await session.commit()
         approver_name = getattr(current_user, "username", None)
-        return ApprovalResponse(
+        response_payload = ApprovalResponse(
             success=True,
             message="MCP request approved successfully",
             agentId=str(mcp_req.id),
@@ -629,6 +699,8 @@ async def approve_agent(
             timestamp=now.isoformat(),
             approvedBy=approver_name,
         )
+        logger.info(f"[APPROVE_RESPONSE] {response_payload.model_dump()}")
+        return response_payload
 
     if model_req is not None:
         if model_req.decision is not None:
@@ -772,7 +844,7 @@ async def approve_agent(
         session.add(model_row)
         await session.commit()
         approver_name = getattr(current_user, "username", None)
-        return ApprovalResponse(
+        response_payload = ApprovalResponse(
             success=True,
             message="Model request approved successfully",
             agentId=str(model_req.id),
@@ -780,6 +852,8 @@ async def approve_agent(
             timestamp=now.isoformat(),
             approvedBy=approver_name,
         )
+        logger.info(f"[APPROVE_RESPONSE] {response_payload.model_dump()}")
+        return response_payload
 
     assert req is not None
     if req.decision is not None:
@@ -813,6 +887,12 @@ async def approve_agent(
     deployment.approval_id = req.id
     deployment.updated_at = now
     session.add(deployment)
+
+    # Update agent lifecycle_status to PUBLISHED
+    agent = await session.get(Agent, deployment.agent_id)
+    if agent:
+        agent.lifecycle_status = LifecycleStatusEnum.PUBLISHED
+        session.add(agent)
 
     # Shadow deployment: keep previous versions active so
     # multiple versions can run side-by-side.
@@ -848,8 +928,33 @@ async def approve_agent(
         except Exception as fm_err:
             logger.warning(f"FileTrigger sync failed after approval {req.id}: {fm_err}")
 
+    # ─── Publish notification (DB-verified) ──
+    try:
+        from agentcore.api.publish import _notify_publish_event
+        await _notify_publish_event(
+            session,
+            agent_id=deployment.agent_id,
+            agent_name=deployment.agent_name,
+            environment="prod",
+            version_number=deployment.version_number,
+            publish_id=deployment.id,
+            published_by=deployment.deployed_by,
+            published_at=deployment.deployed_at,
+        )
+    except Exception as notify_err:
+        logger.warning(f"Publish notification failed after approval {req.id}: {notify_err}")
+
+    # Trigger handoff payload only for approved AGENT promotions (never on reject).
+    try:
+        handoff_payload = _build_prod_promotion_handoff_payload(deployment)
+        logger.info(
+            f"[PROD_PROMOTION_HANDOFF_TRIGGER] {handoff_payload.model_dump()}",
+        )
+    except Exception as handoff_err:
+        logger.warning(f"Handoff payload trigger failed after approval {req.id}: {handoff_err}")
+
     approver_name = getattr(current_user, "username", None)
-    return ApprovalResponse(
+    response_payload = ApprovalResponse(
         success=True,
         message="Agent approved successfully",
         agentId=str(req.agent_id),
@@ -857,6 +962,11 @@ async def approve_agent(
         timestamp=now.isoformat(),
         approvedBy=approver_name,
     )
+    logger.info(
+        f"[APPROVE_RESPONSE] {response_payload.model_dump()} "
+        f"handoff={_build_prod_promotion_handoff_payload(deployment).model_dump()}",
+    )
+    return response_payload
 
 
 @router.post("/{agent_id}/reject", response_model=ApprovalResponse)
@@ -1033,6 +1143,12 @@ async def reject_agent(
     deployment.is_active = False
     deployment.updated_at = now
     session.add(deployment)
+
+    # Reset agent lifecycle_status back to DRAFT on rejection
+    agent = await session.get(Agent, req.agent_id)
+    if agent:
+        agent.lifecycle_status = LifecycleStatusEnum.DRAFT
+        session.add(agent)
 
     await session.commit()
 

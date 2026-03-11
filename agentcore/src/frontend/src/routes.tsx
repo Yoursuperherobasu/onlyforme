@@ -40,6 +40,7 @@ import HelpSupportPage from "./pages/SettingsPage/pages/HelpSupportPage";
 import MCPServersPage from "./pages/McpServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import PackagesPage from "./pages/SettingsPage/pages/PackagesPage";
+import ReleaseManagementPage from "./pages/ReleaseManagementPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
@@ -90,8 +91,15 @@ function DefaultLandingRedirect() {
     return <CustomNavigate replace to="workflows" />;
   }
 
-  // Scheduler is currently visible from sidebar without a permission gate.
-  return <CustomNavigate replace to="scheduler" />;
+  if (permissions.includes("view_hitl_approvals_page")) {
+    return <CustomNavigate replace to="hitl-approvals" />;
+  }
+
+  if (permissions.includes("view_agent_scheduler_page")) {
+    return <CustomNavigate replace to="scheduler" />;
+  }
+
+  return <CustomNavigate replace to="dashboard-admin" />;
 }
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
@@ -156,7 +164,11 @@ const router = createBrowserRouter(
                   />
                   <Route
                     path="hitl-approvals"
-                    element={<HITLApprovalsPage />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_hitl_approvals_page">
+                        <HITLApprovalsPage />
+                      </ProtectedPermissionRoute>
+                    }
                   />
                   <Route
                     path="model-catalogue"
@@ -198,7 +210,11 @@ const router = createBrowserRouter(
                   />
                   <Route
                     path="scheduler"
-                    element={<SchedulerPage />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_agent_scheduler_page">
+                        <SchedulerPage />
+                      </ProtectedPermissionRoute>
+                    }
                   />
                   <Route
                     path="mcp-servers"
@@ -227,6 +243,14 @@ const router = createBrowserRouter(
                   <Route
                     path="packages"
                     element={<PackagesPage />}
+                  />
+                  <Route
+                    path="release-management"
+                    element={
+                      <ProtectedPermissionRoute permission="view_packages_page">
+                        <ReleaseManagementPage />
+                      </ProtectedPermissionRoute>
+                    }
                   />
                   
                   <Route

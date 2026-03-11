@@ -9,6 +9,7 @@ export interface OrchAgentSummary {
   agent_name: string;
   agent_description: string | null;
   version_number: number;
+  environment: "uat" | "prod" | string;
 }
 
 export const useGetOrchAgents: useQueryFunctionType<

@@ -20,7 +20,6 @@ from agentcore.services.auth.utils import (
     authenticate_user,
     create_refresh_token,
     create_user_tokens,
-    get_runtime_auth_timeout_settings,
     get_password_hash,
 )
 from agentcore.services.database.models.user.crud import get_user_by_id
@@ -38,6 +37,40 @@ class AzureSSOResponse(Token):
     permissions: list[str]
 
 router = APIRouter(tags=["Login"])
+
+
+def _apply_auth_cookies(response: Response, tokens: dict, auth_settings, user: User) -> None:
+    persistent_cookie = bool(tokens.get("persistent_cookie", True))
+    access_expires = tokens.get("access_expires_in") if persistent_cookie else None
+    refresh_expires = tokens.get("refresh_expires_in") if persistent_cookie else None
+
+    response.set_cookie(
+        "refresh_token_lf",
+        tokens["refresh_token"],
+        httponly=auth_settings.REFRESH_HTTPONLY,
+        samesite=auth_settings.REFRESH_SAME_SITE,
+        secure=auth_settings.REFRESH_SECURE,
+        expires=refresh_expires,
+        domain=auth_settings.COOKIE_DOMAIN,
+    )
+    response.set_cookie(
+        "access_token_lf",
+        tokens["access_token"],
+        httponly=auth_settings.ACCESS_HTTPONLY,
+        samesite=auth_settings.ACCESS_SAME_SITE,
+        secure=auth_settings.ACCESS_SECURE,
+        expires=access_expires,
+        domain=auth_settings.COOKIE_DOMAIN,
+    )
+    response.set_cookie(
+        "apikey_tkn_lflw",
+        str(user.store_api_key),
+        httponly=auth_settings.ACCESS_HTTPONLY,
+        samesite=auth_settings.ACCESS_SAME_SITE,
+        secure=auth_settings.ACCESS_SECURE,
+        expires=None,
+        domain=auth_settings.COOKIE_DOMAIN,
+    )
 
 
 def _normalize_login_identity(value: str | None) -> str:
@@ -145,60 +178,19 @@ async def login_to_get_access_token(
         ) from exc
 
     if user:
-        runtime_timeout_settings = await get_runtime_auth_timeout_settings(db)
-        access_token_expires_seconds = int(
-            runtime_timeout_settings["access_token_expires_seconds"]
-        )
-        refresh_token_expires_seconds = int(
-            runtime_timeout_settings["refresh_token_expires_seconds"]
-        )
-        refresh_cookie_expires = (
-            refresh_token_expires_seconds
-            if bool(runtime_timeout_settings["persistent_cookie"])
-            else None
-        )
-
-        tokens = await create_user_tokens(
-            user_id=user.id,
-            db=db,
-            update_last_login=True,
-            access_token_expires_seconds=access_token_expires_seconds,
-            refresh_token_expires_seconds=refresh_token_expires_seconds,
-        )
-        response.set_cookie(
-            "refresh_token_lf",
-            tokens["refresh_token"],
-            httponly=auth_settings.REFRESH_HTTPONLY,
-            samesite=auth_settings.REFRESH_SAME_SITE,
-            secure=auth_settings.REFRESH_SECURE,
-            expires=refresh_cookie_expires,
-            domain=auth_settings.COOKIE_DOMAIN,
-        )
-        response.set_cookie(
-            "access_token_lf",
-            tokens["access_token"],
-            httponly=auth_settings.ACCESS_HTTPONLY,
-            samesite=auth_settings.ACCESS_SAME_SITE,
-            secure=auth_settings.ACCESS_SECURE,
-            expires=access_token_expires_seconds,
-            domain=auth_settings.COOKIE_DOMAIN,
-        )
-        response.set_cookie(
-            "apikey_tkn_lflw",
-            str(user.store_api_key),
-            httponly=auth_settings.ACCESS_HTTPONLY,
-            samesite=auth_settings.ACCESS_SAME_SITE,
-            secure=auth_settings.ACCESS_SECURE,
-            expires=None,  # Set to None to make it a session cookie
-            domain=auth_settings.COOKIE_DOMAIN,
-        )
+        tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
+        _apply_auth_cookies(response, tokens, auth_settings, user)
         current_role = normalize_role(getattr(user, "role", "developer"))
         permissions = await get_permissions_for_role(current_role)
+        from agentcore.observability.metrics_registry import record_login_attempt
+        record_login_attempt("success")
         return {
             **tokens,
             "role": current_role,
             "permissions": permissions
         }
+    from agentcore.observability.metrics_registry import record_login_attempt
+    record_login_attempt("failure")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Incorrect username or password",
@@ -230,6 +222,8 @@ async def azure_sso_login(
             issuer=f"https://login.microsoftonline.com/{auth_settings.AZURE_TENANT_ID}/v2.0",
         )
     except Exception as e:
+        from agentcore.observability.metrics_registry import record_login_attempt
+        record_login_attempt("failure")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Azure token",
@@ -272,6 +266,7 @@ async def azure_sso_login(
     else:
         resolved_role = "consumer"
 
+    is_new_user = False
     if not user:
         random_password = secrets.token_urlsafe(32)
         user = User(
@@ -288,6 +283,7 @@ async def azure_sso_login(
             db.add(user)
             await db.commit()
             await db.refresh(user)
+            is_new_user = True
         except IntegrityError:
             await db.rollback()
             existing_user = await _resolve_sso_identity_user(
@@ -305,6 +301,12 @@ async def azure_sso_login(
     if user and not (root_email and normalized_email == root_email):
         resolved_role = normalize_role(getattr(user, "role", "consumer"))
 
+    if user and not is_new_user and not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Inactive user",
+        )
+
     permissions = await get_permissions_for_role(resolved_role)
 
     settings_service = get_settings_service()
@@ -312,52 +314,11 @@ async def azure_sso_login(
     user_dict = user.model_dump(mode="json", exclude={"password"})
     await user_cache.set_user(user_dict)
 
-    # -----------------------------
-    # Issue AgentCore Tokens
-    # -----------------------------
 
-    runtime_timeout_settings = await get_runtime_auth_timeout_settings(db)
-    access_token_expires_seconds = int(runtime_timeout_settings["access_token_expires_seconds"])
-    refresh_token_expires_seconds = int(runtime_timeout_settings["refresh_token_expires_seconds"])
-    refresh_cookie_expires = (
-        refresh_token_expires_seconds if bool(runtime_timeout_settings["persistent_cookie"]) else None
-    )
-
-    tokens = await create_user_tokens(
-        user_id=user.id,
-        db=db,
-        update_last_login=True,
-        access_token_expires_seconds=access_token_expires_seconds,
-        refresh_token_expires_seconds=refresh_token_expires_seconds,
-    )
-    
-    response.set_cookie(
-        "refresh_token_lf",
-        tokens["refresh_token"],
-        httponly=auth_settings.REFRESH_HTTPONLY,
-        samesite=auth_settings.REFRESH_SAME_SITE,
-        secure=auth_settings.REFRESH_SECURE,
-        expires=refresh_cookie_expires,
-        domain=auth_settings.COOKIE_DOMAIN,
-    )
-    response.set_cookie(
-        "access_token_lf",
-        tokens["access_token"],
-        httponly=auth_settings.ACCESS_HTTPONLY,
-        samesite=auth_settings.ACCESS_SAME_SITE,
-        secure=auth_settings.ACCESS_SECURE,
-        expires=access_token_expires_seconds,
-        domain=auth_settings.COOKIE_DOMAIN,
-    )
-    response.set_cookie(
-        "apikey_tkn_lflw",
-        str(user.store_api_key),
-        httponly=auth_settings.ACCESS_HTTPONLY,
-        samesite=auth_settings.ACCESS_SAME_SITE,
-        secure=auth_settings.ACCESS_SECURE,
-        expires=None,
-        domain=auth_settings.COOKIE_DOMAIN,
-    )
+    tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
+    _apply_auth_cookies(response, tokens, auth_settings, user)
+    from agentcore.observability.metrics_registry import record_login_attempt
+    record_login_attempt("success")
     return {
         **tokens,
         "role": resolved_role,
@@ -375,43 +336,14 @@ async def refresh_token(
     token = request.cookies.get("refresh_token_lf")
 
     if token:
-        runtime_timeout_settings = await get_runtime_auth_timeout_settings(db)
-        access_token_expires_seconds = int(runtime_timeout_settings["access_token_expires_seconds"])
-        refresh_token_expires_seconds = int(runtime_timeout_settings["refresh_token_expires_seconds"])
-        refresh_cookie_expires = (
-            refresh_token_expires_seconds if bool(runtime_timeout_settings["persistent_cookie"]) else None
-        )
-
-        tokens = await create_refresh_token(
-            token,
-            db,
-            access_token_expires_seconds=access_token_expires_seconds,
-            refresh_token_expires_seconds=refresh_token_expires_seconds,
-        )
+        tokens = await create_refresh_token(token, db)
         user_id = tokens.get("user_id") 
         user = await get_user_by_id(db, user_id)
         if not user:
              raise HTTPException(status_code=404, detail="User not found")
         user_role = normalize_role(getattr(user, "role", "developer"))
         permissions = await get_permissions_for_role(user_role)
-        response.set_cookie(
-            "refresh_token_lf",
-            tokens["refresh_token"],
-            httponly=auth_settings.REFRESH_HTTPONLY,
-            samesite=auth_settings.REFRESH_SAME_SITE,
-            secure=auth_settings.REFRESH_SECURE,
-            expires=refresh_cookie_expires,
-            domain=auth_settings.COOKIE_DOMAIN,
-        )
-        response.set_cookie(
-            "access_token_lf",
-            tokens["access_token"],
-            httponly=auth_settings.ACCESS_HTTPONLY,
-            samesite=auth_settings.ACCESS_SAME_SITE,
-            secure=auth_settings.ACCESS_SECURE,
-            expires=access_token_expires_seconds,
-            domain=auth_settings.COOKIE_DOMAIN,
-        )
+        _apply_auth_cookies(response, tokens, auth_settings, user)
         return {
             **tokens,
             "role": user_role,

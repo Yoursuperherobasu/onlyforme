@@ -19,6 +19,7 @@ from .user_department_membership import UserDepartmentMembership
 from .vector_db_catalogue import VectorDBCatalogue
 from .knowledge_base import KnowledgeBase
 from .agent_bundle import AgentBundle
+from .agent_publish_recipient import AgentPublishRecipient
 from .agent_edit_lock import AgentEditLock
 from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
@@ -33,14 +34,20 @@ from .timeout_settings import TimeoutSettings
 from .guardrail_catalogue import GuardrailCatalogue
 from .help_support import HelpSupportQuestion
 from .package import Package
+from .product_release import ProductRelease
+from .release_package_snapshot import ReleasePackageSnapshot
 from .teams_app import TeamsApp
 from .hitl_request import HITLRequest
 from .evaluator.model import Evaluator
 from .vertex_builds import VertexBuildTable
+from .langfuse_binding import LangfuseBinding
+from .observability_provision_job import ObservabilityProvisionJob
+from .observability_schema_lock import ObservabilitySchemaLock
 
 __all__ = [
     "Agent",
     "AgentBundle",
+    "AgentPublishRecipient",
     "AgentEditLock",
     "AgentDeploymentProd",
     "AgentDeploymentUAT",
@@ -85,8 +92,13 @@ __all__ = [
     "OrchConversationTable",
     "OrchTransactionTable",
     "Package",
+    "ProductRelease",
+    "ReleasePackageSnapshot",
     "User",
     "HITLRequest",
     "Evaluator",
     "VertexBuildTable",
+    "LangfuseBinding",
+    "ObservabilityProvisionJob",
+    "ObservabilitySchemaLock",
 ]

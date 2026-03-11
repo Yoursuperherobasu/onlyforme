@@ -1046,11 +1046,19 @@ class Node(ExecutableNode):
             session_id = self._session_id
         else:
             session_id = None
+        import time as _time_mod
+        _build_start = _time_mod.perf_counter()
         try:
             if self._tracing_service:
-                return await self._build_with_tracing()
-            return await self._build_without_tracing()
+                result = await self._build_with_tracing()
+            else:
+                result = await self._build_without_tracing()
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "success", (_time_mod.perf_counter() - _build_start) * 1000)
+            return result
         except StreamingError as e:
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "error", (_time_mod.perf_counter() - _build_start) * 1000)
             await self.send_error(
                 exception=e.cause,
                 session_id=session_id,
@@ -1059,11 +1067,10 @@ class Node(ExecutableNode):
             )
             raise e.cause  # noqa: B904
         except GraphInterrupt:
-            # HITL pause — let the interrupt propagate without calling send_error.
-            # send_error would emit an on_error event which shows a red box in the UI.
-            # The interrupt is handled cleanly by nodes.py and build.py upstream.
             raise
         except Exception as e:
+            from agentcore.observability.metrics_registry import record_component_build
+            record_component_build(self.display_name, "error", (_time_mod.perf_counter() - _build_start) * 1000)
             await self.send_error(
                 exception=e,
                 session_id=session_id,
@@ -1546,23 +1553,77 @@ class Node(ExecutableNode):
         if hasattr(self, "graph"):
             # Convert UUID to str if needed
             agent_id = str(self.graph.agent_id) if self.graph.agent_id else None
-            # Mark orchestrator messages so they don't appear in the playground
+            # Orchestrator messages go to the dedicated orch_conversation table
             if getattr(self.graph, "skip_dev_logging", False):
-                message.category = "orch"
+                return await self._store_orch_message(message, agent_id)
 
         stored_messages = await astore_message(message, agent_id=agent_id)
         if len(stored_messages) != 1:
             msg = "Only one message can be stored at a time."
             raise ValueError(msg)
         stored_message = stored_messages[0]
-        
+
         # Get the dump and create a new Message from it
         dump = stored_message.model_dump()
-        
+
         # CRITICAL: Ensure timestamp is preserved when creating the new Message
         result = await Message.create(**dump)
-        
+
         return result
+
+    async def _store_orch_message(self, message: Message, agent_id: str | None) -> Message:
+        """Store a message in the orch_conversation table instead of the regular conversation table.
+
+        When ``graph.orch_skip_node_persist`` is True (set by the orchestrator
+        chat endpoint), the message is returned as-is **without** DB persistence.
+        The orchestrator already stores user messages and agent replies explicitly
+        with correct metadata; letting individual nodes also persist would create
+        duplicates, "Message empty." entries from intermediate nodes, and
+        cross-user session leakage via stale graph state.
+        """
+        graph = self.graph
+
+        # Orchestrator endpoint handles persistence — skip node-level storage.
+        # Assign an id so callers (send_message) that access .id don't crash.
+        if getattr(graph, "orch_skip_node_persist", False):
+            from uuid import uuid4 as _uuid4
+            if not getattr(message, "id", None):
+                message.id = str(_uuid4())
+            return message
+
+        from uuid import UUID as _UUID, uuid4 as _uuid4
+        from datetime import datetime, timezone
+        from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+        from agentcore.services.database.models.orch_conversation.crud import orch_add_message
+        from agentcore.services.deps import session_scope
+
+        orch_row = OrchConversationTable(
+            id=_uuid4(),
+            sender=message.sender or "Machine",
+            sender_name=message.sender_name or "AI",
+            session_id=str(message.session_id or getattr(graph, "orch_session_id", "") or ""),
+            text=message.text if isinstance(message.text, str) else "",
+            agent_id=_UUID(agent_id) if agent_id else None,
+            user_id=_UUID(graph.user_id) if getattr(graph, "user_id", None) else None,
+            deployment_id=_UUID(graph.orch_deployment_id) if getattr(graph, "orch_deployment_id", None) else None,
+            org_id=_UUID(graph.orch_org_id) if getattr(graph, "orch_org_id", None) else None,
+            dept_id=_UUID(graph.orch_dept_id) if getattr(graph, "orch_dept_id", None) else None,
+            timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+            files=list(message.files or []),
+            properties=message.properties.model_dump() if hasattr(message.properties, "model_dump") else (message.properties or {}),
+            category=message.category or "message",
+            content_blocks=[
+                cb.model_dump() if hasattr(cb, "model_dump") else cb
+                for cb in (message.content_blocks or [])
+            ],
+        )
+
+        async with session_scope() as db:
+            saved = await orch_add_message(orch_row, db)
+
+        # Return as a Message so callers can use it uniformly
+        dump = saved.model_dump()
+        return await Message.create(**dump)
 
     async def _send_message_event(self, message: Message, id_: str | None = None, category: str | None = None) -> None:
         if hasattr(self, "_event_manager") and self._event_manager:

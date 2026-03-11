@@ -3,7 +3,6 @@
 import logging
 from uuid import UUID
 
-from app.config import get_settings
 from app.providers.base import get_provider
 from app.schemas import (
     EmbeddingData,
@@ -24,9 +23,8 @@ async def _resolve_registry_config(request: EmbeddingRequest) -> EmbeddingReques
     from app.database import get_session
     from app.services.registry_service import get_decrypted_config
 
-    settings = get_settings()
     async for session in get_session():
-        config = await get_decrypted_config(session, UUID(str(registry_model_id)), settings.encryption_key)
+        config = await get_decrypted_config(session, UUID(str(registry_model_id)))
 
     if config is None:
         msg = f"Registry model {registry_model_id} not found"

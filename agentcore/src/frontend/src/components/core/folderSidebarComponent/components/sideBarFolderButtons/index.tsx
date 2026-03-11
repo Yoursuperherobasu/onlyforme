@@ -357,7 +357,16 @@ const SideBarFoldersButtonsComponent = ({
     userDismissedMcpDialog,
   );
 
-  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const isRootAdmin = role === "root";
+  const rootVisiblePermissions = new Set([
+    "view_dashboard",
+    "view_platform_configs",
+    "view_help_support_page",
+  ]);
+  const can = (permissionKey: string) =>
+    isRootAdmin
+      ? rootVisiblePermissions.has(permissionKey)
+      : permissions?.includes(permissionKey);
 
   // Dispatch custom event when sidebar state changes
   useEffect(() => {
@@ -468,20 +477,22 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* HITL Approvals */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/hitl-approvals")}
-            onClick={() => _navigate("/hitl-approvals")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="UserCheck"
-              className="h-4 w-4"
-            />
-            {t("HITL Approvals")}
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_hitl_approvals_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/hitl-approvals")}
+              onClick={() => _navigate("/hitl-approvals")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="UserCheck"
+                className="h-4 w-4"
+              />
+              {t("HITL Approvals")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Agent Registry */}
         {can("view_published_agents") && (
@@ -538,20 +549,22 @@ const SideBarFoldersButtonsComponent = ({
         )}
 
         {/* Automations */}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="md"
-            isActive={pathname.startsWith("/scheduler")}
-            onClick={() => _navigate("/scheduler")}
-            className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-          >
-            <ForwardedIconComponent
-              name="Zap"
-              className="h-4 w-4"
-            />
-            {t("Agent Scheduler")}
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {can("view_agent_scheduler_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/scheduler")}
+              onClick={() => _navigate("/scheduler")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Zap"
+                className="h-4 w-4"
+              />
+              {t("Agent Scheduler")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
 
         {/* Orchestrator */}
         {can("view_orchastration_page") && (
@@ -707,6 +720,23 @@ const SideBarFoldersButtonsComponent = ({
                 className="h-4 w-4"
               />
               {t("Packages")}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
+
+        {can("view_packages_page") && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="md"
+              isActive={pathname.startsWith("/release-management")}
+              onClick={() => _navigate("/release-management")}
+              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
+            >
+              <ForwardedIconComponent
+                name="Tag"
+                className="h-4 w-4"
+              />
+              {t("Release Management")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}

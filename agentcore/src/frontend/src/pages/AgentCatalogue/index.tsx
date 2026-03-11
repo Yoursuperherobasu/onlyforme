@@ -225,7 +225,30 @@ export default function AgentCatalogueView({
                           {agent.title}
                         </h3>
                         <p className="text-xs text-muted-foreground">
-                          {t("by")} {agent.listed_by_username || t("Unknown")}
+                          {(() => {
+                            const rawName = agent.listed_by_username?.trim() || "";
+                            const displayName = rawName
+                              ? rawName.includes("@")
+                                ? rawName.split("@", 1)[0]
+                                : rawName
+                              : t("Unknown");
+                            const hoverEmail = (
+                              agent.listed_by_email?.trim() ||
+                              (rawName.includes("@") ? rawName : "")
+                            );
+                            return (
+                              <>
+                                {t("by")}{" "}
+                                {hoverEmail ? (
+                                  <ShadTooltip content={hoverEmail}>
+                                    <span className="cursor-help">{displayName}</span>
+                                  </ShadTooltip>
+                                ) : (
+                                  displayName
+                                )}
+                              </>
+                            );
+                          })()}
                         </p>
                       </div>
                     </div>

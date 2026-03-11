@@ -55,7 +55,7 @@ class ModelRegistry(SQLModel, table=True):
     model_name: str = Field(nullable=False)
     model_type: str = Field(default="llm", index=True)  # "llm" or "embedding"
     base_url: str | None = Field(default=None)
-    api_key_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    api_key_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # Environment tag: test (default), uat, prod
     environment: str = Field(default=ModelEnvironment.TEST.value, index=True)
@@ -164,7 +164,7 @@ class ModelRegistryUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ModelRegistryRead(BaseModel):
-    """Safe representation returned to callers - never includes the encrypted key."""
+    """Safe representation returned to callers - never includes secret values."""
 
     id: UUID
     display_name: str
@@ -208,7 +208,7 @@ class ModelRegistryRead(BaseModel):
     @classmethod
     def from_orm_model(cls, row: ModelRegistry) -> "ModelRegistryRead":
         obj = cls.model_validate(row)
-        object.__setattr__(obj, "_has_api_key", bool(row.api_key_encrypted))
+        object.__setattr__(obj, "_has_api_key", bool(row.api_key_secret_ref))
         return obj
 
 

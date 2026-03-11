@@ -17,28 +17,44 @@ import json
 import time
 import traceback
 import asyncio
+import hashlib
+import random
+import concurrent.futures
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any
 from collections import defaultdict
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from agentcore.services.auth.decorators import PermissionChecker
+from agentcore.services.auth.permissions import normalize_role
 from agentcore.services.auth.utils import get_current_active_user
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.agent.model import Agent as Agent
 from agentcore.services.database.models.folder.model import Folder
+from agentcore.services.observability import (
+    ObservabilityScopeError,
+    get_langfuse_provisioning_service,
+    resolve_observability_scope,
+)
 from agentcore.services.deps import get_session
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 
-router = APIRouter(prefix="/observability", tags=["Observability"])
+router = APIRouter(
+    prefix="/observability",
+    tags=["Observability"],
+    dependencies=[Depends(PermissionChecker(["view_observability_page"]))],
+)
 
 
 # Process-local caches to reduce repeated high-latency Langfuse calls.
 _LANGFUSE_CLIENT_CACHE: dict[str, Any] = {"fingerprint": None, "client": None}
+_LANGFUSE_BINDING_CLIENT_CACHE: dict[str, dict[str, Any]] = {}
 _TRACE_FETCH_CACHE: dict[str, dict[str, Any]] = {}
 _TRACE_CACHE_TTL_SECONDS = 12.0
 _TRACE_CACHE_STALE_SECONDS = 90.0
@@ -52,6 +68,10 @@ _SESSIONS_CACHE: dict[str, dict[str, Any]] = {}
 _PROJECTS_CACHE: dict[str, dict[str, Any]] = {}
 _OBSERVATIONS_CACHE_TTL_SECONDS = 60.0
 
+# Tracks which list-endpoint cache keys have already been force-recomputed once due to zero-token
+# cache poisoning. Prevents infinite recompute loops when data genuinely has 0 tokens.
+_ZERO_TOKEN_RECOMPUTED: set[str] = set()
+
 # Request-scoped observation cache (cleared per API request) to deduplicate within-request observation fetches
 _REQUEST_OBSERVATIONS_CACHE: dict[str, list] = {}
 _REQUEST_METRICS_CACHE: dict[str, dict[str, Any]] = {}
@@ -64,15 +84,182 @@ def _clear_request_caches() -> None:
     _REQUEST_METRICS_CACHE.clear()
 
 
+def _list_cache_needs_recompute(cached_items: list, token_attr: str, trace_attr: str) -> bool:
+    """Return True if the cached list has traces but zero tokens — indicating stale/incomplete enrichment.
+
+    Uses getattr so it works with both Pydantic model instances and plain dicts.
+    """
+    total_traces = sum(getattr(item, trace_attr, 0) or 0 for item in cached_items)
+    total_tokens = sum(getattr(item, token_attr, 0) or 0 for item in cached_items)
+    return total_traces > 0 and total_tokens == 0
+
+
 def _make_fallback_budget(total_traces: int, cap: int = 200) -> dict[str, int]:
     """Create a bounded observation-fallback budget for missing trace-level metrics.
 
-    A higher budget improves token consistency across list endpoints when Langfuse
-    traces are missing token/cost/model fields and require observation enrichment.
+    The budget must be >= total_traces so that every trace can be enriched via
+    observations when trace-level token/cost fields are absent (common with
+    Langfuse v3 OTEL-based tracing where span tokens are not automatically rolled
+    up to the trace summary in list API responses).
     """
     if total_traces <= 0:
         return {"remaining": 0}
-    return {"remaining": min(cap, total_traces)}
+    return {"remaining": min(cap, max(50, total_traces))}
+
+
+def _pre_enrich_traces(
+    traces: list[Any],
+    scoped_clients: list[Any],
+    *,
+    max_workers: int = 25,
+    max_enrichments: int = 300,
+) -> None:
+    """Pre-fetch observations in parallel for traces that lack trace-level token data.
+
+    Populates the per-request observations cache so that subsequent
+    ``_get_trace_metrics(allow_observation_fallback=True)`` calls return
+    instantly from cache instead of making a live Langfuse API call per trace.
+    Use this ONCE before iterating over a list of traces to convert what would
+    otherwise be a serial N×observation-API-call pattern into a single parallel
+    fan-out bounded by ``max_workers``.
+
+    ``max_enrichments`` caps the number of observation fetches per call so that
+    large admin scopes (e.g. super_admin with hundreds of traces) don't cause
+    unbounded latency.  Traces are processed in list order (most-recent first)
+    so the most relevant rows are always enriched first.
+    """
+    if not traces or not scoped_clients:
+        return
+    primary_client = scoped_clients[0]
+
+    # Identify which traces genuinely need observation enrichment.
+    # We skip traces that already have token data at the trace level or in any cache.
+    needs_enrichment: list[tuple[str, Any]] = []
+    for trace in traces:
+        trace_id = _get_trace_id(trace)  # forward ref – ok in Python
+        if not trace_id:
+            continue
+        trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
+
+        # Tier 1: request-scoped observations cache hit → already warm
+        obs_key = _observation_cache_key(trace_client, trace_id)  # forward ref
+        if obs_key in _REQUEST_OBSERVATIONS_CACHE or trace_id in _REQUEST_OBSERVATIONS_CACHE:
+            continue
+
+        # Tier 2: metrics cache already shows enriched data → skip
+        m_key = _trace_metrics_cache_key(trace_client, trace_id)  # forward ref
+        cached_m = _TRACE_METRICS_CACHE.get(m_key)
+        if cached_m:
+            cm = cached_m.get("metrics", {})
+            if int(cm.get("total_tokens") or 0) > 0:
+                continue
+
+        # Tier 3: trace-level fields already have data → no API call needed
+        tot, _, _, cost, _, mods, _ = _extract_trace_metrics(trace)  # forward ref
+        if tot > 0 or cost > 0.0 or mods:
+            continue
+
+        needs_enrichment.append((trace_id, trace_client))
+
+    if not needs_enrichment:
+        return
+
+    # Cap to avoid runaway latency on large admin scopes (super_admin / root).
+    if len(needs_enrichment) > max_enrichments:
+        logger.debug(
+            f"_pre_enrich_traces: capping enrichment at {max_enrichments} "
+            f"(total needing enrichment: {len(needs_enrichment)})"
+        )
+        needs_enrichment = needs_enrichment[:max_enrichments]
+
+    logger.debug(
+        f"_pre_enrich_traces: parallel-fetching observations for "
+        f"{len(needs_enrichment)} traces (max_workers={max_workers})"
+    )
+
+    def _fetch_one(args: tuple[str, Any]) -> None:
+        tid, client = args
+        try:
+            obs = fetch_observations_for_trace(client, tid)
+            if not obs and len(scoped_clients) > 1:
+                # Primary client returned empty — try other clients (handles
+                # super_admin / root where traces may belong to a different
+                # Langfuse project / binding than the one resolved by index).
+                primary_key = _observation_cache_key(client, tid)
+                for fb_client in scoped_clients:
+                    if fb_client is client:
+                        continue
+                    obs = fetch_observations_for_trace(fb_client, tid)
+                    if obs:
+                        # Cache under primary key so _get_trace_metrics hits cache
+                        _OBSERVATIONS_CACHE[primary_key] = {
+                            "ts": time.monotonic(),
+                            "observations": obs,
+                        }
+                        _REQUEST_OBSERVATIONS_CACHE[primary_key] = list(obs)
+                        break
+        except Exception:
+            pass
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(max_workers, len(needs_enrichment))
+    ) as pool:
+        list(pool.map(_fetch_one, needs_enrichment))
+
+    # After all observation fetches complete, immediately compute metrics from
+    # the cached observations and write them to _TRACE_METRICS_CACHE.
+    # This guarantees that _get_trace_metrics finds correct token data on its
+    # FIRST process-cache check (before any fallback logic), so all endpoints
+    # (overview, agents, projects) see consistent token counts regardless of
+    # which endpoint runs first or whether _REQUEST_OBSERVATIONS_CACHE was
+    # cleared by a concurrent request.
+    now_mono = time.monotonic()
+    for tid, t_client in needs_enrichment:
+        try:
+            m_key = _trace_metrics_cache_key(t_client, tid)
+            # Skip if already written with valid tokens (e.g. by a concurrent request)
+            existing = _TRACE_METRICS_CACHE.get(m_key)
+            if existing and int((existing.get("metrics") or {}).get("total_tokens") or 0) > 0:
+                continue
+
+            obs_key = _observation_cache_key(t_client, tid)
+            obs_entry = _OBSERVATIONS_CACHE.get(obs_key) or _OBSERVATIONS_CACHE.get(tid)
+            if not obs_entry:
+                continue
+            if (now_mono - float(obs_entry.get("ts", 0))) > _OBSERVATIONS_CACHE_TTL_SECONDS:
+                continue
+            raw_obs = obs_entry.get("observations") or []
+            if not raw_obs:
+                continue
+
+            parsed = [parse_observation(o) for o in raw_obs]
+            obs_total = sum(o.total_tokens for o in parsed)
+            if obs_total <= 0:
+                continue  # Observations found but genuinely have no token data
+
+            obs_input = sum(o.input_tokens for o in parsed)
+            obs_output = sum(o.output_tokens for o in parsed)
+            obs_cost = sum(o.total_cost for o in parsed)
+            obs_latencies = [o.latency_ms for o in parsed if o.latency_ms is not None]
+            obs_models = list(dict.fromkeys(o.model for o in parsed if o.model))
+            obs_errors = sum(1 for o in parsed if (o.level or "").upper() in {"ERROR", "WARNING"})
+            obs_latency = max(obs_latencies) if obs_latencies else None
+
+            _TRACE_METRICS_CACHE[m_key] = {
+                "ts": now_mono,
+                "metrics": {
+                    "total_tokens": int(obs_total),
+                    "input_tokens": int(obs_input),
+                    "output_tokens": int(obs_output),
+                    "total_cost": float(obs_cost),
+                    "latency_ms": obs_latency,
+                    "models": obs_models,
+                    "error_count": int(obs_errors),
+                    "observation_count": len(parsed),
+                },
+            }
+        except Exception:
+            pass
 
 
 # =============================================================================
@@ -81,9 +268,9 @@ def _make_fallback_budget(total_traces: int, cap: int = 200) -> dict[str, int]:
 
 # SWR thresholds (in seconds) - all configurable
 SWR_CONFIG = {
-    "FRESH_SECONDS": 15,              # Data is fresh, return immediately no refresh
-    "STALE_SECONDS": 60,              # Data is stale, return + trigger background refresh
-    "EXPIRED_SECONDS": 300,           # Data is expired, wait for fresh fetch
+    "FRESH_SECONDS": 60,              # Data is fresh, return immediately no refresh
+    "STALE_SECONDS": 180,             # Data is stale, return + trigger background refresh
+    "EXPIRED_SECONDS": 600,           # Data is expired, wait for fresh fetch
     "MAX_CONCURRENT_FETCHES": 3,      # Prevent overwhelming Langfuse
     "FETCH_TIMEOUT": 30,              # Max time for background fetch
     "ENABLE_SWR": True,               # Feature flag to disable SWR
@@ -113,14 +300,14 @@ def _get_cache_metadata(cache_key: str) -> dict[str, Any]:
     meta = _CACHE_METADATA[cache_key]
     age_seconds = time.time() - meta["timestamp"]
     fresh_threshold = SWR_CONFIG["FRESH_SECONDS"]
-    stale_threshold = SWR_CONFIG["STALE_SECONDS"]
+    expired_threshold = SWR_CONFIG["EXPIRED_SECONDS"]
     
     return {
         "cached_at": datetime.fromtimestamp(meta["timestamp"], tz=timezone.utc),
         "age_seconds": int(age_seconds),
         "is_fresh": age_seconds < fresh_threshold,
-        "is_stale": fresh_threshold <= age_seconds < stale_threshold,
-        "is_expired": age_seconds >= stale_threshold,
+        "is_stale": fresh_threshold <= age_seconds < expired_threshold,
+        "is_expired": age_seconds >= expired_threshold,
     }
 
 
@@ -227,6 +414,8 @@ class TraceDetailResponse(BaseModel):
     # Status
     level: str | None = None
     status: str | None = None
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 class TraceListItem(BaseModel):
@@ -249,6 +438,8 @@ class TracesListResponse(BaseModel):
     total: int
     page: int
     limit: int
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 class SessionDetailResponse(BaseModel):
@@ -273,6 +464,8 @@ class SessionDetailResponse(BaseModel):
     models_used: dict[str, dict] = {}  # model -> {tokens, cost, calls}
     # Traces in this session
     traces: list[TraceListItem] = []
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 class SessionListItem(BaseModel):
@@ -295,6 +488,8 @@ class SessionsListResponse(BaseModel):
     total: int
     truncated: bool = False
     fetched_trace_count: int = 0
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 class ModelUsageItem(BaseModel):
@@ -347,6 +542,8 @@ class MetricsResponse(BaseModel):
     # Cache metadata (for SWR indicator in UI)
     cache_age_seconds: int | None = None
     cache_is_fresh: bool | None = None
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 class LangfuseStatusResponse(BaseModel):
@@ -387,6 +584,8 @@ def get_langfuse_client():
     fingerprint = f"{public_key}:{base_url}:{len(secret_key)}"
     cached = _LANGFUSE_CLIENT_CACHE.get("client")
     if cached is not None and _LANGFUSE_CLIENT_CACHE.get("fingerprint") == fingerprint:
+        if not getattr(cached, "_trace_cache_namespace", None):
+            cached._trace_cache_namespace = f"env:{fingerprint}"
         return cached
 
     try:
@@ -441,6 +640,7 @@ def get_langfuse_client():
 
         client._is_v3 = is_v3
         client._sdk_version = sdk_version
+        client._trace_cache_namespace = f"env:{fingerprint}"
 
         # Health check
         if is_v3:
@@ -468,6 +668,391 @@ def get_langfuse_client():
         _LANGFUSE_CLIENT_CACHE["fingerprint"] = None
         _LANGFUSE_CLIENT_CACHE["client"] = None
         return None
+
+
+def _create_langfuse_client(
+    *,
+    secret_key: str,
+    public_key: str,
+    base_url: str,
+) -> Any | None:
+    try:
+        from langfuse import Langfuse
+    except ImportError:
+        return None
+    try:
+        client = Langfuse(
+            secret_key=secret_key,
+            public_key=public_key,
+            host=base_url,
+        )
+        is_v3 = False
+        sdk_version = "unknown"
+        try:
+            import langfuse
+
+            sdk_version = getattr(langfuse, "__version__", "unknown")
+            if sdk_version.startswith("3."):
+                is_v3 = True
+            if hasattr(client, "api"):
+                is_v3 = True
+            if hasattr(client, "auth_check"):
+                is_v3 = True
+        except Exception:
+            is_v3 = hasattr(client, "auth_check") or hasattr(client, "api")
+
+        client._is_v3 = is_v3
+        client._sdk_version = sdk_version
+        client._trace_cache_namespace = f"scoped:{base_url}:{public_key[-8:]}"
+        return client
+    except Exception as exc:
+        logger.warning("Failed to create Langfuse client for scoped binding: {}", exc)
+        return None
+
+
+def _get_langfuse_client_for_binding(binding: Any) -> Any | None:
+    provisioning_service = get_langfuse_provisioning_service()
+    updated_epoch = 0.0
+    try:
+        if binding.updated_at is not None:
+            updated_epoch = float(binding.updated_at.timestamp())
+    except Exception:
+        updated_epoch = 0.0
+    fingerprint = f"{binding.id}:{updated_epoch}"
+
+    cache_entry = _LANGFUSE_BINDING_CLIENT_CACHE.get(str(binding.id))
+    if cache_entry and cache_entry.get("fingerprint") == fingerprint:
+        return cache_entry.get("client")
+
+    try:
+        public_key = provisioning_service.decrypt_secret(binding.public_key_encrypted)
+        secret_key = provisioning_service.decrypt_secret(binding.secret_key_encrypted)
+    except Exception as exc:
+        logger.warning("Failed decrypting Langfuse binding {}: {}", binding.id, exc)
+        return None
+
+    client = _create_langfuse_client(
+        secret_key=secret_key,
+        public_key=public_key,
+        base_url=binding.langfuse_host,
+    )
+    if client is None:
+        return None
+    client._trace_cache_namespace = f"binding:{binding.id}"
+    client._agentcore_binding_id = str(binding.id)
+
+    _LANGFUSE_BINDING_CLIENT_CACHE[str(binding.id)] = {
+        "fingerprint": fingerprint,
+        "client": client,
+    }
+    return client
+
+
+async def _resolve_scope_context(
+    *,
+    session: AsyncSession,
+    current_user: User,
+    org_id: UUID | None = None,
+    dept_id: UUID | None = None,
+    enforce_filter_for_admin: bool = True,
+) -> tuple[set[str], list[Any], str, list[str]]:
+    try:
+        resolution = await resolve_observability_scope(
+            session,
+            current_user=current_user,
+            org_id=org_id,
+            dept_id=dept_id,
+            enforce_filter_for_admin=enforce_filter_for_admin,
+        )
+    except ObservabilityScopeError as exc:
+        detail = str(exc)
+        status_code = 403 if "outside your" in detail.lower() else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    clients: list[Any] = []
+    failed_binding_ids: list[str] = []
+    for binding in resolution.bindings:
+        client = _get_langfuse_client_for_binding(binding)
+        if client is not None:
+            clients.append(client)
+        else:
+            failed_binding_ids.append(str(binding.id))
+
+    scope_warnings: list[str] = []
+    if not resolution.bindings:
+        scope_warnings.append(
+            "No active Langfuse bindings are configured for the selected scope."
+        )
+    elif not clients:
+        scope_warnings.append(
+            "Langfuse bindings exist for this scope, but none are usable. Check encrypted keys/host connectivity."
+        )
+    elif failed_binding_ids:
+        scope_warnings.append(
+            f"{len(failed_binding_ids)} binding(s) could not be initialized for this scope."
+        )
+
+    sorted_uids = sorted(resolution.allowed_user_ids)
+    user_scope_hash = hashlib.sha256("|".join(sorted_uids).encode("utf-8")).hexdigest()[:12] if sorted_uids else "none"
+    scope_key = f"{resolution.role}:{resolution.org_id}:{resolution.dept_id}:{user_scope_hash}"
+    return resolution.allowed_user_ids, clients, scope_key, scope_warnings
+
+
+def _scope_warning_payload(scope_warnings: list[str]) -> dict[str, Any]:
+    if not scope_warnings:
+        return {"scope_warning": False, "scope_warning_message": None}
+    return {
+        "scope_warning": True,
+        "scope_warning_message": " ".join(scope_warnings),
+    }
+
+
+def _fetch_scoped_traces(
+    *,
+    clients: list[Any],
+    allowed_user_ids: set[str],
+    limit: int,
+    from_timestamp: datetime | None = None,
+    to_timestamp: datetime | None = None,
+    name: str | None = None,
+    fetch_all: bool = False,
+) -> list[Any]:
+    if not clients or not allowed_user_ids:
+        return []
+
+    cache_key = _scoped_trace_cache_key(
+        clients=clients,
+        allowed_user_ids=allowed_user_ids,
+        from_timestamp=from_timestamp,
+        to_timestamp=to_timestamp,
+        name=name,
+        limit=limit,
+        fetch_all=fetch_all,
+    )
+    now_mono = time.monotonic()
+    cached_entry = _TRACE_FETCH_CACHE.get(cache_key)
+    stale_traces: list[Any] = []
+    if cached_entry:
+        cached_age = now_mono - float(cached_entry.get("ts", 0))
+        cached_traces = cached_entry.get("traces", []) or []
+        if cached_age <= _TRACE_CACHE_TTL_SECONDS and cached_traces:
+            return list(cached_traces)
+        if cached_age <= _TRACE_CACHE_STALE_SECONDS and cached_traces:
+            stale_traces = list(cached_traces)
+
+    def _attach_client_idx(trace_obj: Any, idx: int) -> Any:
+        try:
+            setattr(trace_obj, "_agentcore_client_idx", idx)
+        except Exception:
+            if isinstance(trace_obj, dict):
+                trace_obj["_agentcore_client_idx"] = idx
+        return trace_obj
+
+    def _trace_quality_score(trace_obj: Any) -> tuple[int, int, int, int]:
+        """Rank duplicate trace rows by data richness.
+
+        Higher is better: prefer rows with more observations/tokens/cost and explicit I/O.
+        This prevents empty/partial duplicates from shadowing richer rows across bindings.
+        """
+        obs_count = int(get_attr(trace_obj, "observation_count", "observationCount", default=0) or 0)
+        total_tokens = int(get_attr(trace_obj, "totalTokens", "total_tokens", default=0) or 0)
+        if total_tokens <= 0:
+            in_tokens = int(get_attr(trace_obj, "inputTokens", "input_tokens", "promptTokens", default=0) or 0)
+            out_tokens = int(get_attr(trace_obj, "outputTokens", "output_tokens", "completionTokens", default=0) or 0)
+            total_tokens = in_tokens + out_tokens
+        total_cost = float(
+            get_attr(
+                trace_obj,
+                "calculated_total_cost",
+                "calculatedTotalCost",
+                "total_cost",
+                "totalCost",
+                default=0,
+            )
+            or 0
+        )
+        has_io = 1 if (get_attr(trace_obj, "input") is not None or get_attr(trace_obj, "output") is not None) else 0
+        return (obs_count, total_tokens, int(total_cost * 1_000_000), has_io)
+
+    combined: list[Any] = []
+    seen_trace_positions: dict[str, int] = {}
+    max_users = 200
+    scoped_user_ids = sorted(allowed_user_ids)[:max_users]
+    if len(allowed_user_ids) > max_users:
+        logger.warning(
+            "Observability scope includes {} users; limiting trace fan-out to first {} users for this request",
+            len(allowed_user_ids),
+            max_users,
+        )
+
+    per_user_limit = max(100, min(limit, 500))
+    if fetch_all:
+        per_user_limit = 500
+
+    # For broad admin scopes, per-user fan-out can cause very high latency
+    # (clients x users x pages API calls). Use a per-client broad fetch first,
+    # then filter in-process by allowed user IDs.
+    fanout_call_budget = len(clients) * len(scoped_user_ids)
+    use_broad_fetch = fanout_call_budget > 24
+
+    def _response_to_traces(response: Any) -> list[Any]:
+        if hasattr(response, "data"):
+            return list(response.data or [])
+        if isinstance(response, list):
+            return response
+        if isinstance(response, dict):
+            return list(response.get("data", []) or [])
+        return []
+
+    def _fetch_client_traces_broad(client_obj: Any, broad_limit: int) -> list[Any]:
+        page_size = min(100, max(1, broad_limit))
+        max_pages = max(1, (broad_limit + page_size - 1) // page_size)
+
+        # Primary: high-level SDK helper
+        if hasattr(client_obj, "fetch_traces"):
+            try:
+                rows: list[Any] = []
+                for page in range(1, max_pages + 1):
+                    kwargs: dict[str, Any] = {"limit": page_size}
+                    if from_timestamp:
+                        kwargs["from_timestamp"] = from_timestamp
+                    if to_timestamp:
+                        kwargs["to_timestamp"] = to_timestamp
+                    if name:
+                        kwargs["name"] = name
+                    resp = client_obj.fetch_traces(**kwargs, page=page)
+                    page_rows = _response_to_traces(resp)
+                    if not page_rows:
+                        break
+                    rows.extend(page_rows)
+                    if len(rows) >= broad_limit:
+                        break
+                if rows:
+                    return rows[:broad_limit]
+            except Exception as exc:
+                logger.debug("Broad fetch_traces failed for scoped client: {}", exc)
+
+        # Fallback: v3 low-level REST resource
+        if hasattr(client_obj, "api"):
+            api_obj = getattr(client_obj, "api")
+            trace_api = getattr(api_obj, "trace", None) or getattr(api_obj, "traces", None)
+            if trace_api and hasattr(trace_api, "list"):
+                try:
+                    rows = []
+                    for page in range(1, max_pages + 1):
+                        kwargs = {"limit": page_size, "page": page}
+                        if from_timestamp:
+                            kwargs["from_timestamp"] = from_timestamp
+                        if to_timestamp:
+                            kwargs["to_timestamp"] = to_timestamp
+                        if name:
+                            kwargs["name"] = name
+                        resp = trace_api.list(**kwargs)
+                        page_rows = _response_to_traces(resp)
+                        if not page_rows:
+                            break
+                        rows.extend(page_rows)
+                        if len(rows) >= broad_limit:
+                            break
+                    if rows:
+                        return rows[:broad_limit]
+                except Exception as exc:
+                    logger.debug("Broad api.trace.list failed for scoped client: {}", exc)
+
+        return []
+
+    if use_broad_fetch:
+        # Fetch exactly as many traces as the endpoint requested — the old formula
+        # (limit * 3) caused super_admin to fetch 1500 traces (15 API pages) even
+        # when only 500 were needed, adding 7+ seconds of network round-trips.
+        broad_limit = 5000 if fetch_all else min(limit, 500)
+        logger.info(
+            "Using broad scoped trace fetch (fanout={} > 24, clients={}, users={}, limit={})",
+            fanout_call_budget,
+            len(clients),
+            len(scoped_user_ids),
+            broad_limit,
+        )
+
+        for client_idx, client in enumerate(clients):
+            broad_traces = _fetch_client_traces_broad(client, broad_limit)
+            for trace in broad_traces:
+                extracted_uids = _extract_trace_user_ids(trace)
+                # Only reject traces that carry an explicit user_id that is outside
+                # the allowed scope. Traces with NO user_id field come from a Langfuse
+                # project that is already scoped to this binding; they must not be
+                # silently dropped — this is critical for OTEL-based v3 traces and
+                # model-service sub-traces whose user_id may not be present in list
+                # API responses.
+                if extracted_uids and not extracted_uids.intersection(allowed_user_ids):
+                    continue
+
+                trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default="") or "")
+                if trace_id and trace_id in seen_trace_positions:
+                    existing_idx = seen_trace_positions[trace_id]
+                    existing_trace = combined[existing_idx]
+                    if _trace_quality_score(trace) > _trace_quality_score(existing_trace):
+                        combined[existing_idx] = _attach_client_idx(trace, client_idx)
+                    continue
+
+                if trace_id:
+                    seen_trace_positions[trace_id] = len(combined)
+                combined.append(_attach_client_idx(trace, client_idx))
+
+        if combined:
+            _cache_traces(cache_key, combined)
+            return combined
+
+        logger.warning(
+            "Broad scoped trace fetch returned no usable traces; falling back to per-user fan-out"
+        )
+
+    for client_idx, client in enumerate(clients):
+        for scoped_user_id in scoped_user_ids:
+            traces = fetch_traces_from_langfuse(
+                client,
+                scoped_user_id,
+                limit=per_user_limit,
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+                name=name,
+                fetch_all=fetch_all,
+            )
+            for trace in traces:
+                trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default="") or "")
+                if trace_id and trace_id in seen_trace_positions:
+                    existing_idx = seen_trace_positions[trace_id]
+                    existing_trace = combined[existing_idx]
+                    if _trace_quality_score(trace) > _trace_quality_score(existing_trace):
+                        combined[existing_idx] = _attach_client_idx(trace, client_idx)
+                    continue
+
+                if trace_id:
+                    seen_trace_positions[trace_id] = len(combined)
+                combined.append(_attach_client_idx(trace, client_idx))
+
+    if combined:
+        _cache_traces(cache_key, combined)
+        return combined
+
+    if stale_traces:
+        logger.debug("Using stale scoped trace cache for {} after empty fresh fetch", cache_key)
+        return stale_traces
+
+    return combined
+
+
+def _resolve_trace_client(trace: Any, clients: list[Any]) -> Any | None:
+    if not clients:
+        return None
+    idx = get_attr(trace, "_agentcore_client_idx", default=None)
+    try:
+        idx_int = int(idx)
+    except (TypeError, ValueError):
+        idx_int = None
+    if idx_int is not None and 0 <= idx_int < len(clients):
+        return clients[idx_int]
+    return clients[0]
 
 
 def is_v3_client(client) -> bool:
@@ -595,7 +1180,34 @@ def calculate_latency_ms(start_time, end_time) -> float | None:
     return None
 
 
+def _is_rate_limited_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 429:
+        return True
+    text = str(exc).lower()
+    return "429" in text or "rate limit" in text or "too many requests" in text
+
+
+def _call_with_rate_limit_retry(method: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call Langfuse SDK method with small bounded retry on 429 responses."""
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if not _is_rate_limited_error(exc) or attempt >= 2:
+                raise
+            backoff = min(1.5, (0.2 * (2 ** attempt)) + random.uniform(0.0, 0.1))
+            logger.debug("Langfuse rate-limited; retrying in {:.2f}s", backoff)
+            time.sleep(backoff)
+    if last_exc is not None:
+        raise last_exc
+    return None
+
+
 def _trace_cache_key(
+    client_namespace: str,
     user_id: str,
     from_timestamp: datetime | None,
     to_timestamp: datetime | None,
@@ -609,8 +1221,40 @@ def _trace_cache_key(
     from_key = from_timestamp.isoformat() if from_timestamp else ""
     to_key = to_timestamp.isoformat() if to_timestamp else ""
     return (
-        f"{user_id}|{from_key}|{to_key}|{name or ''}|{tags_key}|"
+        f"{client_namespace}|{user_id}|{from_key}|{to_key}|{name or ''}|{tags_key}|"
         f"{session_id or ''}|{effective_limit or 0}|{int(fetch_all)}"
+    )
+
+
+def _scoped_trace_cache_key(
+    *,
+    clients: list[Any],
+    allowed_user_ids: set[str],
+    from_timestamp: datetime | None,
+    to_timestamp: datetime | None,
+    name: str | None,
+    limit: int,
+    fetch_all: bool,
+) -> str:
+    client_namespaces = sorted(
+        str(getattr(client, "_trace_cache_namespace", "") or f"client:{id(client)}")
+        for client in clients
+    )
+    user_scope_hash = hashlib.sha256(
+        "|".join(sorted(allowed_user_ids)).encode("utf-8")
+    ).hexdigest()[:12] if allowed_user_ids else "none"
+    client_scope_hash = hashlib.sha256(
+        "|".join(client_namespaces).encode("utf-8")
+    ).hexdigest()[:12] if client_namespaces else "none"
+    return _trace_cache_key(
+        f"scoped:{client_scope_hash}:{user_scope_hash}",
+        user_scope_hash,
+        from_timestamp,
+        to_timestamp,
+        name,
+        None,
+        effective_limit=limit,
+        fetch_all=fetch_all,
     )
 
 
@@ -628,9 +1272,52 @@ def _cache_traces(cache_key: str, traces: list[Any]) -> None:
         _TRACE_FETCH_CACHE.pop(oldest_key, None)
 
 
-def _cache_and_return_observations(trace_id: str, observations: list) -> list:
+def _observation_cache_key(client: Any | None, trace_id: str) -> str:
+    """Build a cache key scoped to client/binding + trace id."""
+    namespace = "default"
+    if client is not None:
+        namespace = str(
+            get_attr(
+                client,
+                "_trace_cache_namespace",
+                "_agentcore_binding_id",
+                "host",
+                "_host",
+                "base_url",
+                "_base_url",
+                default="default",
+            )
+            or "default"
+        )
+    return f"{namespace}:{trace_id}"
+
+
+def _trace_metrics_cache_key(client: Any | None, trace_id: str) -> str:
+    """Build a metrics cache key scoped to client/binding + trace id."""
+    if not trace_id:
+        return trace_id
+    namespace = "default"
+    if client is not None:
+        namespace = str(
+            get_attr(
+                client,
+                "_trace_cache_namespace",
+                "_agentcore_binding_id",
+                "host",
+                "_host",
+                "base_url",
+                "_base_url",
+                default="default",
+            )
+            or "default"
+        )
+    return f"{namespace}:{trace_id}"
+
+
+def _cache_and_return_observations(trace_id: str, observations: list, cache_key: str | None = None) -> list:
     """Store observations in the process-local cache then return them."""
-    _OBSERVATIONS_CACHE[trace_id] = {
+    key = cache_key or trace_id
+    _OBSERVATIONS_CACHE[key] = {
         "ts": time.monotonic(),
         "observations": observations,
     }
@@ -643,11 +1330,83 @@ def _cache_and_return_observations(trace_id: str, observations: list) -> list:
     return observations
 
 
+def _fetch_observations_with_fallback(
+    primary_client: Any,
+    all_clients: list[Any],
+    trace_id: str,
+) -> list:
+    """Fetch observations trying primary_client first, then all other clients.
+
+    Critical for super_admin / root roles where traces may live in a different
+    Langfuse project (binding) than the one resolved as the 'primary' for the
+    trace.  If primary returns empty but another client has observations, those
+    are returned and ALSO cached under the primary client's namespace so that
+    subsequent ``_get_trace_metrics`` calls (which resolve by primary namespace)
+    still find them in cache without an extra API call.
+    """
+    obs = fetch_observations_for_trace(primary_client, trace_id)
+    if obs:
+        return obs
+
+    primary_key = _observation_cache_key(primary_client, trace_id)
+    for fb_client in all_clients:
+        if fb_client is primary_client:
+            continue
+        obs = fetch_observations_for_trace(fb_client, trace_id)
+        if obs:
+            # Cross-reference: also store under primary client's cache key so
+            # _get_trace_metrics finds the data when it queries with primary_key.
+            _OBSERVATIONS_CACHE[primary_key] = {
+                "ts": time.monotonic(),
+                "observations": obs,
+            }
+            _REQUEST_OBSERVATIONS_CACHE[primary_key] = list(obs)
+            return obs
+    return []
+
+
+def _fetch_trace_detail_with_fallback(
+    primary_client: Any,
+    all_clients: list[Any],
+    trace_id: str,
+) -> Any | None:
+    """Fetch trace detail trying primary_client first, then all other clients.
+
+    For super_admin / root, the trace may exist in a different Langfuse project
+    than expected (e.g., org_admin vs department binding).  Trying all clients
+    ensures we get the richest available trace payload.
+    """
+    trace_obj = _fetch_trace_by_id(primary_client, trace_id)
+    if trace_obj is not None:
+        return trace_obj
+    for fb_client in all_clients:
+        if fb_client is primary_client:
+            continue
+        trace_obj = _fetch_trace_by_id(fb_client, trace_id)
+        if trace_obj is not None:
+            return trace_obj
+    return None
+
+
 def _extract_trace_metrics(trace: Any) -> tuple[int, int, int, float, float | None, list[str], int]:
     """Read aggregate metrics from trace-level fields without N+1 observation calls."""
     total_tokens = int(get_attr(trace, "totalTokens", "total_tokens", default=0) or 0)
     input_tokens = int(get_attr(trace, "inputTokens", "input_tokens", "promptTokens", default=0) or 0)
     output_tokens = int(get_attr(trace, "outputTokens", "output_tokens", "completionTokens", default=0) or 0)
+
+    # Langfuse v3 trace payloads often expose usage in `usage_details`
+    # even when token summary fields are empty.
+    usage_details = get_attr(trace, "usage_details", "usageDetails", default={}) or {}
+    if not (input_tokens or output_tokens or total_tokens) and usage_details:
+        if isinstance(usage_details, dict):
+            input_tokens = int(usage_details.get("input", 0) or 0)
+            output_tokens = int(usage_details.get("output", 0) or 0)
+            total_tokens = int(usage_details.get("total", 0) or (input_tokens + output_tokens))
+        elif hasattr(usage_details, "input"):
+            input_tokens = int(getattr(usage_details, "input", 0) or 0)
+            output_tokens = int(getattr(usage_details, "output", 0) or 0)
+            total_tokens = int(getattr(usage_details, "total", 0) or (input_tokens + output_tokens))
+
     if not total_tokens and (input_tokens or output_tokens):
         total_tokens = input_tokens + output_tokens
     if total_tokens and input_tokens == 0 and output_tokens == 0:
@@ -665,6 +1424,16 @@ def _extract_trace_metrics(trace: Any) -> tuple[int, int, int, float, float | No
         )
         or 0
     )
+
+    # Langfuse v3 trace payloads can expose costs in `cost_details`.
+    if total_cost == 0.0:
+        cost_details = get_attr(trace, "cost_details", "costDetails", default={}) or {}
+        if isinstance(cost_details, dict):
+            total_cost = float(cost_details.get("total", 0) or 0)
+            if total_cost == 0.0:
+                in_cost = float(cost_details.get("input", 0) or 0)
+                out_cost = float(cost_details.get("output", 0) or 0)
+                total_cost = in_cost + out_cost
 
     # Try explicit ms fields first (custom instrumentation may set these)
     latency_ms: float | None = None
@@ -684,12 +1453,41 @@ def _extract_trace_metrics(trace: Any) -> tuple[int, int, int, float, float | No
                 pass
 
     metadata = _normalize_metadata(get_attr(trace, "metadata", "meta"))
+    usage_from_metadata = metadata.get("agentcore_usage") or metadata.get("usage") or {}
+    if isinstance(usage_from_metadata, str):
+        usage_from_metadata = _normalize_metadata(usage_from_metadata)
+
+    if not (input_tokens or output_tokens or total_tokens) and isinstance(usage_from_metadata, dict):
+        input_tokens = int(
+            usage_from_metadata.get("input_tokens")
+            or usage_from_metadata.get("input")
+            or usage_from_metadata.get("prompt_tokens")
+            or usage_from_metadata.get("prompt")
+            or 0
+        )
+        output_tokens = int(
+            usage_from_metadata.get("output_tokens")
+            or usage_from_metadata.get("output")
+            or usage_from_metadata.get("completion_tokens")
+            or usage_from_metadata.get("completion")
+            or 0
+        )
+        total_tokens = int(
+            usage_from_metadata.get("total_tokens")
+            or usage_from_metadata.get("total")
+            or (input_tokens + output_tokens)
+        )
+
     models = []
     model_candidates = [
         get_attr(trace, "model"),
+        get_attr(trace, "model_name", "modelName"),
         metadata.get("model"),
         metadata.get("model_name"),
         metadata.get("generation_model"),
+        metadata.get("provider_model"),
+        usage_from_metadata.get("model") if isinstance(usage_from_metadata, dict) else None,
+        usage_from_metadata.get("model_name") if isinstance(usage_from_metadata, dict) else None,
     ]
     for candidate in model_candidates:
         if candidate:
@@ -715,8 +1513,9 @@ def _get_trace_observation_count(trace: Any) -> int:
 # =============================================================================
 
 async def _fetch_metrics_background(
-    user_id: str,
     cache_key: str,
+    clients: list[Any],
+    allowed_user_ids: list[str] | set[str],
     from_timestamp: datetime,
     to_timestamp: datetime,
     search: str | None = None,
@@ -730,17 +1529,19 @@ async def _fetch_metrics_background(
     """
     try:
         logger.debug(f"Background fetch started for {cache_key}")
-        
-        # Get Langfuse client
-        client = get_langfuse_client()
-        if not client:
-            logger.warning(f"Langfuse client not available for background fetch: {cache_key}")
+
+        if not clients:
+            logger.warning(f"No scoped Langfuse clients for background fetch: {cache_key}")
             return
-        
-        # Perform the expensive fetch from Langfuse
-        raw_traces = fetch_traces_from_langfuse(
-            client,
-            user_id,
+
+        allowed_users = set(str(uid) for uid in allowed_user_ids)
+        if not allowed_users:
+            logger.warning(f"No allowed users in scope for background fetch: {cache_key}")
+            return
+
+        raw_traces = _fetch_scoped_traces(
+            clients=clients,
+            allowed_user_ids=allowed_users,
             limit=500,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
@@ -758,6 +1559,8 @@ async def _fetch_metrics_background(
             raw_traces,
             models,
             include_model_breakdown=include_model_breakdown,
+            client=clients[0],
+            clients=clients,
         )
         
         # Update cache with fresh data
@@ -784,7 +1587,7 @@ async def _trigger_background_refresh(
 ) -> None:
     """
     Trigger background refresh if conditions are met:
-    1. Data is stale (age between FRESH and STALE thresholds)
+    1. Data is stale (age between FRESH and EXPIRED thresholds)
     2. Not already fetching
     3. Concurrent fetch limit not exceeded
     """
@@ -824,6 +1627,8 @@ def _build_metrics_from_traces(
     raw_traces: list[Any],
     models: str | None,
     include_model_breakdown: bool,
+    client: Any | None = None,
+    clients: list[Any] | None = None,
 ) -> dict[str, Any]:
     """
     Build metrics from traces (extracted from endpoint logic).
@@ -860,9 +1665,14 @@ def _build_metrics_from_traces(
         "count": 0, "tokens": 0, "cost": 0.0
     })
     
-    client = get_langfuse_client()
-    
+    primary_client = client or (clients[0] if clients else None) or get_langfuse_client()
+
+    # Pre-fetch observations in parallel for traces that lack trace-level token data.
+    # This converts the serial N×observation-call pattern into one parallel fan-out.
+    _pre_enrich_traces(raw_traces, list(clients or ([client] if client else [])))
+
     for trace in raw_traces:
+        trace_client = _resolve_trace_client(trace, clients or []) or primary_client
         trace_id = get_attr(trace, 'id')
         trace_name = get_attr(trace, 'name') or 'Unknown'
         session_id = get_attr(trace, 'session_id', 'sessionId')
@@ -874,22 +1684,22 @@ def _build_metrics_from_traces(
         date_str = timestamp.strftime('%Y-%m-%d') if timestamp else 'Unknown'
         daily_data[date_str]["trace_count"] += 1
         
-        # Get trace metrics
+        # Get trace metrics — trace-level fields are used directly.
+        # Observation fallback is ENABLED here; the cache was pre-warmed in parallel
+        # by _pre_enrich_traces above, so these calls return from cache instantly.
         trace_metrics = _get_trace_metrics(
-            client,
+            trace_client,
             trace,
-            allow_observation_fallback=not include_model_breakdown,
+            allow_observation_fallback=True,
             fallback_budget=fallback_budget,
+            all_clients=list(clients or []),
         )
-        
         trace_tokens = int(trace_metrics["total_tokens"])
         trace_input_tokens = int(trace_metrics["input_tokens"])
         trace_output_tokens = int(trace_metrics["output_tokens"])
         trace_cost = float(trace_metrics["total_cost"])
         trace_latency_ms = trace_metrics["latency_ms"]
         trace_models = list(trace_metrics["models"])
-        
-        # Aggregate overall metrics
         total_tokens += trace_tokens
         input_tokens += trace_input_tokens
         output_tokens += trace_output_tokens
@@ -952,7 +1762,7 @@ def _build_metrics_from_traces(
                 total_tokens=data["total_tokens"],
                 total_cost=data["total_cost"],
             ))
-    by_date = by_date[-30:]  # Keep only last 30 days for background refresh
+    by_date = by_date[-30:]  # Keep only last 30 days of trend data
     
     # Build top agents
     top_agents = [
@@ -984,6 +1794,7 @@ def _get_trace_metrics(
     *,
     allow_observation_fallback: bool = True,
     fallback_budget: dict[str, int] | None = None,
+    all_clients: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Get trace metrics with smart fallback strategy.
 
@@ -994,8 +1805,14 @@ def _get_trace_metrics(
     - allow_observation_fallback=True AND
     - fallback_budget has remaining calls AND
     - NO trace-level metrics at all (zero tokens AND zero cost AND no models)
+
+    all_clients: full list of scoped Langfuse clients.  When supplied, enables
+    cross-project fallback so that super_admin / root users whose traces may
+    live in a different Langfuse project (binding) than the primary resolved
+    client still get correct token data.
     """
     trace_id = _get_trace_id(trace)
+    metrics_cache_key = _trace_metrics_cache_key(client, trace_id) if trace_id else trace_id
     now_mono = time.monotonic()
 
     def _needs_enrichment(data: dict[str, Any]) -> bool:
@@ -1005,7 +1822,21 @@ def _get_trace_metrics(
             and not list(data.get("models") or [])
         )
 
+    def _has_cacheable_signal(data: dict[str, Any]) -> bool:
+        return (
+            int(data.get("total_tokens") or 0) > 0
+            or float(data.get("total_cost") or 0.0) > 0.0
+            or bool(list(data.get("models") or []))
+            or int(data.get("observation_count") or 0) > 0
+            or data.get("latency_ms") is not None
+        )
+
     # Check request-scoped metrics cache first (within same request)
+    if metrics_cache_key and metrics_cache_key in _REQUEST_METRICS_CACHE:
+        request_cached = dict(_REQUEST_METRICS_CACHE[metrics_cache_key])
+        if not (allow_observation_fallback and trace_id and _needs_enrichment(request_cached)):
+            return request_cached
+    # Backward compatibility with pre-namespace cache keys
     if trace_id in _REQUEST_METRICS_CACHE:
         request_cached = dict(_REQUEST_METRICS_CACHE[trace_id])
         if not (allow_observation_fallback and trace_id and _needs_enrichment(request_cached)):
@@ -1013,11 +1844,14 @@ def _get_trace_metrics(
 
     # Check process-level TTL cache
     if trace_id:
-        cached = _TRACE_METRICS_CACHE.get(trace_id)
+        cached = _TRACE_METRICS_CACHE.get(metrics_cache_key) if metrics_cache_key else None
+        if cached is None:
+            # Backward compatibility with pre-namespace cache keys
+            cached = _TRACE_METRICS_CACHE.get(trace_id)
         if cached and (now_mono - float(cached.get("ts", 0))) <= _TRACE_METRICS_CACHE_TTL_SECONDS:
             result = dict(cached.get("metrics", {}))
             if not (allow_observation_fallback and _needs_enrichment(result)):
-                _REQUEST_METRICS_CACHE[trace_id] = result
+                _REQUEST_METRICS_CACHE[metrics_cache_key or trace_id] = result
                 return result
 
     (
@@ -1044,22 +1878,62 @@ def _get_trace_metrics(
 
     # SMART FALLBACK: Only fetch observations if trace-level data is COMPLETELY missing
     # Don't fetch if we have any trace-level metrics (tokens or cost or models)
+    has_partial_trace_gap = (
+        (
+            int(metrics["total_tokens"] or 0) > 0
+            or float(metrics["total_cost"] or 0.0) > 0.0
+            or int(metrics["observation_count"] or 0) > 0
+        )
+        and (int(metrics["total_tokens"] or 0) == 0 or not metrics["models"])
+    )
+
     needs_fallback = (
         allow_observation_fallback
         and bool(trace_id)
-        and metrics["total_tokens"] == 0  # No tokens at all
-        and metrics["total_cost"] == 0.0  # No cost at all
-        and not metrics["models"]  # No models recorded
+        and (
+            (
+                metrics["total_tokens"] == 0
+                and metrics["total_cost"] == 0.0
+                and not metrics["models"]
+            )
+            or has_partial_trace_gap
+        )
     )
 
-    if needs_fallback and fallback_budget is not None and fallback_budget.get("remaining", 0) <= 0:
+    # Determine whether observations are already in any cache tier (populated by
+    # _pre_enrich_traces).  Cache hits do NOT count against the fallback budget —
+    # the budget exists solely to limit *live* Langfuse API calls.
+    # NOTE: _cache_and_return_observations only writes to _OBSERVATIONS_CACHE (process-level),
+    # NOT to _REQUEST_OBSERVATIONS_CACHE, so we must check both tiers here.
+    _tid_s = str(trace_id) if trace_id else ""
+    _obs_key = _observation_cache_key(client, _tid_s) if _tid_s else ""
+    _obs_in_request_cache = bool(_tid_s) and (
+        _obs_key in _REQUEST_OBSERVATIONS_CACHE
+        or _tid_s in _REQUEST_OBSERVATIONS_CACHE
+    )
+    _obs_process_entry = (
+        _OBSERVATIONS_CACHE.get(_obs_key) or _OBSERVATIONS_CACHE.get(_tid_s)
+    ) if _tid_s else None
+    _obs_in_process_cache = bool(_obs_process_entry) and (
+        (now_mono - float(_obs_process_entry.get("ts", 0))) <= _OBSERVATIONS_CACHE_TTL_SECONDS
+    )
+    _obs_in_cache = _obs_in_request_cache or _obs_in_process_cache
+
+    if needs_fallback and not _obs_in_cache and fallback_budget is not None and fallback_budget.get("remaining", 0) <= 0:
         needs_fallback = False
 
     if needs_fallback and trace_id:
-        if fallback_budget is not None:
+        # Only deduct from the live-call budget when we actually hit Langfuse.
+        if fallback_budget is not None and not _obs_in_cache:
             fallback_budget["remaining"] = max(0, fallback_budget.get("remaining", 0) - 1)
         try:
-            raw_observations = fetch_observations_for_trace(client, trace_id)
+            # Use multi-client fallback when all_clients provided: handles the
+            # super_admin / root case where traces live in a different Langfuse
+            # project (binding) than the primary resolved client.
+            if all_clients and len(all_clients) > 1:
+                raw_observations = _fetch_observations_with_fallback(client, all_clients, trace_id)
+            else:
+                raw_observations = fetch_observations_for_trace(client, trace_id)
             parsed_obs = [parse_observation(obs) for obs in raw_observations]
             if parsed_obs:
                 obs_total_tokens = sum(o.total_tokens for o in parsed_obs)
@@ -1090,8 +1964,64 @@ def _get_trace_metrics(
         except Exception:
             pass
 
-    if trace_id:
-        _TRACE_METRICS_CACHE[trace_id] = {
+    # Try full trace-detail payload before observation fan-out.
+    # This is usually cheaper and often contains token/model fields that list rows omit.
+    still_missing = (
+        int(metrics.get("total_tokens") or 0) == 0
+        or not list(metrics.get("models") or [])
+    )
+    allow_trace_refetch = bool(trace_id) and still_missing
+    if allow_trace_refetch and fallback_budget is not None and fallback_budget.get("remaining", 0) <= 0:
+        allow_trace_refetch = False
+    if allow_trace_refetch and trace_id:
+        try:
+            if fallback_budget is not None:
+                fallback_budget["remaining"] = max(0, fallback_budget.get("remaining", 0) - 1)
+            # Use multi-client fallback so super_admin / root fetches the richest
+            # available trace payload across all Langfuse projects/bindings.
+            if all_clients and len(all_clients) > 1:
+                full_trace = _fetch_trace_detail_with_fallback(client, all_clients, trace_id)
+            else:
+                full_trace = _fetch_trace_by_id(client, trace_id)
+            if full_trace is not None:
+                (
+                    ft_total,
+                    ft_input,
+                    ft_output,
+                    ft_cost,
+                    ft_latency,
+                    ft_models,
+                    ft_errors,
+                ) = _extract_trace_metrics(full_trace)
+
+                if int(metrics.get("total_tokens") or 0) == 0 and int(ft_total or 0) > 0:
+                    metrics["total_tokens"] = int(ft_total)
+                    if int(metrics.get("input_tokens") or 0) == 0 and int(metrics.get("output_tokens") or 0) == 0:
+                        metrics["input_tokens"] = int(ft_input or 0)
+                        metrics["output_tokens"] = int(ft_output or 0)
+
+                if not list(metrics.get("models") or []) and ft_models:
+                    metrics["models"] = list(ft_models)
+
+                if metrics.get("latency_ms") is None and ft_latency is not None:
+                    metrics["latency_ms"] = ft_latency
+
+                metrics["error_count"] = max(int(metrics.get("error_count") or 0), int(ft_errors or 0))
+        except Exception:
+            pass
+
+    still_missing = (
+        int(metrics.get("total_tokens") or 0) == 0
+        or not list(metrics.get("models") or [])
+    )
+
+    # Only write to the process-level metrics cache when we have real token data.
+    # Caching zero-token entries (e.g. only latency is present) causes all other
+    # endpoints within the 60-second TTL window to receive stale zeros and skip
+    # enrichment, producing missing tokens on agents / projects / sessions pages.
+    has_tokens = int(metrics.get("total_tokens") or 0) > 0
+    if trace_id and has_tokens and _has_cacheable_signal(metrics):
+        _TRACE_METRICS_CACHE[metrics_cache_key or trace_id] = {
             "ts": now_mono,
             "metrics": metrics,
         }
@@ -1104,7 +2034,7 @@ def _get_trace_metrics(
             _TRACE_METRICS_CACHE.pop(oldest_key, None)
 
     # Cache in request scope
-    _REQUEST_METRICS_CACHE[trace_id] = metrics
+    _REQUEST_METRICS_CACHE[metrics_cache_key or trace_id] = metrics
     return metrics
 
 
@@ -1118,6 +2048,7 @@ def fetch_traces_from_langfuse(
     tags: list[str] | None = None,
     session_id: str | None = None,
     fetch_all: bool = False,
+    _date_fallback_depth: int = 0,
 ) -> list:
     """
     Fetch traces from Langfuse using the appropriate SDK method.
@@ -1142,7 +2073,9 @@ def fetch_traces_from_langfuse(
     effective_limit = 5000 if fetch_all else limit
     # Langfuse API has a max limit of 100 per request
     page_size = min(100, effective_limit)
+    client_namespace = str(getattr(client, "_trace_cache_namespace", "") or f"client:{id(client)}")
     cache_key = _trace_cache_key(
+        client_namespace,
         user_id,
         from_timestamp,
         to_timestamp,
@@ -1196,7 +2129,7 @@ def fetch_traces_from_langfuse(
 
             while page <= max_pages:
                 logger.debug(f"Fetching page {page} with filters: {filter_kwargs}")
-                response = client.fetch_traces(**filter_kwargs, page=page)
+                response = _call_with_rate_limit_retry(client.fetch_traces, **filter_kwargs, page=page)
 
                 page_traces = []
                 if hasattr(response, 'data'):
@@ -1269,7 +2202,7 @@ def fetch_traces_from_langfuse(
                         if tags:
                             list_kwargs["tags"] = tags
                         try:
-                            response = trace_api.list(**list_kwargs)
+                            response = _call_with_rate_limit_retry(trace_api.list, **list_kwargs)
                         except TypeError as e:
                             # Some SDK versions reject unknown keyword variants (e.g. userId).
                             logger.debug(f"trace_api.list rejected kwargs {list_kwargs.keys()}: {e}")
@@ -1330,7 +2263,7 @@ def fetch_traces_from_langfuse(
 
             while page <= max_pages:
                 logger.debug(f"Fallback fetching page {page} without user filter, limit={page_size}")
-                response = client.fetch_traces(**fallback_kwargs, page=page)
+                response = _call_with_rate_limit_retry(client.fetch_traces, **fallback_kwargs, page=page)
 
                 page_traces = []
                 if hasattr(response, 'data'):
@@ -1379,7 +2312,7 @@ def fetch_traces_from_langfuse(
     if hasattr(client, 'client') and hasattr(client.client, 'traces'):
         try:
             logger.debug(f"Attempting direct client.traces.list(user_id={user_id})")
-            response = client.client.traces.list(user_id=user_id, limit=page_size)
+            response = _call_with_rate_limit_retry(client.client.traces.list, user_id=user_id, limit=page_size)
             if hasattr(response, 'data'):
                 trace_data = response.data or []
             elif isinstance(response, list):
@@ -1393,8 +2326,9 @@ def fetch_traces_from_langfuse(
 
     # Date-filter fallback: some SDK/API combinations return intermittent empty
     # results for date-filtered list calls. Retry without date filter and
-    # apply the date window client-side.
-    if not trace_data and (from_timestamp or to_timestamp):
+    # apply the date window client-side.  Guard against infinite recursion by
+    # only attempting this fallback once (depth=0 → allowed, depth≥1 → skip).
+    if not trace_data and (from_timestamp or to_timestamp) and _date_fallback_depth == 0:
         try:
             # Use a broader unfiltered fetch on fallback to avoid false-empty
             # windows (notably for narrow ranges like "today") when server-side
@@ -1410,6 +2344,7 @@ def fetch_traces_from_langfuse(
                 tags=tags,
                 session_id=session_id,
                 fetch_all=True,
+                _date_fallback_depth=_date_fallback_depth + 1,
             )
             if unfiltered:
                 filtered: list[Any] = []
@@ -1434,7 +2369,7 @@ def fetch_traces_from_langfuse(
     # non-empty trace cache for this user and filter by the current window.
     if not trace_data and (from_timestamp or to_timestamp):
         newest_user_cache: tuple[float, list[Any]] | None = None
-        user_key_prefix = f"{user_id}|"
+        user_key_prefix = f"{client_namespace}|{user_id}|"
         for key, entry in _TRACE_FETCH_CACHE.items():
             if not key.startswith(user_key_prefix):
                 continue
@@ -1483,19 +2418,27 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
     3. Langfuse API (slowest)
     """
     trace_id_str = str(trace_id)
+    obs_cache_key = _observation_cache_key(client, trace_id_str)
 
     # Tier 1: Request-scoped cache (deduplicate within single API request)
-    if trace_id_str in _REQUEST_OBSERVATIONS_CACHE:
+    if obs_cache_key in _REQUEST_OBSERVATIONS_CACHE:
         logger.debug(f"Request cache hit for observations: trace_id={trace_id_str}")
+        return list(_REQUEST_OBSERVATIONS_CACHE[obs_cache_key])
+    # Backward compatibility with pre-namespace keys
+    if trace_id_str in _REQUEST_OBSERVATIONS_CACHE:
+        logger.debug(f"Legacy request cache hit for observations: trace_id={trace_id_str}")
         return list(_REQUEST_OBSERVATIONS_CACHE[trace_id_str])
 
     # Tier 2: Check process-local cache to avoid redundant high-latency Langfuse calls
     _now_mono = time.monotonic()
-    _obs_cached = _OBSERVATIONS_CACHE.get(trace_id_str)
+    _obs_cached = _OBSERVATIONS_CACHE.get(obs_cache_key)
+    if _obs_cached is None:
+        # Backward compatibility with pre-namespace keys
+        _obs_cached = _OBSERVATIONS_CACHE.get(trace_id_str)
     if _obs_cached and (_now_mono - float(_obs_cached.get("ts", 0))) <= _OBSERVATIONS_CACHE_TTL_SECONDS:
         logger.debug(f"Process cache hit for observations: trace_id={trace_id_str}")
         result = list(_obs_cached.get("observations", []))
-        _REQUEST_OBSERVATIONS_CACHE[trace_id_str] = result
+        _REQUEST_OBSERVATIONS_CACHE[obs_cache_key] = result
         return result
 
     observations = []
@@ -1512,14 +2455,23 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
     def _try_call(method: Any) -> list:
         if not callable(method):
             return []
-        variants = [
-            {"trace_id": trace_id, "limit": 100},
-            {"traceId": trace_id, "limit": 100},
-            {"trace": trace_id, "limit": 100},
-        ]
+        tid = str(trace_id)
+        normalized_variants = [tid]
+        if "-" in tid:
+            normalized_variants.append(tid.replace("-", ""))
+        elif len(tid) == 32:
+            normalized_variants.append(f"{tid[:8]}-{tid[8:12]}-{tid[12:16]}-{tid[16:20]}-{tid[20:]}")
+
+        variants = []
+        for _tid in normalized_variants:
+            variants.extend([
+                {"trace_id": _tid, "limit": 100},
+                {"traceId": _tid, "limit": 100},
+                {"trace": _tid, "limit": 100},
+            ])
         for kwargs in variants:
             try:
-                rows = _response_to_list(method(**kwargs))
+                rows = _response_to_list(_call_with_rate_limit_retry(method, **kwargs))
                 if rows:
                     return rows
             except TypeError:
@@ -1533,7 +2485,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
         try:
             observations = _try_call(client.fetch_observations)
             if observations:
-                return _cache_and_return_observations(str(trace_id), observations)
+                return _cache_and_return_observations(str(trace_id), observations, cache_key=obs_cache_key)
         except Exception as e:
             logger.debug(f"fetch_observations failed for trace {trace_id}: {e}")
 
@@ -1544,7 +2496,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
             try:
                 observations = _try_call(obs_client.get_many)
                 if observations:
-                    return _cache_and_return_observations(str(trace_id), observations)
+                    return _cache_and_return_observations(str(trace_id), observations, cache_key=obs_cache_key)
             except Exception as e:
                 logger.debug(f"api.observations.get_many failed for trace {trace_id}: {e}")
 
@@ -1552,7 +2504,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
             try:
                 observations = _try_call(obs_client.list)
                 if observations:
-                    return _cache_and_return_observations(str(trace_id), observations)
+                    return _cache_and_return_observations(str(trace_id), observations, cache_key=obs_cache_key)
             except Exception as e:
                 logger.debug(f"api.observations.list failed for trace {trace_id}: {e}")
 
@@ -1563,7 +2515,7 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
             try:
                 observations = _try_call(obs_v2_client.get_many)
                 if observations:
-                    return _cache_and_return_observations(str(trace_id), observations)
+                    return _cache_and_return_observations(str(trace_id), observations, cache_key=obs_cache_key)
             except Exception as e:
                 logger.debug(f"api.observations_v_2.get_many failed for trace {trace_id}: {e}")
 
@@ -1572,19 +2524,30 @@ def fetch_observations_for_trace(client, trace_id: str) -> list:
         try:
             observations = _try_call(client.client.observations.list)
             if observations:
-                return _cache_and_return_observations(str(trace_id), observations)
+                return _cache_and_return_observations(str(trace_id), observations, cache_key=obs_cache_key)
         except Exception as e:
             logger.debug(f"client.client.observations.list failed for trace {trace_id}: {e}")
+
+    # Last fallback: fetch full trace and reuse embedded observations if available.
+    # Some SDK/resource variants return observations only on trace-detail calls.
+    try:
+        trace_obj = _fetch_trace_by_id(client, str(trace_id))
+        embedded = get_attr(trace_obj, "observations", default=[]) if trace_obj else []
+        if isinstance(embedded, (list, tuple)) and embedded:
+            observations = list(embedded)
+            return _cache_and_return_observations(str(trace_id), observations, cache_key=obs_cache_key)
+    except Exception:
+        pass
 
     # Only persist NON-EMPTY results in the 60s cache.
     # Empty results must NOT be cached persistently — if Langfuse returned nothing this request
     # (API hiccup, indexing lag, etc.) the next request should try fresh.
     # The request-scoped cache still deduplicates within the same API call.
     if observations:
-        final_observations = _cache_and_return_observations(trace_id_str, observations)
+        final_observations = _cache_and_return_observations(trace_id_str, observations, cache_key=obs_cache_key)
     else:
         final_observations = observations
-    _REQUEST_OBSERVATIONS_CACHE[trace_id_str] = list(final_observations)
+    _REQUEST_OBSERVATIONS_CACHE[obs_cache_key] = list(final_observations)
     return final_observations
 
 
@@ -1631,7 +2594,7 @@ def fetch_scores_for_trace(client, trace_id: str, user_id: str | None = None, li
             added += 1
         return added
 
-    # Method 0: v3 API score_v_2.get (most reliable in Langfuse v3)
+    # Method 0: v3 API score_v_2.get (primary path for Langfuse v3)
     if hasattr(client, "api") and hasattr(client.api, "score_v_2"):
         try:
             kwargs: dict[str, Any] = {"trace_id": trace_id, "limit": limit}
@@ -1639,54 +2602,26 @@ def fetch_scores_for_trace(client, trace_id: str, user_id: str | None = None, li
                 kwargs["user_id"] = user_id
             try:
                 kwargs["fields"] = "score,trace"
-                payload = client.api.score_v_2.get(**kwargs)
+                payload = _call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
             except TypeError:
                 kwargs.pop("fields", None)
-                payload = client.api.score_v_2.get(**kwargs)
+                payload = _call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
             _append_scores(payload, already_filtered_by_trace=True)
+            if scores:
+                scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                return scores
         except Exception as e:
             logger.debug(f"api.score_v_2.get failed for trace {trace_id}: {e}")
 
-    # Method 1: legacy SDK helper
+    # Method 1: legacy SDK helper fallback
     if hasattr(client, "fetch_scores"):
         try:
-            _append_scores(client.fetch_scores(trace_id=trace_id))
+            _append_scores(_call_with_rate_limit_retry(client.fetch_scores, trace_id=trace_id))
+            if scores:
+                scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                return scores
         except Exception as e:
             logger.debug(f"fetch_scores failed for trace {trace_id}: {e}")
-
-    # Method 2: direct client scores API (v2/v3 variants)
-    if hasattr(client, "client") and hasattr(client.client, "scores"):
-        try:
-            kwargs: dict[str, Any] = {"trace_id": trace_id, "limit": limit}
-            if user_id:
-                kwargs["user_id"] = user_id
-            try:
-                payload = client.client.scores.list(**kwargs)
-            except TypeError:
-                kwargs.pop("user_id", None)
-                payload = client.client.scores.list(**kwargs)
-            _append_scores(payload, already_filtered_by_trace=True)
-        except Exception as e:
-            logger.debug(f"client.scores.list failed for trace {trace_id}: {e}")
-
-    # Method 3: v3 REST resources under client.api.score(s).list where available.
-    if hasattr(client, "api"):
-        for attr in ("scores", "score"):
-            score_api = getattr(client.api, attr, None)
-            if not score_api or not hasattr(score_api, "list"):
-                continue
-            try:
-                kwargs = {"trace_id": trace_id, "limit": limit}
-                if user_id:
-                    kwargs["user_id"] = user_id
-                try:
-                    payload = score_api.list(**kwargs)
-                except TypeError:
-                    kwargs.pop("user_id", None)
-                    payload = score_api.list(**kwargs)
-                _append_scores(payload, already_filtered_by_trace=True)
-            except Exception as e:
-                logger.debug(f"api.{attr}.list failed for trace {trace_id}: {e}")
 
     # Some providers/SDK variants do not persist user_id on scores even when the trace
     # belongs to the user. If the user-filtered fetch returns empty, retry by trace only.
@@ -1702,6 +2637,35 @@ def fetch_scores_for_trace(client, trace_id: str, user_id: str | None = None, li
     return scores
 
 
+def _fetch_trace_by_id(client: Any, trace_id: str) -> Any | None:
+    """Fetch a single trace by id with UUID formatting fallbacks."""
+    tid = str(trace_id)
+    id_variants = [tid]
+    if "-" in tid:
+        id_variants.append(tid.replace("-", ""))
+    elif len(tid) == 32:
+        id_variants.append(f"{tid[:8]}-{tid[8:12]}-{tid[12:16]}-{tid[16:20]}-{tid[20:]}")
+
+    for tid_variant in id_variants:
+        if hasattr(client, "fetch_trace"):
+            try:
+                response = _call_with_rate_limit_retry(client.fetch_trace, tid_variant)
+                trace_obj = response.data if hasattr(response, "data") else response
+                if trace_obj:
+                    return trace_obj
+            except Exception:
+                pass
+
+        if hasattr(client, "api") and hasattr(client.api, "trace") and hasattr(client.api.trace, "get"):
+            try:
+                trace_obj = _call_with_rate_limit_retry(client.api.trace.get, tid_variant)
+                if trace_obj:
+                    return trace_obj
+            except Exception:
+                pass
+    return None
+
+
 def parse_observation(obs: Any) -> ObservationResponse:
     """Parse a Langfuse observation into our response model."""
     obs_id = get_attr(obs, 'id', default='')
@@ -1715,6 +2679,8 @@ def parse_observation(obs: Any) -> ObservationResponse:
     ttft_ms = calculate_latency_ms(start_time, completion_start) if completion_start else None
 
     metadata = _normalize_metadata(get_attr(obs, 'metadata', 'meta', default={}) or {})
+    obs_output = get_attr(obs, 'output')
+    output_dict = obs_output if isinstance(obs_output, dict) else {}
 
     # Extract usage data
     # Langfuse v3: `usage` is deprecated; actual counts live in `usage_details`
@@ -1738,9 +2704,25 @@ def parse_observation(obs: Any) -> ObservationResponse:
     # Langfuse v3 primary token source: usage_details dict wins when usage is empty/zero
     if not (input_tokens or output_tokens or total_tokens) and usage_details:
         if isinstance(usage_details, dict):
-            input_tokens = int(usage_details.get('input', 0) or 0)
-            output_tokens = int(usage_details.get('output', 0) or 0)
-            total_tokens = int(usage_details.get('total', 0) or (input_tokens + output_tokens))
+            input_tokens = int(
+                usage_details.get('input', 0)
+                or usage_details.get('input_tokens', 0)
+                or usage_details.get('prompt', 0)
+                or usage_details.get('prompt_tokens', 0)
+                or 0
+            )
+            output_tokens = int(
+                usage_details.get('output', 0)
+                or usage_details.get('output_tokens', 0)
+                or usage_details.get('completion', 0)
+                or usage_details.get('completion_tokens', 0)
+                or 0
+            )
+            total_tokens = int(
+                usage_details.get('total', 0)
+                or usage_details.get('total_tokens', 0)
+                or (input_tokens + output_tokens)
+            )
         elif hasattr(usage_details, 'input'):
             input_tokens = int(getattr(usage_details, 'input', 0) or 0)
             output_tokens = int(getattr(usage_details, 'output', 0) or 0)
@@ -1752,6 +2734,9 @@ def parse_observation(obs: Any) -> ObservationResponse:
         usage_from_metadata = _normalize_metadata(usage_from_metadata)
     if not isinstance(usage_from_metadata, dict):
         usage_from_metadata = {}
+
+    if not usage_from_metadata and isinstance(metadata.get('usage'), dict):
+        usage_from_metadata = metadata.get('usage') or {}
 
     if not (input_tokens or output_tokens or total_tokens) and usage_from_metadata:
         input_tokens = int(
@@ -1775,6 +2760,31 @@ def parse_observation(obs: Any) -> ObservationResponse:
             or (input_tokens + output_tokens)
         )
 
+    # LangChain/model-service style payloads often include usage inside output.
+    output_usage = output_dict.get('usage') or output_dict.get('token_usage') or output_dict.get('usage_metadata') or {}
+    if isinstance(output_usage, str):
+        output_usage = _normalize_metadata(output_usage)
+    if not (input_tokens or output_tokens or total_tokens) and isinstance(output_usage, dict):
+        input_tokens = int(
+            output_usage.get('input')
+            or output_usage.get('input_tokens')
+            or output_usage.get('prompt_tokens')
+            or output_usage.get('prompt')
+            or 0
+        )
+        output_tokens = int(
+            output_usage.get('output')
+            or output_usage.get('output_tokens')
+            or output_usage.get('completion_tokens')
+            or output_usage.get('completion')
+            or 0
+        )
+        total_tokens = int(
+            output_usage.get('total')
+            or output_usage.get('total_tokens')
+            or (input_tokens + output_tokens)
+        )
+
     # Extract cost data
     # Langfuse v3: `cost_details` (Dict[str, float]) is the primary source;
     # `calculated_*_cost` fields are deprecated but kept as fallback.
@@ -1793,11 +2803,32 @@ def parse_observation(obs: Any) -> ObservationResponse:
     # Langfuse v3 primary cost source: cost_details wins when calculated fields are 0
     if not (input_cost or output_cost or total_cost) and cost_details:
         if isinstance(cost_details, dict):
-            input_cost = float(cost_details.get('input', 0) or 0)
-            output_cost = float(cost_details.get('output', 0) or 0)
-            total_cost = float(cost_details.get('total', 0) or 0)
+            input_cost = float(
+                cost_details.get('input', 0)
+                or cost_details.get('input_cost', 0)
+                or cost_details.get('prompt', 0)
+                or cost_details.get('prompt_cost', 0)
+                or 0
+            )
+            output_cost = float(
+                cost_details.get('output', 0)
+                or cost_details.get('output_cost', 0)
+                or cost_details.get('completion', 0)
+                or cost_details.get('completion_cost', 0)
+                or 0
+            )
+            total_cost = float(cost_details.get('total', 0) or cost_details.get('total_cost', 0) or 0)
             if not total_cost and (input_cost or output_cost):
                 total_cost = input_cost + output_cost
+
+    # Cost may also be present in metadata/output payloads.
+    if total_cost == 0.0:
+        md_cost = metadata.get('total_cost') or metadata.get('cost') or output_dict.get('total_cost') or output_dict.get('cost')
+        try:
+            if md_cost is not None:
+                total_cost = float(md_cost)
+        except (TypeError, ValueError):
+            pass
 
     model = get_attr(obs, 'model')
     if not model and usage_from_metadata:
@@ -1805,6 +2836,14 @@ def parse_observation(obs: Any) -> ObservationResponse:
             usage_from_metadata.get('model')
             or usage_from_metadata.get('model_name')
             or usage_from_metadata.get('generation_model')
+        )
+    if not model:
+        model = (
+            metadata.get('model')
+            or metadata.get('model_name')
+            or metadata.get('provider_model')
+            or output_dict.get('model')
+            or output_dict.get('model_name')
         )
 
     return ObservationResponse(
@@ -1894,51 +2933,78 @@ def parse_trace_to_list_item(trace: Any, observations: list | None = None) -> Tr
 # =============================================================================
 
 @router.get("/status")
-async def get_langfuse_status() -> LangfuseStatusResponse:
+async def get_langfuse_status(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> LangfuseStatusResponse:
     """Check if Langfuse is connected and available."""
-    host = os.getenv("LANGFUSE_HOST")
-    client = get_langfuse_client()
-
-    if not client:
+    host = os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL")
+    scoped_clients: list[Any] = []
+    scope_warnings: list[str] = []
+    try:
+        _allowed_user_ids, scoped_clients, _scope_key, scope_warnings = await _resolve_scope_context(
+            session=session,
+            current_user=current_user,
+            enforce_filter_for_admin=False,
+        )
+    except HTTPException as exc:
         return LangfuseStatusResponse(
             connected=False,
             host=host,
-            message="Langfuse not configured. Set LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_HOST in your .env file."
+            message=f"Cannot resolve observability scope: {exc.detail}",
+        )
+    except Exception as exc:
+        return LangfuseStatusResponse(
+            connected=False,
+            host=host,
+            message=f"Cannot resolve observability scope: {exc}",
         )
 
-    try:
-        # v3 uses auth_check(), v2 uses client.health.health()
-        if is_v3_client(client):
-            # v3 health check uses auth_check()
-            if client.auth_check():
-                sdk_version = "v3"
+    if not scoped_clients:
+        warning_message = " ".join(scope_warnings) if scope_warnings else "No scoped Langfuse binding found."
+        return LangfuseStatusResponse(
+            connected=False,
+            host=host,
+            message=warning_message,
+        )
+
+    for scoped_client in scoped_clients:
+        try:
+            resolved_host = (
+                get_attr(scoped_client, "host", "_host", "base_url", "_base_url", default=None) or host
+            )
+            if is_v3_client(scoped_client):
+                if hasattr(scoped_client, "auth_check"):
+                    if scoped_client.auth_check():
+                        return LangfuseStatusResponse(
+                            connected=True,
+                            host=resolved_host,
+                            message="Langfuse connected successfully (scoped binding, SDK v3)",
+                        )
+                else:
+                    return LangfuseStatusResponse(
+                        connected=True,
+                        host=resolved_host,
+                        message="Langfuse client initialized successfully (scoped binding)",
+                    )
+            else:
+                from langfuse.api.core.request_options import RequestOptions
+
+                scoped_client.client.health.health(request_options=RequestOptions(timeout_in_seconds=2))
                 return LangfuseStatusResponse(
                     connected=True,
-                    host=host,
-                    message=f"Langfuse connected successfully (SDK {sdk_version})"
+                    host=resolved_host,
+                    message="Langfuse connected successfully (scoped binding, SDK v2)",
                 )
-            else:
-                return LangfuseStatusResponse(
-                    connected=False,
-                    host=host,
-                    message="Langfuse v3 auth_check() failed - check credentials"
-                )
-        else:
-            # v2 health check
-            from langfuse.api.core.request_options import RequestOptions
-            client.client.health.health(request_options=RequestOptions(timeout_in_seconds=2))
-            sdk_version = "v2"
-            return LangfuseStatusResponse(
-                connected=True,
-                host=host,
-                message=f"Langfuse connected successfully (SDK {sdk_version})"
-            )
-    except Exception as e:
-        return LangfuseStatusResponse(
-            connected=False,
-            host=host,
-            message=f"Cannot connect to Langfuse: {str(e)}"
-        )
+        except Exception:
+            continue
+
+    warning_message = " ".join(scope_warnings) if scope_warnings else "Scoped Langfuse bindings are configured but not reachable."
+    return LangfuseStatusResponse(
+        connected=False,
+        host=host,
+        message=warning_message,
+    )
 
 
 @router.get("/debug")
@@ -1995,14 +3061,36 @@ async def debug_langfuse_data(
             user_traces = [t for t in all_traces if str(get_attr(t, 'user_id', 'userId') or '') == str(current_user.id)]
             result["user_traces_count"] = len(user_traces)
 
-            # Sample trace data (first 3 traces)
-            for trace in all_traces[:3]:
+            # Sample trace data (first 10 traces, full IDs for /debug/trace/{id} use)
+            for trace in all_traces[:10]:
+                trace_id_val = str(get_attr(trace, 'id', default='') or '')
+                usage_raw = get_attr(trace, 'usage', default=None)
+                usage_details_raw = get_attr(trace, 'usage_details', 'usageDetails', default=None)
+
+                def _safe_dump(val):
+                    if val is None:
+                        return None
+                    if isinstance(val, dict):
+                        return val
+                    if hasattr(val, '__dict__'):
+                        return {k: v for k, v in vars(val).items() if not k.startswith('_')}
+                    if hasattr(val, 'model_dump'):
+                        try:
+                            return val.model_dump()
+                        except Exception:
+                            pass
+                    return str(val)
+
                 sample = {
-                    "id": str(get_attr(trace, 'id', default=''))[:20],
+                    "id": trace_id_val,
                     "name": get_attr(trace, 'name'),
                     "user_id": str(get_attr(trace, 'user_id', 'userId') or ''),
                     "session_id": get_attr(trace, 'session_id', 'sessionId'),
                     "timestamp": str(get_attr(trace, 'timestamp', default=''))[:30],
+                    "observation_count": get_attr(trace, 'observation_count', 'observationCount', default=0),
+                    "total_tokens_meta": get_attr(trace, 'total_tokens', 'totalTokens', default=None),
+                    "usage": _safe_dump(usage_raw),
+                    "usage_details": _safe_dump(usage_details_raw),
                 }
                 result["sample_traces"].append(sample)
 
@@ -2071,13 +3159,37 @@ async def debug_trace_detail(
                 "input_preview": str(get_attr(obs, 'input'))[:100] if get_attr(obs, 'input') else None,
                 "output_preview": str(get_attr(obs, 'output'))[:100] if get_attr(obs, 'output') else None,
             }
-            # Extract usage
-            usage = get_attr(obs, 'usage', default={})
-            if usage:
-                if isinstance(usage, dict):
-                    obs_sample["usage"] = usage
-                elif hasattr(usage, '__dict__'):
-                    obs_sample["usage"] = {k: v for k, v in usage.__dict__.items() if not k.startswith('_')}
+            # Extract usage / usage_details — show everything token-related
+            def _dump_usage(val):
+                if val is None:
+                    return None
+                if isinstance(val, dict):
+                    return val
+                if hasattr(val, '__dict__'):
+                    return {k: v for k, v in vars(val).items() if not k.startswith('_')}
+                if hasattr(val, 'model_dump'):
+                    try:
+                        return val.model_dump()
+                    except Exception:
+                        pass
+                return str(val)
+
+            usage = get_attr(obs, 'usage', default=None)
+            usage_details = get_attr(obs, 'usage_details', 'usageDetails', default=None)
+            obs_sample["usage"] = _dump_usage(usage)
+            obs_sample["usage_details"] = _dump_usage(usage_details)
+            obs_sample["input_tokens_direct"] = get_attr(obs, 'input_tokens', 'inputTokens', 'prompt_tokens', default=None)
+            obs_sample["output_tokens_direct"] = get_attr(obs, 'output_tokens', 'outputTokens', 'completion_tokens', default=None)
+            # Show ALL top-level keys so we can spot unknown token-carrying fields
+            try:
+                if hasattr(obs, '__dict__'):
+                    obs_sample["_all_keys"] = [k for k in vars(obs) if not k.startswith('__')]
+                elif isinstance(obs, dict):
+                    obs_sample["_all_keys"] = list(obs.keys())
+                elif hasattr(obs, 'model_fields'):
+                    obs_sample["_all_keys"] = list(obs.model_fields.keys())
+            except Exception:
+                pass
             result["observations_sample"].append(obs_sample)
     except Exception as e:
         result["errors"].append(f"fetch_observations error: {str(e)}")
@@ -2089,10 +3201,13 @@ async def debug_trace_detail(
 @router.get("/traces")
 async def get_user_traces(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     page: Annotated[int, Query(ge=1)] = 1,
     session_id: Annotated[str | None, Query()] = None,
-    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to 7 days ago.")] = None,
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
+    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to today.")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD). Defaults to today.")] = None,
 ) -> TracesListResponse:
     """
@@ -2102,19 +3217,29 @@ async def get_user_traces(
     Observations are fetched only in detailed view (GET /traces/{trace_id}).
 
     Date filtering:
-    - Defaults to last 7 days if no dates specified
+    - Defaults to today if no dates specified
     - Use from_date/to_date for custom ranges
     """
     _clear_request_caches()  # Clear per-request caches at start
 
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
-
     try:
-        user_id = str(current_user.id)
+        allowed_user_ids, scoped_clients, _scope_key, scope_warnings = await _resolve_scope_context(
+            session=session,
+            current_user=current_user,
+            org_id=org_id,
+            dept_id=dept_id,
+            enforce_filter_for_admin=True,
+        )
+        if not scoped_clients:
+            return TracesListResponse(
+                traces=[],
+                total=0,
+                page=page,
+                limit=limit,
+                **_scope_warning_payload(scope_warnings),
+            )
 
-        # Parse date range with sensible defaults (last 7 days)
+        # Parse date range with sensible defaults (today)
         now = datetime.now(timezone.utc)
         if to_date:
             to_timestamp = datetime.strptime(to_date, "%Y-%m-%d").replace(
@@ -2128,15 +3253,15 @@ async def get_user_traces(
                 hour=0, minute=0, second=0, tzinfo=timezone.utc
             )
         else:
-            # Default to last 7 days
-            from_timestamp = now - timedelta(days=7)
+            # Default to start of today (UTC)
+            from_timestamp = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Fetch traces with date filter - request more than needed for filtering
         # but cap at a reasonable limit for performance
         fetch_limit = min(limit * page + 50, 200)  # Fetch enough for pagination + buffer
-        raw_traces = fetch_traces_from_langfuse(
-            client,
-            user_id,
+        raw_traces = _fetch_scoped_traces(
+            clients=scoped_clients,
+            allowed_user_ids=allowed_user_ids,
             limit=fetch_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
@@ -2149,17 +3274,22 @@ async def get_user_traces(
         # Parse traces with trace metrics helper; only falls back to observations for
         # missing metrics, avoiding persistent zero-token list rows.
         traces = []
-        fallback_budget = {"remaining": min(30, max(5, len(raw_traces) // 4))}
+        fallback_budget = _make_fallback_budget(len(raw_traces))
+        primary_client = scoped_clients[0]
+        # Pre-fetch observations in parallel so the loop below hits cache only.
+        _pre_enrich_traces(raw_traces, scoped_clients)
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id', 'trace_id', 'traceId')
             if not trace_id:
                 continue
 
+            trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
             trace_metrics = _get_trace_metrics(
-                client,
+                trace_client,
                 trace,
-                allow_observation_fallback=True,
+                allow_observation_fallback=True,  # Cache pre-warmed in parallel above
                 fallback_budget=fallback_budget,
+                all_clients=scoped_clients,
             )
             trace_item = TraceListItem(
                 id=str(trace_id),
@@ -2188,7 +3318,8 @@ async def get_user_traces(
             traces=paginated_traces,
             total=total,
             page=page,
-            limit=limit
+            limit=limit,
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -2202,6 +3333,9 @@ async def get_user_traces(
 async def get_trace_detail(
     trace_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
 ) -> TraceDetailResponse:
     """
     Get detailed trace information including all observations (spans).
@@ -2212,80 +3346,142 @@ async def get_trace_detail(
     - Uses request-scoped cache to avoid N+1 queries
     """
     _clear_request_caches()  # Clear per-request caches at start
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    allowed_user_ids, scoped_clients, _scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        raise HTTPException(status_code=404, detail=(scope_warnings[0] if scope_warnings else "Trace not found"))
 
     try:
         logger.info(f"Fetching trace detail for trace_id={trace_id}, user_id={current_user.id}")
 
         # Fetch the trace - try fetch_trace first (works in both v2 and v3)
         trace = None
+        trace_client: Any | None = None
 
-        # Primary: client.fetch_trace(trace_id)
-        # Try both UUID formats: with and without hyphens (Langfuse SDKs differ on this).
-        if hasattr(client, 'fetch_trace'):
-            _tid_str = str(trace_id)
-            _tid_variants: list[str] = [_tid_str]
-            if '-' not in _tid_str and len(_tid_str) == 32:
-                _tid_variants.append(f"{_tid_str[:8]}-{_tid_str[8:12]}-{_tid_str[12:16]}-{_tid_str[16:20]}-{_tid_str[20:]}")
-            elif '-' in _tid_str:
-                _tid_variants.append(_tid_str.replace('-', ''))
-            for _tid_v in _tid_variants:
-                try:
-                    response = client.fetch_trace(_tid_v)
-                    _t = response.data if hasattr(response, 'data') else response
-                    if _t:
-                        trace = _t
-                        break
-                except Exception as e:
-                    logger.debug(f"fetch_trace({_tid_v!r}) failed: {e}")
+        def _trace_quality_score(trace_obj: Any) -> tuple[int, int, int, int]:
+            obs_count = int(get_attr(trace_obj, "observation_count", "observationCount", default=0) or 0)
+            total_tokens = int(get_attr(trace_obj, "totalTokens", "total_tokens", default=0) or 0)
+            if total_tokens <= 0:
+                in_tokens = int(get_attr(trace_obj, "inputTokens", "input_tokens", "promptTokens", default=0) or 0)
+                out_tokens = int(get_attr(trace_obj, "outputTokens", "output_tokens", "completionTokens", default=0) or 0)
+                total_tokens = in_tokens + out_tokens
+            total_cost = float(
+                get_attr(
+                    trace_obj,
+                    "calculated_total_cost",
+                    "calculatedTotalCost",
+                    "total_cost",
+                    "totalCost",
+                    default=0,
+                )
+                or 0
+            )
+            has_io = 1 if (get_attr(trace_obj, "input") is not None or get_attr(trace_obj, "output") is not None) else 0
+            return (obs_count, total_tokens, int(total_cost * 1_000_000), has_io)
 
-        # Fallback for v3: client.api.trace.get(trace_id)
-        if not trace and is_v3_client(client) and hasattr(client, 'api') and hasattr(client.api, 'trace'):
-            try:
-                trace = client.api.trace.get(trace_id)
-            except Exception as e:
-                logger.debug(f"v3 api.trace.get failed: {e}")
+        best_trace: Any | None = None
+        best_trace_client: Any | None = None
+        best_trace_score: tuple[int, int, int, int] = (-1, -1, -1, -1)
 
-        # Fallback for v3: client.client.traces.get(trace_id)
-        if not trace and is_v3_client(client) and hasattr(client, 'client') and hasattr(client.client, 'traces'):
-            try:
-                trace = client.client.traces.get(trace_id)
-            except Exception as e:
-                logger.debug(f"v3 traces.get failed: {e}")
+        def _consider_trace(candidate: Any, candidate_client: Any) -> None:
+            nonlocal best_trace, best_trace_client, best_trace_score
+            if not candidate:
+                return
+            score = _trace_quality_score(candidate)
+            if score > best_trace_score:
+                best_trace = candidate
+                best_trace_client = candidate_client
+                best_trace_score = score
 
-        # Last resort: scan the in-process trace cache (no new API calls).
-        # The trace is almost always cached from the session/agent list that the user
-        # navigated from. Avoids the previous 300-trace API fetch (3 pages * ~3s = 9s).
-        if not trace:
-            _user_id_str = str(current_user.id)
-            _norm_req_id = str(trace_id).replace('-', '').lower()
-            for _ck, _ce in list(_TRACE_FETCH_CACHE.items()):
-                if not _ck.startswith(f"{_user_id_str}|"):
+        _tid_str = str(trace_id)
+        _tid_variants: list[str] = [_tid_str]
+        if "-" not in _tid_str and len(_tid_str) == 32:
+            _tid_variants.append(f"{_tid_str[:8]}-{_tid_str[8:12]}-{_tid_str[12:16]}-{_tid_str[16:20]}-{_tid_str[20:]}")
+        elif "-" in _tid_str:
+            _tid_variants.append(_tid_str.replace("-", ""))
+
+        # Fastest path first: scan process-local trace cache to avoid fresh API calls.
+        _norm_req_id = str(trace_id).replace('-', '').lower()
+        for _ck, _ce in list(_TRACE_FETCH_CACHE.items()):
+            for _candidate in (_ce.get("traces", []) or []):
+                _cid = str(get_attr(_candidate, "id", "trace_id", "traceId", default="") or "")
+                if _cid.replace('-', '').lower() != _norm_req_id:
                     continue
-                for _candidate in (_ce.get("traces", []) or []):
-                    _cid = str(get_attr(_candidate, "id", "trace_id", "traceId", default="") or "")
-                    if _cid.replace('-', '').lower() == _norm_req_id:
-                        _cand_uids = _extract_trace_user_ids(_candidate)
-                        if not _cand_uids or _user_id_str in _cand_uids:
-                            trace = _candidate
-                            logger.debug(f"Found trace {trace_id} in process cache (no API call)")
-                            break
-                if trace:
+                _cand_uids = _extract_trace_user_ids(_candidate)
+                if _cand_uids and set(_cand_uids).intersection(allowed_user_ids):
+                    trace = _candidate
+                    trace_client = _resolve_trace_client(_candidate, scoped_clients)
+                    logger.debug(f"Found trace {trace_id} in process cache (no API call)")
                     break
+            if trace:
+                break
+
+        if not trace:
+            for candidate_client in scoped_clients:
+                if hasattr(candidate_client, "fetch_trace"):
+                    for _tid_v in _tid_variants:
+                        try:
+                            response = _call_with_rate_limit_retry(candidate_client.fetch_trace, _tid_v)
+                            _t = response.data if hasattr(response, "data") else response
+                            _consider_trace(_t, candidate_client)
+                        except Exception as e:
+                            logger.debug(f"fetch_trace({_tid_v!r}) failed: {e}")
+
+                if is_v3_client(candidate_client) and hasattr(candidate_client, "api") and hasattr(candidate_client.api, "trace"):
+                    for _tid_v in _tid_variants:
+                        try:
+                            _t = _call_with_rate_limit_retry(candidate_client.api.trace.get, _tid_v)
+                            _consider_trace(_t, candidate_client)
+                        except Exception as e:
+                            logger.debug(f"v3 api.trace.get({_tid_v!r}) failed: {e}")
+
+        if best_trace is not None:
+            trace = best_trace
+            trace_client = best_trace_client
 
         if not trace:
             raise HTTPException(status_code=404, detail="Trace not found")
+        if trace_client is None:
+            trace_client = _resolve_trace_client(trace, scoped_clients) or scoped_clients[0]
+        current_role = normalize_role(getattr(current_user, "role", None))
 
         # Security check
         trace_user_ids = _extract_trace_user_ids(trace)
-        if trace_user_ids and str(current_user.id) not in trace_user_ids:
-            raise HTTPException(status_code=404, detail="Trace not found")
+        if not trace_user_ids or not set(trace_user_ids).intersection(allowed_user_ids):
+            # Fallback: some fetch_trace payloads omit user fields in scoped setups.
+            # Re-authorize using already-fetched scoped trace cache by trace_id.
+            _norm_req_id = str(get_attr(trace, "id", "trace_id", "traceId", default=trace_id) or trace_id).replace('-', '').lower()
+            _authorized_cache_hit = False
+            for _ck, _ce in list(_TRACE_FETCH_CACHE.items()):
+                for _candidate in (_ce.get("traces", []) or []):
+                    _cid = str(get_attr(_candidate, "id", "trace_id", "traceId", default="") or "")
+                    if _cid.replace('-', '').lower() != _norm_req_id:
+                        continue
+                    _cand_uids = _extract_trace_user_ids(_candidate)
+                    if _cand_uids and set(_cand_uids).intersection(allowed_user_ids):
+                        trace_user_ids = _cand_uids
+                        _authorized_cache_hit = True
+                        break
+                if _authorized_cache_hit:
+                    break
+            if not _authorized_cache_hit:
+                if not trace_user_ids and current_role in {"root", "super_admin", "department_admin"}:
+                    logger.warning(
+                        "Trace {} has no user metadata; allowing scoped admin access for role={}",
+                        trace_id,
+                        current_role,
+                    )
+                else:
+                    raise HTTPException(status_code=404, detail="Trace not found")
         trace_user_id = (
             str(current_user.id)
             if str(current_user.id) in trace_user_ids
-            else (next(iter(trace_user_ids)) if trace_user_ids else None)
+            else (next(iter(trace_user_ids)) if trace_user_ids else str(current_user.id))
         )
 
         requested_trace_id = str(trace_id)
@@ -2308,8 +3504,10 @@ async def get_trace_detail(
         if _embedded_obs and isinstance(_embedded_obs, (list, tuple)) and len(_embedded_obs) > 0:
             _parsed_preview = [parse_observation(o) for o in _embedded_obs]
             _has_tokens = any(p.total_tokens > 0 for p in _parsed_preview)
-            _has_names = any(p.name for p in _parsed_preview)
-            _use_embedded = _has_tokens or _has_names
+            _has_cost = any((p.total_cost or 0.0) > 0.0 for p in _parsed_preview)
+            _has_model = any(bool(p.model) for p in _parsed_preview)
+            _has_names = any(bool(p.name) for p in _parsed_preview)
+            _use_embedded = _has_tokens or _has_cost or _has_model or _has_names
             if not _use_embedded:
                 logger.debug(
                     f"Trace {resolved_trace_id}: embedded obs have no names/tokens — "
@@ -2319,9 +3517,13 @@ async def get_trace_detail(
             raw_observations: list = list(_embedded_obs)
             logger.debug(f"Trace {resolved_trace_id}: using {len(raw_observations)} embedded observations (no extra API call)")
             # Seed process cache so subsequent requests for same trace are instant
-            _cache_and_return_observations(resolved_trace_id, raw_observations)
+            _cache_and_return_observations(
+                resolved_trace_id,
+                raw_observations,
+                cache_key=_observation_cache_key(trace_client, resolved_trace_id),
+            )
             fetched_scores_future = asyncio.create_task(asyncio.to_thread(
-                lambda: fetch_scores_for_trace(client, resolved_trace_id, str(current_user.id), limit=200)
+                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=200)
             ))
             fetched_scores = await fetched_scores_future
             if isinstance(fetched_scores, Exception):
@@ -2330,10 +3532,10 @@ async def get_trace_detail(
         else:
             # No embedded observations — fetch observations and scores in parallel
             obs_task = asyncio.create_task(asyncio.to_thread(
-                lambda: fetch_observations_for_trace(client, resolved_trace_id)
+                lambda: fetch_observations_for_trace(trace_client, resolved_trace_id)
             ))
             scores_task = asyncio.create_task(asyncio.to_thread(
-                lambda: fetch_scores_for_trace(client, resolved_trace_id, str(current_user.id), limit=200)
+                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=200)
             ))
 
             # Wait for both in parallel
@@ -2349,19 +3551,74 @@ async def get_trace_detail(
 
             # Fallback for alternative trace ID if nothing found
             if not raw_observations and resolved_trace_id != requested_trace_id:
-                raw_observations = fetch_observations_for_trace(client, requested_trace_id)
+                raw_observations = fetch_observations_for_trace(trace_client, requested_trace_id)
+
+            # If the chosen scoped client has no observations for this trace, probe
+            # other scoped clients before returning an empty timeline.
+            if not raw_observations and len(scoped_clients) > 1:
+                for alt_client in scoped_clients:
+                    if alt_client is trace_client:
+                        continue
+                    alt_obs = fetch_observations_for_trace(alt_client, resolved_trace_id)
+                    if not alt_obs and resolved_trace_id != requested_trace_id:
+                        alt_obs = fetch_observations_for_trace(alt_client, requested_trace_id)
+                    if alt_obs:
+                        raw_observations = alt_obs
+                        trace_client = alt_client
+                        break
+
+            # If observations are still empty, probe alternate scoped clients for a richer
+            # trace payload before giving up. Some bindings expose full detail on fetch_trace
+            # but return empty observation lists during indexing lag.
+            if not raw_observations and len(scoped_clients) > 1:
+                alt_best_trace: Any | None = None
+                alt_best_client: Any | None = None
+                alt_best_score: tuple[int, int, int, int] = best_trace_score
+                for alt_client in scoped_clients:
+                    for alt_tid in {resolved_trace_id, requested_trace_id}:
+                        try:
+                            alt_trace = _fetch_trace_by_id(alt_client, alt_tid)
+                        except Exception:
+                            continue
+                        if not alt_trace:
+                            continue
+                        alt_score = _trace_quality_score(alt_trace)
+                        if alt_score > alt_best_score:
+                            alt_best_trace = alt_trace
+                            alt_best_client = alt_client
+                            alt_best_score = alt_score
+                        embedded_alt = get_attr(alt_trace, "observations", default=[]) or []
+                        if isinstance(embedded_alt, (list, tuple)) and embedded_alt:
+                            raw_observations = list(embedded_alt)
+                            trace = alt_trace
+                            trace_client = alt_client
+                            break
+                    if raw_observations:
+                        break
+                if not raw_observations and alt_best_trace is not None and alt_best_score > best_trace_score:
+                    trace = alt_best_trace
+                    trace_client = alt_best_client or trace_client
 
         observations = [parse_observation(obs) for obs in (raw_observations or [])]
 
         # Sort observations by start time
         observations.sort(key=lambda o: o.start_time or datetime.min.replace(tzinfo=timezone.utc))
 
-        # Aggregate metrics from observations
-        total_tokens = sum(o.total_tokens for o in observations)
-        input_tokens = sum(o.input_tokens for o in observations)
-        output_tokens = sum(o.output_tokens for o in observations)
-        total_cost = sum(o.total_cost for o in observations)
-        models_used = list(set(o.model for o in observations if o.model))
+        # Aggregate metrics from observations when available, otherwise fall back to the
+        # best trace-level metrics without fabricating a synthetic zero-value span.
+        if observations:
+            total_tokens = sum(o.total_tokens for o in observations)
+            input_tokens = sum(o.input_tokens for o in observations)
+            output_tokens = sum(o.output_tokens for o in observations)
+            total_cost = sum(o.total_cost for o in observations)
+            models_used = list(set(o.model for o in observations if o.model))
+        else:
+            trace_metrics = _get_trace_metrics(trace_client, trace, allow_observation_fallback=True, all_clients=scoped_clients)
+            total_tokens = int(trace_metrics["total_tokens"])
+            input_tokens = int(trace_metrics["input_tokens"])
+            output_tokens = int(trace_metrics["output_tokens"])
+            total_cost = float(trace_metrics["total_cost"])
+            models_used = list(trace_metrics["models"])
 
         # Calculate trace latency
         latency_ms = None
@@ -2371,15 +3628,22 @@ async def get_trace_detail(
             if start_times and end_times:
                 latency_ms = (max(end_times) - min(start_times)).total_seconds() * 1000
         else:
-            # Fallback to trace-level metrics if observations are unavailable
-            trace_metrics = _get_trace_metrics(client, trace, allow_observation_fallback=False)
-            total_tokens = int(trace_metrics["total_tokens"])
-            input_tokens = int(trace_metrics["input_tokens"])
-            output_tokens = int(trace_metrics["output_tokens"])
-            total_cost = float(trace_metrics["total_cost"])
-            latency_ms = trace_metrics["latency_ms"]
+            # No observations — pull latency/models from trace-level fields only.
+            # Do NOT re-fetch observations here (allow_observation_fallback=False) to avoid
+            # duplicating the fallback call already made above (allow_observation_fallback=True).
+            # IMPORTANT: do not overwrite total_tokens / input_tokens / output_tokens / total_cost
+            # that were already computed by the observation-fallback call above.
+            trace_latency_metrics = _get_trace_metrics(trace_client, trace, allow_observation_fallback=False, all_clients=scoped_clients)
+            latency_ms = trace_latency_metrics["latency_ms"]
             if not models_used:
-                models_used = list(trace_metrics["models"])
+                models_used = list(trace_latency_metrics["models"])
+            # Fill tokens/cost only if the observation fallback above returned nothing
+            if total_tokens == 0:
+                total_tokens = int(trace_latency_metrics["total_tokens"])
+                input_tokens = int(trace_latency_metrics["input_tokens"])
+                output_tokens = int(trace_latency_metrics["output_tokens"])
+            if total_cost == 0.0:
+                total_cost = float(trace_latency_metrics["total_cost"])
 
         # Merge and de-duplicate scores by id
         scores: list[ScoreItem] = []
@@ -2436,6 +3700,7 @@ async def get_trace_detail(
             tags=get_attr(trace, 'tags', default=[]) or [],
             level=_enum_str(get_attr(trace, 'level')),
             status=_enum_str(get_attr(trace, 'status')),
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -2449,10 +3714,13 @@ async def get_trace_detail(
 @router.get("/sessions")
 async def get_user_sessions(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
     background_tasks: BackgroundTasks,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     # Filter parameters
-    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to 7 days ago.")] = None,
+    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to today.")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD). Defaults to today.")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
     search: Annotated[str | None, Query(description="Search by session ID or trace name")] = None,
@@ -2462,36 +3730,70 @@ async def get_user_sessions(
     Get chat sessions for the current user with aggregated metrics.
 
     STALE-WHILE-REVALIDATE CACHING STRATEGY:
-    - Fresh cache (<15s old): Return immediately, no refresh
-    - Stale cache (15-60s old): Return immediately, trigger background refresh
-    - Expired cache (>60s old): Fetch fresh data (blocks briefly)
+    - Fresh cache (<60s old): Return immediately, no refresh
+    - Stale cache (<10m old): Return cached data, trigger background refresh
+    - Expired cache (>=10m old): Serve cached data and refresh in background, or fetch fresh on miss
 
     OPTIMIZATION: Uses trace-level metrics only (no observation fetching).
     For detailed session data, use GET /sessions/{session_id}.
 
     Date filtering:
-    - Defaults to last 7 days if no dates specified
+    - Defaults to today if no dates specified
     - Use from_date/to_date for custom ranges
     """
     _clear_request_caches()  # Clear per-request caches at start
 
+    allowed_user_ids, scoped_clients, scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        return SessionsListResponse(
+            sessions=[],
+            total=0,
+            truncated=False,
+            fetched_trace_count=0,
+            **_scope_warning_payload(scope_warnings),
+        )
+
     # Build cache key from stable parameters
     user_id = str(current_user.id)
-    cache_key = f"sessions:{user_id}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
+    cache_key = f"sessions:{user_id}:{scope_key}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
     
     # Check cache status
     cache_meta = _get_cache_metadata(cache_key)
     
     # Cache checking logic (only if SWR enabled)
     if SWR_CONFIG["ENABLE_SWR"]:
-        # === FRESH CACHE: Return immediately, no refresh ===
+        # === FRESH CACHE: Return immediately unless data looks incomplete ===
         if cache_meta["is_fresh"] and cache_key in _SESSIONS_CACHE:
-            logger.debug(f"Sessions cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
             cached = _SESSIONS_CACHE[cache_key]
-            return SessionsListResponse(
-                **cached["data"],
-                fetched_trace_count=cached.get("fetched_trace_count", 0),
-            )
+            cached_sessions = cached["data"].get("sessions", [])
+            # If all sessions have 0 tokens but non-zero trace counts, the cache was
+            # populated before observation enrichment completed. Invalidate once per key
+            # to force a fresh computation; the guard prevents infinite recompute loops
+            # when data genuinely has 0 tokens (e.g. tracing-only workloads).
+            if (
+                cache_key not in _ZERO_TOKEN_RECOMPUTED
+                and _list_cache_needs_recompute(cached_sessions, "total_tokens", "trace_count")
+            ):
+                logger.warning(
+                    f"Sessions cache {cache_key} has zero tokens with traces present — "
+                    "invalidating to force recompute (once)"
+                )
+                _SESSIONS_CACHE.pop(cache_key, None)
+                _ZERO_TOKEN_RECOMPUTED.add(cache_key)
+                # Fall through to fresh computation below
+            else:
+                logger.debug(f"Sessions cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
+                return SessionsListResponse(
+                    **cached["data"],
+                    fetched_trace_count=cached.get("fetched_trace_count", 0),
+                    **_scope_warning_payload(scope_warnings),
+                )
         
         # === STALE CACHE: fetch fresh synchronously ===
         # We currently don't have a dedicated sessions background fetch task,
@@ -2504,25 +3806,23 @@ async def get_user_sessions(
 
     # === EXPIRED/MISSING CACHE: Fetch fresh data ===
     logger.debug(f"Sessions cache MISS for {cache_key}, fetching fresh data")
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    primary_client = scoped_clients[0]
 
     try:
-        user_id = str(current_user.id)
-
-        # Parse date filters with sensible defaults (last 7 days)
+        # Parse date filters with sensible defaults (today)
         from_timestamp, to_timestamp = _compute_date_range(
             from_date,
             to_date,
             tz_offset,
-            default_days=7,
+            default_days=1,
         )
 
         trace_limit = 500
         # Fetch traces with date filters
-        raw_traces = fetch_traces_from_langfuse(
-            client, user_id, limit=trace_limit,
+        raw_traces = _fetch_scoped_traces(
+            clients=scoped_clients,
+            allowed_user_ids=allowed_user_ids,
+            limit=trace_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
             fetch_all=fetch_all,
@@ -2535,6 +3835,8 @@ async def get_user_sessions(
         # observations for traces missing trace-level token/cost fields (Langfuse v3).
         sessions_data: dict[str, dict] = {}
         fallback_budget = _make_fallback_budget(len(raw_traces))
+        # Pre-fetch observations in parallel so the loop below hits cache only.
+        _pre_enrich_traces(raw_traces, scoped_clients)
 
         for trace in raw_traces:
             session_id = get_attr(trace, 'session_id', 'sessionId')
@@ -2542,12 +3844,14 @@ async def get_user_sessions(
                 continue
 
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
+            trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
 
             trace_metrics = _get_trace_metrics(
-                client,
+                trace_client,
                 trace,
-                allow_observation_fallback=True,
+                allow_observation_fallback=True,  # Cache pre-warmed in parallel above
                 fallback_budget=fallback_budget,
+                all_clients=scoped_clients,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
             trace_cost = float(trace_metrics["total_cost"])
@@ -2614,13 +3918,17 @@ async def get_user_sessions(
             "truncated": is_truncated,
         }
 
-        # Cache the result, but avoid caching empty date-filter windows to reduce
-        # sticky false-empty UI states from intermittent upstream filtering issues.
+        # Cache the result, but avoid caching empty date-filter windows or zero-token
+        # data when sessions exist (zero-token cache poisons downstream fresh paths).
+        _sessions_have_tokens = any(getattr(s, "total_tokens", 0) > 0 for s in sessions)
+        _sessions_have_traces = any(getattr(s, "trace_count", 0) > 0 for s in sessions)
         should_cache_response = not (
             total_count == 0 and (from_date or to_date)
+        ) and not (
+            _sessions_have_traces and not _sessions_have_tokens
         )
         if should_cache_response:
-            cache_key = f"sessions:{user_id}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
+            cache_key = f"sessions:{user_id}:{scope_key}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
             if cache_key not in _SESSIONS_CACHE:
                 _SESSIONS_CACHE[cache_key] = {}
             _SESSIONS_CACHE[cache_key]["data"] = response_data
@@ -2632,6 +3940,7 @@ async def get_user_sessions(
             total=total_count,
             truncated=is_truncated,
             fetched_trace_count=len(raw_traces),
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -2645,6 +3954,9 @@ async def get_user_sessions(
 async def get_session_detail(
     session_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
@@ -2654,13 +3966,18 @@ async def get_session_detail(
     """
     _clear_request_caches()  # Clear per-request caches at start
 
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    allowed_user_ids, scoped_clients, _scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        raise HTTPException(status_code=404, detail=(scope_warnings[0] if scope_warnings else "Session not found"))
+    primary_client = scoped_clients[0]
 
     try:
-        user_id = str(current_user.id)
-
         # Parse optional date filters with timezone-aware helper (must match list endpoints)
         from_timestamp, to_timestamp = _compute_date_range(
             from_date,
@@ -2669,20 +3986,42 @@ async def get_session_detail(
             default_days=None,
         )
 
-        # Fetch traces by date window and filter by session_id client-side.
-        # Relying on SDK/server-side session_id filtering can under-return traces
-        # (often only root traces), which causes mismatch with session/agent tabs.
-        raw_traces = fetch_traces_from_langfuse(
-            client,
-            user_id,
-            limit=500,
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            fetch_all=False,
-        )
+        # Fast path: query each scoped client directly with session_id filter.
+        # The SDK/API may only return root traces for session_id queries, but it's
+        # much faster than fetching 500 traces and filtering client-side.
+        # We then verify client-side and fall back to the broad scan if needed.
+        session_traces: list[Any] = []
+        _seen_trace_ids: set[str] = set()
+        for _sc in scoped_clients:
+            for _uid in list(allowed_user_ids)[:20]:  # cap to avoid explosion
+                try:
+                    _r = fetch_traces_from_langfuse(
+                        _sc, user_id=_uid, limit=100,
+                        from_timestamp=from_timestamp, to_timestamp=to_timestamp,
+                        session_id=session_id,
+                    )
+                    for _t in _r:
+                        if get_attr(_t, 'session_id', 'sessionId') != session_id:
+                            continue
+                        _tid = _get_trace_id(_t)
+                        if _tid and _tid not in _seen_trace_ids:
+                            _seen_trace_ids.add(_tid)
+                            session_traces.append(_t)
+                except Exception:
+                    pass
 
-        # Filter to the requested session using the same semantics as list endpoints.
-        session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
+        if not session_traces:
+            # Fallback: broad fetch, filter by session_id client-side.
+            # Slower but catches cases where SDK session_id filter under-returns.
+            raw_traces = _fetch_scoped_traces(
+                clients=scoped_clients,
+                allowed_user_ids=allowed_user_ids,
+                limit=500,
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+                fetch_all=False,
+            )
+            session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
 
         if not session_traces:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -2698,21 +4037,24 @@ async def get_session_detail(
         models_used: dict[str, dict] = {}
         timestamps = []
 
-        # Small fallback budget: only call observations if trace-level data is completely absent
-        fallback_budget: dict[str, int] = {"remaining": min(3, len(session_traces))}
+        # Detail view: allow observation fallback for all traces in this session so
+        # token counts are always accurate when drilling into a session.
+        fallback_budget: dict[str, int] = {"remaining": len(session_traces)}
 
         for trace in session_traces:
             trace_id = _get_trace_id(trace)
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
             if timestamp:
                 timestamps.append(timestamp)
+            trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
 
             # Fast path: use trace-level metrics (already cached from session-list computation).
             # This avoids N sequential observation API calls (previously 10+ s per session click).
             trace_metrics = _get_trace_metrics(
-                client, trace,
+                trace_client, trace,
                 allow_observation_fallback=True,
                 fallback_budget=fallback_budget,
+                all_clients=scoped_clients,
             )
             t_tokens = int(trace_metrics["total_tokens"])
             t_input = int(trace_metrics["input_tokens"])
@@ -2776,6 +4118,7 @@ async def get_session_detail(
             duration_seconds=duration,
             models_used=models_used,
             traces=traces,
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -2789,10 +4132,13 @@ async def get_session_detail(
 @router.get("/metrics")
 async def get_user_metrics(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
     background_tasks: BackgroundTasks,
-    days: Annotated[int, Query(ge=1, le=90)] = 7,
+    days: Annotated[int, Query(ge=1, le=90)] = 1,
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     # Filter parameters
-    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to 7 days ago.")] = None,
+    from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to today.")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD). Defaults to today.")] = None,
     search: Annotated[str | None, Query(description="Search by trace name")] = None,
     models: Annotated[str | None, Query(description="Comma-separated model names to filter")] = None,
@@ -2814,108 +4160,166 @@ async def get_user_metrics(
     - Most responses will be instant (100-200ms from cache)
 
     Date filtering:
-    - Defaults to last 7 days if no dates specified
+    - Defaults to today if no dates specified
     - Use from_date/to_date for custom ranges
     """
     _clear_request_caches()  # Clear per-request caches at start
 
+    allowed_user_ids, scoped_clients, scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        return MetricsResponse(**_scope_warning_payload(scope_warnings))
+
     # If SWR is disabled, skip the caching logic
     if not SWR_CONFIG["ENABLE_SWR"]:
-        return _fetch_metrics_sync(current_user, days, from_date, to_date, search, models, tz_offset, include_model_breakdown, fetch_all)
+        return _fetch_metrics_sync(
+            current_user,
+            scoped_clients,
+            allowed_user_ids,
+            scope_key,
+            scope_warnings,
+            days,
+            from_date,
+            to_date,
+            search,
+            models,
+            tz_offset,
+            include_model_breakdown,
+            fetch_all,
+        )
     
     user_id = str(current_user.id)
     
     # Build cache key from stable parameters
-    cache_key = f"metrics:{user_id}:{from_date}:{to_date}:{days}:{search}:{models}:{include_model_breakdown}:{tz_offset}:{fetch_all}"
+    cache_key = (
+        f"metrics:{user_id}:{scope_key}:{from_date}:{to_date}:{days}:"
+        f"{search}:{models}:{include_model_breakdown}:{tz_offset}:{fetch_all}"
+    )
     
     # Check cache status
     cache_meta = _get_cache_metadata(cache_key)
-    
+
+    def _endpoint_cache_is_complete(cached_entry: dict) -> bool:
+        """Return False when the cached result has traces but zero tokens
+        — indicates incomplete enrichment from a previous request that must
+        be recomputed rather than served as stale zeros."""
+        m = cached_entry.get("metrics") or {}
+        has_traces = int(m.get("total_traces") or 0) > 0
+        has_tokens = int(m.get("total_tokens") or 0) > 0
+        return not has_traces or has_tokens
+
     # === FRESH CACHE: Return immediately, no refresh ===
     if cache_meta["is_fresh"] and cache_key in _TRACE_METRICS_CACHE:
-        logger.debug(f"Metrics cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
         cached = _TRACE_METRICS_CACHE[cache_key]
-        return MetricsResponse(
-            **cached["metrics"],
-            cache_age_seconds=cache_meta["age_seconds"],
-            cache_is_fresh=True,
-        )
+        if _endpoint_cache_is_complete(cached):
+            logger.debug(f"Metrics cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
+            return MetricsResponse(
+                **cached["metrics"],
+                cache_age_seconds=cache_meta["age_seconds"],
+                cache_is_fresh=True,
+                **_scope_warning_payload(scope_warnings),
+            )
     
     # === STALE CACHE: Return immediately + trigger background refresh ===
     if cache_meta["is_stale"] and cache_key in _TRACE_METRICS_CACHE:
-        logger.debug(f"Metrics cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s, triggering refresh")
         cached = _TRACE_METRICS_CACHE[cache_key]
-        
-        # Parse date parameters for background task
-        from_timestamp, to_timestamp = _compute_date_range(
-            from_date,
-            to_date,
-            tz_offset,
-            default_days=days,
-        )
-        
-        # Trigger background refresh (non-blocking)
-        await _trigger_background_refresh(
-            background_tasks,
-            cache_key,
-            {
-                "user_id": user_id,
-                "cache_key": cache_key,
-                "from_timestamp": from_timestamp,
-                "to_timestamp": to_timestamp,
-                "search": search,
-                "models": models,
-                "include_model_breakdown": include_model_breakdown,
-                "fetch_all": fetch_all,
-            },
-            task_fn=_fetch_metrics_background,
-        )
-        
-        return MetricsResponse(
-            **cached["metrics"],
-            cache_age_seconds=cache_meta["age_seconds"],
-            cache_is_fresh=False,
-        )
+        if _endpoint_cache_is_complete(cached):
+            logger.debug(f"Metrics cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s, triggering refresh")
+
+            # Parse date parameters for background task
+            from_timestamp, to_timestamp = _compute_date_range(
+                from_date,
+                to_date,
+                tz_offset,
+                default_days=days,
+            )
+
+            # Trigger background refresh (non-blocking)
+            await _trigger_background_refresh(
+                background_tasks,
+                cache_key,
+                {
+                    "cache_key": cache_key,
+                    "clients": scoped_clients,
+                    "allowed_user_ids": list(allowed_user_ids),
+                    "from_timestamp": from_timestamp,
+                    "to_timestamp": to_timestamp,
+                    "search": search,
+                    "models": models,
+                    "include_model_breakdown": include_model_breakdown,
+                    "fetch_all": fetch_all,
+                },
+                task_fn=_fetch_metrics_background,
+            )
+
+            return MetricsResponse(
+                **cached["metrics"],
+                cache_age_seconds=cache_meta["age_seconds"],
+                cache_is_fresh=False,
+                **_scope_warning_payload(scope_warnings),
+            )
     
     # === EXPIRED CACHE: Return cached immediately + trigger background refresh ===
     if cache_meta["is_expired"] and cache_key in _TRACE_METRICS_CACHE:
-        logger.debug(f"Metrics cache HIT (expired) for {cache_key}, serving cached and refreshing in background")
         cached = _TRACE_METRICS_CACHE[cache_key]
+        if _endpoint_cache_is_complete(cached):
+            logger.debug(f"Metrics cache HIT (expired) for {cache_key}, serving cached and refreshing in background")
 
-        from_timestamp, to_timestamp = _compute_date_range(
-            from_date,
-            to_date,
-            tz_offset,
-            default_days=days,
-        )
+            from_timestamp, to_timestamp = _compute_date_range(
+                from_date,
+                to_date,
+                tz_offset,
+                default_days=days,
+            )
 
-        await _trigger_background_refresh(
-            background_tasks,
-            cache_key,
-            {
-                "user_id": user_id,
-                "cache_key": cache_key,
-                "from_timestamp": from_timestamp,
-                "to_timestamp": to_timestamp,
-                "search": search,
-                "models": models,
-                "include_model_breakdown": include_model_breakdown,
-                "fetch_all": fetch_all,
-            },
-            task_fn=_fetch_metrics_background,
-        )
+            await _trigger_background_refresh(
+                background_tasks,
+                cache_key,
+                {
+                    "cache_key": cache_key,
+                    "clients": scoped_clients,
+                    "allowed_user_ids": list(allowed_user_ids),
+                    "from_timestamp": from_timestamp,
+                    "to_timestamp": to_timestamp,
+                    "search": search,
+                    "models": models,
+                    "include_model_breakdown": include_model_breakdown,
+                    "fetch_all": fetch_all,
+                },
+                task_fn=_fetch_metrics_background,
+            )
 
-        return MetricsResponse(
-            **cached["metrics"],
-            cache_age_seconds=cache_meta["age_seconds"],
-            cache_is_fresh=False,
-        )
+            return MetricsResponse(
+                **cached["metrics"],
+                cache_age_seconds=cache_meta["age_seconds"],
+                cache_is_fresh=False,
+                **_scope_warning_payload(scope_warnings),
+            )
 
     # === EXPIRED/MISSING CACHE: Fetch fresh data (blocks briefly) ===
     logger.debug(f"Metrics cache MISS for {cache_key}, fetching fresh data")
     
     # Fall back to synchronous fetch
-    return _fetch_metrics_sync(current_user, days, from_date, to_date, search, models, tz_offset, include_model_breakdown, fetch_all)
+    return _fetch_metrics_sync(
+        current_user,
+        scoped_clients,
+        allowed_user_ids,
+        scope_key,
+        scope_warnings,
+        days,
+        from_date,
+        to_date,
+        search,
+        models,
+        tz_offset,
+        include_model_breakdown,
+        fetch_all,
+    )
 
 
 def _compute_date_range(
@@ -2984,6 +4388,10 @@ def _compute_date_range(
 
 def _fetch_metrics_sync(
     current_user: User,
+    scoped_clients: list[Any],
+    allowed_user_ids: set[str],
+    scope_key: str,
+    scope_warnings: list[str],
     days: int,
     from_date: str | None,
     to_date: str | None,
@@ -2997,9 +4405,10 @@ def _fetch_metrics_sync(
     Synchronous metrics fetch (used when cache misses or SWR disabled).
     This is the actual computation that builds metrics from Langfuse.
     """
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    if not scoped_clients:
+        return MetricsResponse(**_scope_warning_payload(scope_warnings))
+    if not allowed_user_ids:
+        return MetricsResponse(**_scope_warning_payload(scope_warnings))
 
     try:
         user_id = str(current_user.id)
@@ -3019,9 +4428,9 @@ def _fetch_metrics_sync(
 
         # Fetch traces with date filters
         trace_limit = 500
-        raw_traces = fetch_traces_from_langfuse(
-            client,
-            user_id,
+        raw_traces = _fetch_scoped_traces(
+            clients=scoped_clients,
+            allowed_user_ids=allowed_user_ids,
             limit=trace_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
@@ -3056,6 +4465,9 @@ def _fetch_metrics_sync(
             "count": 0, "tokens": 0, "cost": 0.0
         })
 
+        # Pre-fetch observations in parallel so the loop below hits cache only.
+        _pre_enrich_traces(raw_traces, scoped_clients)
+
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id')
             trace_name = get_attr(trace, 'name') or 'Unknown'
@@ -3075,11 +4487,13 @@ def _fetch_metrics_sync(
 
             # OPTIMIZATION: Only fetch observations if explicitly requested
             # Smart fallback strategy: only fetch if trace has NO metrics data at all
+            trace_client = _resolve_trace_client(trace, scoped_clients) or scoped_clients[0]
             trace_metrics = _get_trace_metrics(
-                client,
+                trace_client,
                 trace,
-                allow_observation_fallback=not include_model_breakdown,  # Disable fallback unless explicitly requested
+                allow_observation_fallback=True,  # Cache pre-warmed in parallel above
                 fallback_budget=fallback_budget,
+                all_clients=scoped_clients,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
             trace_input_tokens = int(trace_metrics["input_tokens"])
@@ -3096,7 +4510,7 @@ def _fetch_metrics_sync(
             # ONLY fetch observations if user explicitly requested detailed breakdown
             if include_model_breakdown:
                 try:
-                    observations = fetch_observations_for_trace(client, str(trace_id))
+                    observations = fetch_observations_for_trace(trace_client, str(trace_id))
                     parsed_obs = [parse_observation(obs) for obs in observations]
                 except Exception:
                     parsed_obs = []
@@ -3208,7 +4622,7 @@ def _fetch_metrics_sync(
         )
 
         # Cache the result with metadata
-        cache_key = f"metrics:{user_id}:{from_date}:{to_date}:{days}:{search}:{models}:{include_model_breakdown}:{tz_offset}:{fetch_all}"
+        cache_key = f"metrics:{user_id}:{scope_key}:{from_date}:{to_date}:{days}:{search}:{models}:{include_model_breakdown}:{tz_offset}:{fetch_all}"
         metrics_dict = {
             "total_traces": total_traces,
             "total_observations": total_observations,
@@ -3247,6 +4661,7 @@ def _fetch_metrics_sync(
             fetched_trace_count=len(raw_traces),
             cache_age_seconds=0,
             cache_is_fresh=True,
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -3283,6 +4698,8 @@ class AgentListResponse(BaseModel):
     total: int
     truncated: bool = False
     fetched_trace_count: int = 0
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 class AgentDetailResponse(BaseModel):
@@ -3302,6 +4719,8 @@ class AgentDetailResponse(BaseModel):
     models_used: dict[str, dict] = {}  # model -> {tokens, cost, calls}
     sessions: list[SessionListItem] = []
     by_date: list[DailyUsageItem] = []
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 # =============================================================================
@@ -3326,6 +4745,8 @@ class ProjectListResponse(BaseModel):
     total: int
     truncated: bool = False
     fetched_trace_count: int = 0
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 class ProjectDetailResponse(BaseModel):
@@ -3346,6 +4767,8 @@ class ProjectDetailResponse(BaseModel):
     models_used: dict[str, dict] = {}  # model -> {tokens, cost, calls}
     agents: list[AgentListItem] = []
     by_date: list[DailyUsageItem] = []
+    scope_warning: bool = False
+    scope_warning_message: str | None = None
 
 
 # =============================================================================
@@ -3446,9 +4869,17 @@ def _match_trace_to_agent(trace, agents_by_id: dict, agents_by_name: dict) -> tu
     return None, None
 
 
-def _user_agents_stmt(user_id):
+def _user_agents_stmt(user_ids: UUID | list[UUID] | set[UUID]):
     """Build a user-agent query compatible with schemas that may not expose `is_component`."""
-    stmt = select(Agent).where(Agent.user_id == user_id)
+    if isinstance(user_ids, set):
+        user_ids = list(user_ids)
+    if isinstance(user_ids, list):
+        if not user_ids:
+            stmt = select(Agent).where(Agent.user_id.is_(None))
+        else:
+            stmt = select(Agent).where(Agent.user_id.in_(user_ids))
+    else:
+        stmt = select(Agent).where(Agent.user_id == user_ids)
     is_component_col = getattr(Agent, "is_component", None)
     if is_component_col is not None:
         stmt = stmt.where((is_component_col == False) | (is_component_col.is_(None)))  # noqa: E712
@@ -3459,8 +4890,9 @@ def _user_agents_stmt(user_id):
 async def get_user_agents(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    _background_tasks: BackgroundTasks,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
@@ -3469,54 +4901,71 @@ async def get_user_agents(
     """
     Get all agents/agents for the current user with aggregated metrics.
 
-    STALE-WHILE-REVALIDATE CACHING STRATEGY:
-    - Fresh cache (<15s old): Return immediately, no refresh
-    - Stale cache (15-60s old): Return immediately, trigger background refresh
-    - Expired cache (>60s old): Fetch fresh data (blocks briefly)
-
     Uses database agents as source of truth and matches traces to agents.
     """
     _clear_request_caches()  # Clear per-request caches at start
 
+    allowed_user_ids, scoped_clients, scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        return AgentListResponse(
+            agents=[],
+            total=0,
+            truncated=False,
+            fetched_trace_count=0,
+            **_scope_warning_payload(scope_warnings),
+        )
+    primary_client = scoped_clients[0]
+
+    scoped_user_uuids: list[UUID] = []
+    for uid in allowed_user_ids:
+        try:
+            scoped_user_uuids.append(UUID(uid))
+        except Exception:
+            continue
+
     # Build cache key from stable parameters
     user_id = str(current_user.id)
-    cache_key = f"agents:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+    cache_key = f"agents:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
     
     # Check cache status
     cache_meta = _get_cache_metadata(cache_key)
     
-    # Cache checking logic (only if SWR enabled)
-    if SWR_CONFIG["ENABLE_SWR"]:
-        # === FRESH CACHE: Return immediately, no refresh ===
-        if cache_meta["is_fresh"] and cache_key in _AGENTS_CACHE:
+    if cache_meta["is_fresh"] and cache_key in _AGENTS_CACHE:
+        cached = _AGENTS_CACHE[cache_key]
+        cached_agents = cached["data"].get("agents", [])
+        if (
+            cache_key not in _ZERO_TOKEN_RECOMPUTED
+            and _list_cache_needs_recompute(cached_agents, "total_tokens", "trace_count")
+        ):
+            logger.warning(
+                f"Agents cache {cache_key} has zero tokens with traces present — "
+                "invalidating to force recompute (once)"
+            )
+            _AGENTS_CACHE.pop(cache_key, None)
+            _ZERO_TOKEN_RECOMPUTED.add(cache_key)
+            # Fall through to fresh computation below
+        else:
             logger.debug(f"Agents cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
-            cached = _AGENTS_CACHE[cache_key]
             return AgentListResponse(
                 **cached["data"],
                 fetched_trace_count=cached.get("fetched_trace_count", 0),
-            )
-        
-        # === STALE CACHE: fetch fresh synchronously ===
-        # Background refresh task is not configured for agents cache.
-        # Returning stale values here can keep token counts at zero for too long.
-        if cache_meta["is_stale"] and cache_key in _AGENTS_CACHE:
-            logger.debug(
-                f"Agents cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s; "
-                "fetching fresh synchronously"
+                **_scope_warning_payload(scope_warnings),
             )
 
     # === EXPIRED/MISSING CACHE: Fetch fresh data ===
     logger.debug(f"Agents cache MISS for {cache_key}, fetching fresh data")
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
     try:
-        user_id = str(current_user.id)
         logger.info(f"Fetching agents for user_id: {user_id}")
 
         # Get all user agents from database (source of truth)
-        agents_result = await session.exec(_user_agents_stmt(current_user.id))
+        agents_result = await session.exec(_user_agents_stmt(scoped_user_uuids))
         user_agents = agents_result.all()
 
         # Build lookup dictionaries
@@ -3551,8 +5000,10 @@ async def get_user_agents(
 
         # Fetch all traces from Langfuse
         trace_limit = 500
-        raw_traces = fetch_traces_from_langfuse(
-            client, user_id, limit=trace_limit,
+        raw_traces = _fetch_scoped_traces(
+            clients=scoped_clients,
+            allowed_user_ids=allowed_user_ids,
+            limit=trace_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
             fetch_all=fetch_all,
@@ -3586,6 +5037,8 @@ async def get_user_agents(
         agents_data: dict[str, dict] = {}
         processed_traces: set[str] = set()
         fallback_budget = _make_fallback_budget(len(raw_traces))
+        # Pre-fetch observations in parallel so the loop below hits cache only.
+        _pre_enrich_traces(raw_traces, scoped_clients)
 
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id')
@@ -3611,11 +5064,13 @@ async def get_user_agents(
             if not agent_id:
                 continue  # Skip traces not associated with any agent
 
+            trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
             trace_metrics = _get_trace_metrics(
-                client,
+                trace_client,
                 trace,
-                allow_observation_fallback=True,
+                allow_observation_fallback=True,  # Cache pre-warmed in parallel above
                 fallback_budget=fallback_budget,
+                all_clients=scoped_clients,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
             trace_cost = float(trace_metrics["total_cost"])
@@ -3692,13 +5147,17 @@ async def get_user_agents(
             "truncated": is_truncated,
         }
 
-        # Cache the result, but avoid caching empty date-filter windows to reduce
-        # sticky false-empty UI states from intermittent upstream filtering issues.
+        # Cache the result, but avoid caching empty date-filter windows or zero-token
+        # data when agents exist (zero-token cache poisons downstream fresh paths).
+        _agents_have_tokens = any(getattr(a, "total_tokens", 0) > 0 for a in agents)
+        _agents_have_traces = any(getattr(a, "trace_count", 0) > 0 for a in agents)
         should_cache_response = not (
             total_count == 0 and (from_date or to_date)
+        ) and not (
+            _agents_have_traces and not _agents_have_tokens
         )
         if should_cache_response:
-            cache_key = f"agents:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+            cache_key = f"agents:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
             if cache_key not in _AGENTS_CACHE:
                 _AGENTS_CACHE[cache_key] = {}
             _AGENTS_CACHE[cache_key]["data"] = response_data
@@ -3710,6 +5169,7 @@ async def get_user_agents(
             total=total_count,
             truncated=is_truncated,
             fetched_trace_count=len(raw_traces),
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -3725,6 +5185,8 @@ async def get_agent_detail(
     agent_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
@@ -3734,19 +5196,34 @@ async def get_agent_detail(
     """
     _clear_request_caches()  # Clear per-request caches at start
 
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    allowed_user_ids, scoped_clients, _scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        raise HTTPException(status_code=404, detail=(scope_warnings[0] if scope_warnings else "Agent/Agent not found"))
+    primary_client = scoped_clients[0]
+
+    scoped_user_uuids: list[UUID] = []
+    for uid in allowed_user_ids:
+        try:
+            scoped_user_uuids.append(UUID(uid))
+        except Exception:
+            continue
 
     try:
-        user_id = str(current_user.id)
-
         # Get agent from database to verify it exists and get its name
         from uuid import UUID as PyUUID
         try:
             agent_uuid = PyUUID(agent_id)
             agent_result = await session.exec(
-                select(Agent).where(Agent.id == agent_uuid, Agent.user_id == current_user.id)
+                select(Agent).where(
+                    Agent.id == agent_uuid,
+                    Agent.user_id.in_(scoped_user_uuids),
+                )
             )
             agent = agent_result.first()
         except ValueError:
@@ -3773,8 +5250,10 @@ async def get_agent_detail(
         )
 
         # Fetch all traces
-        raw_traces = fetch_traces_from_langfuse(
-            client, user_id, limit=500,
+        raw_traces = _fetch_scoped_traces(
+            clients=scoped_clients,
+            allowed_user_ids=allowed_user_ids,
+            limit=500,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
         )
@@ -3808,6 +5287,7 @@ async def get_agent_detail(
                 models_used={},
                 sessions=[],
                 by_date=[],
+                **_scope_warning_payload(scope_warnings),
             )
 
         # Pass 2: Process ALL traces that belong to this agent's sessions
@@ -3850,11 +5330,13 @@ async def get_agent_detail(
 
             # Fast path: trace-level metrics (cached — zero extra API calls).
             # Mirrors the fix already applied to session_detail.
+            trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
             t_metrics = _get_trace_metrics(
-                client,
+                trace_client,
                 trace,
                 allow_observation_fallback=True,
                 fallback_budget=_agent_detail_fallback_budget,
+                all_clients=scoped_clients,
             )
             trace_tokens = int(t_metrics["total_tokens"])
             trace_input_tokens = int(t_metrics["input_tokens"])
@@ -3962,6 +5444,7 @@ async def get_agent_detail(
             models_used=models_used,
             sessions=sessions,
             by_date=by_date,
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -3980,8 +5463,9 @@ async def get_agent_detail(
 async def get_user_projects(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    _background_tasks: BackgroundTasks,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
@@ -3990,48 +5474,65 @@ async def get_user_projects(
     """
     Get all projects (folders) for the current user with aggregated metrics.
 
-    STALE-WHILE-REVALIDATE CACHING STRATEGY:
-    - Fresh cache (<15s old): Return immediately, no refresh
-    - Stale cache (15-60s old): Return immediately, trigger background refresh
-    - Expired cache (>60s old): Fetch fresh data (blocks briefly)
     """
     _clear_request_caches()  # Clear per-request caches at start
 
+    allowed_user_ids, scoped_clients, scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        return ProjectListResponse(
+            projects=[],
+            total=0,
+            truncated=False,
+            fetched_trace_count=0,
+            **_scope_warning_payload(scope_warnings),
+        )
+    primary_client = scoped_clients[0]
+
+    scoped_user_uuids: list[UUID] = []
+    for uid in allowed_user_ids:
+        try:
+            scoped_user_uuids.append(UUID(uid))
+        except Exception:
+            continue
+
     # Build cache key from stable parameters
     user_id = str(current_user.id)
-    cache_key = f"projects:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+    cache_key = f"projects:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
     
     # Check cache status
     cache_meta = _get_cache_metadata(cache_key)
     
-    # Cache checking logic (only if SWR enabled)
-    if SWR_CONFIG["ENABLE_SWR"]:
-        # === FRESH CACHE: Return immediately, no refresh ===
-        if cache_meta["is_fresh"] and cache_key in _PROJECTS_CACHE:
+    if cache_meta["is_fresh"] and cache_key in _PROJECTS_CACHE:
+        cached = _PROJECTS_CACHE[cache_key]
+        cached_projects = cached["data"].get("projects", [])
+        if (
+            cache_key not in _ZERO_TOKEN_RECOMPUTED
+            and _list_cache_needs_recompute(cached_projects, "total_tokens", "trace_count")
+        ):
+            logger.warning(
+                f"Projects cache {cache_key} has zero tokens with traces present — "
+                "invalidating to force recompute (once)"
+            )
+            _PROJECTS_CACHE.pop(cache_key, None)
+            _ZERO_TOKEN_RECOMPUTED.add(cache_key)
+            # Fall through to fresh computation below
+        else:
             logger.debug(f"Projects cache HIT (fresh) for {cache_key}, age={cache_meta['age_seconds']}s")
-            cached = _PROJECTS_CACHE[cache_key]
             return ProjectListResponse(
                 **cached["data"],
                 fetched_trace_count=cached.get("fetched_trace_count", 0),
+                **_scope_warning_payload(scope_warnings),
             )
-        
-        # === STALE CACHE: fetch fresh synchronously ===
-        # Background refresh task is not configured for projects cache.
-        # Returning stale values here can keep token counts at zero for too long.
-        if cache_meta["is_stale"] and cache_key in _PROJECTS_CACHE:
-            logger.debug(
-                f"Projects cache HIT (stale) for {cache_key}, age={cache_meta['age_seconds']}s; "
-                "fetching fresh synchronously"
-            )
-
     # === EXPIRED/MISSING CACHE: Fetch fresh data ===
     logger.debug(f"Projects cache MISS for {cache_key}, fetching fresh data")
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
     try:
-        user_id = str(current_user.id)
         logger.info(f"Fetching projects for user_id: {user_id}")
 
         from_timestamp, to_timestamp = _compute_date_range(
@@ -4043,12 +5544,12 @@ async def get_user_projects(
 
         # Get all user folders from database
         folders_result = await session.exec(
-            select(Folder).where(Folder.user_id == current_user.id)
+            select(Folder).where(Folder.user_id.in_(scoped_user_uuids))
         )
         user_folders = folders_result.all()
 
         # Get all user agents
-        agents_result = await session.exec(_user_agents_stmt(current_user.id))
+        agents_result = await session.exec(_user_agents_stmt(scoped_user_uuids))
         user_agents = agents_result.all()
 
         # Build folder lookup and agent-to-folder mapping
@@ -4063,9 +5564,9 @@ async def get_user_projects(
 
         # Fetch all traces
         trace_limit = 500
-        raw_traces = fetch_traces_from_langfuse(
-            client,
-            user_id,
+        raw_traces = _fetch_scoped_traces(
+            clients=scoped_clients,
+            allowed_user_ids=allowed_user_ids,
             limit=trace_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
@@ -4114,6 +5615,8 @@ async def get_user_projects(
             projects_data[folder_id]["trace_count"] += 1
 
         # Pass 2: aggregate tokens/cost from all traces that belong to discovered project sessions
+        # Pre-fetch observations in parallel so the loop below hits cache only.
+        _pre_enrich_traces(raw_traces, scoped_clients)
         for trace in raw_traces:
             trace_id = get_attr(trace, 'id')
             if trace_id in processed_traces:
@@ -4126,11 +5629,13 @@ async def get_user_projects(
                 continue
 
             timestamp = parse_datetime(get_attr(trace, 'timestamp'))
+            trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
             trace_metrics = _get_trace_metrics(
-                client,
+                trace_client,
                 trace,
-                allow_observation_fallback=True,
+                allow_observation_fallback=True,  # Cache pre-warmed in parallel above
                 fallback_budget=fallback_budget,
+                all_clients=scoped_clients,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
             trace_cost = float(trace_metrics["total_cost"])
@@ -4168,13 +5673,17 @@ async def get_user_projects(
             "truncated": is_truncated,
         }
 
-        # Cache the result, but avoid caching empty date-filter windows to reduce
-        # sticky false-empty UI states from intermittent upstream filtering issues.
+        # Cache the result, but avoid caching empty date-filter windows or zero-token
+        # data when projects exist (zero-token cache poisons downstream fresh paths).
+        _projects_have_tokens = any(getattr(p, "total_tokens", 0) > 0 for p in projects)
+        _projects_have_traces = any(getattr(p, "trace_count", 0) > 0 for p in projects)
         should_cache_response = not (
             total_count == 0 and (from_date or to_date)
+        ) and not (
+            _projects_have_traces and not _projects_have_tokens
         )
         if should_cache_response:
-            cache_key = f"projects:{user_id}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+            cache_key = f"projects:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
             if cache_key not in _PROJECTS_CACHE:
                 _PROJECTS_CACHE[cache_key] = {}
             _PROJECTS_CACHE[cache_key]["data"] = response_data
@@ -4186,6 +5695,7 @@ async def get_user_projects(
             total=total_count,
             truncated=is_truncated,
             fetched_trace_count=len(raw_traces),
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:
@@ -4201,6 +5711,8 @@ async def get_project_detail(
     project_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    org_id: Annotated[UUID | None, Query(description="Organization scope for root/super-admin")] = None,
+    dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
@@ -4210,19 +5722,34 @@ async def get_project_detail(
     """
     _clear_request_caches()  # Clear per-request caches at start
 
-    client = get_langfuse_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    allowed_user_ids, scoped_clients, _scope_key, scope_warnings = await _resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        dept_id=dept_id,
+        enforce_filter_for_admin=True,
+    )
+    if not scoped_clients:
+        raise HTTPException(status_code=404, detail=(scope_warnings[0] if scope_warnings else "Project not found"))
+    primary_client = scoped_clients[0]
+
+    scoped_user_uuids: list[UUID] = []
+    for uid in allowed_user_ids:
+        try:
+            scoped_user_uuids.append(UUID(uid))
+        except Exception:
+            continue
 
     try:
-        user_id = str(current_user.id)
-
         # Get folder from database
         from uuid import UUID as PyUUID
         try:
             folder_uuid = PyUUID(project_id)
             folder_result = await session.exec(
-                select(Folder).where(Folder.id == folder_uuid, Folder.user_id == current_user.id)
+                select(Folder).where(
+                    Folder.id == folder_uuid,
+                    Folder.user_id.in_(scoped_user_uuids),
+                )
             )
             folder = folder_result.first()
         except ValueError:
@@ -4234,7 +5761,7 @@ async def get_project_detail(
         project_name = folder.name
 
         # Get agents in this folder
-        agents_stmt = _user_agents_stmt(current_user.id).where(Agent.folder_id == folder.id)
+        agents_stmt = _user_agents_stmt(scoped_user_uuids).where(Agent.folder_id == folder.id)
         agents_result = await session.exec(agents_stmt)
         folder_agents = agents_result.all()
 
@@ -4259,6 +5786,7 @@ async def get_project_detail(
                 models_used={},
                 agents=[],
                 by_date=[],
+                **_scope_warning_payload(scope_warnings),
             )
 
         # Parse date filters with timezone awareness
@@ -4270,7 +5798,10 @@ async def get_project_detail(
         )
 
         # Fetch all traces
-        raw_traces = fetch_traces_from_langfuse(client, user_id, limit=100,
+        raw_traces = _fetch_scoped_traces(
+            clients=scoped_clients,
+            allowed_user_ids=allowed_user_ids,
+            limit=100,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
         )
@@ -4307,11 +5838,13 @@ async def get_project_detail(
             if timestamp:
                 timestamps.append(timestamp)
 
+            trace_client = _resolve_trace_client(trace, scoped_clients) or primary_client
             trace_metrics = _get_trace_metrics(
-                client,
+                trace_client,
                 trace,
                 allow_observation_fallback=True,
                 fallback_budget=fallback_budget,
+                all_clients=scoped_clients,
             )
             trace_tokens = int(trace_metrics["total_tokens"])
             trace_input_tokens = int(trace_metrics["input_tokens"])
@@ -4420,6 +5953,7 @@ async def get_project_detail(
             models_used=models_used,
             agents=agents,
             by_date=by_date,
+            **_scope_warning_payload(scope_warnings),
         )
 
     except HTTPException:

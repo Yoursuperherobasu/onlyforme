@@ -16,6 +16,9 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     logger = logging.getLogger(__name__)
     logger.info("MCP Service starting on %s:%s", settings.host, settings.port)
+    if not settings.key_vault_url:
+        msg = "MCP Service requires Azure Key Vault. Set MCP_SERVICE_KEY_VAULT_URL."
+        raise RuntimeError(msg)
 
     # Initialise database if configured
     if settings.database_url:

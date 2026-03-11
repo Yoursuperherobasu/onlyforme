@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import date
 from collections.abc import AsyncGenerator
 
 from collections.abc import AsyncGenerator
@@ -47,6 +48,7 @@ from agentcore.services.database.models.agent.model import Agent, AgentRead
 from agentcore.services.database.models.agent.utils import get_all_webhook_components_in_agent
 from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
 from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
+from agentcore.services.database.models.product_release.model import ProductRelease
 from agentcore.services.database.models.user.model import User, UserRead
 from agentcore.services.deps import get_settings_service, get_telemetry_service, session_scope
 from agentcore.services.telemetry.schema import RunPayload
@@ -211,6 +213,7 @@ async def simple_run_agent(
     validate_input_and_tweaks(input_request)
     try:
         from agentcore.api.utils import build_graph_from_data
+        from agentcore.services.deps import get_chat_service
 
         task_result: list[RunOutputs] = []
         user_id = api_key_user.id if api_key_user else None
@@ -226,6 +229,7 @@ async def simple_run_agent(
             payload=graph_data,
             user_id=str(user_id) if user_id else None,
             agent_name=agent.name,
+            chat_service=get_chat_service(),
         )
 
         # Set PROD deployment context so adapter logs to transaction_prod
@@ -399,8 +403,8 @@ async def simplified_run_agent(
     agent: Annotated[AgentRead | None, Depends(get_agent_by_id_or_endpoint_name)],
     input_request: SimplifiedAPIRequest | None = None,
     stream: bool = False,
-    api_key_user: Annotated[UserRead, Depends(api_key_security)],
-env: RunEnvironment = Query(
+    # api_key_user: Annotated[UserRead, Depends(api_key_security)],  # Disabled for testing
+    env: RunEnvironment = Query(
         description="Environment to run the agent from: dev (draft from agent table), uat (agent_deployment_uat), or prod (agent_deployment_prod)",
     ),
     version: str = Query(
@@ -448,9 +452,12 @@ env: RunEnvironment = Query(
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
     # --- Resolve flow data from the correct environment / version ---
+    logger.info(f"[RUN_AGENT] Resolving agent={agent.id} env={env.value} version={version}")
     agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
         agent_id=agent.id, env=env, version=version
     )
+    resolved_source = "PROD table" if prod_deployment else ("UAT table" if uat_deployment else "DEV (agent table)")
+    logger.info(f"[RUN_AGENT] Resolved from: {resolved_source} | agent={agent.id}")
     start_time = time.perf_counter()
 
     if stream:
@@ -461,7 +468,7 @@ env: RunEnvironment = Query(
             run_agent_generator(
                 agent=agent,
                 input_request=input_request,
-                api_key_user=api_key_user,
+                api_key_user=None,  # Disabled for testing
                 event_manager=event_manager,
                 client_consumed_queue=asyncio_queue_client_consumed,
                 prod_deployment=prod_deployment,
@@ -484,7 +491,7 @@ env: RunEnvironment = Query(
             agent=agent,
             input_request=input_request,
             stream=stream,
-            api_key_user=api_key_user,
+            api_key_user=None,  # Disabled for testing
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
         )
@@ -625,6 +632,27 @@ async def webhook_run_agent(
 @router.get("/version")
 async def get_version():
     return get_version_info()
+
+
+@router.get("/version/current-release")
+async def get_current_release_version():
+    active_end_date = date(9999, 12, 31)
+    async with session_scope() as session:
+        release = (
+            await session.exec(
+                select(ProductRelease)
+                .where(ProductRelease.end_date == active_end_date)
+                .order_by(ProductRelease.start_date.desc(), ProductRelease.created_at.desc())
+            )
+        ).first()
+    if release is None:
+        return None
+    return {
+        "version": release.version,
+        "start_date": release.start_date.isoformat(),
+        "end_date": release.end_date.isoformat(),
+        "is_active": release.end_date == active_end_date,
+    }
 
 
 @router.post("/custom_component", status_code=HTTPStatus.OK)

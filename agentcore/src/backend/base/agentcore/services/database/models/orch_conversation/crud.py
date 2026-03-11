@@ -78,9 +78,16 @@ async def orch_get_sessions(
 async def orch_delete_session(
     session: AsyncSession,
     session_id: str,
+    user_id: UUID | None = None,
 ) -> int:
-    """Delete all messages in a session. Returns count of deleted rows."""
+    """Delete all messages in a session. Returns count of deleted rows.
+
+    When *user_id* is provided the delete is scoped to that user so that
+    one user cannot delete another user's session.
+    """
     stmt = delete(OrchConversationTable).where(OrchConversationTable.session_id == session_id)
+    if user_id:
+        stmt = stmt.where(OrchConversationTable.user_id == user_id)
     result = await session.execute(stmt)
     await session.commit()
     return result.rowcount  # type: ignore[return-value]
@@ -90,13 +97,20 @@ async def orch_rename_session(
     session: AsyncSession,
     old_session_id: str,
     new_session_id: str,
+    user_id: UUID | None = None,
 ) -> int:
-    """Rename a session (update session_id on all its messages). Returns count of updated rows."""
+    """Rename a session (update session_id on all its messages). Returns count of updated rows.
+
+    When *user_id* is provided the update is scoped to that user so that
+    one user cannot rename another user's session.
+    """
     stmt = (
         update(OrchConversationTable)
         .where(OrchConversationTable.session_id == old_session_id)
-        .values(session_id=new_session_id)
     )
+    if user_id:
+        stmt = stmt.where(OrchConversationTable.user_id == user_id)
+    stmt = stmt.values(session_id=new_session_id)
     result = await session.execute(stmt)
     await session.commit()
     return result.rowcount  # type: ignore[return-value]

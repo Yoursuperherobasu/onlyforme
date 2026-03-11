@@ -11,6 +11,7 @@ export interface IUnifiedPublishAgentRequest {
   visibility: "PUBLIC" | "PRIVATE";
   environment: "uat" | "prod";
   publish_description?: string;
+  recipient_emails?: string[];
 }
 
 export interface IUnifiedPublishAgentResponse {
@@ -43,6 +44,7 @@ export const usePostUnifiedPublishAgent: useMutationFunctionType<
         visibility: payload.visibility,
         environment: payload.environment,
         publish_description: payload.publish_description ?? null,
+        recipient_emails: payload.recipient_emails ?? [],
       },
     );
     return response.data;

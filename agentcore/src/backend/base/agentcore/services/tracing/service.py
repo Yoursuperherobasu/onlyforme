@@ -7,10 +7,19 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from loguru import logger
 
 from agentcore.services.base import Service
+from agentcore.services.auth.permissions import normalize_role
+from agentcore.services.deps import session_scope
+from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.user.model import User
+from agentcore.services.observability import (
+    get_langfuse_provisioning_service,
+    resolve_write_langfuse_binding,
+)
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -32,6 +41,9 @@ def _get_langfuse_tracer():
 
 trace_context_var: ContextVar[TraceContext | None] = ContextVar("trace_context", default=None)
 component_context_var: ContextVar[ComponentTraceContext | None] = ContextVar("component_trace_context", default=None)
+
+# Keep strong references to background tasks to prevent "Task was destroyed but pending" warnings
+_background_tasks: set[asyncio.Task] = set()
 
 
 class TraceContext:
@@ -57,6 +69,10 @@ class TraceContext:
         self.agent_name: str | None = agent_name
         self.observability_project_id: str | None = observability_project_id
         self.observability_project_name: str | None = observability_project_name
+        self.langfuse_host: str | None = None
+        self.langfuse_public_key: str | None = None
+        self.langfuse_secret_key: str | None = None
+        self.langfuse_credentials_resolved: bool = False
         self.tracers: dict[str, BaseTracer] = {}
         self.all_inputs: dict[str, dict] = defaultdict(dict)
         self.all_outputs: dict[str, dict] = defaultdict(dict)
@@ -134,12 +150,21 @@ class TracingService(Service):
         try:
             trace_context.running = True
             trace_context.worker_task = asyncio.create_task(self._trace_worker(trace_context))
+            _background_tasks.add(trace_context.worker_task)
+            trace_context.worker_task.add_done_callback(_background_tasks.discard)
         except Exception:  # noqa: BLE001
             logger.exception("Error starting tracing service")
 
     def _initialize_langfuse_tracer(self, trace_context: TraceContext) -> None:
         if self.deactivated:
             logger.warning("🚫 Langfuse tracer init skipped - tracing deactivated")
+            return
+        if not trace_context.langfuse_credentials_resolved:
+            logger.warning(
+                "Langfuse tracer init skipped - no scoped binding credentials resolved for user={} agent={}",
+                trace_context.user_id,
+                trace_context.agent_id,
+            )
             return
         logger.info(f"🎯 Creating LangFuseTracer instance for agent={trace_context.agent_name}")
         langfuse_tracer = _get_langfuse_tracer()
@@ -154,9 +179,93 @@ class TracingService(Service):
             agent_name=trace_context.agent_name,
             observability_project_id=trace_context.observability_project_id,
             observability_project_name=trace_context.observability_project_name,
+            langfuse_host=trace_context.langfuse_host,
+            langfuse_public_key=trace_context.langfuse_public_key,
+            langfuse_secret_key=trace_context.langfuse_secret_key,
         )
         trace_context.tracers["langfuse"] = tracer_instance
         logger.info(f"✅ LangFuseTracer created: ready={tracer_instance.ready}, agent={trace_context.agent_name}")
+
+    async def _resolve_langfuse_credentials(self, trace_context: TraceContext) -> None:
+        if not trace_context.user_id:
+            return
+        try:
+            user_uuid = UUID(str(trace_context.user_id))
+        except (ValueError, TypeError):
+            logger.warning("Skipping Langfuse binding resolution: invalid user_id={}", trace_context.user_id)
+            return
+
+        agent_uuid: UUID | None = None
+        if trace_context.agent_id:
+            try:
+                agent_uuid = UUID(str(trace_context.agent_id))
+            except (ValueError, TypeError):
+                agent_uuid = None
+
+        try:
+            async with session_scope() as session:
+                provisioning_service = get_langfuse_provisioning_service()
+                binding = await resolve_write_langfuse_binding(
+                    session,
+                    user_id=user_uuid,
+                    agent_id=agent_uuid,
+                    selected_dept_id=None,
+                )
+
+                if not binding:
+                    actor = await session.get(User, user_uuid)
+                    actor_role = normalize_role(actor.role) if actor else ""
+                    if actor and actor_role == "root":
+                        is_unscoped_root_agent = True
+                        if agent_uuid is not None:
+                            agent = await session.get(Agent, agent_uuid)
+                            if agent and (agent.org_id is not None or agent.dept_id is not None):
+                                is_unscoped_root_agent = False
+                        if is_unscoped_root_agent:
+                            try:
+                                binding = await provisioning_service.ensure_root_private_binding(
+                                    session,
+                                    actor=actor,
+                                )
+                                await session.commit()
+                                logger.info(
+                                    "Resolved root-private Langfuse binding for root trace write user_id={} agent_id={}",
+                                    user_uuid,
+                                    agent_uuid,
+                                )
+                            except Exception:
+                                await session.rollback()
+                                logger.exception(
+                                    "Failed ensuring root-private Langfuse binding for user_id={} agent_id={}",
+                                    user_uuid,
+                                    agent_uuid,
+                                )
+
+                if not binding:
+                    logger.warning(
+                        "No active Langfuse binding resolved for trace write user_id={} agent_id={}",
+                        user_uuid,
+                        agent_uuid,
+                    )
+                    return
+                trace_context.langfuse_host = binding.langfuse_host
+                trace_context.langfuse_public_key = provisioning_service.decrypt_secret(
+                    binding.public_key_encrypted
+                )
+                trace_context.langfuse_secret_key = provisioning_service.decrypt_secret(
+                    binding.secret_key_encrypted
+                )
+                trace_context.langfuse_credentials_resolved = bool(
+                    trace_context.langfuse_host
+                    and trace_context.langfuse_public_key
+                    and trace_context.langfuse_secret_key
+                )
+        except Exception:
+            logger.exception(
+                "Failed resolving Langfuse binding for trace write user_id={} agent_id={}",
+                user_uuid,
+                agent_uuid,
+            )
 
     async def start_tracers(
         self,
@@ -208,6 +317,7 @@ class TracingService(Service):
                 observability_project_name=observability_project_name,
             )
             trace_context_var.set(trace_context)
+            await self._resolve_langfuse_credentials(trace_context)
             
             logger.info(f"🔧 Initializing Langfuse tracer for agent={agent_name}")
             self._initialize_langfuse_tracer(trace_context)

@@ -31,9 +31,9 @@ class McpRegistry(SQLModel, table=True):
     command: str | None = Field(default=None)
     args: list | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
-    # Secrets (encrypted JSON)
-    env_vars_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    headers_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Secret references (stored in Azure Key Vault)
+    env_vars_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    headers_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
 
     is_active: bool = Field(default=True)
     created_by: str | None = Field(default=None, nullable=True)
@@ -69,8 +69,8 @@ class McpRegistryCreate(BaseModel):
     url: str | None = None
     command: str | None = None
     args: list[str] | None = None
-    env_vars: dict[str, str] | None = None  # plain-text; encrypted before storage
-    headers: dict[str, str] | None = None  # plain-text; encrypted before storage
+    env_vars: dict[str, str] | None = None  # plain-text; stored in Azure Key Vault
+    headers: dict[str, str] | None = None  # plain-text; stored in Azure Key Vault
     is_active: bool = True
     created_by: str | None = None
     deployment_env: str = "DEV"
@@ -96,8 +96,8 @@ class McpRegistryUpdate(BaseModel):
     url: str | None = None
     command: str | None = None
     args: list[str] | None = None
-    env_vars: dict[str, str] | None = None  # plain-text; re-encrypted if provided
-    headers: dict[str, str] | None = None  # plain-text; re-encrypted if provided
+    env_vars: dict[str, str] | None = None  # plain-text; updated in Azure Key Vault if provided
+    headers: dict[str, str] | None = None  # plain-text; updated in Azure Key Vault if provided
     is_active: bool | None = None
     deployment_env: str | None = None
     status: str | None = None
@@ -162,8 +162,8 @@ class McpRegistryRead(BaseModel):
     @classmethod
     def from_orm_model(cls, row: McpRegistry) -> "McpRegistryRead":
         obj = cls.model_validate(row)
-        object.__setattr__(obj, "_has_env_vars", bool(row.env_vars_encrypted))
-        object.__setattr__(obj, "_has_headers", bool(row.headers_encrypted))
+        object.__setattr__(obj, "_has_env_vars", bool(row.env_vars_secret_ref))
+        object.__setattr__(obj, "_has_headers", bool(row.headers_secret_ref))
         return obj
 
 

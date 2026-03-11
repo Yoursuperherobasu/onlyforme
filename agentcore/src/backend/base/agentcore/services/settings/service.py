@@ -3,6 +3,7 @@ from __future__ import annotations
 from agentcore.services.base import Service
 from agentcore.services.settings.auth import AuthSettings
 from agentcore.services.settings.base import Settings
+from agentcore.services.settings.key_vault import resolve_backend_secrets_from_key_vault
 
 
 class SettingsService(Service):
@@ -17,6 +18,7 @@ class SettingsService(Service):
     def initialize(cls) -> SettingsService:
         # Check if a string is a valid path or a file name
 
+        resolve_backend_secrets_from_key_vault()
         settings = Settings()
         if not settings.config_dir:
             msg = "CONFIG_DIR must be set in settings"

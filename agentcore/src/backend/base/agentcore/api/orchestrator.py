@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from pydantic import BaseModel
+from sqlalchemy import or_, true
 from sqlmodel import col, select
 
 from fastapi.responses import StreamingResponse
@@ -21,6 +22,17 @@ from agentcore.events.event_manager import EventManager, create_default_event_ma
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
     DeploymentPRODStatusEnum,
+    ProdDeploymentVisibilityEnum,
+)
+from agentcore.services.database.models.agent_deployment_uat.model import (
+    AgentDeploymentUAT,
+    DeploymentUATStatusEnum,
+)
+from agentcore.services.database.models.agent_publish_recipient.model import (
+    AgentPublishRecipient,
+)
+from agentcore.services.database.models.user_department_membership.model import (
+    UserDepartmentMembership,
 )
 from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
 from agentcore.services.database.models.orch_conversation.crud import (
@@ -42,6 +54,7 @@ class OrchAgentSummary(BaseModel):
     agent_name: str
     agent_description: str | None = None
     version_number: int
+    environment: str
 
 
 class OrchChatRequest(BaseModel):
@@ -63,6 +76,7 @@ class OrchMessageResponse(BaseModel):
     deployment_id: UUID | None = None
     category: str = "message"
     properties: dict | None = None
+    content_blocks: list | None = None
 
 
 class OrchChatResponse(BaseModel):
@@ -166,6 +180,7 @@ async def _build_orch_graph(
     Returns (graph, inputs, outputs).
     """
     from agentcore.processing.process import process_tweaks
+    from agentcore.services.deps import get_chat_service
 
     graph_data = snapshot.copy()
     graph_data = process_tweaks(graph_data, {}, stream=stream)
@@ -175,7 +190,14 @@ async def _build_orch_graph(
         payload=graph_data,
         user_id=user_id,
         agent_name=agent_name,
+        chat_service=get_chat_service(),
     )
+
+    # Always update user_id after retrieving the graph — the graph may have
+    # been returned from cache with a *different* user's ID. Without this,
+    # node-level messages (stored by _store_orch_message) would carry the
+    # stale user_id, causing sessions to leak across users.
+    graph.user_id = user_id
 
     if stream:
         for vertex in graph.vertices:
@@ -184,6 +206,12 @@ async def _build_orch_graph(
 
     # Orchestration chat persists messages/transactions in its own tables.
     graph.skip_dev_logging = True
+
+    # Tell nodes NOT to persist messages — the orchestrator endpoint stores
+    # user messages and agent replies explicitly with correct metadata.
+    # Node-level persistence would create duplicates and "Message empty."
+    # entries from intermediate nodes (e.g. RegistryModelComponent).
+    graph.orch_skip_node_persist = True
 
     # Pass orch context so the adapter logs to orch_transaction.
     graph.orch_session_id = session_id
@@ -211,6 +239,42 @@ async def _build_orch_graph(
     return graph, inputs, outputs
 
 
+def _serialize_content_blocks(content_blocks: list) -> list:
+    """Serialize ContentBlock objects to dicts for JSON storage."""
+    serialized = []
+    for block in content_blocks:
+        if hasattr(block, "model_dump"):
+            serialized.append(block.model_dump())
+        elif isinstance(block, dict):
+            serialized.append(block)
+    return serialized
+
+
+def _extract_content_blocks_from_graph(graph) -> list:
+    """Extract content_blocks from all built vertices in the graph.
+
+    After graph execution, intermediate vertices (like Agent/Worker Node)
+    may contain Messages with tool call content_blocks in their artifacts.
+    Output vertices (ChatOutput) typically only have text.
+    """
+    content_blocks: list = []
+    for vertex in graph.vertices:
+        if not getattr(vertex, "built", False):
+            continue
+        artifacts = getattr(vertex, "artifacts", None)
+        if artifacts is None:
+            continue
+        # Direct Message object with content_blocks
+        if hasattr(artifacts, "content_blocks") and artifacts.content_blocks:
+            content_blocks.extend(artifacts.content_blocks)
+        # Dict wrapping a Message
+        elif isinstance(artifacts, dict):
+            for val in artifacts.values():
+                if hasattr(val, "content_blocks") and val.content_blocks:
+                    content_blocks.extend(val.content_blocks)
+    return content_blocks
+
+
 async def _run_agent_from_snapshot(
     *,
     agent_id: str,
@@ -224,10 +288,10 @@ async def _run_agent_from_snapshot(
     deployment_id: str | None = None,
     org_id: str | None = None,
     dept_id: str | None = None,
-) -> tuple[str, str | None, bool]:
+) -> tuple[str, str | None, bool, list]:
     """Build a graph from a published snapshot and run it.
 
-    Returns (response_text, session_id, was_interrupted).
+    Returns (response_text, session_id, was_interrupted, content_blocks).
     """
     from agentcore.processing.process import run_graph_internal
 
@@ -262,7 +326,10 @@ async def _run_agent_from_snapshot(
     )
     if was_interrupted:
         logger.info(f"[ORCH] Graph interrupted (HITL) — no response text to extract")
-        return "", result_session_id, True
+        return "", result_session_id, True, []
+
+    # Extract content_blocks (tool calls, etc.) from all built vertices
+    content_blocks = _extract_content_blocks_from_graph(graph)
 
     run_response = RunResponse(outputs=task_result, session_id=result_session_id)
     encoded = jsonable_encoder(run_response)
@@ -270,14 +337,15 @@ async def _run_agent_from_snapshot(
     response_text = _extract_text(encoded)
     logger.info(f"[ORCH] Extracted response text: {response_text[:500] if response_text else '(empty)'}")
 
-    return response_text, result_session_id, False
+    return response_text, result_session_id, False, content_blocks
 
 
 
 async def _resolve_agent(
     session,
+    current_user: CurrentActiveUser,
     body: OrchChatRequest,
-) -> tuple[UUID, UUID, AgentDeploymentProd]:
+) -> tuple[UUID, UUID, AgentDeploymentProd | AgentDeploymentUAT]:
     """Resolve the target agent for a chat request (sticky routing).
 
     If agent_id/deployment_id are provided → use them (explicit @mention).
@@ -300,12 +368,73 @@ async def _resolve_agent(
 
     deployment = await session.get(AgentDeploymentProd, deployment_id)
     if not deployment:
+        deployment = await session.get(AgentDeploymentUAT, deployment_id)
+    if not deployment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Deployment {deployment_id} not found",
         )
 
+    if not await _user_can_access_deployment(session, current_user, deployment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this deployment.",
+        )
+
     return agent_id, deployment_id, deployment
+
+
+async def _user_can_access_deployment(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    deployment: AgentDeploymentProd | AgentDeploymentUAT,
+) -> bool:
+    role = str(getattr(current_user, "role", "")).lower()
+    if role in {"super_admin", "department_admin", "root"}:
+        return True
+
+    if deployment.deployed_by == current_user.id:
+        return True
+
+    recipient_exists = (
+        await session.exec(
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == deployment.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    deployment.dept_id is None,
+                    AgentPublishRecipient.dept_id == deployment.dept_id,
+                ),
+            )
+            .limit(1)
+        )
+    ).first()
+    if recipient_exists:
+        return True
+
+    if isinstance(deployment, AgentDeploymentProd):
+        visibility_value = (
+            deployment.visibility.value
+            if hasattr(deployment.visibility, "value")
+            else str(deployment.visibility)
+        )
+        if str(visibility_value).upper() == "PUBLIC":
+            member_exists = (
+                await session.exec(
+                    select(UserDepartmentMembership.id)
+                    .where(
+                        UserDepartmentMembership.user_id == current_user.id,
+                        UserDepartmentMembership.department_id == deployment.dept_id,
+                        UserDepartmentMembership.status == "active",
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if member_exists:
+                return True
+
+    return False
 
 
 async def _maybe_context_reset(
@@ -353,16 +482,105 @@ async def list_orch_agents(
     session: DbSession,
     current_user: CurrentActiveUser,
 ):
-    """Return all PROD-deployed agents that are PUBLISHED, active, and enabled."""
+    """Return accessible UAT/PROD deployed agents for orchestration chat."""
     try:
-        stmt = (
+        current_role = str(getattr(current_user, "role", "")).lower()
+        is_admin = current_role in {"super_admin", "department_admin", "root"}
+
+        prod_share_exists = (
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    AgentDeploymentProd.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id == AgentDeploymentProd.dept_id,
+                ),
+            )
+            .exists()
+        )
+        prod_dept_member_exists = (
+            select(UserDepartmentMembership.id)
+            .where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.department_id == AgentDeploymentProd.dept_id,
+                UserDepartmentMembership.status == "active",
+            )
+            .exists()
+        )
+        prod_private_access = (
+            (AgentDeploymentProd.deployed_by == current_user.id)
+            | prod_share_exists
+        )
+        prod_public_access = prod_private_access | prod_dept_member_exists
+        if is_admin:
+            prod_private_access = prod_private_access | true()
+            prod_public_access = prod_public_access | true()
+
+        prod_stmt = (
             select(AgentDeploymentProd)
             .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
             .where(AgentDeploymentProd.is_active == True)  # noqa: E712
             .where(AgentDeploymentProd.is_enabled == True)  # noqa: E712
-            .order_by(col(AgentDeploymentProd.agent_name).asc())
+            .where(
+                (
+                    (AgentDeploymentProd.visibility == ProdDeploymentVisibilityEnum.PUBLIC)
+                    & prod_public_access
+                )
+                | (
+                    (AgentDeploymentProd.visibility == ProdDeploymentVisibilityEnum.PRIVATE)
+                    & prod_private_access
+                )
+            )
         )
-        records = (await session.exec(stmt)).all()
+
+        uat_share_exists = (
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    AgentDeploymentUAT.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id == AgentDeploymentUAT.dept_id,
+                ),
+            )
+            .exists()
+        )
+        uat_access = (
+            (AgentDeploymentUAT.deployed_by == current_user.id)
+            | uat_share_exists
+        )
+        if is_admin:
+            uat_access = uat_access | true()
+
+        uat_stmt = (
+            select(AgentDeploymentUAT)
+            .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+            .where(AgentDeploymentUAT.is_active == True)  # noqa: E712
+            .where(AgentDeploymentUAT.is_enabled == True)  # noqa: E712
+            .where(uat_access)
+        )
+
+        prod_records = list((await session.exec(prod_stmt)).all())
+        uat_records = list((await session.exec(uat_stmt)).all())
+
+        # Keep all PROD versions. Hide UAT rows only when a PROD exists for same agent_id.
+        prod_agent_ids = {str(rec.agent_id) for rec in prod_records}
+        filtered_uat_records = [
+            rec for rec in uat_records if str(rec.agent_id) not in prod_agent_ids
+        ]
+
+        records_with_env: list[tuple[AgentDeploymentProd | AgentDeploymentUAT, str]] = (
+            [(rec, "prod") for rec in prod_records]
+            + [(rec, "uat") for rec in filtered_uat_records]
+        )
+        records_with_env.sort(
+            key=lambda row: (
+                str(row[0].agent_name or "").lower(),
+                -int(getattr(row[0], "version_number", 0) or 0),
+            )
+        )
+
         return [
             OrchAgentSummary(
                 deploy_id=r.id,
@@ -370,8 +588,9 @@ async def list_orch_agents(
                 agent_name=r.agent_name,
                 agent_description=r.agent_description,
                 version_number=r.version_number,
+                environment=env_name,
             )
-            for r in records
+            for r, env_name in records_with_env
         ]
     except HTTPException:
         raise
@@ -398,7 +617,11 @@ async def orch_chat(
     """
     try:
         # -- 1. Resolve agent (sticky routing) -----------------------------
-        agent_id, deployment_id, deployment = await _resolve_agent(session, body)
+        agent_id, deployment_id, deployment = await _resolve_agent(
+            session,
+            current_user,
+            body,
+        )
 
         # -- 2. Context reset if agent switched ----------------------------
         did_reset = await _maybe_context_reset(
@@ -431,7 +654,7 @@ async def orch_chat(
 
         # -- 4. Run the agent from its frozen PROD snapshot ----------------
         logger.info(f"[ORCH] Agent={deployment.agent_name} | session={body.session_id} | input_value={body.input_value!r}")
-        agent_text, _, _was_hitl = await _run_agent_from_snapshot(
+        agent_text, _, _was_hitl, agent_content_blocks = await _run_agent_from_snapshot(
             agent_id=str(agent_id),
             agent_name=deployment.agent_name,
             snapshot=deployment.agent_snapshot,
@@ -445,6 +668,9 @@ async def orch_chat(
 
         if not agent_text or not agent_text.strip():
             agent_text = "Agent did not produce a response."
+
+        # Serialize content_blocks for storage
+        serialized_blocks = _serialize_content_blocks(agent_content_blocks)
 
         # -- 5. Persist agent reply ----------------------------------------
         reply_ts = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -461,7 +687,7 @@ async def orch_chat(
             files=[],
             properties={},
             category="message",
-            content_blocks=[],
+            content_blocks=serialized_blocks,
         )
         saved_agent_msg = await orch_add_message(agent_msg, session)
 
@@ -478,6 +704,7 @@ async def orch_chat(
                 text=agent_text,
                 agent_id=agent_id,
                 deployment_id=deployment_id,
+                content_blocks=serialized_blocks or None,
             ),
         )
 
@@ -505,7 +732,11 @@ async def orch_chat_stream(
       - ``end``          – signals stream is done, carries final ``{agent_text, message_id}``
     """
     # -- 1. Resolve agent (sticky routing) -------------------------------
-    agent_id, deployment_id, deployment = await _resolve_agent(session, body)
+    agent_id, deployment_id, deployment = await _resolve_agent(
+        session,
+        current_user,
+        body,
+    )
 
     # -- 2. Context reset if agent switched ------------------------------
     await _maybe_context_reset(
@@ -556,7 +787,7 @@ async def orch_chat_stream(
     async def _run_and_persist():
         """Background coroutine: run the agent, persist reply, close the queue."""
         try:
-            agent_text, _result_sid, was_interrupted = await _run_agent_from_snapshot(
+            agent_text, _result_sid, was_interrupted, agent_content_blocks = await _run_agent_from_snapshot(
                 agent_id=agent_id_str,
                 agent_name=agent_name,
                 snapshot=snapshot,
@@ -643,6 +874,9 @@ async def orch_chat_stream(
             if not agent_text or not agent_text.strip():
                 agent_text = "Agent did not produce a response."
 
+            # Serialize content_blocks for storage
+            serialized_blocks = _serialize_content_blocks(agent_content_blocks)
+
             # Persist agent reply in orch tables (uses its own DB session)
             from agentcore.services.deps import session_scope
 
@@ -661,7 +895,7 @@ async def orch_chat_stream(
                     files=[],
                     properties={},
                     category="message",
-                    content_blocks=[],
+                    content_blocks=serialized_blocks,
                 )
                 await orch_add_message(agent_msg, db)
 
@@ -669,6 +903,7 @@ async def orch_chat_stream(
             event_manager.on_end(data={
                 "agent_text": agent_text,
                 "message_id": str(agent_msg.id),
+                "content_blocks": serialized_blocks,
             })
         except Exception as exc:
             logger.exception(f"[ORCH-STREAM] Error: {exc}")
@@ -726,6 +961,8 @@ async def list_orch_sessions(
                 summary.active_agent_id = active["agent_id"]
                 summary.active_deployment_id = active["deployment_id"]
                 dep = await session.get(AgentDeploymentProd, active["deployment_id"])
+                if not dep:
+                    dep = await session.get(AgentDeploymentUAT, active["deployment_id"])
                 if dep:
                     summary.active_agent_name = dep.agent_name
             summaries.append(summary)
@@ -763,8 +1000,12 @@ async def get_orch_session_messages(
                 deployment_id=m.deployment_id,
                 category=m.category or "message",
                 properties=m.properties if isinstance(m.properties, dict) else None,
+                content_blocks=m.content_blocks if m.content_blocks else None,
             )
             for m in messages
+            # Safety net: skip messages with empty text that were persisted by
+            # intermediate graph nodes before the orch_skip_node_persist fix.
+            if (m.text and m.text.strip()) or m.category == "context_reset"
         ]
     except Exception as e:
         logger.error(f"Error getting orch session messages: {e}")
@@ -781,7 +1022,7 @@ async def delete_orch_session(
 ):
     """Delete all messages and transactions for an orchestrator session."""
     try:
-        await orch_delete_session(session, session_id)
+        await orch_delete_session(session, session_id, user_id=current_user.id)
         await orch_delete_session_transactions(session, session_id)
     except Exception as e:
         logger.error(f"Error deleting orch session: {e}")
@@ -803,7 +1044,7 @@ async def rename_orch_session(
 ):
     """Rename an orchestrator session (updates session_id on all messages)."""
     try:
-        count = await orch_rename_session(session, session_id, new_session_id)
+        count = await orch_rename_session(session, session_id, new_session_id, user_id=current_user.id)
         return {"updated": count, "new_session_id": new_session_id}
     except Exception as e:
         logger.error(f"Error renaming orch session: {e}")
@@ -838,6 +1079,8 @@ async def get_active_agent(
         if not active:
             return ActiveAgentResponse()
         dep = await session.get(AgentDeploymentProd, active["deployment_id"])
+        if not dep:
+            dep = await session.get(AgentDeploymentUAT, active["deployment_id"])
         return ActiveAgentResponse(
             agent_id=active["agent_id"],
             deployment_id=active["deployment_id"],

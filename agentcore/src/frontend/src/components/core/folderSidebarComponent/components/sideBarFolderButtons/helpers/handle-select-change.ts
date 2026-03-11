@@ -11,9 +11,6 @@ export const handleSelectChange = (
     case "delete":
       handleDeleteFolder!(folder);
       break;
-    case "download":
-      handleDownloadFolder(folder.id!);
-      break;
     case "rename":
       handleSelectFolderToRename(folder);
       break;

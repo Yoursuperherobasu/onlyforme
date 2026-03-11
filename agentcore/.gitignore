@@ -3,6 +3,10 @@ prepare-commit-msg
 # Logs
 logs
 *.log
+loguru/
+agentcore/loguru/
+loguru/**/*.jsonl
+loguru/metrics/*.prom
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -64,7 +68,9 @@ typings/
 # dotenv environment variables file
 .env
 .env.test
-
+src/services/mcp-service/.env
+src/services/guardrails-service/.env
+src/services/model-service/.env
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 
@@ -167,6 +173,7 @@ __pypackages__/
 .venv
 env/
 venv/
+myenv/
 ENV/
 env.bak/
 venv.bak/

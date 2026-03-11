@@ -17,6 +17,7 @@ export interface RegistryEntry {
   visibility: "PUBLIC" | "PRIVATE" | string;
   listed_by: string;
   listed_by_username?: string | null;
+  listed_by_email?: string | null;
   listed_at: string;
   created_at: string;
   updated_at: string;
@@ -67,4 +68,3 @@ export const useGetRegistry: useQueryFunctionType<
     options,
   );
 };
-

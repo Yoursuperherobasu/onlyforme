@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2 } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -30,6 +30,7 @@ interface Agent {
   deploy_id: string;
   agent_id: string;
   version_number: number;
+  environment: "uat" | "prod" | string;
 }
 
 interface Message {
@@ -66,6 +67,7 @@ function mapApiAgents(apiAgents: OrchAgentSummary[]): Agent[] {
     deploy_id: a.deploy_id,
     agent_id: a.agent_id,
     version_number: a.version_number,
+    environment: a.environment,
   }));
 }
 
@@ -122,7 +124,7 @@ export default function AgentOrchestrator() {
   const [showMentions, setShowMentions] = useState(false);
   const [filteredAgents, setFilteredAgents] = useState<Agent[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState("");
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string>(crypto.randomUUID());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -147,6 +149,10 @@ export default function AgentOrchestrator() {
   const agents: Agent[] = useMemo(
     () => (apiAgents ? mapApiAgents(apiAgents) : []),
     [apiAgents],
+  );
+  const selectedAgent = useMemo(
+    () => agents.find((a) => a.id === selectedModelId) || agents[0],
+    [agents, selectedModelId],
   );
 
   // Load messages when switching to an existing session
@@ -182,20 +188,23 @@ export default function AgentOrchestrator() {
         })();
       }
 
-      // Sync selectedModel with the session's active agent
+      // Sync selected model with the session's active agent
       const sessionInfo = apiSessions?.find((s) => s.session_id === activeSessionId);
       if (sessionInfo?.active_agent_name) {
-        setSelectedModel(sessionInfo.active_agent_name);
+        const activeAgent = agents.find((a) => a.name === sessionInfo.active_agent_name);
+        if (activeAgent) {
+          setSelectedModelId(activeAgent.id);
+        }
       }
     }
-  }, [apiSessionMessages, activeSessionId, apiSessions]);
+  }, [apiSessionMessages, activeSessionId, apiSessions, agents]);
 
   // Set default selected model when agents load
   useEffect(() => {
-    if (agents.length > 0 && !selectedModel) {
-      setSelectedModel(agents[0].name);
+    if (agents.length > 0 && !selectedModelId) {
+      setSelectedModelId(agents[0].id);
     }
-  }, [agents]);
+  }, [agents, selectedModelId]);
 
   // Update filteredAgents when agents load
   useEffect(() => {
@@ -248,6 +257,19 @@ export default function AgentOrchestrator() {
     const agent = agents.find((a) => a.name === name);
     return agent?.color || "#10a37f";
   };
+
+  const versionBadge = (version: number) => (
+    <span className="ml-2 inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-muted-foreground">
+      v{version}
+    </span>
+  );
+
+  const uatBadge = (environment: string) =>
+    String(environment).toLowerCase() === "uat" ? (
+      <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-amber-700">
+        UAT
+      </span>
+    ) : null;
 
   /* ------------------ HITL ACTION HANDLER ------------------ */
 
@@ -354,11 +376,11 @@ export default function AgentOrchestrator() {
     const explicitAgent = [...agents]
       .sort((a, b) => b.name.length - a.name.length)
       .find((a) => input.includes(`@${a.name}`));
-    const fallbackAgent = agents.find((a) => a.name === selectedModel) || agents[0];
+    const fallbackAgent = selectedAgent || agents[0];
 
     // If user explicitly @mentioned an agent, update the selected model (sticky switch)
-    if (explicitAgent && explicitAgent.name !== selectedModel) {
-      setSelectedModel(explicitAgent.name);
+    if (explicitAgent && explicitAgent.id !== selectedModelId) {
+      setSelectedModelId(explicitAgent.id);
     }
 
     // Target agent: explicit @mention wins, otherwise use sticky (selectedModel)
@@ -587,7 +609,7 @@ export default function AgentOrchestrator() {
       setStreamingAgentName("");
       setStreamingMsgId(null);
     }
-  }, [input, isSending, agents, selectedModel, currentSessionId, refetchSessions]);
+  }, [input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, refetchSessions]);
 
   /* ------------------ SESSION MANAGEMENT ------------------ */
 
@@ -648,67 +670,78 @@ export default function AgentOrchestrator() {
         </div>
 
         {/* Chat History */}
-        <div className="flex-1 overflow-y-auto px-2">
-          {Object.entries(grouped).map(([date, chats]) => (
-            <div key={date} className="mb-4">
-              <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {date}
-              </div>
-              {chats.map((chat) => (
-                <div
-                  key={chat.session_id}
-                  className="group relative flex items-center"
-                >
-                  <button
-                    onClick={() => handleSelectSession(chat.session_id)}
-                    className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-2 py-2.5 pr-8 text-left text-sm text-foreground hover:bg-accent ${
-                      currentSessionId === chat.session_id ? "bg-accent" : ""
-                    }`}
-                  >
-                    <MessageSquare size={14} className="shrink-0 opacity-50" />
-                    <span className="truncate">{chat.preview || t("New conversation")}</span>
-                  </button>
-                  {/* Delete button — visible on hover */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteSession(chat.session_id);
-                    }}
-                    className="invisible absolute right-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500 group-hover:visible"
-                    title={t("Delete session")}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("Conversations")}
+          </div>
+          <div className="flex-1 overflow-y-auto px-2">
+            {Object.entries(grouped).map(([date, chats]) => (
+              <div key={date} className="mb-4">
+                <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {date}
                 </div>
-              ))}
-            </div>
-          ))}
+                {chats.map((chat) => (
+                  <div
+                    key={chat.session_id}
+                    className="group relative flex items-center"
+                  >
+                    <button
+                      onClick={() => handleSelectSession(chat.session_id)}
+                      className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-2 py-2.5 pr-8 text-left text-sm text-foreground hover:bg-accent ${
+                        currentSessionId === chat.session_id ? "bg-accent" : ""
+                      }`}
+                    >
+                      <MessageSquare size={14} className="shrink-0 opacity-50" />
+                      <span className="truncate">{chat.preview || t("New conversation")}</span>
+                    </button>
+                    {/* Delete button — visible on hover */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteSession(chat.session_id);
+                      }}
+                      className="invisible absolute right-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500 group-hover:visible"
+                      title={t("Delete session")}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Agents Panel */}
-        <div className="border-t border-border px-2 py-3">
-          <div className="px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+          <div className="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {t("Agents")}
           </div>
-          <div className="flex flex-col gap-0.5">
-            {agents.map((agent) => (
-              <button
-                key={agent.id}
-                onClick={() => {
-                  setSelectedModel(agent.name);
-                  setShowModelPicker(false);
-                }}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-foreground hover:bg-accent ${
-                  selectedModel === agent.name ? "bg-accent" : ""
-                }`}
-              >
-                <span
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ background: agent.online ? agent.color : undefined }}
-                />
-                <span className="truncate">{agent.name}</span>
-              </button>
-            ))}
+          <div className="flex-1 overflow-y-auto px-2 pb-2">
+            <div className="flex flex-col gap-0.5">
+              {agents.map((agent) => (
+                <button
+                  key={agent.id}
+                  onClick={() => {
+                    setSelectedModelId(agent.id);
+                    setShowModelPicker(false);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-foreground hover:bg-accent ${
+                    selectedModelId === agent.id ? "bg-accent" : ""
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: agent.online ? agent.color : undefined }}
+                  />
+                  <span className="flex min-w-0 items-center">
+                    <span className="truncate">{agent.name}</span>
+                    {versionBadge(agent.version_number)}
+                    {uatBadge(agent.environment)}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -732,8 +765,16 @@ export default function AgentOrchestrator() {
               onClick={() => setShowModelPicker(!showModelPicker)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[15px] font-semibold text-foreground hover:bg-accent"
             >
-              <Sparkles size={16} style={{ color: getAgentColor(selectedModel) }} />
-              {selectedModel || t("Select Agent")}
+              <Sparkles size={16} style={{ color: selectedAgent?.color || "#10a37f" }} />
+              {selectedAgent ? (
+                <span className="flex items-center">
+                  <span>{selectedAgent.name}</span>
+                  {versionBadge(selectedAgent.version_number)}
+                  {uatBadge(selectedAgent.environment)}
+                </span>
+              ) : (
+                t("Select Agent")
+              )}
               <ChevronDown size={14} className="opacity-50" />
             </button>
 
@@ -743,11 +784,11 @@ export default function AgentOrchestrator() {
                   <button
                     key={agent.id}
                     onClick={() => {
-                      setSelectedModel(agent.name);
+                      setSelectedModelId(agent.id);
                       setShowModelPicker(false);
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
-                      selectedModel === agent.name ? "bg-accent" : ""
+                      selectedModelId === agent.id ? "bg-accent" : ""
                     }`}
                   >
                     <span
@@ -757,13 +798,19 @@ export default function AgentOrchestrator() {
                       <Sparkles size={14} color="white" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium">{agent.name}</div>
+                      <div className="flex items-center font-medium">
+                        <span>{agent.name}</span>
+                        {versionBadge(agent.version_number)}
+                        {uatBadge(agent.environment)}
+                      </div>
                       <div className="text-xs text-muted-foreground">
                         {agent.description}
                       </div>
                     </div>
-                    {selectedModel === agent.name && (
-                      <span className="ml-auto text-primary">✓</span>
+                    {selectedModelId === agent.id && (
+                      <span className="ml-auto text-primary">
+                        <Check size={14} />
+                      </span>
                     )}
                   </button>
                 ))}
@@ -923,7 +970,11 @@ export default function AgentOrchestrator() {
                       <Sparkles size={12} color="white" />
                     </span>
                     <div className="min-w-0">
-                      <div className="font-medium">@{agent.name}</div>
+                      <div className="flex items-center font-medium">
+                        <span>@{agent.name}</span>
+                        {versionBadge(agent.version_number)}
+                        {uatBadge(agent.environment)}
+                      </div>
                       <div className="text-xs text-muted-foreground">
                         {agent.description}
                       </div>

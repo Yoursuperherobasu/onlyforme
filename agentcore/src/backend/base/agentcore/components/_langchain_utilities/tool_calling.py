@@ -1,3 +1,5 @@
+import logging
+
 from langchain_classic.agents import create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -9,6 +11,8 @@ from agentcore.inputs.inputs import (
     MessageTextInput,
 )
 from agentcore.schema.data import Data
+
+logger = logging.getLogger(__name__)
 
 
 class ToolCallingAgentNode(LCToolsAgentNode):
@@ -46,8 +50,16 @@ class ToolCallingAgentNode(LCToolsAgentNode):
 
     def create_agent_runnable(self):
         # Check if we have actual tools to use
-        has_tools = self.tools and len(self.tools) > 0
-        
+        tools = self.tools
+        has_tools = bool(tools and len(tools) > 0)
+        tool_names = [getattr(t, "name", str(t)) for t in (tools or [])]
+        logger.info(
+            "[create_agent_runnable] has_tools=%s tools=%s llm_type=%s",
+            has_tools,
+            tool_names,
+            type(self.llm).__name__,
+        )
+
         if has_tools:
             # Use tool-calling agent when tools are available
             messages = [
@@ -60,9 +72,9 @@ class ToolCallingAgentNode(LCToolsAgentNode):
             self.validate_tool_names()
             try:
                 return create_tool_calling_agent(self.llm, self.tools, prompt)
-            except NotImplementedError as e:
+            except (NotImplementedError, ValueError) as e:
                 message = f"{self.display_name} does not support tool calling. Please try using a compatible model."
-                raise NotImplementedError(message) from e
+                raise type(e)(message) from e
         else:
             # No tools - create a simple chain that doesn't bind tools to the LLM
             # This prevents the "Tool choice is none, but model called a tool" error

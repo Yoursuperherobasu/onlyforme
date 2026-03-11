@@ -24,6 +24,10 @@ from agentcore.services.database.models.user.model import User, UserCreate, User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.deps import get_settings_service
+from agentcore.services.observability import (
+    LangfuseProvisioningError,
+    get_langfuse_provisioning_service,
+)
 
 router = APIRouter(tags=["Users"], prefix="/users")
 
@@ -98,6 +102,19 @@ async def _resolve_existing_user_for_create(
                 local_part_matches.append(candidate)
         if len(local_part_matches) == 1:
             return local_part_matches[0]
+
+    # Fallback: look for a soft-deleted user with the same username so the
+    # caller can reactivate it instead of failing on a unique-constraint error.
+    soft_deleted = (
+        await session.exec(
+            select(User).where(
+                User.deleted_at.is_not(None),
+                func.lower(User.username) == username.lower(),
+            )
+        )
+    ).first()
+    if soft_deleted:
+        return soft_deleted
 
     return None
 
@@ -330,20 +347,29 @@ async def add_user(
             username=username,
             email=email,
         )
+        is_reusing_soft_deleted = bool(
+            existing_user and existing_user.deleted_at is not None
+        )
         is_reusing_consumer = bool(
-            existing_user and normalize_role(getattr(existing_user, "role", "consumer")) == "consumer"
+            existing_user
+            and not is_reusing_soft_deleted
+            and normalize_role(getattr(existing_user, "role", "consumer")) == "consumer"
         )
         is_reusing_same_role = bool(
             existing_user
             and not is_reusing_consumer
+            and not is_reusing_soft_deleted
             and normalize_role(getattr(existing_user, "role", "consumer")) == target_role
         )
-        if existing_user and not is_reusing_consumer and not is_reusing_same_role:
+        if existing_user and not is_reusing_consumer and not is_reusing_same_role and not is_reusing_soft_deleted:
             raise HTTPException(status_code=400, detail="This username is unavailable.")
 
         raw_password = user.password or secrets.token_urlsafe(32)
-        if (is_reusing_consumer or is_reusing_same_role) and existing_user:
+        if (is_reusing_consumer or is_reusing_same_role or is_reusing_soft_deleted) and existing_user:
             new_user = existing_user
+            if is_reusing_soft_deleted:
+                new_user.deleted_at = None
+                new_user.is_active = user.is_active if user.is_active is not None else True
             new_user.display_name = display_name or new_user.display_name
             new_user.email = new_user.email or email or username
         else:
@@ -375,22 +401,43 @@ async def add_user(
 
         new_user.password = get_password_hash(raw_password)
         new_user.is_superuser = new_user.role in {"super_admin", "department_admin", "root"}
-        new_user.is_active = get_settings_service().auth_settings.NEW_USER_IS_ACTIVE
+        new_user.is_active = (
+            user.is_active
+            if user.is_active is not None
+            else get_settings_service().auth_settings.NEW_USER_IS_ACTIVE
+        )
         session.add(new_user)
         await session.flush()
 
         role_entity = await _get_role_entity(session, target_role)
 
         if creator_role == "root":
-            org = Organization(
-                name=organization_name,
-                description=organization_description,
-                status="active",
-                owner_user_id=new_user.id,
-                created_by=current_user.id,
-                updated_by=current_user.id,
-            )
-            session.add(org)
+            # Reactivate a suspended/deleted org with the same name if one exists
+            # (e.g. after a super_admin was deleted and is being recreated).
+            org = (
+                await session.exec(
+                    select(Organization).where(
+                        Organization.name == organization_name,
+                    )
+                )
+            ).first()
+            if org:
+                org.status = "active"
+                org.owner_user_id = new_user.id
+                org.description = organization_description or org.description
+                org.updated_by = current_user.id
+                org.updated_at = datetime.now(timezone.utc)
+                session.add(org)
+            else:
+                org = Organization(
+                    name=organization_name,
+                    description=organization_description,
+                    status="active",
+                    owner_user_id=new_user.id,
+                    created_by=current_user.id,
+                    updated_by=current_user.id,
+                )
+                session.add(org)
             await session.flush()
             await _ensure_org_membership(
                 session,
@@ -407,9 +454,25 @@ async def add_user(
                 role_id=root_role.id,
                 actor_user_id=current_user.id,
             )
+            try:
+                provisioning_service = get_langfuse_provisioning_service()
+                if provisioning_service.enabled:
+                    await provisioning_service.provision_org_admin_project(
+                        session,
+                        org=org,
+                        actor=current_user,
+                    )
+            except LangfuseProvisioningError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Langfuse provisioning failed; organization creation rolled back: {exc}",
+                ) from exc
 
         elif creator_role == "super_admin":
             org_id = await _resolve_creator_org(session, current_user, organization_name)
+            org = await session.get(Organization, org_id)
+            if not org:
+                raise HTTPException(status_code=400, detail="Invalid organization mapping.")
             await _ensure_org_membership(
                 session,
                 user_id=new_user.id,
@@ -421,15 +484,32 @@ async def add_user(
             if target_role == "department_admin":
                 if not department_name:
                     raise HTTPException(status_code=400, detail="Department name is required for department admins.")
-                department = Department(
-                    org_id=org_id,
-                    name=department_name,
-                    admin_user_id=new_user.id,
-                    status="active",
-                    created_by=current_user.id,
-                    updated_by=current_user.id,
-                )
-                session.add(department)
+                # Reactivate an archived department with the same name if one exists
+                # (e.g. after a dept_admin was deleted and is being recreated).
+                department = (
+                    await session.exec(
+                        select(Department).where(
+                            Department.org_id == org_id,
+                            Department.name == department_name,
+                        )
+                    )
+                ).first()
+                if department:
+                    department.status = "active"
+                    department.admin_user_id = new_user.id
+                    department.updated_by = current_user.id
+                    department.updated_at = datetime.now(timezone.utc)
+                    session.add(department)
+                else:
+                    department = Department(
+                        org_id=org_id,
+                        name=department_name,
+                        admin_user_id=new_user.id,
+                        status="active",
+                        created_by=current_user.id,
+                        updated_by=current_user.id,
+                    )
+                    session.add(department)
                 await session.flush()
                 new_user.department_name = department.name
                 new_user.department_admin_email = None
@@ -441,6 +521,20 @@ async def add_user(
                     role_id=role_entity.id,
                     actor_user_id=current_user.id,
                 )
+                try:
+                    provisioning_service = get_langfuse_provisioning_service()
+                    if provisioning_service.enabled:
+                        await provisioning_service.provision_department_project(
+                            session,
+                            org=org,
+                            department=department,
+                            actor=current_user,
+                        )
+                except LangfuseProvisioningError as exc:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Langfuse provisioning failed; department creation rolled back: {exc}",
+                    ) from exc
             else:
                 if target_role not in {"developer", "business_user"}:
                     raise HTTPException(status_code=400, detail="Invalid target role for super admin.")
@@ -508,7 +602,16 @@ async def add_user(
         raise
     except IntegrityError as e:
         await session.rollback()
-        raise HTTPException(status_code=400, detail="This username is unavailable.") from e
+        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        if "username" in error_msg.lower():
+            detail = "This username is unavailable."
+        elif "email" in error_msg.lower():
+            detail = "This email is already in use."
+        elif "department" in error_msg.lower() or "uq_department" in error_msg.lower():
+            detail = "A department with this name already exists in the organization."
+        else:
+            detail = "Could not create user due to a data conflict."
+        raise HTTPException(status_code=400, detail=detail) from e
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -757,6 +860,59 @@ async def patch_user(
         user_update.is_superuser = user_update.role in {"super_admin", "department_admin", "root"}
 
     if user_db := await get_user_by_id(session, user_id):
+        # Root promoting/editing a super admin must also ensure org membership mapping.
+        if normalize_role(user.role) == "root" and user_update.role == "super_admin":
+            organization_name = _strip_or_none(user_update.organization_name)
+            organization_description = _strip_or_none(user_update.organization_description)
+
+            if not organization_name:
+                existing_super_admin_org = (
+                    await session.exec(
+                        select(UserOrganizationMembership).where(
+                            UserOrganizationMembership.user_id == user_db.id,
+                            UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+                        )
+                    )
+                ).first()
+                if not existing_super_admin_org:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Organization name is required for super admin.",
+                    )
+            else:
+                organization = (
+                    await session.exec(select(Organization).where(Organization.name == organization_name))
+                ).first()
+                if not organization:
+                    organization = Organization(
+                        name=organization_name,
+                        description=organization_description,
+                        status="active",
+                        owner_user_id=user_db.id,
+                        created_by=user.id,
+                        updated_by=user.id,
+                    )
+                    session.add(organization)
+                    await session.flush()
+
+                super_admin_role = await _get_role_entity(session, "super_admin")
+                await _ensure_org_membership(
+                    session,
+                    user_id=user_db.id,
+                    org_id=organization.id,
+                    role_id=super_admin_role.id,
+                    actor_user_id=user.id,
+                )
+
+                root_role = await _get_role_entity(session, "root")
+                await _ensure_org_membership(
+                    session,
+                    user_id=user.id,
+                    org_id=organization.id,
+                    role_id=root_role.id,
+                    actor_user_id=user.id,
+                )
+
         if not update_password:
             user_update.password = user_db.password
         return await update_user(user_db, user_update, session)
@@ -815,13 +971,25 @@ async def delete_user(
                 raise HTTPException(status_code=403, detail="Permission denied")
         if normalize_role(user_db.role) == "root":
             raise HTTPException(status_code=403, detail="Root users cannot be deleted.")
-        deleted_count, _ = await soft_delete_user_hierarchy(
+        deleted_count, _, affected_dept_ids, affected_org_ids = await soft_delete_user_hierarchy(
             session,
             user_id,
             actor_user_id=current_user.id,
         )
         if deleted_count == 0:
             raise HTTPException(status_code=409, detail="No eligible users found to delete.")
+
+        # Langfuse cleanup: delete projects/orgs that were just archived/suspended in DB.
+        try:
+            provisioning_service = get_langfuse_provisioning_service()
+            if provisioning_service.enabled:
+                for dept_id in affected_dept_ids:
+                    await provisioning_service.cleanup_department_langfuse(session, dept_id=dept_id)
+                for org_id in affected_org_ids:
+                    await provisioning_service.cleanup_org_admin_langfuse(session, org_id=org_id)
+        except LangfuseProvisioningError:
+            pass  # logged inside the service; do not block the delete
+
         await session.commit()
     except HTTPException:
         await session.rollback()

@@ -41,7 +41,8 @@ class ModelRegistry(SQLModel, table=True):
     model_name: str = Field(nullable=False)
     model_type: str = Field(default="llm", index=True)  # "llm" or "embedding"
     base_url: str | None = Field(default=None)
-    api_key_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Stores the Azure Key Vault secret reference/name for provider API keys.
+    api_key_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # Environment tag: test (default), uat, prod
     environment: str = Field(default=ModelEnvironment.TEST.value, index=True)
@@ -87,7 +88,7 @@ class ModelRegistryCreate(BaseModel):
     model_name: str
     model_type: str = "llm"  # "llm" or "embedding"
     base_url: str | None = None
-    api_key: str | None = None  # plain-text; encrypted before storage
+    api_key: str | None = None  # plain-text; stored in Azure Key Vault
     environment: str = ModelEnvironment.TEST.value
     provider_config: dict | None = None
     capabilities: dict | None = None
@@ -113,7 +114,7 @@ class ModelRegistryUpdate(BaseModel):
     model_name: str | None = None
     model_type: str | None = None
     base_url: str | None = None
-    api_key: str | None = None  # plain-text; re-encrypted if provided
+    api_key: str | None = None  # plain-text; updated in Azure Key Vault if provided
     environment: str | None = None
     provider_config: dict | None = None
     capabilities: dict | None = None
@@ -134,7 +135,7 @@ class ModelRegistryUpdate(BaseModel):
 
 
 class ModelRegistryRead(BaseModel):
-    """Safe representation returned to callers - never includes the encrypted key."""
+    """Safe representation returned to callers - never includes secret values."""
 
     id: UUID
     display_name: str
@@ -172,7 +173,7 @@ class ModelRegistryRead(BaseModel):
     @classmethod
     def from_orm_model(cls, row: ModelRegistry) -> "ModelRegistryRead":
         obj = cls.model_validate(row)
-        object.__setattr__(obj, "_has_api_key", bool(row.api_key_encrypted))
+        object.__setattr__(obj, "_has_api_key", bool(row.api_key_secret_ref))
         return obj
 
 

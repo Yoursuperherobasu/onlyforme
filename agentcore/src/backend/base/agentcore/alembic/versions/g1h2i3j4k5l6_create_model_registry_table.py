@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column("provider", sa.String(), nullable=False),
         sa.Column("model_name", sa.String(), nullable=False),
         sa.Column("base_url", sa.String(), nullable=True),
-        sa.Column("api_key_encrypted", sa.Text(), nullable=True),
+        sa.Column("api_key_secret_ref", sa.Text(), nullable=True),
         sa.Column("environment", sa.String(), nullable=False, server_default=sa.text("'test'")),
         sa.Column("provider_config", postgresql.JSON(astext_type=sa.Text()), nullable=True),
         sa.Column("capabilities", postgresql.JSON(astext_type=sa.Text()), nullable=True),

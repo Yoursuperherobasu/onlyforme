@@ -17,6 +17,7 @@ from sqlalchemy import or_
 
 from agentcore.api.schemas import UploadFileResponse
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.permissions import normalize_role
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.file.model import File as UserFile
 from agentcore.services.database.models.knowledge_base.model import KBVisibilityEnum, KnowledgeBase
@@ -101,17 +102,57 @@ async def _build_file_visibility_filters(session: DbSession, current_user: Curre
 
 
 async def _resolve_default_scope(session: DbSession, current_user: CurrentActiveUser) -> tuple[uuid.UUID, uuid.UUID]:
-    membership = (
+    allowed_pairs = await _get_allowed_department_pairs_for_user(session, current_user)
+    if not allowed_pairs:
+        raise HTTPException(status_code=403, detail="No active department scope found for user")
+    return sorted(allowed_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+
+
+async def _get_allowed_department_pairs_for_user(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> set[tuple[uuid.UUID, uuid.UUID]]:
+    role = normalize_role(getattr(current_user, "role", "") or "")
+
+    if role == "root":
+        dept_rows = (
+            await session.exec(
+                select(Department.org_id, Department.id).where(Department.status == "active")
+            )
+        ).all()
+        return {(row[0], row[1]) for row in dept_rows}
+
+    if role == "super_admin":
+        org_rows = (
+            await session.exec(
+                select(UserOrganizationMembership.org_id).where(
+                    UserOrganizationMembership.user_id == current_user.id,
+                    UserOrganizationMembership.status.in_(["accepted", "active"]),
+                )
+            )
+        ).all()
+        org_ids = {r if isinstance(r, uuid.UUID) else r[0] for r in org_rows}
+        if not org_ids:
+            return set()
+        dept_rows = (
+            await session.exec(
+                select(Department.org_id, Department.id).where(
+                    Department.org_id.in_(list(org_ids)),
+                    Department.status == "active",
+                )
+            )
+        ).all()
+        return {(row[0], row[1]) for row in dept_rows}
+
+    memberships = (
         await session.exec(
             select(UserDepartmentMembership.org_id, UserDepartmentMembership.department_id).where(
                 UserDepartmentMembership.user_id == current_user.id,
                 UserDepartmentMembership.status == "active",
             )
         )
-    ).first()
-    if not membership:
-        raise HTTPException(status_code=403, detail="No active department scope found for user")
-    return membership[0], membership[1]
+    ).all()
+    return {(m[0], m[1]) for m in memberships}
 
 
 async def _resolve_upload_scope(
@@ -136,17 +177,9 @@ async def _resolve_upload_scope(
         normalized_visibility = "ORGANIZATION" if public_scope.strip().lower() == "organization" else "DEPARTMENT"
 
     if normalized_visibility == "DEPARTMENT":
-        memberships = (
-            await session.exec(
-                select(UserDepartmentMembership.org_id, UserDepartmentMembership.department_id).where(
-                    UserDepartmentMembership.user_id == current_user.id,
-                    UserDepartmentMembership.status == "active",
-                )
-            )
-        ).all()
-        if not memberships:
+        allowed = await _get_allowed_department_pairs_for_user(session, current_user)
+        if not allowed:
             raise HTTPException(status_code=403, detail="No active department scope found for user")
-        allowed = {(m[0], m[1]) for m in memberships}
         if org_id and dept_id:
             parsed_org_id = uuid.UUID(org_id)
             parsed_dept_id = uuid.UUID(dept_id)

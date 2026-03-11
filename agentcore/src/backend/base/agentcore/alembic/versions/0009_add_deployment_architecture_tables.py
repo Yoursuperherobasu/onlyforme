@@ -61,7 +61,7 @@ def upgrade() -> None:
         ("org_status_enum", "'active', 'suspended', 'deleted'"),
         ("dept_status_enum", "'active', 'archived'"),
         ("project_status_enum", "'active', 'archived', 'deleted'"),
-        ("lifecycle_status_enum", "'DRAFT', 'PUBLISHED', 'DEPRECATED', 'ARCHIVED'"),
+        ("lifecycle_status_enum", "'DRAFT', 'PENDING_APPROVAL', 'PUBLISHED', 'DEPRECATED', 'ARCHIVED'"),
         ("deployment_uat_status_enum", "'PUBLISHED', 'UNPUBLISHED', 'ERROR'"),
         ("deployment_visibility_enum", "'PUBLIC', 'PRIVATE'"),
         ("deployment_lifecycle_enum", "'DRAFT', 'PUBLISHED', 'DEPRECATED', 'ARCHIVED'"),
@@ -69,7 +69,7 @@ def upgrade() -> None:
         ("prod_deployment_visibility_enum", "'PUBLIC', 'PRIVATE'"),
         ("prod_deployment_lifecycle_enum", "'DRAFT', 'PUBLISHED', 'DEPRECATED', 'ARCHIVED'"),
         ("deployment_env_enum", "'UAT', 'PROD'"),
-        ("bundle_type_enum", "'model', 'mcp_server', 'guardrail'"),
+        ("bundle_type_enum", "'model', 'mcp_server', 'guardrail', 'knowledge_base', 'vector_db', 'connector', 'tool', 'custom_component'"),
         ("registry_visibility_enum", "'PUBLIC', 'PRIVATE'"),
         ("registry_deployment_env_enum", "'UAT', 'PROD'"),
     ]

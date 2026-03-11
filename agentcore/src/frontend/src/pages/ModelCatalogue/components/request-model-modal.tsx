@@ -71,7 +71,7 @@ export default function RequestModelModal({
   const [chargeCode, setChargeCode] = useState("");
   const [projectName, setProjectName] = useState("");
   const [reason, setReason] = useState("");
-  const [temperature, setTemperature] = useState<number | "">(0.7);
+  const [temperature, setTemperature] = useState<number | "">("");
   const [maxTokens, setMaxTokens] = useState<number | "">("");
   const [dimensions, setDimensions] = useState<number | "">("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -435,7 +435,7 @@ export default function RequestModelModal({
                       step="0.01"
                       min="0"
                       max="2"
-                      placeholder="0.7"
+                      placeholder="Optional"
                       value={temperature}
                       onChange={(e) =>
                         setTemperature(e.target.value ? Number(e.target.value) : "")

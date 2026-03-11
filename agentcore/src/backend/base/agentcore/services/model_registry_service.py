@@ -66,7 +66,7 @@ async def create_model(
     )
 
     if data.api_key and enc_key:
-        row.api_key_encrypted = encrypt_api_key(data.api_key, enc_key)
+        row.api_key_secret_ref = encrypt_api_key(data.api_key, enc_key)
 
     session.add(row)
     await session.commit()
@@ -125,7 +125,7 @@ async def update_model(
     # Handle API key separately
     plain_key = update_fields.pop("api_key", None)
     if plain_key and enc_key:
-        row.api_key_encrypted = encrypt_api_key(plain_key, enc_key)
+        row.api_key_secret_ref = encrypt_api_key(plain_key, enc_key)
 
     for field, value in update_fields.items():
         setattr(row, field, value)
@@ -167,8 +167,8 @@ async def get_decrypted_config(
         "default_params": row.default_params or {},
     }
 
-    if row.api_key_encrypted and enc_key:
-        config["api_key"] = decrypt_api_key_with_fallback(row.api_key_encrypted, enc_key)
+    if row.api_key_secret_ref and enc_key:
+        config["api_key"] = decrypt_api_key_with_fallback(row.api_key_secret_ref, enc_key)
     else:
         config["api_key"] = ""
 

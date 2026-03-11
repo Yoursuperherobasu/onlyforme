@@ -140,6 +140,10 @@ class LangGraphAdapter:
         self._lock: asyncio.Lock = asyncio.Lock()
         self.activated_vertices: list[str] = []
         self._is_state_vertices: list[str] | None = None
+
+        # Cache invalidation metadata
+        self._cached_updated_at: str | None = None  # agent.updated_at when cached (for DB builds)
+        self._data_hash: str | None = None           # SHA256 of payload (for data builds)
     
  # ── Redis serialization support ──────────────────────────────────────
     def __getstate__(self) -> dict:
@@ -632,7 +636,8 @@ class LangGraphAdapter:
         #     vertex.build() directly and does NOT check is_active(), so marking
         #     workers INACTIVE here does not affect internal supervisor hops.
         for vertex in self.vertices:
-            if getattr(vertex, "base_name", "") == "SupervisorAgent" or getattr(vertex, "vertex_type", "") == "SupervisorAgent":
+            if getattr(vertex, "base_name", "") in ("SupervisorAgent", "CollaborativeAgent") or getattr(vertex, "vertex_type", "") in ("SupervisorAgent", "CollaborativeAgent"):
+                component_label = getattr(vertex, "base_name", "") or getattr(vertex, "vertex_type", "")
                 marked: set[str] = set()
 
                 # Strategy 1: sourceHandle.name from graph.edges
@@ -654,7 +659,7 @@ class LangGraphAdapter:
                         child_vertex.set_state("INACTIVE")
                         marked.add(edge.get("target", ""))
                         logger.info(
-                            f"[SupervisorAgent] Pre-marked worker '{handle_name}' "
+                            f"[{component_label}] Pre-marked worker '{handle_name}' "
                             f"({edge.get('target')}) INACTIVE before run"
                         )
 
@@ -663,7 +668,7 @@ class LangGraphAdapter:
                 # was None/missing in this run's edge serialisation).
                 if not marked:
                     logger.warning(
-                        f"[SupervisorAgent] sourceHandle.name missing for supervisor "
+                        f"[{component_label}] sourceHandle.name missing for "
                         f"'{vertex.id}' edges — falling back to successor_map pre-marking."
                     )
                     for successor_id in self.successor_map.get(vertex.id, []):
@@ -672,7 +677,7 @@ class LangGraphAdapter:
                             continue
                         child_vertex.set_state("INACTIVE")
                         logger.info(
-                            f"[SupervisorAgent] Pre-marked (fallback) successor "
+                            f"[{component_label}] Pre-marked (fallback) successor "
                             f"'{successor_id}' INACTIVE before run"
                         )
 
