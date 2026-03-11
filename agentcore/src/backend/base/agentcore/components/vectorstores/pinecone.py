@@ -187,19 +187,8 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         except Exception as e:
             raise ValueError(f"Error creating index: {e}") from e
 
-        from langchain_pinecone import PineconeVectorStore
-        import os
-
         real_embedding = self._get_embedding_model()
         wrapped = Float32Embeddings(real_embedding)
-
-        pinecone = PineconeVectorStore(
-            index_name=self.index_name,
-            embedding=wrapped,
-            text_key=self.text_key,
-            namespace=self.namespace,
-            pinecone_api_key=os.getenv("PINECONE_API_KEY", ""),
-        )
 
         try:
             count = self._ingest_if_needed(wrapped)
@@ -208,7 +197,15 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         except Exception as e:
             raise ValueError(f"Error ingesting documents: {e}") from e
 
-        return pinecone
+        # Return a lightweight proxy that delegates search to the microservice
+        # instead of requiring PINECONE_API_KEY locally
+        return _MicroservicePineconeProxy(
+            index_name=self.index_name,
+            namespace=self.namespace or "",
+            text_key=self.text_key,
+            embedding=wrapped,
+            component=self,
+        )
 
     # ══════════════════════════════════════════════════════════
     #  SEARCH via microservice
@@ -293,3 +290,64 @@ class Float32Embeddings:
     def embed_query(self, text):
         embedding = self._model.embed_query(text)
         return [float(np.float32(x)) for x in embedding]
+
+
+class _MicroservicePineconeProxy(VectorStore):
+    """Lightweight VectorStore proxy that delegates all operations to the pinecone-service microservice.
+
+    This avoids needing PINECONE_API_KEY on the backend — the key lives only in the microservice.
+    """
+
+    def __init__(self, index_name: str, namespace: str, text_key: str, embedding, component):
+        self._index_name = index_name
+        self._namespace = namespace
+        self._text_key = text_key
+        self._embedding = embedding
+        self._component = component
+
+    @property
+    def embeddings(self):
+        return self._embedding
+
+    def add_texts(self, texts, metadatas=None, **kwargs):
+        from langchain_core.documents import Document as LCDocument
+        docs = []
+        for i, text in enumerate(texts):
+            meta = metadatas[i] if metadatas and i < len(metadatas) else {}
+            docs.append(LCDocument(page_content=text, metadata=meta))
+        dense_embeddings = self._embedding.embed_documents(list(texts))
+        doc_items = [
+            {"page_content": doc.page_content, "metadata": dict(doc.metadata) if doc.metadata else {}}
+            for doc in docs
+        ]
+        result = ingest_via_service(
+            index_name=self._index_name,
+            namespace=self._namespace,
+            text_key=self._text_key,
+            documents=doc_items,
+            embedding_vectors=dense_embeddings,
+        )
+        return [str(i) for i in range(result.get("vectors_upserted", 0))]
+
+    def similarity_search(self, query, k=4, **kwargs):
+        from langchain_core.documents import Document as LCDocument
+        query_embedding = self._embedding.embed_query(query)
+        result = search_via_service(
+            index_name=self._index_name,
+            namespace=self._namespace,
+            text_key=self._text_key,
+            query=query,
+            query_embedding=query_embedding,
+            number_of_results=k,
+        )
+        docs = []
+        for item in result.get("results", []):
+            docs.append(LCDocument(
+                page_content=item.get("text", ""),
+                metadata=item.get("metadata", {}),
+            ))
+        return docs
+
+    @classmethod
+    def from_texts(cls, texts, embedding, metadatas=None, **kwargs):
+        raise NotImplementedError("Use the PineconeVectorStoreNode component instead.")
