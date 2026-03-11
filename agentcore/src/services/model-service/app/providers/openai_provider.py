@@ -58,6 +58,7 @@ class OpenAIProvider(BaseProvider):
             "model": model,
             "api_key": api_key,
             "streaming": streaming,
+            "stream_usage": True,
         }
 
         if base_url:

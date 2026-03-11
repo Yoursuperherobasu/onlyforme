@@ -36,6 +36,7 @@ class AzureOpenAIProvider(BaseProvider):
             "api_version": api_version,
             "api_key": api_key,
             "streaming": streaming,
+            "stream_usage": True,
         }
 
         if temperature is not None:

@@ -58,6 +58,7 @@ class TraceContext:
         agent_name: str | None = None,
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
+        environment: str | None = None,
     ):
         self.run_id: UUID | None = run_id
         self.run_name: str | None = run_name
@@ -69,6 +70,8 @@ class TraceContext:
         self.agent_name: str | None = agent_name
         self.observability_project_id: str | None = observability_project_id
         self.observability_project_name: str | None = observability_project_name
+        # Langfuse environment for logical separation (e.g. "uat", "production")
+        self.environment: str | None = environment
         self.langfuse_host: str | None = None
         self.langfuse_public_key: str | None = None
         self.langfuse_secret_key: str | None = None
@@ -182,6 +185,7 @@ class TracingService(Service):
             langfuse_host=trace_context.langfuse_host,
             langfuse_public_key=trace_context.langfuse_public_key,
             langfuse_secret_key=trace_context.langfuse_secret_key,
+            environment=trace_context.environment,
         )
         trace_context.tracers["langfuse"] = tracer_instance
         logger.info(f"✅ LangFuseTracer created: ready={tracer_instance.ready}, agent={trace_context.agent_name}")
@@ -278,6 +282,7 @@ class TracingService(Service):
         agent_name: str | None = None,
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
+        environment: str | None = None,
     ) -> None:
         """Start a trace for a graph run.
 
@@ -295,6 +300,7 @@ class TracingService(Service):
             agent_name: Agent name for observability display
             observability_project_id: Folder ID for project-level grouping
             observability_project_name: Folder name for project display
+            environment: Langfuse environment tag ("uat" or "production")
         """
         if self.deactivated:
             logger.warning(f"🚫 TRACING DEACTIVATED - skipping tracer start for agent={agent_name}")
@@ -315,6 +321,7 @@ class TracingService(Service):
                 agent_name=agent_name,
                 observability_project_id=observability_project_id,
                 observability_project_name=observability_project_name,
+                environment=environment,
             )
             trace_context_var.set(trace_context)
             await self._resolve_langfuse_credentials(trace_context)

@@ -138,6 +138,7 @@ export const getEvaluationScores = async (params: {
   page?: number;
   trace_id?: string;
   name?: string;
+  environment?: string;
 }) => {
   const response = await api.get("/api/evaluation/scores", { params });
   return response.data;
@@ -168,6 +169,7 @@ export const getPendingReviews = async (
     user_id_filter?: string;
     ts_from?: string;
     ts_to?: string;
+    environment?: string;
   } = { limit: 20 },
 ) => {
   const response = await api.get("/api/evaluation/traces/pending", { params });
@@ -402,13 +404,13 @@ export interface EvaluationPreset {
   requires_ground_truth?: boolean;
 }
 
-export const createEvaluator = async (data: any) => {
-  const response = await api.post("/api/evaluation/configs", data);
+export const createEvaluator = async (data: any, params?: { environment?: string }) => {
+  const response = await api.post("/api/evaluation/configs", data, { params });
   return response.data as EvaluatorConfig;
 };
 
-export const getAgents = async () => {
-  const response = await api.get("/api/evaluation/models");
+export const getAgents = async (params?: { environment?: string }) => {
+  const response = await api.get("/api/evaluation/models", { params });
   return response.data;
 };
 
@@ -422,8 +424,8 @@ export const getEvaluationPresets = async () => {
   return response.data as EvaluationPreset[];
 };
 
-export const runEvaluator = async (id: string) => {
-  const response = await api.post(`/api/evaluation/configs/${id}/run`);
+export const runEvaluator = async (id: string, params?: { environment?: string }) => {
+  const response = await api.post(`/api/evaluation/configs/${id}/run`, undefined, { params });
   return response.data as {
     status: "queued" | "noop";
     config_id: string;

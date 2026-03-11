@@ -260,7 +260,9 @@ class LCModelNode(Node):
                 }
             )
             if stream:
-                lf_message, result = await self._handle_stream(runnable, inputs)
+                lf_message, result, stream_ai_message = await self._handle_stream(runnable, inputs)
+                if stream_ai_message is not None:
+                    message = stream_ai_message
             else:
                 message = runnable.invoke(inputs)
                 result = message.content if hasattr(message, "content") else message
@@ -286,25 +288,40 @@ class LCModelNode(Node):
         return lf_message or Message(text=result)
 
     def _set_trace_usage_from_message(self, message: AIMessage, duration_ms: float = 0.0) -> None:
-        """Extract token usage from AIMessage.response_metadata and set trace_output_metadata."""
+        """Extract token usage from AIMessage and set trace_output_metadata.
+
+        Checks three sources in order:
+        1. response_metadata.token_usage (OpenAI-style, non-streaming)
+        2. response_metadata.usage (Anthropic-style, non-streaming)
+        3. usage_metadata (LangChain standard, works with streaming chunks)
+        """
         meta = message.response_metadata or {}
 
         input_tokens = 0
         output_tokens = 0
         model_name = meta.get("model_name") or meta.get("model") or ""
 
-        # OpenAI-style (token_usage dict)
+        # OpenAI-style (token_usage dict in response_metadata)
         token_usage = meta.get("token_usage")
         if isinstance(token_usage, dict):
             input_tokens = int(token_usage.get("prompt_tokens") or 0)
             output_tokens = int(token_usage.get("completion_tokens") or 0)
 
-        # Anthropic-style (usage dict)
+        # Anthropic-style (usage dict in response_metadata)
         if not (input_tokens or output_tokens):
             usage = meta.get("usage")
             if isinstance(usage, dict):
                 input_tokens = int(usage.get("input_tokens") or 0)
                 output_tokens = int(usage.get("output_tokens") or 0)
+
+        # LangChain usage_metadata (standard for streaming chunks and newer providers)
+        if not (input_tokens or output_tokens):
+            usage_meta = getattr(message, "usage_metadata", None)
+            if isinstance(usage_meta, dict):
+                input_tokens = int(usage_meta.get("input_tokens") or 0)
+                output_tokens = int(usage_meta.get("output_tokens") or 0)
+                if not model_name:
+                    model_name = usage_meta.get("model_name") or ""
 
         if input_tokens or output_tokens:
             self.trace_output_metadata = {
@@ -334,11 +351,14 @@ class LCModelNode(Node):
             inputs: The inputs to send to the model
 
         Returns:
-            tuple: (Message object if connected to chat output, model result)
+            tuple: (Message object if connected to chat output, model result, AIMessage or None)
+                   The third element carries the accumulated AIMessage with response_metadata
+                   so the caller can extract token usage for Langfuse tracing.
         """
         from uuid import uuid4
 
         lf_message = None
+        ai_message = None  # Will hold the full AIMessage if available
         if self.is_connected_to_chat_output():
             # Add a Message — use async streaming to avoid blocking the event loop
             if hasattr(self, "graph"):
@@ -347,8 +367,24 @@ class LCModelNode(Node):
                 session_id = self._session_id
             else:
                 session_id = None
+
+            # Wrap the async generator to accumulate chunks for token usage
+            # extraction while still passing them through to send_message.
+            chunk_collector: list = []
+
+            async def _accumulate_and_yield(astream):
+                accumulated = None
+                async for chunk in astream:
+                    try:
+                        accumulated = chunk if accumulated is None else accumulated + chunk
+                    except TypeError:
+                        pass
+                    yield chunk
+                if accumulated is not None:
+                    chunk_collector.append(accumulated)
+
             model_message = Message(
-                text=runnable.astream(inputs),
+                text=_accumulate_and_yield(runnable.astream(inputs)),
                 sender=MESSAGE_SENDER_AI,
                 sender_name="AI",
                 properties={"icon": self.icon, "state": "partial"},
@@ -357,6 +393,9 @@ class LCModelNode(Node):
             model_message.properties.source = self._build_source(self._id, self.display_name, self)
             lf_message = await self.send_message(model_message)
             result = lf_message.text
+            # Extract the accumulated AIMessage with response_metadata / usage_metadata
+            if chunk_collector and isinstance(chunk_collector[0], AIMessage):
+                ai_message = chunk_collector[0]
         elif hasattr(self, "_event_manager") and self._event_manager:
             # Stream tokens directly via event_manager even when not
             # connected to ChatOutput (e.g. LLM → Agent → ChatOutput).
@@ -366,7 +405,14 @@ class LCModelNode(Node):
 
             message_id = str(uuid4())
             complete = ""
+            accumulated = None
             async for chunk in runnable.astream(inputs):
+                # Accumulate chunks to build the full AIMessage with
+                # response_metadata (token usage arrives in the last chunk).
+                try:
+                    accumulated = chunk if accumulated is None else accumulated + chunk
+                except TypeError:
+                    pass
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 complete += content
                 self._event_manager.on_token(
@@ -376,10 +422,14 @@ class LCModelNode(Node):
                 # deliver the token to the client immediately.
                 await asyncio.sleep(0)
             result = complete
+            if isinstance(accumulated, AIMessage):
+                ai_message = accumulated
         else:
             message = await runnable.ainvoke(inputs)
             result = message.content if hasattr(message, "content") else message
-        return lf_message, result
+            if isinstance(message, AIMessage):
+                ai_message = message
+        return lf_message, result, ai_message
 
     @abstractmethod
     def build_model(self) -> LanguageModel:  # type: ignore[type-var]

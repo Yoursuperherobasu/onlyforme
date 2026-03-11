@@ -231,8 +231,15 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
     )
     yield f"data: {initial_chunk.model_dump_json()}\n\n"
 
-    # Stream content chunks
+    # Stream content chunks and accumulate for usage extraction
+    accumulated = None
     async for chunk in provider.stream(model, messages):
+        # Accumulate chunks so the final message carries usage metadata
+        try:
+            accumulated = chunk if accumulated is None else accumulated + chunk
+        except TypeError:
+            pass
+
         content = ""
         if hasattr(chunk, "content") and chunk.content:
             content = chunk.content
@@ -263,4 +270,16 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
         ],
     )
     yield f"data: {final_chunk.model_dump_json()}\n\n"
+
+    # Extract and send usage from accumulated message
+    if accumulated is not None:
+        usage = _extract_usage(accumulated)
+        if usage.prompt_tokens or usage.completion_tokens or usage.total_tokens:
+            usage_chunk = ChatCompletionChunk(
+                model=request.model,
+                choices=[],
+                usage=usage,
+            )
+            yield f"data: {usage_chunk.model_dump_json()}\n\n"
+
     yield "data: [DONE]\n\n"
