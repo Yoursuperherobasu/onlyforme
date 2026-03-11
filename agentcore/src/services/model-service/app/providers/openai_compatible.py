@@ -70,6 +70,7 @@ class OpenAICompatibleProvider(BaseProvider):
             "api_key": api_key or "not-needed",
             "base_url": base_url,
             "streaming": streaming,
+            "stream_usage": True,
         }
 
         if temperature is not None:

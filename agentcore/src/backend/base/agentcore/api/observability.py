@@ -816,6 +816,7 @@ def _fetch_scoped_traces(
     to_timestamp: datetime | None = None,
     name: str | None = None,
     fetch_all: bool = False,
+    environment: str | None = None,
 ) -> list[Any]:
     if not clients or not allowed_user_ids:
         return []
@@ -828,6 +829,7 @@ def _fetch_scoped_traces(
         name=name,
         limit=limit,
         fetch_all=fetch_all,
+        environment=environment,
     )
     now_mono = time.monotonic()
     cached_entry = _TRACE_FETCH_CACHE.get(cache_key)
@@ -920,6 +922,8 @@ def _fetch_scoped_traces(
                         kwargs["to_timestamp"] = to_timestamp
                     if name:
                         kwargs["name"] = name
+                    if environment:
+                        kwargs["environment"] = environment
                     resp = client_obj.fetch_traces(**kwargs, page=page)
                     page_rows = _response_to_traces(resp)
                     if not page_rows:
@@ -947,6 +951,8 @@ def _fetch_scoped_traces(
                             kwargs["to_timestamp"] = to_timestamp
                         if name:
                             kwargs["name"] = name
+                        if environment:
+                            kwargs["environment"] = environment
                         resp = trace_api.list(**kwargs)
                         page_rows = _response_to_traces(resp)
                         if not page_rows:
@@ -1017,6 +1023,7 @@ def _fetch_scoped_traces(
                 to_timestamp=to_timestamp,
                 name=name,
                 fetch_all=fetch_all,
+                environment=environment,
             )
             for trace in traces:
                 trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default="") or "")
@@ -1235,6 +1242,7 @@ def _scoped_trace_cache_key(
     name: str | None,
     limit: int,
     fetch_all: bool,
+    environment: str | None = None,
 ) -> str:
     client_namespaces = sorted(
         str(getattr(client, "_trace_cache_namespace", "") or f"client:{id(client)}")
@@ -1247,7 +1255,7 @@ def _scoped_trace_cache_key(
         "|".join(client_namespaces).encode("utf-8")
     ).hexdigest()[:12] if client_namespaces else "none"
     return _trace_cache_key(
-        f"scoped:{client_scope_hash}:{user_scope_hash}",
+        f"scoped:{client_scope_hash}:{user_scope_hash}:{environment or 'all'}",
         user_scope_hash,
         from_timestamp,
         to_timestamp,
@@ -1522,6 +1530,7 @@ async def _fetch_metrics_background(
     models: str | None = None,
     include_model_breakdown: bool = False,
     fetch_all: bool = False,
+    environment: str | None = None,
 ) -> None:
     """
     Background task: Fetch fresh metrics from Langfuse asynchronously.
@@ -1547,6 +1556,7 @@ async def _fetch_metrics_background(
             to_timestamp=to_timestamp,
             name=search,
             fetch_all=fetch_all,
+            environment=environment,
         )
 
         # Do not overwrite an existing non-empty cache with an empty transient fetch.
@@ -2049,6 +2059,7 @@ def fetch_traces_from_langfuse(
     session_id: str | None = None,
     fetch_all: bool = False,
     _date_fallback_depth: int = 0,
+    environment: str | None = None,
 ) -> list:
     """
     Fetch traces from Langfuse using the appropriate SDK method.
@@ -2126,6 +2137,8 @@ def fetch_traces_from_langfuse(
                 filter_kwargs["name"] = name
             if tags:
                 filter_kwargs["tags"] = tags
+            if environment:
+                filter_kwargs["environment"] = environment
 
             while page <= max_pages:
                 logger.debug(f"Fetching page {page} with filters: {filter_kwargs}")
@@ -2201,6 +2214,8 @@ def fetch_traces_from_langfuse(
                             list_kwargs["name"] = name
                         if tags:
                             list_kwargs["tags"] = tags
+                        if environment:
+                            list_kwargs["environment"] = environment
                         try:
                             response = _call_with_rate_limit_retry(trace_api.list, **list_kwargs)
                         except TypeError as e:
@@ -2260,6 +2275,8 @@ def fetch_traces_from_langfuse(
                 fallback_kwargs["from_timestamp"] = from_timestamp
             if to_timestamp:
                 fallback_kwargs["to_timestamp"] = to_timestamp
+            if environment:
+                fallback_kwargs["environment"] = environment
 
             while page <= max_pages:
                 logger.debug(f"Fallback fetching page {page} without user filter, limit={page_size}")
@@ -2311,8 +2328,11 @@ def fetch_traces_from_langfuse(
     # ==========================================================================
     if hasattr(client, 'client') and hasattr(client.client, 'traces'):
         try:
+            last_resort_kwargs: dict[str, Any] = {"user_id": user_id, "limit": page_size}
+            if environment:
+                last_resort_kwargs["environment"] = environment
             logger.debug(f"Attempting direct client.traces.list(user_id={user_id})")
-            response = _call_with_rate_limit_retry(client.client.traces.list, user_id=user_id, limit=page_size)
+            response = _call_with_rate_limit_retry(client.client.traces.list, **last_resort_kwargs)
             if hasattr(response, 'data'):
                 trace_data = response.data or []
             elif isinstance(response, list):
@@ -2345,6 +2365,7 @@ def fetch_traces_from_langfuse(
                 session_id=session_id,
                 fetch_all=True,
                 _date_fallback_depth=_date_fallback_depth + 1,
+                environment=environment,
             )
             if unfiltered:
                 filtered: list[Any] = []
@@ -3209,6 +3230,7 @@ async def get_user_traces(
     dept_id: Annotated[UUID | None, Query(description="Department scope for root/super-admin")] = None,
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD). Defaults to today.")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD). Defaults to today.")] = None,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> TracesListResponse:
     """
     Get traces for the current user with aggregated metrics.
@@ -3265,6 +3287,7 @@ async def get_user_traces(
             limit=fetch_limit,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
+            environment=environment,
         )
 
         # Filter by session if specified
@@ -3725,6 +3748,7 @@ async def get_user_sessions(
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
     search: Annotated[str | None, Query(description="Search by session ID or trace name")] = None,
     fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> SessionsListResponse:
     """
     Get chat sessions for the current user with aggregated metrics.
@@ -3761,11 +3785,11 @@ async def get_user_sessions(
 
     # Build cache key from stable parameters
     user_id = str(current_user.id)
-    cache_key = f"sessions:{user_id}:{scope_key}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
-    
+    cache_key = f"sessions:{user_id}:{scope_key}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}:{environment}"
+
     # Check cache status
     cache_meta = _get_cache_metadata(cache_key)
-    
+
     # Cache checking logic (only if SWR enabled)
     if SWR_CONFIG["ENABLE_SWR"]:
         # === FRESH CACHE: Return immediately unless data looks incomplete ===
@@ -3826,6 +3850,7 @@ async def get_user_sessions(
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
             fetch_all=fetch_all,
+            environment=environment,
         )
 
         is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
@@ -3928,7 +3953,7 @@ async def get_user_sessions(
             _sessions_have_traces and not _sessions_have_tokens
         )
         if should_cache_response:
-            cache_key = f"sessions:{user_id}:{scope_key}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}"
+            cache_key = f"sessions:{user_id}:{scope_key}:{from_date}:{to_date}:{search}:{limit}:{tz_offset}:{fetch_all}:{environment}"
             if cache_key not in _SESSIONS_CACHE:
                 _SESSIONS_CACHE[cache_key] = {}
             _SESSIONS_CACHE[cache_key]["data"] = response_data
@@ -3960,6 +3985,7 @@ async def get_session_detail(
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> SessionDetailResponse:
     """
     Get detailed session information including all traces and per-model breakdown.
@@ -3998,7 +4024,7 @@ async def get_session_detail(
                     _r = fetch_traces_from_langfuse(
                         _sc, user_id=_uid, limit=100,
                         from_timestamp=from_timestamp, to_timestamp=to_timestamp,
-                        session_id=session_id,
+                        session_id=session_id, environment=environment,
                     )
                     for _t in _r:
                         if get_attr(_t, 'session_id', 'sessionId') != session_id:
@@ -4020,6 +4046,7 @@ async def get_session_detail(
                 from_timestamp=from_timestamp,
                 to_timestamp=to_timestamp,
                 fetch_all=False,
+                environment=environment,
             )
             session_traces = [t for t in raw_traces if get_attr(t, 'session_id', 'sessionId') == session_id]
 
@@ -4145,6 +4172,7 @@ async def get_user_metrics(
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC (e.g., 330 for IST)")] = None,
     include_model_breakdown: Annotated[bool, Query(description="Include per-model breakdown (slower)")] = False,
     fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> MetricsResponse:
     """
     Get comprehensive aggregated metrics for the current user.
@@ -4191,14 +4219,15 @@ async def get_user_metrics(
             tz_offset,
             include_model_breakdown,
             fetch_all,
+            environment=environment,
         )
-    
+
     user_id = str(current_user.id)
-    
+
     # Build cache key from stable parameters
     cache_key = (
         f"metrics:{user_id}:{scope_key}:{from_date}:{to_date}:{days}:"
-        f"{search}:{models}:{include_model_breakdown}:{tz_offset}:{fetch_all}"
+        f"{search}:{models}:{include_model_breakdown}:{tz_offset}:{fetch_all}:{environment}"
     )
     
     # Check cache status
@@ -4253,6 +4282,7 @@ async def get_user_metrics(
                     "models": models,
                     "include_model_breakdown": include_model_breakdown,
                     "fetch_all": fetch_all,
+                    "environment": environment,
                 },
                 task_fn=_fetch_metrics_background,
             )
@@ -4263,7 +4293,7 @@ async def get_user_metrics(
                 cache_is_fresh=False,
                 **_scope_warning_payload(scope_warnings),
             )
-    
+
     # === EXPIRED CACHE: Return cached immediately + trigger background refresh ===
     if cache_meta["is_expired"] and cache_key in _TRACE_METRICS_CACHE:
         cached = _TRACE_METRICS_CACHE[cache_key]
@@ -4290,6 +4320,7 @@ async def get_user_metrics(
                     "models": models,
                     "include_model_breakdown": include_model_breakdown,
                     "fetch_all": fetch_all,
+                    "environment": environment,
                 },
                 task_fn=_fetch_metrics_background,
             )
@@ -4319,6 +4350,7 @@ async def get_user_metrics(
         tz_offset,
         include_model_breakdown,
         fetch_all,
+        environment=environment,
     )
 
 
@@ -4400,6 +4432,7 @@ def _fetch_metrics_sync(
     tz_offset: int | None,
     include_model_breakdown: bool,
     fetch_all: bool,
+    environment: str | None = None,
 ) -> MetricsResponse:
     """
     Synchronous metrics fetch (used when cache misses or SWR disabled).
@@ -4436,6 +4469,7 @@ def _fetch_metrics_sync(
             to_timestamp=to_timestamp,
             name=search,
             fetch_all=fetch_all,
+            environment=environment,
         )
 
         is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
@@ -4897,6 +4931,7 @@ async def get_user_agents(
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
     fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> AgentListResponse:
     """
     Get all agents/agents for the current user with aggregated metrics.
@@ -4931,8 +4966,8 @@ async def get_user_agents(
 
     # Build cache key from stable parameters
     user_id = str(current_user.id)
-    cache_key = f"agents:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
-    
+    cache_key = f"agents:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}:{environment}"
+
     # Check cache status
     cache_meta = _get_cache_metadata(cache_key)
     
@@ -5007,6 +5042,7 @@ async def get_user_agents(
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
             fetch_all=fetch_all,
+            environment=environment,
         )
 
         is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
@@ -5157,7 +5193,7 @@ async def get_user_agents(
             _agents_have_traces and not _agents_have_tokens
         )
         if should_cache_response:
-            cache_key = f"agents:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+            cache_key = f"agents:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}:{environment}"
             if cache_key not in _AGENTS_CACHE:
                 _AGENTS_CACHE[cache_key] = {}
             _AGENTS_CACHE[cache_key]["data"] = response_data
@@ -5190,6 +5226,7 @@ async def get_agent_detail(
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> AgentDetailResponse:
     """
     Get detailed agent/agent information including sessions and metrics breakdown.
@@ -5256,6 +5293,7 @@ async def get_agent_detail(
             limit=500,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
+            environment=environment,
         )
 
         # Two-pass approach for agent detail
@@ -5470,6 +5508,7 @@ async def get_user_projects(
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
     fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000) instead of capped limit")] = False,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> ProjectListResponse:
     """
     Get all projects (folders) for the current user with aggregated metrics.
@@ -5503,8 +5542,8 @@ async def get_user_projects(
 
     # Build cache key from stable parameters
     user_id = str(current_user.id)
-    cache_key = f"projects:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
-    
+    cache_key = f"projects:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}:{environment}"
+
     # Check cache status
     cache_meta = _get_cache_metadata(cache_key)
     
@@ -5571,6 +5610,7 @@ async def get_user_projects(
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
             fetch_all=fetch_all,
+            environment=environment,
         )
 
         is_truncated = (not fetch_all) and len(raw_traces) >= trace_limit
@@ -5683,7 +5723,7 @@ async def get_user_projects(
             _projects_have_traces and not _projects_have_tokens
         )
         if should_cache_response:
-            cache_key = f"projects:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}"
+            cache_key = f"projects:{user_id}:{scope_key}:{from_date}:{to_date}:{limit}:{tz_offset}:{fetch_all}:{environment}"
             if cache_key not in _PROJECTS_CACHE:
                 _PROJECTS_CACHE[cache_key] = {}
             _PROJECTS_CACHE[cache_key]["data"] = response_data
@@ -5716,6 +5756,7 @@ async def get_project_detail(
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
+    environment: Annotated[str | None, Query(description="Langfuse environment filter: 'uat' or 'production'")] = None,
 ) -> ProjectDetailResponse:
     """
     Get detailed project (folder) information including agents and metrics breakdown.
@@ -5804,6 +5845,7 @@ async def get_project_detail(
             limit=100,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
+            environment=environment,
         )
 
         # Aggregate metrics

@@ -433,6 +433,8 @@ function calculateTrend(data: DailyUsageItem[] | undefined, key: keyof DailyUsag
 // API Functions
 // =============================================================================
 
+type LangfuseEnvironment = "uat" | "production";
+
 interface FetchMetricsParams {
   from_date?: string;
   to_date?: string;
@@ -443,11 +445,13 @@ interface FetchMetricsParams {
   fetch_all?: boolean;
   org_id?: string;
   dept_id?: string;
+  environment?: LangfuseEnvironment;
 }
 
 function applyScopeParams(searchParams: URLSearchParams, params: FetchMetricsParams): void {
   if (params.org_id) searchParams.set("org_id", params.org_id);
   if (params.dept_id) searchParams.set("dept_id", params.dept_id);
+  if (params.environment) searchParams.set("environment", params.environment);
 }
 
 // Get user's timezone offset in minutes (positive for east of UTC, e.g., IST = 330)
@@ -874,6 +878,7 @@ export default function ObservabilityPage(): JSX.Element {
   const sessionRole = String(currentRole || "").toLowerCase();
   const isProvisioningAdminSessionRole = sessionRole === "root" || sessionRole === "super_admin";
   // State
+  const [selectedEnvironment, setSelectedEnvironment] = useState<LangfuseEnvironment>("uat");
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
@@ -988,8 +993,9 @@ export default function ObservabilityPage(): JSX.Element {
     () => ({
       ...(selectedOrgId ? { org_id: selectedOrgId } : {}),
       ...(selectedDeptId ? { dept_id: selectedDeptId } : {}),
+      environment: selectedEnvironment,
     }),
-    [selectedOrgId, selectedDeptId],
+    [selectedOrgId, selectedDeptId, selectedEnvironment],
   );
   const canRunScopedQueries = !!status?.connected && roleKnown && scopeReady;
 
@@ -1009,6 +1015,7 @@ export default function ObservabilityPage(): JSX.Element {
       includeModelBreakdown,
       selectedOrgId,
       selectedDeptId,
+      selectedEnvironment,
     ],
     queryFn: () => fetchMetrics({
       ...dateParams,
@@ -1025,7 +1032,7 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: sessionsData, isLoading: sessionsLoading, isFetching: sessionsFetching, dataUpdatedAt: sessionsUpdatedAt, refetch: refetchSessions } = useQuery({
-    queryKey: ["observability-sessions", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
+    queryKey: ["observability-sessions", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
     queryFn: () => fetchSessions({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchSessions,
     staleTime: OBSERVABILITY_LIST_STALE_MS,
@@ -1035,7 +1042,7 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: agentsData, isLoading: agentsLoading, isFetching: agentsFetching, dataUpdatedAt: agentsUpdatedAt, refetch: refetchAgents } = useQuery({
-    queryKey: ["observability-agents", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
+    queryKey: ["observability-agents", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
     queryFn: () => fetchAgents({
       ...dateParams,
       ...scopeParams,
@@ -1048,7 +1055,7 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: projectsData, isLoading: projectsLoading, isFetching: projectsFetching, dataUpdatedAt: projectsUpdatedAt, refetch: refetchProjects } = useQuery({
-    queryKey: ["observability-projects", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
+    queryKey: ["observability-projects", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
     queryFn: () => fetchProjects({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchProjects,
     staleTime: OBSERVABILITY_LIST_STALE_MS,
@@ -1058,7 +1065,7 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: sessionDetail, isLoading: sessionDetailLoading, isFetching: sessionDetailFetching, refetch: refetchSessionDetail } = useQuery({
-    queryKey: ["session-detail", selectedSession, filters.dateRange, selectedOrgId, selectedDeptId],
+    queryKey: ["session-detail", selectedSession, filters.dateRange, selectedOrgId, selectedDeptId, selectedEnvironment],
     queryFn: () => fetchSessionDetail(selectedSession!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedSession && canRunScopedQueries,
     staleTime: OBSERVABILITY_DETAIL_STALE_MS,
@@ -1068,7 +1075,7 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: traceDetail, isLoading: traceDetailLoading, isFetching: traceDetailFetching, isError: traceDetailError, refetch: refetchTraceDetail } = useQuery({
-    queryKey: ["trace-detail", selectedTrace, selectedOrgId, selectedDeptId],
+    queryKey: ["trace-detail", selectedTrace, selectedOrgId, selectedDeptId, selectedEnvironment],
     queryFn: () => fetchTraceDetail(selectedTrace!, scopeParams),
     enabled: !!selectedTrace && canRunScopedQueries,
     staleTime: OBSERVABILITY_DETAIL_STALE_MS,
@@ -1079,7 +1086,7 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: agentDetail, isLoading: agentDetailLoading, isFetching: agentDetailFetching, refetch: refetchAgentDetail } = useQuery({
-    queryKey: ["agent-detail", selectedAgent, filters.dateRange, selectedOrgId, selectedDeptId],
+    queryKey: ["agent-detail", selectedAgent, filters.dateRange, selectedOrgId, selectedDeptId, selectedEnvironment],
     queryFn: () => fetchAgentDetail(selectedAgent!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedAgent && canRunScopedQueries,
     staleTime: OBSERVABILITY_DETAIL_STALE_MS,
@@ -1089,7 +1096,7 @@ export default function ObservabilityPage(): JSX.Element {
   });
 
   const { data: projectDetail, isLoading: projectDetailLoading, isFetching: projectDetailFetching, refetch: refetchProjectDetail } = useQuery({
-    queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId],
+    queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
     queryFn: () => fetchProjectDetail(selectedProject!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedProject && canRunScopedQueries,
     staleTime: OBSERVABILITY_DETAIL_STALE_MS,
@@ -1372,15 +1379,51 @@ export default function ObservabilityPage(): JSX.Element {
     <div className="flex h-full w-full flex-col overflow-auto bg-gray-50">
       {/* Header */}
       <div className="border-b bg-white px-8 py-6 shadow-sm">
-        <div className="flex items-center gap-3">
-          <BarChart3 className="h-7 w-7" style={{ color: THEME.primary }} />
-          <div>
-            <h1 className="text-2xl font-semibold" style={{ color: THEME.textMain }}>
-              Observability
-            </h1>
-            <p className="text-sm" style={{ color: THEME.textSecondary }}>
-              Monitor your AI usage, costs, and performance metrics
-            </p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <BarChart3 className="h-7 w-7" style={{ color: THEME.primary }} />
+            <div>
+              <h1 className="text-2xl font-semibold" style={{ color: THEME.textMain }}>
+                Observability
+              </h1>
+              <p className="text-sm" style={{ color: THEME.textSecondary }}>
+                Monitor your AI usage, costs, and performance metrics
+              </p>
+            </div>
+          </div>
+
+          {/* Environment Toggle */}
+          <div className="flex items-center rounded-lg border bg-gray-50 p-1">
+            {([
+              { value: "uat" as const, label: "UAT" },
+              { value: "production" as const, label: "PROD" },
+            ]).map((env) => (
+              <button
+                key={env.value}
+                onClick={() => {
+                  if (selectedEnvironment === env.value) return;
+                  markFiltersApplying();
+                  setSelectedEnvironment(env.value);
+                  setFetchAllMode(false);
+                  setSelectedSession(null);
+                  setSelectedTrace(null);
+                  setSelectedAgent(null);
+                  setSelectedProject(null);
+                }}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  selectedEnvironment === env.value
+                    ? "shadow-sm"
+                    : "hover:bg-gray-100"
+                }`}
+                style={
+                  selectedEnvironment === env.value
+                    ? { backgroundColor: THEME.primary, color: "#fff" }
+                    : { color: THEME.textSecondary }
+                }
+              >
+                {env.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -1626,6 +1669,16 @@ export default function ObservabilityPage(): JSX.Element {
               Dept: {(scopeOptions?.departments ?? []).find((dept) => dept.id === selectedDeptId)?.name || selectedDeptId}
             </Badge>
           )}
+          <Badge
+            variant="secondary"
+            style={
+              selectedEnvironment === "production"
+                ? { backgroundColor: "#dcfce7", color: "#166534" }
+                : { backgroundColor: "#dbeafe", color: "#1e40af" }
+            }
+          >
+            Env: {selectedEnvironment === "production" ? "PROD" : "UAT"}
+          </Badge>
         </div>
 
         {requiresFilterFirst && !scopeReady && (

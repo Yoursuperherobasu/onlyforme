@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 
 from agentcore.api.utils import CurrentActiveUser, DbSession, build_graph_from_data
 from agentcore.api.v1_schemas import InputValueRequest, RunResponse
+from agentcore.services.database.models.agent.model import Agent
 from agentcore.events.event_manager import EventManager, create_default_event_manager
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
@@ -163,6 +164,26 @@ def _extract_text(payload: Any) -> str:
         return str(payload)
 
 
+async def _lookup_agent_project(session, agent_id: UUID) -> tuple[str | None, str | None]:
+    """Look up the agent's project_id and project_name for observability metadata."""
+    try:
+        agent = await session.get(Agent, agent_id)
+        if agent and agent.project_id:
+            project_id = str(agent.project_id)
+            project_name = None
+            try:
+                from agentcore.services.database.models.folder.model import Folder
+                folder = await session.get(Folder, agent.project_id)
+                if folder:
+                    project_name = folder.name
+            except Exception:
+                pass
+            return project_id, project_name
+    except Exception:
+        pass
+    return None, None
+
+
 async def _build_orch_graph(
     *,
     agent_id: str,
@@ -174,6 +195,9 @@ async def _build_orch_graph(
     org_id: str | None = None,
     dept_id: str | None = None,
     stream: bool = False,
+    is_prod_deployment: bool = False,
+    project_id: str | None = None,
+    project_name: str | None = None,
 ):
     """Build a graph from a published snapshot, ready for execution.
 
@@ -190,6 +214,9 @@ async def _build_orch_graph(
         payload=graph_data,
         user_id=user_id,
         agent_name=agent_name,
+        session_id=session_id,
+        project_id=project_id,
+        project_name=project_name,
         chat_service=get_chat_service(),
     )
 
@@ -218,6 +245,17 @@ async def _build_orch_graph(
     graph.orch_deployment_id = deployment_id
     graph.orch_org_id = org_id
     graph.orch_dept_id = dept_id
+
+    # Set prod/uat deployment context so the adapter tags Langfuse traces
+    # with the correct environment ("production" vs "uat").
+    if is_prod_deployment:
+        graph.prod_deployment_id = deployment_id
+        graph.prod_org_id = org_id
+        graph.prod_dept_id = dept_id
+    else:
+        graph.uat_deployment_id = deployment_id
+        graph.uat_org_id = org_id
+        graph.uat_dept_id = dept_id
 
     inputs = [
         InputValueRequest(
@@ -288,6 +326,9 @@ async def _run_agent_from_snapshot(
     deployment_id: str | None = None,
     org_id: str | None = None,
     dept_id: str | None = None,
+    is_prod_deployment: bool = False,
+    project_id: str | None = None,
+    project_name: str | None = None,
 ) -> tuple[str, str | None, bool, list]:
     """Build a graph from a published snapshot and run it.
 
@@ -305,6 +346,9 @@ async def _run_agent_from_snapshot(
         org_id=org_id,
         dept_id=dept_id,
         stream=stream,
+        is_prod_deployment=is_prod_deployment,
+        project_id=project_id,
+        project_name=project_name,
     )
 
     inputs[0].input_value = input_value
@@ -652,7 +696,8 @@ async def orch_chat(
         )
         await orch_add_message(user_msg, session)
 
-        # -- 4. Run the agent from its frozen PROD snapshot ----------------
+        # -- 4. Run the agent from its deployment snapshot -------------------
+        project_id, project_name = await _lookup_agent_project(session, agent_id)
         logger.info(f"[ORCH] Agent={deployment.agent_name} | session={body.session_id} | input_value={body.input_value!r}")
         agent_text, _, _was_hitl, agent_content_blocks = await _run_agent_from_snapshot(
             agent_id=str(agent_id),
@@ -664,6 +709,9 @@ async def orch_chat(
             deployment_id=str(deployment_id),
             org_id=str(deployment.org_id) if deployment.org_id else None,
             dept_id=str(deployment.dept_id) if deployment.dept_id else None,
+            is_prod_deployment=isinstance(deployment, AgentDeploymentProd),
+            project_id=project_id,
+            project_name=project_name,
         )
 
         if not agent_text or not agent_text.strip():
@@ -768,6 +816,9 @@ async def orch_chat_stream(
     await orch_add_message(user_msg, session)
 
     # -- 4. Set up streaming queue + event manager -----------------------
+    # Look up project info for observability metadata before entering background task
+    orch_project_id, orch_project_name = await _lookup_agent_project(session, agent_id)
+
     queue: asyncio.Queue = asyncio.Queue()
     event_manager = create_default_event_manager(queue)
 
@@ -783,6 +834,7 @@ async def orch_chat_stream(
     dep_user_id = current_user.id
     dep_org_id = str(deployment.org_id) if deployment.org_id else None
     dep_dept_id = str(deployment.dept_id) if deployment.dept_id else None
+    dep_is_prod = isinstance(deployment, AgentDeploymentProd)
 
     async def _run_and_persist():
         """Background coroutine: run the agent, persist reply, close the queue."""
@@ -799,6 +851,9 @@ async def orch_chat_stream(
                 deployment_id=str(dep_deployment_id),
                 org_id=dep_org_id,
                 dept_id=dep_dept_id,
+                is_prod_deployment=dep_is_prod,
+                project_id=orch_project_id,
+                project_name=orch_project_name,
             )
 
             # When interrupted (HITL pause), _emit_hitl_pause_event already

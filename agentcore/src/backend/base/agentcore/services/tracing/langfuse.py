@@ -119,6 +119,7 @@ class LangFuseTracer(BaseTracer):
         langfuse_host: str | None = None,
         langfuse_public_key: str | None = None,
         langfuse_secret_key: str | None = None,
+        environment: str | None = None,
     ) -> None:
         self.trace_name = trace_name
         self.trace_type = trace_type
@@ -133,6 +134,7 @@ class LangFuseTracer(BaseTracer):
         self.langfuse_host = langfuse_host
         self.langfuse_public_key = langfuse_public_key
         self.langfuse_secret_key = langfuse_secret_key
+        self.environment = environment
 
         # Span tracking
         self.spans: dict[str, Any] = {}
@@ -144,6 +146,7 @@ class LangFuseTracer(BaseTracer):
         self._root_span = None
         self._root_context = None
         self._propagate_context = None
+        self._otel_reset_token = None  # Token for detaching the clean OTEL context
 
         # Accumulate token usage from child spans so the root span carries
         # trace-level totals — prevents needing per-trace observation API calls
@@ -170,6 +173,8 @@ class LangFuseTracer(BaseTracer):
                 langfuse_kwargs["public_key"] = self.langfuse_public_key
             if self.langfuse_secret_key:
                 langfuse_kwargs["secret_key"] = self.langfuse_secret_key
+            if self.environment:
+                langfuse_kwargs["environment"] = self.environment
 
             # Fallback to env propagation only when explicit runtime host is not provided.
             if not self.langfuse_host and host and not os.getenv("LANGFUSE_BASE_URL"):
@@ -242,6 +247,18 @@ class LangFuseTracer(BaseTracer):
                 trace_metadata["project_id"] = self.observability_project_id
             if self.observability_project_name:
                 trace_metadata["project_name"] = self.observability_project_name
+            if self.environment:
+                trace_metadata["environment"] = self.environment
+
+            # Clear any existing OTEL context so our root span always creates
+            # a NEW top-level trace.  Without this, auto-instrumented spans
+            # (FastAPI, HTTP clients, or prior Langfuse clients) can become the
+            # parent, resulting in an "Unnamed trace" wrapper in the Langfuse UI.
+            try:
+                from opentelemetry import context as otel_context
+                self._otel_reset_token = otel_context.attach(otel_context.Context())
+            except ImportError:
+                pass
 
             # v3: Create root span using start_as_current_observation
             # The root span becomes the trace, input/output derive from it
@@ -300,7 +317,10 @@ class LangFuseTracer(BaseTracer):
         span_metadata |= metadata or {}
 
         try:
-            observation_type = "generation" if str(trace_type).lower() == "guardrail" else "span"
+            # Use "generation" for LLM and guardrail components so Langfuse
+            # displays token usage, model info, and latency in its Generation tab.
+            # "span" observations do not show token metrics in the Langfuse UI.
+            observation_type = "generation" if str(trace_type).lower() in ("llm", "guardrail") else "span"
             # v3: Create span with input passed directly to start_as_current_observation
             span_context = self._client.start_as_current_observation(
                 as_type=observation_type,
@@ -443,6 +463,15 @@ class LangFuseTracer(BaseTracer):
 
         except Exception as e:
             logger.warning(f"Error ending trace: {e}")
+
+        # Detach the clean OTEL context we attached during setup
+        if self._otel_reset_token is not None:
+            try:
+                from opentelemetry import context as otel_context
+                otel_context.detach(self._otel_reset_token)
+                self._otel_reset_token = None
+            except Exception:
+                pass
 
         # Flush
         try:

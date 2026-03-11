@@ -722,6 +722,10 @@ class MicroserviceChatModel(BaseChatModel):
         payload = self._build_payload(messages, stream=True)
         if stop:
             payload["stop"] = stop
+        # Request token usage in the streaming response
+        payload["stream_options"] = {"include_usage": True}
+
+        stream_usage: dict | None = None
 
         with httpx.Client(timeout=300.0) as client:
             with client.stream(
@@ -739,6 +743,9 @@ class MicroserviceChatModel(BaseChatModel):
                         break
                     try:
                         chunk = json.loads(data_str)
+                        # Capture usage from any chunk (typically the last one)
+                        if chunk.get("usage"):
+                            stream_usage = chunk["usage"]
                         choices = chunk.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
@@ -751,6 +758,22 @@ class MicroserviceChatModel(BaseChatModel):
                                 yield gen_chunk
                     except json.JSONDecodeError:
                         continue
+
+        # Yield a final empty chunk with usage_metadata so callers can extract tokens
+        if stream_usage:
+            usage_chunk = AIMessageChunk(
+                content="",
+                usage_metadata={
+                    "input_tokens": stream_usage.get("prompt_tokens", 0),
+                    "output_tokens": stream_usage.get("completion_tokens", 0),
+                    "total_tokens": stream_usage.get("total_tokens", 0),
+                },
+                response_metadata={
+                    "token_usage": stream_usage,
+                    "model_name": self.model,
+                },
+            )
+            yield ChatGenerationChunk(message=usage_chunk)
 
     async def _astream(
         self,
@@ -794,6 +817,10 @@ class MicroserviceChatModel(BaseChatModel):
         payload = self._build_payload(messages, stream=True)
         if stop:
             payload["stop"] = stop
+        # Request token usage in the streaming response
+        payload["stream_options"] = {"include_usage": True}
+
+        stream_usage: dict | None = None
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
@@ -811,6 +838,9 @@ class MicroserviceChatModel(BaseChatModel):
                         break
                     try:
                         chunk = json.loads(data_str)
+                        # Capture usage from any chunk (typically the last one)
+                        if chunk.get("usage"):
+                            stream_usage = chunk["usage"]
                         choices = chunk.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
@@ -823,6 +853,22 @@ class MicroserviceChatModel(BaseChatModel):
                                 yield gen_chunk
                     except json.JSONDecodeError:
                         continue
+
+        # Yield a final empty chunk with usage_metadata so callers can extract tokens
+        if stream_usage:
+            usage_chunk = AIMessageChunk(
+                content="",
+                usage_metadata={
+                    "input_tokens": stream_usage.get("prompt_tokens", 0),
+                    "output_tokens": stream_usage.get("completion_tokens", 0),
+                    "total_tokens": stream_usage.get("total_tokens", 0),
+                },
+                response_metadata={
+                    "token_usage": stream_usage,
+                    "model_name": self.model,
+                },
+            )
+            yield ChatGenerationChunk(message=usage_chunk)
 
 
 class MicroserviceEmbeddings(LCEmbeddings):
