@@ -451,6 +451,27 @@ async def create_registry_model_via_service(body: dict) -> dict:
         return resp.json()
 
 
+async def fetch_decrypted_model_config(model_id: str) -> dict | None:
+    """Fetch decrypted model config (with API key) from the Model microservice."""
+    try:
+        url, api_key = _get_model_service_settings()
+    except ValueError:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{url}/v1/registry/models/{model_id}/config",
+                headers=_headers(api_key),
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.warning("Failed to fetch decrypted model config from Model service: %s", e)
+        return None
+
+
 async def get_registry_model_via_service(model_id: str) -> dict | None:
     """Get a registry model by ID via the Model microservice."""
     url, api_key = _get_model_service_settings()
