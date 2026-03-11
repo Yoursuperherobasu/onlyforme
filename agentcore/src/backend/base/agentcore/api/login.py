@@ -266,6 +266,7 @@ async def azure_sso_login(
     else:
         resolved_role = "consumer"
 
+    is_new_user = False
     if not user:
         random_password = secrets.token_urlsafe(32)
         user = User(
@@ -282,6 +283,7 @@ async def azure_sso_login(
             db.add(user)
             await db.commit()
             await db.refresh(user)
+            is_new_user = True
         except IntegrityError:
             await db.rollback()
             existing_user = await _resolve_sso_identity_user(
@@ -298,6 +300,12 @@ async def azure_sso_login(
     # DB role always wins for registered users (except configured root email override above)
     if user and not (root_email and normalized_email == root_email):
         resolved_role = normalize_role(getattr(user, "role", "consumer"))
+
+    if user and not is_new_user and not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Inactive user",
+        )
 
     permissions = await get_permissions_for_role(resolved_role)
 

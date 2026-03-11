@@ -376,6 +376,8 @@ async def read_projects(
                         name=project.name,
                         description=project.description,
                         auth_settings=project.auth_settings,
+                        created_at=project.created_at,
+                        updated_at=project.updated_at,
                         is_own_project=is_own,
                         created_by_email=created_by_email,
                         department_name=department_name,
@@ -392,6 +394,8 @@ async def read_projects(
                     name=project.name,
                     description=project.description,
                     auth_settings=project.auth_settings,
+                    created_at=project.created_at,
+                    updated_at=project.updated_at,
                     is_own_project=(
                         project.user_id == current_user.id
                         or project.owner_user_id == current_user.id
@@ -487,6 +491,8 @@ async def read_project(
         name=project.name,
         description=project.description,
         auth_settings=project.auth_settings,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
         agents=agents_in_scope,
     )
 
@@ -508,20 +514,18 @@ async def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     try:
-        if project.name and project.name != existing_project.name:
-            existing_project.name = project.name
-            session.add(existing_project)
-            await session.commit()
-            await session.refresh(existing_project)
-            return existing_project
-
-        project_data = existing_project.model_dump(exclude_unset=True)
+        project_data = project.model_dump(exclude_unset=True)
         for key, value in project_data.items():
             if key not in {"components", "agents"}:
                 setattr(existing_project, key, value)
+        existing_project.updated_at = datetime.now(timezone.utc)
+        existing_project.updated_by = current_user.id
         session.add(existing_project)
         await session.commit()
         await session.refresh(existing_project)
+
+        if "components" not in project_data and "agents" not in project_data:
+            return existing_project
 
         concat_project_components = project.components + project.agents
 

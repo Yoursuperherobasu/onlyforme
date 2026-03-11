@@ -369,7 +369,7 @@ async def add_user(
             new_user = existing_user
             if is_reusing_soft_deleted:
                 new_user.deleted_at = None
-                new_user.is_active = True
+                new_user.is_active = user.is_active if user.is_active is not None else True
             new_user.display_name = display_name or new_user.display_name
             new_user.email = new_user.email or email or username
         else:
@@ -401,7 +401,11 @@ async def add_user(
 
         new_user.password = get_password_hash(raw_password)
         new_user.is_superuser = new_user.role in {"super_admin", "department_admin", "root"}
-        new_user.is_active = get_settings_service().auth_settings.NEW_USER_IS_ACTIVE
+        new_user.is_active = (
+            user.is_active
+            if user.is_active is not None
+            else get_settings_service().auth_settings.NEW_USER_IS_ACTIVE
+        )
         session.add(new_user)
         await session.flush()
 

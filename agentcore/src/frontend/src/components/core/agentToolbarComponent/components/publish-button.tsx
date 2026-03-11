@@ -34,9 +34,7 @@ import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import useAlertStore from "@/stores/alertStore";
 import { cn } from "@/utils/utils";
 
-interface PublishButtonProps {
-  hasIO: boolean;
-}
+interface PublishButtonProps {}
 
 interface PublishContextResponse {
   department_id: string;
@@ -82,7 +80,7 @@ const DisabledButton = () => (
   </div>
 );
 
-const PublishButton = ({ hasIO }: PublishButtonProps) => {
+const PublishButton = ({}: PublishButtonProps) => {
   const { permissions, userData } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canPublish = can("view_project_page");
@@ -502,17 +500,6 @@ const PublishButton = ({ hasIO }: PublishButtonProps) => {
     );
   }
 
-  // If user has permission but agent doesn't have IO, show disabled with different tooltip
-  if (!hasIO) {
-    return (
-      <ShadTooltip content="Add a Chat Input or Chat Output to use the playground">
-        <div className="pointer-events-none">
-          <DisabledButton />
-        </div>
-      </ShadTooltip>
-    );
-  }
-
   if (hasPendingApproval) {
     return (
       <ShadTooltip content="This agent is awaiting approval. You can publish again after approve/reject.">
@@ -523,7 +510,7 @@ const PublishButton = ({ hasIO }: PublishButtonProps) => {
     );
   }
 
-  // User has permission and agent has IO - show active button
+  // User has permission - show active button
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <ActiveButton onClick={() => setOpen(true)} />
