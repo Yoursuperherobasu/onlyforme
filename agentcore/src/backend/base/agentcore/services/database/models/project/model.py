@@ -65,6 +65,8 @@ class ProjectCreate(ProjectBase):
 
 class ProjectRead(ProjectBase):
     id: UUID
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     is_own_project: bool = False
     created_by_email: str | None = None
     department_name: str | None = None

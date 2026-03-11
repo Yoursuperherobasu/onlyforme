@@ -67,6 +67,7 @@ class UserCreate(SQLModel):
     email: str | None = None
     display_name: str | None = None
     password: str | None = None
+    is_active: bool | None = None
     role: str = Field(default="developer", max_length=50)
     department_admin_email: str | None = None
     department_name: str | None = None

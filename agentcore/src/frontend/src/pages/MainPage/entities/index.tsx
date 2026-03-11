@@ -5,6 +5,7 @@ export type FolderType = {
   description: string;
   id?: string | null;
   parent_id: string;
+  created_at?: string;
   updated_at?: string;
   is_own_project?: boolean;
   created_by_email?: string | null;

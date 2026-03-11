@@ -67,13 +67,6 @@ export const SelectOptions = ({
               <FolderSelectItem name="Rename" iconName="SquarePen" />
             </SelectItem>
           )}
-          <SelectItem
-            value="download"
-            data-testid="btn-download-project"
-            className="text-xs"
-          >
-            <FolderSelectItem name="Download" iconName="Download" />
-          </SelectItem>
           {index > 0 && (
             <SelectItem
               value="delete"

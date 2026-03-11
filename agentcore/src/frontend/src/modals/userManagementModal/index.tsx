@@ -42,6 +42,7 @@ export default function UserManagementModal({
   const [organizationDescription, setOrganizationDescription] = useState("");
   const [departmentError, setDepartmentError] = useState("");
   const [organizationError, setOrganizationError] = useState("");
+  const [usernameError, setUsernameError] = useState("");
   const { mutate: mutateGetAssignableRoles } = useGetAssignableRoles();
   const { mutate: mutateGetDepartments } = useGetDepartments();
   const [inputState, setInputState] = useState<UserInputType>(CONTROL_NEW_USER);
@@ -125,6 +126,7 @@ export default function UserManagementModal({
     setOrganizationDescription("");
     setDepartmentError("");
     setOrganizationError("");
+    setUsernameError("");
     setInputState({ ...CONTROL_NEW_USER, role: defaultRole });
   }
 
@@ -192,6 +194,21 @@ export default function UserManagementModal({
     return true;
   }
 
+  function validateUsernameEmail(value: string): boolean {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setUsernameError("Username is required.");
+      return false;
+    }
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(trimmed)) {
+      setUsernameError("Username must be a valid email address.");
+      return false;
+    }
+    setUsernameError("");
+    return true;
+  }
+
   return (
     <BaseModal size="medium-h-full" open={open} setOpen={setOpen}>
       <BaseModal.Trigger asChild={asChild}>{children}</BaseModal.Trigger>
@@ -206,6 +223,10 @@ export default function UserManagementModal({
       <BaseModal.Content>
         <Form.Root
           onSubmit={(event) => {
+            if (!validateUsernameEmail(username)) {
+              event.preventDefault();
+              return;
+            }
             const submitRequiresDepartmentAdminSelection =
               userData?.role === "super_admin" && effectiveRole !== "department_admin";
             if (submitRequiresDepartmentAdminSelection && !validateDepartmentAdminSelection()) {
@@ -271,6 +292,7 @@ export default function UserManagementModal({
                   onChange={({ target: { value } }) => {
                     handleInput({ target: { name: "username", value } });
                     setUserName(value);
+                    if (usernameError) validateUsernameEmail(value);
                   }}
                   value={username}
                   className="primary-input"
@@ -278,6 +300,11 @@ export default function UserManagementModal({
                   placeholder="Username"
                 />
               </Form.Control>
+              {usernameError && (
+                <div className="mt-1 text-xs text-destructive">
+                  {usernameError}
+                </div>
+              )}
               <Form.Message match="valueMissing" className="field-invalid">
                 Please enter your username
               </Form.Message>
@@ -296,8 +323,9 @@ export default function UserManagementModal({
                       id="is_active"
                       className="relative top-0.5"
                       onCheckedChange={(value) => {
-                        handleInput({ target: { name: "is_active", value } });
-                        setIsActive(value);
+                        const nextValue = value === true;
+                        handleInput({ target: { name: "is_active", value: nextValue } });
+                        setIsActive(nextValue);
                       }}
                     />
                   </Form.Control>

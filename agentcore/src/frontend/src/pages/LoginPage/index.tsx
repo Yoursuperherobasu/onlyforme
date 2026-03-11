@@ -115,9 +115,17 @@ export default function LoginPage(): JSX.Element {
       );
 
       if (!res.ok) {
-        const text = await res.text();
-        console.error("🔴 [SSO] Backend error:", text);
-        throw new Error(text || "Backend SSO failed");
+        let detail = "Backend SSO failed";
+        try {
+          const payload = await res.json();
+          if (payload?.detail) detail = payload.detail;
+        } catch {
+          const text = await res.text();
+          if (text) detail = text;
+        }
+        console.error("🔴 [SSO] Backend error:", detail);
+        setErrorData({ title: SIGNIN_ERROR_ALERT, list: [detail] });
+        return;
       }
 
       const data = await res.json();
@@ -139,6 +147,10 @@ export default function LoginPage(): JSX.Element {
       // window.location.href = "/";
     } catch (err) {
       console.error("🔴 [SSO] Azure SSO failed:", err);
+      setErrorData({
+        title: SIGNIN_ERROR_ALERT,
+        list: ["Microsoft SSO failed. Please try again or contact your admin."],
+      });
     }
   }
 
