@@ -40,6 +40,7 @@ import HelpSupportPage from "./pages/SettingsPage/pages/HelpSupportPage";
 import MCPServersPage from "./pages/McpServersPage";
 import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import PackagesPage from "./pages/SettingsPage/pages/PackagesPage";
+import ReleaseManagementPage from "./pages/ReleaseManagementPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
@@ -242,6 +243,14 @@ const router = createBrowserRouter(
                   <Route
                     path="packages"
                     element={<PackagesPage />}
+                  />
+                  <Route
+                    path="release-management"
+                    element={
+                      <ProtectedPermissionRoute permission="view_packages_page">
+                        <ReleaseManagementPage />
+                      </ProtectedPermissionRoute>
+                    }
                   />
                   
                   <Route

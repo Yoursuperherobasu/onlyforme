@@ -575,6 +575,81 @@ def _test_azure_blob_connection(config: dict) -> dict:
 def _test_sharepoint_connection(config: dict) -> dict:
     """Test a SharePoint connection."""
     start = time.time()
+
+    site_url = config.get("site_url", "")
+    client_id = config.get("client_id", "")
+    client_secret = config.get("client_secret", "")
+    tenant_id = config.get("tenant_id", "")
+
+    if not site_url or not client_id or not client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="site_url, client_id, and client_secret are required for SharePoint connector",
+        )
+
+    # Primary: test via Microsoft Graph API (same auth path the connector uses)
+    if tenant_id:
+        try:
+            import httpx
+            from urllib.parse import urlparse
+
+            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+            token_resp = httpx.post(token_url, data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "https://graph.microsoft.com/.default",
+            }, timeout=10)
+            if token_resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Azure AD token request failed ({token_resp.status_code}): {token_resp.text[:300]}",
+                )
+            access_token = token_resp.json()["access_token"]
+
+            parsed = urlparse(site_url)
+            hostname = parsed.hostname
+            site_path = parsed.path.rstrip("/")
+            if site_path and site_path != "/":
+                graph_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:{site_path}"
+            else:
+                graph_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:/"
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            site_resp = httpx.get(graph_url, headers=headers, timeout=10)
+            if site_resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SharePoint site resolution failed ({site_resp.status_code}): {site_resp.text[:300]}",
+                )
+            site_data = site_resp.json()
+            site_id = site_data["id"]
+            site_name = site_data.get("displayName", site_url)
+
+            drives_resp = httpx.get(
+                f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives",
+                headers=headers, timeout=10,
+            )
+            if drives_resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SharePoint drives listing failed ({drives_resp.status_code}): {drives_resp.text[:300]}",
+                )
+
+            latency_ms = round((time.time() - start) * 1000, 2)
+            drive_count = len(drives_resp.json().get("value", []))
+            return {
+                "success": True,
+                "message": f"Connected successfully to SharePoint site: {site_name} ({drive_count} document libraries found)",
+                "latency_ms": latency_ms,
+                "tables_metadata": None,
+            }
+        except HTTPException:
+            raise
+        except Exception as graph_err:
+            logger.warning(f"Graph API test failed, falling back to Office365 library: {graph_err}")
+
+    # Fallback: test via Office365-REST-Python-Client (legacy SharePoint REST API)
     try:
         from office365.runtime.auth.client_credential import ClientCredential
         from office365.sharepoint.client_context import ClientContext
@@ -582,16 +657,6 @@ def _test_sharepoint_connection(config: dict) -> dict:
         raise HTTPException(
             status_code=400,
             detail="Office365-REST-Python-Client not installed. Install with: pip install Office365-REST-Python-Client",
-        )
-
-    site_url = config.get("site_url", "")
-    client_id = config.get("client_id", "")
-    client_secret = config.get("client_secret", "")
-
-    if not site_url or not client_id or not client_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="site_url, client_id, and client_secret are required for SharePoint connector",
         )
 
     credentials = ClientCredential(client_id, client_secret)

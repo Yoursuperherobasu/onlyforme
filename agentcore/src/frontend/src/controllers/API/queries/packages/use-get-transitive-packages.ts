@@ -6,9 +6,14 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 export type TransitivePackage = {
+  id: string;
   name: string;
   resolved_version: string;
   required_by: string[];
+  required_by_details: { name: string; version: string }[];
+  start_date: string;
+  end_date: string;
+  is_current: boolean;
   source: Record<string, unknown>;
 };
 

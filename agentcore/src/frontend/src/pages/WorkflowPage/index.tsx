@@ -749,11 +749,11 @@ export default function WorkflowsView({
                             >
                               {t("Export as JSON")}
                             </DropdownMenuItem>
-                            <DropdownMenuItem
+                            <DropdownMenuItem 
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleOpenWidgetExport(workflow);
-                              }}
+                              }} disabled
                             >
                               {t("Export as Widget")}
                             </DropdownMenuItem>

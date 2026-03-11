@@ -39,7 +39,12 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Page Access", keys: ["view_projects_page"] },
       {
         name: "Actions",
-        keys: ["prod_publish_approval_required", "prod_publish_approval_not_required"],
+        keys: [
+          "edit_projects_page",
+          "delete_project",
+          "prod_publish_approval_required",
+          "prod_publish_approval_not_required",
+        ],
       },
     ],
   },

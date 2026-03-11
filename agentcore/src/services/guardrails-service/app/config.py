@@ -64,7 +64,7 @@ def _derive_encryption_key() -> str:
 class Settings(BaseSettings):
     api_key: str = ""
     host: str = "0.0.0.0"
-    port: int = 8003
+    port: int = 8005
     log_level: str = "info"
     cors_origins: str = "*"
     database_url: str | None = None

@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
-import { Plus, Folder, MoreVertical, Edit2, Trash2, Download, FileText, X, Info } from "lucide-react";
+import { Plus, Folder, MoreVertical, Edit2, Trash2, FileText, X, Info } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { usePostFolders } from "@/controllers/API/queries/folders";
-import { useGetDownloadFolders } from "@/controllers/API/queries/folders/use-get-download-folders";
 import useAlertStore from "@/stores/alertStore";
 import { track } from "@/customization/utils/analytics";
-import { customGetDownloadFolderBlob } from "@/customization/utils/custom-get-download-folders";
 import type { FolderType } from "@/pages/MainPage/entities";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
@@ -50,7 +48,6 @@ export default function FolderCardsView({
   const [searchQuery, setSearchQuery] = useState("");
   
   const { mutate: mutateAddFolder, isPending } = usePostFolders();
-  const { mutate: mutateDownloadFolder } = useGetDownloadFolders({});
 
   const displayFolders = folders || [];
   const { permissions, role } = useContext(AuthContext);
@@ -77,10 +74,14 @@ export default function FolderCardsView({
     folder.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
   
-  // Sort by updated_at descending (most recently updated first)
+  // Sort by updated_at descending (most recently updated first). Fallback to created_at.
   const sortedFolders = [...filteredFolders].sort((a, b) => {
-    if (!a.updated_at || !b.updated_at) return 0;
-    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    const aDate = a.updated_at || a.created_at;
+    const bDate = b.updated_at || b.created_at;
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return new Date(bDate).getTime() - new Date(aDate).getTime();
   });
   
   // Split folders into recent (top 4) and older
@@ -176,23 +177,6 @@ export default function FolderCardsView({
     );
   };
 
-  const handleDownloadFolder = (folder: FolderType) => {
-    mutateDownloadFolder(
-      {
-        folderId: folder.id!,
-      },
-      {
-        onSuccess: (response) => {
-          customGetDownloadFolderBlob(response, folder.id!, folder.name, setSuccessData);
-        },
-        onError: (e) => {
-          setErrorData({
-            title: `An error occurred while downloading your project.`,
-          });
-        },
-      },
-    );
-  };
 
   return (
     <>
@@ -284,7 +268,7 @@ export default function FolderCardsView({
                     )}
 
                     {/* Menu Button - Only show if user has edit or delete permissions */}
-                    {can("view_projects_page") && (
+                    {(can("edit_projects_page") || can("delete_project")) && (
                     <div className="z-20">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -296,7 +280,7 @@ export default function FolderCardsView({
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {can("view_projects_page") && (
+                          {can("edit_projects_page") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -307,18 +291,7 @@ export default function FolderCardsView({
                             Rename
                           </DropdownMenuItem>
                           )}
-                          {can("view_projects_page") && (
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownloadFolder(folder);
-                            }}
-                          >
-                            <Download className="mr-2 h-4 w-4" />
-                            Download
-                          </DropdownMenuItem>
-                          )}
-                          {can("view_projects_page") && (
+                          {can("delete_project") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -407,13 +380,14 @@ export default function FolderCardsView({
             <div className="rounded-lg border bg-card overflow-hidden">
               {/* Table Header */}
               <div className="grid grid-cols-12 gap-4 border-b bg-muted/50 px-4 py-3 text-xs font-semibold text-muted-foreground sticky top-0">
-                <div className="col-span-5 flex items-center gap-2">
+                <div className="col-span-3 flex items-center gap-2">
                   <Folder className="h-4 w-4" />
                   <span>Name</span>
                 </div>
                 {showCreatedBy && <div className="col-span-2 flex items-center">Created By</div>}
                 {showDepartment && <div className="col-span-2 flex items-center">Department</div>}
                 {showOrganization && <div className="col-span-2 flex items-center">Organization</div>}
+                <div className="col-span-2 flex items-center">Last Updated</div>
                 <div className="col-span-1"></div>
               </div>
 
@@ -441,7 +415,7 @@ export default function FolderCardsView({
                         onClick={() => can("view_projects_page") && onFolderClick(folder.id)}
                       >
                         {/* Name Column */}
-                        <div className="col-span-5 flex items-center gap-3 min-w-0">
+                        <div className="col-span-3 flex items-center gap-3 min-w-0">
                           <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-primary/10">
                             <Folder className="h-4 w-4 text-primary" />
                           </div>
@@ -479,6 +453,13 @@ export default function FolderCardsView({
                             <span className="truncate">{folder.organization_name || "--"}</span>
                           </div>
                         )}
+                        <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                          {folder.updated_at || folder.created_at ? (
+                            <span className="truncate">{formatDate(folder.updated_at || folder.created_at!)}</span>
+                          ) : (
+                            <span className="truncate">--</span>
+                          )}
+                        </div>
 
                         {/* Actions Column - Only show if user has edit or delete permissions */}
                         <div className="col-span-1 flex items-center justify-end">
@@ -502,17 +483,6 @@ export default function FolderCardsView({
                               >
                                 <Edit2 className="mr-2 h-4 w-4" />
                                 Rename
-                              </DropdownMenuItem>
-                              )}
-                              {can("edit_projects_page") && (
-                              <DropdownMenuItem
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDownloadFolder(folder);
-                                }}
-                              >
-                                <Download className="mr-2 h-4 w-4" />
-                                Download
                               </DropdownMenuItem>
                               )}
                               {can("delete_project") && (
@@ -802,17 +772,6 @@ export default function FolderCardsView({
                   >
                     <Edit2 className="mr-2 h-4 w-4" />
                     Rename
-                  </DropdownMenuItem>
-                  )}
-                  {can("edit_projects_page") && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setDetailModalOpen(false);
-                      handleDownloadFolder(selectedFolderDetail);
-                    }}
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download
                   </DropdownMenuItem>
                   )}
                   {can("delete_project") && (

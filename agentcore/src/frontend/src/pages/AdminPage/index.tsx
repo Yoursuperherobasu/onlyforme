@@ -116,11 +116,12 @@ export default function AdminPage() {
     );
   }
 
-  function getUsers() {
+  function getUsers(query = inputValue) {
     mutateGetUsers(
       {
         skip: size * (index - 1),
         limit: size,
+        ...(query ? { q: query } : {}),
       },
       {
         onSuccess: (users) => {
@@ -141,6 +142,7 @@ export default function AdminPage() {
       {
         skip: pageSize * (pageIndex - 1),
         limit: pageSize,
+        ...(inputValue ? { q: inputValue } : {}),
       },
       {
         onSuccess: (users) => {
@@ -155,19 +157,31 @@ export default function AdminPage() {
   function resetFilter() {
     setPageIndex(PAGINATION_PAGE);
     setPageSize(PAGINATION_SIZE);
-    getUsers();
+    getUsers("");
   }
 
   function handleFilterUsers(input: string) {
     setInputValue(input);
 
     if (input === "") {
-      setFilterUserList(userList.current);
+      setPageIndex(PAGINATION_PAGE);
+      getUsers("");
     } else {
-      const filteredList = userList.current.filter((user: Users) =>
-        user.username.toLowerCase().includes(input.toLowerCase()),
+      setPageIndex(PAGINATION_PAGE);
+      mutateGetUsers(
+        {
+          skip: 0,
+          limit: size,
+          q: input,
+        },
+        {
+          onSuccess: (users) => {
+            setTotalRowsCount(users["total_count"]);
+            userList.current = users["users"];
+            setFilterUserList(users["users"]);
+          },
+        },
       );
-      setFilterUserList(filteredList);
     }
   }
 
@@ -369,7 +383,7 @@ export default function AdminPage() {
                   className="cursor-pointer"
                   onClick={() => {
                     setInputValue("");
-                    setFilterUserList(userList.current);
+                    resetFilter();
                   }}
                 >
                   <IconComponent name="X" className="w-6 text-foreground" />

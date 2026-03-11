@@ -9,7 +9,7 @@ interface EditFolderModalProps {
   open: boolean;
   setOpen: (open: boolean) => void;
   folder?: FolderType;
-  onSave: (newName: string) => void;
+  onSave: (newName: string, newDescription: string) => void;
 }
 
 export default function EditFolderModal({
@@ -19,16 +19,18 @@ export default function EditFolderModal({
   onSave,
 }: EditFolderModalProps): JSX.Element {
   const [folderName, setFolderName] = useState("");
+  const [folderDescription, setFolderDescription] = useState("");
 
   useEffect(() => {
     if (folder) {
       setFolderName(folder.name);
+      setFolderDescription(folder.description || "");
     }
   }, [folder]);
 
   const handleSave = () => {
     if (folderName.trim()) {
-      onSave(folderName);
+      onSave(folderName, folderDescription.trim());
     }
   };
 
@@ -57,6 +59,15 @@ export default function EditFolderModal({
               onKeyDown={handleKeyDown}
               placeholder="Enter project name"
               autoFocus
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="description">Description (Optional)</Label>
+            <Input
+              id="description"
+              value={folderDescription}
+              onChange={(e) => setFolderDescription(e.target.value)}
+              placeholder="Brief description of your project..."
             />
           </div>
         </div>

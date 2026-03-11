@@ -555,18 +555,16 @@ class TriggerService(Service):
     ) -> list[dict]:
         """Scan a SharePoint document library for new/modified files.
 
+        Uses Microsoft Graph API (client-credentials) instead of Office365-REST-Python-Client
+        so that only Graph API permissions are needed (Sites.Read.All / Sites.ReadWrite.All).
+
         Credentials are resolved from the connector_catalogue via `connector_id`
         stored in the trigger_config JSON.
         """
-        try:
-            from office365.runtime.auth.client_credential import ClientCredential
-            from office365.sharepoint.client_context import ClientContext
-        except ImportError:
-            logger.error(
-                "Office365-REST-Python-Client not installed. "
-                "Install with: pip install Office365-REST-Python-Client"
-            )
-            return []
+        import httpx
+        from urllib.parse import urlparse
+
+        GRAPH = "https://graph.microsoft.com/v1.0"
 
         # Resolve credentials from connector catalogue
         connector_id = config.get("connector_id")
@@ -578,6 +576,7 @@ class TriggerService(Service):
             site_url = connector_cfg.get("site_url", "")
             client_id = connector_cfg.get("client_id", "")
             client_secret = connector_cfg.get("client_secret", "")
+            tenant_id = connector_cfg.get("tenant_id", "")
             library = connector_cfg.get("library", "Shared Documents")
             folder_path = connector_cfg.get("folder", config.get("sharepoint_folder", ""))
         else:
@@ -585,6 +584,7 @@ class TriggerService(Service):
             site_url = config.get("sharepoint_site_url", "")
             client_id = config.get("sharepoint_client_id", "")
             client_secret = config.get("sharepoint_client_secret", "")
+            tenant_id = config.get("sharepoint_tenant_id", "")
             library = config.get("sharepoint_library", "Shared Documents")
             folder_path = config.get("sharepoint_folder", "")
 
@@ -592,34 +592,94 @@ class TriggerService(Service):
             logger.warning(f"TriggerService: SharePoint trigger {task_id} missing site_url, client_id, or client_secret")
             return []
 
+        if not tenant_id:
+            logger.warning(f"TriggerService: SharePoint trigger {task_id} missing tenant_id for Graph API")
+            return []
+
         seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
         try:
-            credentials = ClientCredential(client_id, client_secret)
-            ctx = ClientContext(site_url).with_credentials(credentials)
-
-            target_folder = ctx.web.get_folder_by_server_relative_url(
-                f"{library}/{folder_path}" if folder_path else library
+            # 1. Acquire token
+            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+            token_resp = await asyncio.to_thread(
+                lambda: httpx.post(token_url, data={
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "scope": "https://graph.microsoft.com/.default",
+                }, timeout=15)
             )
-            files = target_folder.files
-            ctx.load(files)
-            await asyncio.to_thread(ctx.execute_query)
+            if token_resp.status_code != 200:
+                logger.error(f"TriggerService: Graph token error for trigger {task_id}: {token_resp.text[:300]}")
+                return []
+            access_token = token_resp.json()["access_token"]
+            headers = {"Authorization": f"Bearer {access_token}"}
 
-            for sp_file in files:
+            # 2. Resolve site ID
+            parsed = urlparse(site_url)
+            hostname = parsed.hostname or parsed.netloc
+            path = parsed.path.rstrip("/")
+            site_api = f"{GRAPH}/sites/{hostname}:{path}" if path else f"{GRAPH}/sites/{hostname}"
+            site_resp = await asyncio.to_thread(
+                lambda: httpx.get(site_api, headers=headers, timeout=15)
+            )
+            if site_resp.status_code != 200:
+                logger.error(f"TriggerService: failed to resolve site for trigger {task_id}: {site_resp.text[:300]}")
+                return []
+            site_id = site_resp.json()["id"]
+
+            # 3. Resolve drive ID
+            drives_resp = await asyncio.to_thread(
+                lambda: httpx.get(f"{GRAPH}/sites/{site_id}/drives", headers=headers, timeout=15)
+            )
+            if drives_resp.status_code != 200:
+                logger.error(f"TriggerService: failed to list drives for trigger {task_id}")
+                return []
+            drives = drives_resp.json().get("value", [])
+            drive_id = None
+            for d in drives:
+                if d.get("name", "").lower() == library.lower():
+                    drive_id = d["id"]
+                    break
+            if not drive_id and drives:
+                drive_id = drives[0]["id"]
+            if not drive_id:
+                logger.error(f"TriggerService: no drives found for trigger {task_id}")
+                return []
+
+            # 4. List files
+            if folder_path:
+                items_url = f"{GRAPH}/drives/{drive_id}/root:/{folder_path}:/children?$top=200"
+            else:
+                items_url = f"{GRAPH}/drives/{drive_id}/root/children?$top=200"
+            items_resp = await asyncio.to_thread(
+                lambda: httpx.get(items_url, headers=headers, timeout=15)
+            )
+            if items_resp.status_code != 200:
+                logger.error(f"TriggerService: failed to list items for trigger {task_id}: {items_resp.text[:300]}")
+                return []
+            items = items_resp.json().get("value", [])
+
+            # Filter to files only
+            for item in items:
+                if "file" not in item:
+                    continue
+                file_name = item.get("name", "")
                 if file_types:
-                    ext = Path(sp_file.name).suffix.lstrip(".")
+                    ext = Path(file_name).suffix.lstrip(".")
                     if ext not in file_types:
                         continue
 
-                modified = sp_file.time_last_modified if hasattr(sp_file, "time_last_modified") else ""
-                file_key = f"{sp_file.name}:{modified}"
+                modified = item.get("lastModifiedDateTime", "")
+                file_key = f"{file_name}:{modified}"
 
                 if file_key not in seen:
                     new_files.append({
-                        "name": sp_file.name,
-                        "path": sp_file.serverRelativeUrl,
-                        "size": sp_file.length if hasattr(sp_file, "length") else 0,
+                        "name": file_name,
+                        "path": item.get("webUrl", ""),
+                        "item_id": item.get("id", ""),
+                        "size": item.get("size", 0),
                         "modified": str(modified),
                     })
                     seen[file_key] = None

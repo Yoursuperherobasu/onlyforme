@@ -32,6 +32,7 @@ export const AccountMenu = () => {
   const { t, i18n } = useTranslation();
   const version = useDarkStore((state) => state.version);
   const latestVersion = useDarkStore((state) => state.latestVersion);
+  const currentReleaseVersion = useDarkStore((state) => state.currentReleaseVersion);
   const navigate = useCustomNavigate();
   const { mutate: mutationLogout } = useLogout();
   const { permissions, role, userData } = useContext(AuthContext);
@@ -75,6 +76,7 @@ export const AccountMenu = () => {
 
     return currentBaseVersion === latestBaseVersion;
   })();
+  const visibleVersion = currentReleaseVersion || version || "-";
 
   return (
     <HeaderMenu>
@@ -123,6 +125,8 @@ export const AccountMenu = () => {
               ) : null}
               <span className="text-muted-foreground">{t("Role")}</span>
               <span className="truncate text-foreground">{displayRole}</span>
+              <span className="text-muted-foreground">{t("Release")}</span>
+              <span className="truncate text-foreground">{visibleVersion}</span>
             </div>
           </div>
           <div>

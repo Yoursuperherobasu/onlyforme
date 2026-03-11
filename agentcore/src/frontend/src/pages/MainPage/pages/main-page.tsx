@@ -81,7 +81,7 @@ export default function CollectionPage(): JSX.Element {
     );
   };
 
-  const handleUpdateFolderName = (newName: string) => {
+  const handleUpdateFolderName = (newName: string, newDescription: string) => {
     if (!folderToEdit || !newName.trim()) return;
 
     updateFolder(
@@ -90,13 +90,14 @@ export default function CollectionPage(): JSX.Element {
         data: {
           ...folderToEdit,
           name: newName.trim(),
+          description: newDescription,
           agents: folderToEdit.agents ?? [],
           components: folderToEdit.components ?? [],
         },
       },
       {
         onSuccess: () => {
-          setSuccessData({ title: "Project renamed successfully." });
+          setSuccessData({ title: "Project updated successfully." });
           setOpenEditFolderModal(false);
           setFolderToEdit(undefined);
         },
@@ -187,6 +188,12 @@ export default function CollectionPage(): JSX.Element {
         openDeleteFolderModal={openDeleteFolderModal}
         setOpenDeleteFolderModal={setOpenDeleteFolderModal}
         handleDeleteFolder={handleDeleteFolder}
+      />
+      <EditFolderModal
+        open={openEditFolderModal}
+        setOpen={setOpenEditFolderModal}
+        folder={folderToEdit}
+        onSave={handleUpdateFolderName}
       />
 
       <EditFolderModal

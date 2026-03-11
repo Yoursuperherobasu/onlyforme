@@ -34,6 +34,8 @@ from .timeout_settings import TimeoutSettings
 from .guardrail_catalogue import GuardrailCatalogue
 from .help_support import HelpSupportQuestion
 from .package import Package
+from .product_release import ProductRelease
+from .release_package_snapshot import ReleasePackageSnapshot
 from .teams_app import TeamsApp
 from .hitl_request import HITLRequest
 from .evaluator.model import Evaluator
@@ -90,6 +92,8 @@ __all__ = [
     "OrchConversationTable",
     "OrchTransactionTable",
     "Package",
+    "ProductRelease",
+    "ReleasePackageSnapshot",
     "User",
     "HITLRequest",
     "Evaluator",

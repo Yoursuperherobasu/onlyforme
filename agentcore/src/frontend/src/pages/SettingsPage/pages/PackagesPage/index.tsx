@@ -141,7 +141,12 @@ function TransitiveTable({
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.resolved_version.toLowerCase().includes(q) ||
-        p.required_by.some((r) => r.toLowerCase().includes(q)),
+        p.required_by.some((r) => r.toLowerCase().includes(q)) ||
+        p.required_by_details.some(
+          (r) => r.name.toLowerCase().includes(q) || r.version.toLowerCase().includes(q),
+        ) ||
+        p.start_date.toLowerCase().includes(q) ||
+        p.end_date.toLowerCase().includes(q),
     );
   }, [packages, search]);
 
@@ -157,12 +162,16 @@ function TransitiveTable({
             <th className="px-4 py-3 text-left font-medium">{t("Package")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Version")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Required By")}</th>
+            <th className="px-4 py-3 text-left font-medium">{t("Required By Version")}</th>
+            <th className="px-4 py-3 text-left font-medium">{t("Start Date")}</th>
+            <th className="px-4 py-3 text-left font-medium">{t("End Date")}</th>
+            <th className="px-4 py-3 text-left font-medium">{t("Status")}</th>
           </tr>
         </thead>
         <tbody>
           {filtered.map((pkg) => (
             <tr
-              key={pkg.name}
+              key={pkg.id}
               className="border-b last:border-0 transition-colors hover:bg-muted/30"
             >
               <td className="px-4 py-3 font-mono text-sm">{pkg.name}</td>
@@ -179,8 +188,33 @@ function TransitiveTable({
                       ` +${pkg.required_by.length - 3} more`}
                   </span>
                 ) : (
-                  "—"
+                  "-"
                 )}
+              </td>
+              <td className="px-4 py-3 text-sm text-muted-foreground">
+                {pkg.required_by_details.length > 0 ? (
+                  <span>
+                    {pkg.required_by_details
+                      .slice(0, 3)
+                      .map((d) => `${d.name}: ${d.version}`)
+                      .join(", ")}
+                    {pkg.required_by_details.length > 3 &&
+                      ` +${pkg.required_by_details.length - 3} more`}
+                  </span>
+                ) : (
+                  "-"
+                )}
+              </td>
+              <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.start_date}</td>
+              <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.end_date}</td>
+              <td className="px-4 py-3 text-sm">
+                <Badge
+                  variant="outline"
+                  size="sm"
+                  className={pkg.is_current ? "border-green-500/50 text-green-600" : ""}
+                >
+                  {pkg.is_current ? t("Current") : t("Historical")}
+                </Badge>
               </td>
             </tr>
           ))}
