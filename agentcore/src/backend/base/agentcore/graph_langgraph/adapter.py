@@ -795,6 +795,7 @@ class LangGraphAdapter:
         session_id: str | None = None,
         stream: bool = False,
         fallback_to_env_vars: bool = False,
+        files: list[str] | None = None,
         event_manager=None,
     ):
         """Run the graph with given inputs via LangGraph compiled execution.
@@ -874,7 +875,7 @@ class LangGraphAdapter:
                 "session_id": self._session_id or str(self.agent_id) if self.agent_id else "",
                 "user_id": self.user_id,
                 "input_data": run_inputs,
-                "files": None,
+                "files": files,
                 "fallback_to_env_vars": fallback_to_env_vars,
                 "stop_component_id": None,
                 "start_component_id": start_component_id,

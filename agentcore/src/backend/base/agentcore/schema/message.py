@@ -113,13 +113,21 @@ class Message(Data):
     def model_post_init(self, /, _context: Any) -> None:
         new_files: list[Any] = []
         for file in self.files or []:
-            if is_image_file(file):
+            if isinstance(file, Image):
+                new_files.append(file)
+            elif is_image_file(file):
                 new_files.append(Image(path=file))
             else:
                 new_files.append(file)
         self.files = new_files
         if "timestamp" not in self.data:
             self.data["timestamp"] = self.timestamp
+
+    async def resolve_images(self) -> None:
+        """Pre-fetch image data from storage so to_lc_message works synchronously."""
+        for file in self.files or []:
+            if isinstance(file, Image):
+                await file.resolve()
 
     def set_agent_id(self, agent_id: str) -> None:
         self.agent_id = agent_id
@@ -197,16 +205,15 @@ class Message(Data):
             return ""
         return value
 
-    # Keep this async method for backwards compatibility
     def get_file_content_dicts(self):
         content_dicts = []
-        files = get_file_paths(self.files)
-
-        for file in files:
+        for file in self.files or []:
             if isinstance(file, Image):
                 content_dicts.append(file.to_content_dict())
             else:
-                content_dicts.append(create_image_content_dict(file))
+                # Wrap string paths as Image objects so they go through
+                # the storage service (supports Azure blob, local, etc.)
+                content_dicts.append(Image(path=file).to_content_dict())
         return content_dicts
 
     def load_lc_prompt(self):

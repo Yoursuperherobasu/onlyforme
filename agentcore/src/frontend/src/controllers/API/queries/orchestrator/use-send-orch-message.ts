@@ -22,6 +22,7 @@ export interface OrchMessageResponse {
   agent_id: string | null;
   deployment_id: string | null;
   category?: string;
+  files?: string[];
   properties?: {
     hitl?: boolean;
     thread_id?: string;

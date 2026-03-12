@@ -271,6 +271,28 @@ class PublishNotifyResponse(BaseModel):
     deployment_id: UUID
 
 
+class PublishNotifyVerifiedResponse(BaseModel):
+    """DB-verified response for publish notification events.
+
+    Returns full deployment details after verifying the record exists
+    in the database — used for downstream deployment orchestration.
+    """
+
+    agent_id: UUID
+    agent_name: str
+    agent_description: str | None = None
+    environment: str
+    version_number: str
+    deployment_id: UUID
+    status: str
+    is_active: bool
+    deployed_by: UUID
+    deployed_at: datetime | None = None
+    org_id: UUID
+    dept_id: UUID | None = None
+    verified: bool = True
+
+
 class ValidatePublishEmailResponse(BaseModel):
     """Validation response for publish recipient emails."""
 
@@ -1261,22 +1283,77 @@ async def _notify_publish_event(
     except Exception as notify_err:
         logger.warning(f"[PUBLISH_NOTIFY] failed for publish_id={publish_id}: {notify_err}")
 
-@router.post("/notify", response_model=PublishNotifyResponse, status_code=200)
-async def publish_notification(*, body: PublishNotifyRequest):
-    """Internal endpoint triggered after a successful agent publish.
+@router.post("/notify", response_model=PublishNotifyVerifiedResponse, status_code=200)
+async def publish_notify_verify(
+    *,
+    body: PublishNotifyRequest,
+    session: DbSession,
+):
+    """DB-verified publish notification endpoint for PROD deployments.
 
-    Returns agent_id, environment, and version_number.
-    Can also be called externally to verify a publish event.
+    Triggered after agent approval in prod. Looks up the deployment
+    record in the agent_deployment_prod table, verifies that the
+    agent_id and version match, and returns the full deployment
+    details for downstream deployment orchestration.
+
+    Raises:
+        404: Deployment record not found in prod table.
+        409: Mismatch between request payload and DB record.
     """
+    # 1. Find the deployment record in PROD table only
+    record = (await session.exec(
+        select(AgentDeploymentProd).where(AgentDeploymentProd.id == body.deployment_id)
+    )).first()
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"PROD deployment record {body.deployment_id} not found",
+        )
+
+    # 2. Verify agent_id matches
+    if record.agent_id != body.agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Agent ID mismatch: request says '{body.agent_id}' "
+                f"but deployment record has '{record.agent_id}'"
+            ),
+        )
+
+    # 3. Verify version matches
+    payload_version = str(body.version_number).strip()
+    if payload_version.lower().startswith("v"):
+        payload_version = payload_version[1:]
+    if str(record.version_number) != payload_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Version mismatch: request says 'v{body.version_number}' "
+                f"but deployment record has 'v{record.version_number}'"
+            ),
+        )
+
     logger.info(
-        f"Publish notification: agent={body.agent_id} env={body.environment} "
-        f"version={body.version_number}"
+        f"[PUBLISH_NOTIFY] Verified: agent='{record.agent_name}' "
+        f"agent_id={record.agent_id} deployment_id={record.id} "
+        f"env=prod version=v{record.version_number} "
+        f"status={record.status} is_active={record.is_active}",
     )
-    return PublishNotifyResponse(
-        agent_id=body.agent_id,
-        environment=body.environment,
-        version_number=body.version_number,
-        deployment_id=body.deployment_id,
+
+    return PublishNotifyVerifiedResponse(
+        agent_id=record.agent_id,
+        agent_name=record.agent_name,
+        agent_description=record.agent_description,
+        environment="prod",
+        version_number=f"v{record.version_number}",
+        deployment_id=record.id,
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        is_active=record.is_active,
+        deployed_by=record.deployed_by,
+        deployed_at=record.deployed_at,
+        org_id=record.org_id,
+        dept_id=record.dept_id,
+        verified=True,
     )
 
 
@@ -1946,6 +2023,31 @@ async def publish_agent(
                     published_by=current_user.id,
                     published_at=new_record.deployed_at,
                 )
+
+                # ─── HTTP notify (for downstream deployment orchestration) ──
+                try:
+                    import httpx
+                    from agentcore.services.deps import get_settings_service
+                    settings = get_settings_service().settings
+                    base_url = f"http://{settings.host}:{settings.port}"
+                    payload = {
+                        "agent_id": str(agent_id),
+                        "environment": "prod",
+                        "version_number": str(next_version),
+                        "deployment_id": str(new_record.id),
+                    }
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+                        resp.raise_for_status()
+                        verified = resp.json()
+                    logger.info(
+                        f"[PROD_ADMIN_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+                        f"deployment_id={verified.get('deployment_id')} "
+                        f"version={verified.get('version_number')} "
+                        f"status={verified.get('status')} is_active={verified.get('is_active')}",
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Post-deploy notify API failed for PROD deploy of {agent_id}: {notify_err}")
 
                 return PublishActionResponse(
                     success=True,

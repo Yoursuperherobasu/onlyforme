@@ -61,20 +61,27 @@ class BaseProvider(ABC):
         raise NotImplementedError(msg)
 
     def build_messages(self, messages: list[dict[str, str]]) -> list[BaseMessage]:
-        """Convert OpenAI-format message dicts to LangChain BaseMessage objects."""
+        """Convert OpenAI-format message dicts to LangChain BaseMessage objects.
+
+        Preserves multimodal content (list of text/image_url dicts) for user
+        messages so vision-capable models can process images.
+        """
         lc_messages: list[BaseMessage] = []
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content") or ""
+            raw_content = msg.get("content")
+            # Preserve list content for multimodal; default to "" for None
+            content = raw_content if isinstance(raw_content, (str, list)) else (raw_content or "")
             if role == "system":
-                lc_messages.append(SystemMessage(content=content))
+                lc_messages.append(SystemMessage(content=content if isinstance(content, str) else str(content)))
             elif role == "tool":
                 lc_messages.append(ToolMessage(
-                    content=content,
+                    content=content if isinstance(content, str) else str(content),
                     tool_call_id=msg.get("tool_call_id", ""),
                 ))
             elif role == "assistant":
                 tool_calls_raw = msg.get("tool_calls")
+                str_content = content if isinstance(content, str) else str(content)
                 if tool_calls_raw:
                     lc_tool_calls = []
                     for tc in tool_calls_raw:
@@ -89,10 +96,11 @@ class BaseProvider(ABC):
                             "args": args,
                             "id": tc.get("id", ""),
                         })
-                    lc_messages.append(AIMessage(content=content, tool_calls=lc_tool_calls))
+                    lc_messages.append(AIMessage(content=str_content, tool_calls=lc_tool_calls))
                 else:
-                    lc_messages.append(AIMessage(content=content))
+                    lc_messages.append(AIMessage(content=str_content))
             else:
+                # User messages: preserve list content for multimodal (text + images)
                 lc_messages.append(HumanMessage(content=content))
         return lc_messages
 

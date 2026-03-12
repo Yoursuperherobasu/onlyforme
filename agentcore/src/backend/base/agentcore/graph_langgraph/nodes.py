@@ -163,6 +163,12 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
                 if new_val:
                     vertex.update_raw_params({INPUT_FIELD_NAME: new_val}, overwrite=True)
 
+            # Pass uploaded files to input vertices (e.g. ChatInput) so that
+            # images/documents are included in the Message sent to the LLM.
+            files_from_state = state.get("files")
+            if should_update and files_from_state:
+                vertex.update_raw_params({"files": files_from_state}, overwrite=True)
+
         try:
             if should_build:
                 # ----------------------------------------------------------

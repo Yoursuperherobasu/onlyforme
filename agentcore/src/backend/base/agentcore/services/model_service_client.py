@@ -99,21 +99,33 @@ def _safe_float(value) -> float | None:
 
 
 def _messages_to_dicts(messages: list[BaseMessage]) -> list[dict]:
-    """Convert LangChain BaseMessage list to OpenAI-format dicts."""
+    """Convert LangChain BaseMessage list to OpenAI-format dicts.
+
+    Preserves multimodal content (text + image_url) for user messages
+    so that vision-capable models can process images.
+    """
     result = []
     for msg in messages:
-        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+        # Preserve list content (multimodal: text + images) as-is for the API.
+        # Only stringify if it's not already a string or list.
+        if isinstance(msg.content, str):
+            content = msg.content
+        elif isinstance(msg.content, list):
+            content = msg.content  # Keep structured content for multimodal
+        else:
+            content = str(msg.content)
 
         if isinstance(msg, SystemMessage):
-            result.append({"role": "system", "content": content})
+            # System messages must be string content
+            result.append({"role": "system", "content": msg.content if isinstance(msg.content, str) else str(msg.content)})
         elif isinstance(msg, ToolMessage):
             result.append({
                 "role": "tool",
-                "content": content,
+                "content": msg.content if isinstance(msg.content, str) else str(msg.content),
                 "tool_call_id": msg.tool_call_id,
             })
         elif isinstance(msg, AIMessage):
-            entry: dict = {"role": "assistant", "content": content}
+            entry: dict = {"role": "assistant", "content": msg.content if isinstance(msg.content, str) else str(msg.content)}
             if msg.tool_calls:
                 entry["tool_calls"] = [
                     {
@@ -130,6 +142,7 @@ def _messages_to_dicts(messages: list[BaseMessage]) -> list[dict]:
                 ]
             result.append(entry)
         else:
+            # User messages: preserve multimodal content (text + image_url)
             result.append({"role": "user", "content": content})
     return result
 
