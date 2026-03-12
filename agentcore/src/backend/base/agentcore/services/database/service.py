@@ -380,13 +380,13 @@ class DatabaseService(Service):
 
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
-        current_tables = ["agent", "user", "project", "conversation", "transaction", "vertex_build"]
-
-        if table_names and all(table in table_names for table in current_tables):
+        expected_tables = [table.name for table in SQLModel.metadata.sorted_tables]
+        missing_tables = [table for table in expected_tables if table not in table_names]
+        if not missing_tables:
             logger.debug("Database and tables already exist")
             return
 
-        logger.debug("Creating database and tables")
+        logger.debug("Creating missing database tables: {}", ", ".join(missing_tables))
 
         for table in SQLModel.metadata.sorted_tables:
             try:
@@ -401,7 +401,7 @@ class DatabaseService(Service):
         # Now check if the required tables exist, if not, something went wrong.
         inspector = inspect(connection)
         table_names = inspector.get_table_names()
-        for table in current_tables:
+        for table in expected_tables:
             if table not in table_names:
                 logger.error("Something went wrong creating the database and tables.")
                 logger.error("Please check your database settings.")

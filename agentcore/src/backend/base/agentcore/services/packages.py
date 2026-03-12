@@ -9,7 +9,7 @@ from typing import Any
 
 import toml
 from loguru import logger
-from sqlmodel import select
+from sqlmodel import select, text
 
 from agentcore.services.database.models.package.model import Package
 from agentcore.services.database.models.product_release.model import ProductRelease
@@ -104,15 +104,28 @@ async def sync_packages_to_db() -> None:
     seen: set[tuple[str, str]] = set()  # (normalised_name, package_type) dedup
     release_id = None
 
+    # Skip sync until table exists in partially initialized DBs.
+    async with session_scope() as session:
+        package_check = (await session.exec(text("SELECT to_regclass('public.package') IS NOT NULL"))).first()
+        package_table_exists = bool(package_check[0]) if package_check else False
+        if not package_table_exists:
+            logger.warning("Package table missing; skipping package sync until bootstrap creates it")
+            return
+
     # Attach latest package sync rows to currently active release, if available.
     try:
         async with session_scope() as session:
-            active_release = (
-                await session.exec(
-                    select(ProductRelease).where(ProductRelease.end_date == date(9999, 12, 31))
-                )
+            release_check = (
+                await session.exec(text("SELECT to_regclass('public.product_release') IS NOT NULL"))
             ).first()
-            release_id = active_release.id if active_release else None
+            release_table_exists = bool(release_check[0]) if release_check else False
+            if release_table_exists:
+                active_release = (
+                    await session.exec(
+                        select(ProductRelease).where(ProductRelease.end_date == date(9999, 12, 31))
+                    )
+                ).first()
+                release_id = active_release.id if active_release else None
     except Exception as exc:  # pragma: no cover - defensive only
         logger.debug("Could not resolve active release for package sync: {}", exc)
 
