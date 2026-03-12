@@ -4,6 +4,7 @@ import PublishDropdown from "./deploy-dropdown";
 import PlaygroundButton from "./playground-button";
 import PublishButton from "./publish-button";
 import PublishStatusBadge from "./publish-status-badge";
+import PublishVersionDropdown from "./publish-version-dropdown";
 import TeamsButton from "./teams/teams-button";
 
 type AgentToolbarOptionsProps = {
@@ -33,6 +34,7 @@ const AgentToolbarOptions = ({
       </div>
       <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
         <PublishStatusBadge />
+        <PublishVersionDropdown />
         <PublishButton />
       </div>
       <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">

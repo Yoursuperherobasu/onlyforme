@@ -6,7 +6,12 @@ import type {
   reactFlowInstance,
   Viewport,
 } from "@xyflow/react";
-import type { AllNodeType, EdgeType, AgentType } from "@/types/agent";
+import type {
+  AllNodeType,
+  EdgeType,
+  AgentType,
+  PublishedVersionSelection,
+} from "@/types/agent";
 import type { BuildStatus, EventDeliveryType } from "../../../constants/enums";
 import type { VertexBuildTypeAPI } from "../../api";
 import type { ChatInputType, ChatOutputType } from "../../chat";
@@ -75,6 +80,10 @@ export type AgentStoreType = {
   }) => void;
   fitViewNode: (nodeId: string) => void;
   autoSaveAgent: (() => void) | undefined;
+  activePublishedVersion: PublishedVersionSelection | null;
+  setActivePublishedVersion: (
+    version: PublishedVersionSelection | null,
+  ) => void;
   componentsToUpdate: ComponentsToUpdateType[];
   setComponentsToUpdate: (
     update:

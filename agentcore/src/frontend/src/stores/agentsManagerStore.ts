@@ -21,6 +21,22 @@ const useAgentsManagerStore = create<AgentsManagerStoreType>((set, get) => ({
   setIOModalOpen: (IOModalOpen: boolean) => {
     set({ IOModalOpen });
   },
+  autoSaveDisabledAgents: {},
+  setAutoSaveDisabledForAgent: (agentId: string, disabled: boolean) => {
+    set((state) => ({
+      autoSaveDisabledAgents: {
+        ...state.autoSaveDisabledAgents,
+        [agentId]: disabled,
+      },
+    }));
+  },
+  versionSavePrompt: null,
+  openVersionSavePrompt: (prompt) => {
+    set({ versionSavePrompt: prompt });
+  },
+  clearVersionSavePrompt: () => {
+    set({ versionSavePrompt: null });
+  },
   healthCheckMaxRetries: 5,
   setHealthCheckMaxRetries: (healthCheckMaxRetries: number) =>
     set({ healthCheckMaxRetries }),
@@ -137,6 +153,8 @@ const useAgentsManagerStore = create<AgentsManagerStoreType>((set, get) => ({
       currentAgentId: "",
       searchAgentsComponents: "",
       selectedAgentsComponentsCards: [],
+      autoSaveDisabledAgents: {},
+      versionSavePrompt: null,
     });
   },
 }));

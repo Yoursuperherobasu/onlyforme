@@ -83,6 +83,9 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
     }
   },
   autoSaveAgent: undefined,
+  activePublishedVersion: null,
+  setActivePublishedVersion: (activePublishedVersion) =>
+    set({ activePublishedVersion }),
   componentsToUpdate: [],
   setComponentsToUpdate: (change) => {
     const newChange =
