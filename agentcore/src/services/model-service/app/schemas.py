@@ -32,7 +32,7 @@ class ChatMessageToolCall(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str
-    content: str | None = ""
+    content: str | list | None = ""  # list for multimodal (text + image_url)
     tool_call_id: str | None = None
     tool_calls: list[ChatMessageToolCall] | None = None
 

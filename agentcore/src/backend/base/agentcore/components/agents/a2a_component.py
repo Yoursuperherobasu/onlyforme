@@ -98,8 +98,8 @@ class A2AAgentsComponent(Node):
                 },
             ],
             value=[
-                {"name": "Researcher", "description": "Researches topics and gathers information"},
-                {"name": "Writer", "description": "Writes polished articles from research"},
+                {"name": "Agent 1", "description": ""},
+                {"name": "Agent 2", "description": ""},
             ],
         ),
         # ===== Task Input =====

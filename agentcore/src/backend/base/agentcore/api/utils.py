@@ -162,7 +162,7 @@ def _apply_session_to_graph(graph: LangGraphAdapter, kwargs: dict) -> None:
     session_id = kwargs.get("session_id") or str(graph.agent_id)
     for vid in graph.has_session_id_vertices:
         vertex = graph.get_vertex(vid)
-        if vertex and not vertex.raw_params.get("session_id"):
+        if vertex:
             vertex.update_raw_params({"session_id": session_id}, overwrite=True)
     graph.session_id = session_id
 
@@ -232,8 +232,7 @@ async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwar
         if vertex is None:
             msg = f"Vertex {vertex_id} not found"
             raise ValueError(msg)
-        if not vertex.raw_params.get("session_id"):
-            vertex.update_raw_params({"session_id": session_id}, overwrite=True)
+        vertex.update_raw_params({"session_id": session_id}, overwrite=True)
 
     graph.session_id = session_id
     await graph.initialize_run()

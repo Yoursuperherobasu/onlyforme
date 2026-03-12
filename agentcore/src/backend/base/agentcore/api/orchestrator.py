@@ -64,6 +64,7 @@ class OrchChatRequest(BaseModel):
     deployment_id: UUID | None = None
     input_value: str
     version_number: int | None = None
+    files: list[str] | None = None
 
 
 class OrchMessageResponse(BaseModel):
@@ -76,6 +77,7 @@ class OrchMessageResponse(BaseModel):
     agent_id: UUID | None = None
     deployment_id: UUID | None = None
     category: str = "message"
+    files: list[str] | None = None
     properties: dict | None = None
     content_blocks: list | None = None
 
@@ -321,6 +323,7 @@ async def _run_agent_from_snapshot(
     input_value: str,
     session_id: str | None,
     user_id: str | None,
+    files: list[str] | None = None,
     stream: bool = False,
     event_manager: EventManager | None = None,
     deployment_id: str | None = None,
@@ -359,6 +362,7 @@ async def _run_agent_from_snapshot(
         session_id=session_id,
         inputs=inputs,
         outputs=outputs,
+        files=files,
         stream=stream,
         event_manager=event_manager,
     )
@@ -689,7 +693,7 @@ async def orch_chat(
             user_id=current_user.id,
             deployment_id=deployment_id,
             timestamp=msg_ts,
-            files=[],
+            files=body.files or [],
             properties={},
             category="message",
             content_blocks=[],
@@ -706,6 +710,7 @@ async def orch_chat(
             input_value=body.input_value,
             session_id=body.session_id,
             user_id=str(current_user.id),
+            files=body.files,
             deployment_id=str(deployment_id),
             org_id=str(deployment.org_id) if deployment.org_id else None,
             dept_id=str(deployment.dept_id) if deployment.dept_id else None,
@@ -808,7 +813,7 @@ async def orch_chat_stream(
         user_id=current_user.id,
         deployment_id=deployment_id,
         timestamp=stream_msg_ts,
-        files=[],
+        files=body.files or [],
         properties={},
         category="message",
         content_blocks=[],
@@ -835,6 +840,7 @@ async def orch_chat_stream(
     dep_org_id = str(deployment.org_id) if deployment.org_id else None
     dep_dept_id = str(deployment.dept_id) if deployment.dept_id else None
     dep_is_prod = isinstance(deployment, AgentDeploymentProd)
+    dep_files = body.files
 
     async def _run_and_persist():
         """Background coroutine: run the agent, persist reply, close the queue."""
@@ -846,6 +852,7 @@ async def orch_chat_stream(
                 input_value=input_value,
                 session_id=chat_session_id,
                 user_id=user_id_str,
+                files=dep_files,
                 stream=True,
                 event_manager=event_manager,
                 deployment_id=str(dep_deployment_id),
@@ -1054,6 +1061,7 @@ async def get_orch_session_messages(
                 agent_id=m.agent_id,
                 deployment_id=m.deployment_id,
                 category=m.category or "message",
+                files=m.files if m.files else None,
                 properties=m.properties if isinstance(m.properties, dict) else None,
                 content_blocks=m.content_blocks if m.content_blocks else None,
             )

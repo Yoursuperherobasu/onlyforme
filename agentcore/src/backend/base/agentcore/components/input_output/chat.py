@@ -117,6 +117,13 @@ class ChatInput(ChatNode):
             self.message.value = stored_message
             message = stored_message
 
+        # Pre-fetch image data from storage (Azure/local) so that
+        # downstream to_lc_message() can build multimodal content synchronously.
+        # Must happen AFTER store, because send_message returns a new Message
+        # object that doesn't carry the _base64_cache from the original.
+        if isinstance(message, Message):
+            await message.resolve_images()
+
         # Add log for user message
         if message.sender == MESSAGE_SENDER_USER:
             logger.info(f"[USER_MESSAGE] User: {message.text}")

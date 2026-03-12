@@ -16,7 +16,7 @@ class Parser(Node):
         HandleInput(
             name="input_data",
             display_name="Data or DataFrame",
-            input_types=["DataFrame", "Data"],
+            input_types=["DataFrame", "Data", "Message"],
             info="Accepts either a DataFrame or a Data object.",
             required=True,
         ),

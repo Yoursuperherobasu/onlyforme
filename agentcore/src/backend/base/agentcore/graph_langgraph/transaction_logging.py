@@ -22,12 +22,24 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 def _prepare_inputs(vertex: LangGraphVertex) -> dict | None:
-    """Serialize vertex raw_params to primitive types for logging."""
+    """Serialize vertex raw_params to primitive types for logging.
+
+    Filters out bulky config fields (like source code) that are not useful
+    in the transaction logs — keeps only meaningful runtime inputs.
+    """
     from agentcore.graph_langgraph.logging import _vertex_to_primitive_dict
 
     if not vertex.raw_params:
         return None
-    return _vertex_to_primitive_dict(vertex.raw_params)
+
+    # Fields that are component config, not runtime inputs
+    _EXCLUDE_KEYS = {"code", "_type", "show", "advanced", "dynamic", "info"}
+
+    filtered = {
+        k: v for k, v in vertex.raw_params.items()
+        if k not in _EXCLUDE_KEYS
+    }
+    return _vertex_to_primitive_dict(filtered) if filtered else None
 
 
 def _prepare_outputs(vertex: LangGraphVertex) -> dict | None:
@@ -77,9 +89,18 @@ def _prepare_serialized_io(
 
     _ml = get_max_text_length()
     _mi = get_max_items_length()
-    ser_inputs = (
-        serialize(_vertex_to_primitive_dict(vertex.raw_params), max_length=_ml, max_items=_mi)
+
+    # Filter out bulky config fields (like source code) from inputs
+    _EXCLUDE_KEYS = {"code", "_type", "show", "advanced", "dynamic", "info"}
+    filtered_params = (
+        {k: v for k, v in vertex.raw_params.items() if k not in _EXCLUDE_KEYS}
         if vertex.raw_params
+        else None
+    )
+
+    ser_inputs = (
+        serialize(_vertex_to_primitive_dict(filtered_params), max_length=_ml, max_items=_mi)
+        if filtered_params
         else None
     )
     ser_outputs = (
