@@ -944,6 +944,31 @@ async def approve_agent(
     except Exception as notify_err:
         logger.warning(f"Publish notification failed after approval {req.id}: {notify_err}")
 
+    # ─── HTTP notify (for downstream deployment) ──
+    try:
+        import httpx
+        from agentcore.services.deps import get_settings_service
+        settings = get_settings_service().settings
+        base_url = f"http://{settings.host}:{settings.port}"
+        payload = {
+            "agent_id": str(deployment.agent_id),
+            "environment": "prod",
+            "version_number": str(deployment.version_number),
+            "deployment_id": str(deployment.id),
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+            resp.raise_for_status()
+            verified = resp.json()
+        logger.info(
+            f"[APPROVAL_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+            f"deployment_id={verified.get('deployment_id')} "
+            f"version={verified.get('version_number')} "
+            f"status={verified.get('status')} is_active={verified.get('is_active')}",
+        )
+    except Exception as notify_err:
+        logger.warning(f"Post-approval notify API failed for approval {req.id}: {notify_err}")
+
     # Trigger handoff payload only for approved AGENT promotions (never on reject).
     try:
         handoff_payload = _build_prod_promotion_handoff_payload(deployment)

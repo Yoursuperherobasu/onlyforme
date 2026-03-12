@@ -1,21 +1,39 @@
 import base64
+import mimetypes
 from pathlib import Path
 
 from PIL import Image as PILImage
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from agentcore.services.deps import get_storage_service
 
 IMAGE_ENDPOINT = "/files/images/"
 
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".svg"}
+
 
 def is_image_file(file_path) -> bool:
+    # Already an Image object
+    if isinstance(file_path, BaseModel) and hasattr(file_path, "path"):
+        path_str = file_path.path or ""
+        return Path(path_str).suffix.lower() in _IMAGE_EXTENSIONS
+
+    # Try opening with PIL (works for local files)
+    if isinstance(file_path, (str, Path)):
+        try:
+            with PILImage.open(str(file_path)) as img:
+                img.verify()
+            return True
+        except (OSError, SyntaxError):
+            pass
+
+    # Fallback: check by file extension (for remote/Azure storage paths)
     try:
-        with PILImage.open(file_path) as img:
-            img.verify()  # Verify that it is, in fact, an image
-    except (OSError, SyntaxError):
+        path_str = str(file_path)
+        ext = Path(path_str).suffix.lower()
+        return ext in _IMAGE_EXTENSIONS
+    except Exception:
         return False
-    return True
 
 
 def get_file_paths(files: list[str]):
@@ -50,18 +68,39 @@ async def get_files(
 class Image(BaseModel):
     path: str | None = None
     url: str | None = None
+    # Pre-resolved base64 data — populated by resolve() so that
+    # to_content_dict() can work synchronously without hitting storage.
+    _base64_cache: str | None = PrivateAttr(default=None)
 
-    def to_base64(self):
+    async def resolve(self) -> None:
+        """Fetch the image from storage and cache its base64 representation."""
+        if self._base64_cache is not None:
+            return
+        if not self.path:
+            return
+        files = await get_files([self.path], convert_to_base64=True)
+        if files:
+            self._base64_cache = files[0]
+
+    def to_base64(self) -> str:
+        if self._base64_cache is not None:
+            return self._base64_cache
+        # Fallback for local files only
         if self.path:
-            files = get_files([self.path], convert_to_base64=True)
-            return files[0]
-        msg = "Image path is not set."
+            path = Path(self.path)
+            if path.exists() and path.is_file():
+                with path.open("rb") as f:
+                    return base64.b64encode(f.read()).decode("utf-8")
+        msg = f"Image not resolved. Call await image.resolve() first. path={self.path}"
         raise ValueError(msg)
 
-    def to_content_dict(self):
+    def to_content_dict(self) -> dict:
+        path_str = self.path or ""
+        mime_type = mimetypes.guess_type(path_str)[0] or "image/png"
+        base64_data = self.to_base64()
         return {
             "type": "image_url",
-            "image_url": self.to_base64(),
+            "image_url": {"url": f"data:{mime_type};base64,{base64_data}"},
         }
 
     def get_url(self) -> str:
