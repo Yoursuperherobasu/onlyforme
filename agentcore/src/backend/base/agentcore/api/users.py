@@ -134,14 +134,14 @@ async def _assignable_roles_for_creator(session: DbSession, creator_role: str) -
         return [
             role
             for role in global_role_names
-            if role in {"department_admin", "developer", "business_user"}
+            if role not in {"root", "super_admin"}
         ]
 
     if creator_role == "department_admin":
         return [
             role
             for role in global_role_names
-            if role in {"developer", "business_user"}
+            if role not in {"root", "super_admin", "department_admin"}
         ]
 
     return []
