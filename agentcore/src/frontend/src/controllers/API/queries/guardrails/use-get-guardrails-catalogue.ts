@@ -11,6 +11,8 @@ export interface GuardrailRuntimeConfig {
   files?: Record<string, string>;
 }
 
+export type GuardrailEnvironment = "uat" | "prod";
+
 export interface GuardrailInfo {
   id: string;
   name: string;
@@ -32,6 +34,12 @@ export interface GuardrailInfo {
   public_scope?: "organization" | "department" | null;
   public_dept_ids?: string[];
   shared_user_ids?: string[];
+  // Environment separation fields
+  environment?: GuardrailEnvironment;
+  sourceGuardrailId?: string | null;
+  promotedAt?: string | null;
+  promotedBy?: string | null;
+  prodRefCount?: number;
 }
 
 export interface GuardrailCreateOrUpdatePayload {
@@ -54,6 +62,7 @@ export interface GuardrailCreateOrUpdatePayload {
 
 export interface GuardrailsCatalogueParams {
   framework?: "nemo" | "arize";
+  environment?: GuardrailEnvironment;
 }
 
 export const useGetGuardrailsCatalogue: useQueryFunctionType<
@@ -63,14 +72,18 @@ export const useGetGuardrailsCatalogue: useQueryFunctionType<
   const { query } = UseRequestProcessor();
 
   const getGuardrailsCatalogueFn = async (): Promise<GuardrailInfo[]> => {
+    const queryParams: Record<string, string> = {};
+    if (params?.framework) queryParams.framework = params.framework;
+    if (params?.environment) queryParams.environment = params.environment;
+
     const res = await api.get(`${getURL("GUARDRAILS_CATALOGUE")}/`, {
-      params: params?.framework ? { framework: params.framework } : undefined,
+      params: Object.keys(queryParams).length > 0 ? queryParams : undefined,
     });
     return res.data ?? [];
   };
 
   const queryResult: UseQueryResult<GuardrailInfo[], any> = query(
-    ["useGetGuardrailsCatalogue", params?.framework ?? "all"],
+    ["useGetGuardrailsCatalogue", params?.framework ?? "all", params?.environment ?? "uat"],
     getGuardrailsCatalogueFn,
     {
       refetchOnWindowFocus: false,

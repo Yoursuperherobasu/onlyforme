@@ -1006,6 +1006,9 @@ async def _extract_and_create_bundles(
     Extracts all 8 resource types:
         MODEL, MCP_SERVER, GUARDRAIL, KNOWLEDGE_BASE, VECTOR_DB,
         CONNECTOR, TOOL, CUSTOM_COMPONENT
+
+    For PROD deployments, guardrails are automatically promoted — a frozen
+    production copy is created (or reused) via the guardrails microservice.
     """
     bundles: list[AgentBundle] = []
     seen: set[tuple[str, str]] = set()  # (bundle_type, resource_name) dedup
@@ -1030,6 +1033,36 @@ async def _extract_and_create_bundles(
                 continue
             seen.add(dedup_key)
 
+            resource_config = _extract_resource_config(template, field_name, node_type)
+
+            # ── Guardrail promotion for PROD deployments ──
+            if (
+                node_type == "NemoGuardrails"
+                and deployment_env == DeploymentEnvEnum.PROD
+                and resource_config
+            ):
+                guardrail_id = resource_config.get("guardrail_id") or resource_config.get("raw_value", "")
+                if guardrail_id:
+                    try:
+                        from agentcore.services.guardrail_service_client import promote_guardrail_via_service
+
+                        promo_result = await promote_guardrail_via_service(
+                            guardrail_id=guardrail_id,
+                            promoted_by=str(created_by),
+                        )
+                        resource_config["prod_guardrail_id"] = promo_result.get("prod_guardrail_id")
+                        logger.info(
+                            "[GUARDRAIL_PROMOTION] Guardrail promoted for prod deployment: "
+                            f"uat_id={guardrail_id}, prod_id={promo_result.get('prod_guardrail_id')}, "
+                            f"in_sync={promo_result.get('in_sync')}, agent_id={agent_id}"
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[GUARDRAIL_PROMOTION] Failed to promote guardrail for prod deployment: "
+                            f"guardrail_id={guardrail_id}, agent_id={agent_id}. "
+                            "Prod agent will fall back to UAT guardrail at runtime."
+                        )
+
             bundles.append(AgentBundle(
                 agent_id=agent_id,
                 org_id=org_id,
@@ -1038,7 +1071,7 @@ async def _extract_and_create_bundles(
                 deployment_env=deployment_env,
                 bundle_type=bundle_type,
                 resource_name=resource_name,
-                resource_config=_extract_resource_config(template, field_name, node_type),
+                resource_config=resource_config,
                 created_by=created_by,
             ))
 

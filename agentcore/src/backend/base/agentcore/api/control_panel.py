@@ -1133,6 +1133,43 @@ async def promote_uat_to_prod(
         await session.commit()
         await session.refresh(new_record)
 
+        # ── Promote guardrails used by this agent to PROD ──
+        try:
+            snapshot = uat_dep.agent_snapshot or {}
+            for node in snapshot.get("nodes", []):
+                node_data = node.get("data", {})
+                node_type = node_data.get("type", "")
+                if node_type != "NemoGuardrails":
+                    continue
+                template = node_data.get("node", {}).get("template", {})
+                field = template.get("guardrail_id")
+                if not field:
+                    continue
+                value = field.get("value") if isinstance(field, dict) else field
+                guardrail_id = None
+                if isinstance(value, str) and "|" in value:
+                    parts = [p.strip() for p in value.split("|")]
+                    if len(parts) >= 2:
+                        guardrail_id = parts[1]
+                elif isinstance(value, str) and value.strip():
+                    guardrail_id = value.strip()
+                if guardrail_id:
+                    from agentcore.services.guardrail_service_client import promote_guardrail_via_service
+                    promo_result = await promote_guardrail_via_service(
+                        guardrail_id=guardrail_id,
+                        promoted_by=str(current_user.id),
+                    )
+                    logger.info(
+                        "[GUARDRAIL_PROMOTION] Guardrail promoted for prod deployment: "
+                        f"uat_id={guardrail_id}, prod_id={promo_result.get('prod_guardrail_id')}, "
+                        f"agent_id={uat_dep.agent_id}, deploy_id={new_record.id}"
+                    )
+        except Exception as guardrail_err:
+            logger.warning(
+                f"[GUARDRAIL_PROMOTION] Failed to promote guardrails for PROD deploy {new_record.id}: {guardrail_err}",
+                exc_info=True,
+            )
+
         if is_admin:
             try:
                 await sync_agent_registry(
