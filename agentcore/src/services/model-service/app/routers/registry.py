@@ -93,6 +93,19 @@ async def delete_registry_model(
         raise HTTPException(status_code=404, detail="Model not found")
 
 
+@router.get("/models/{model_id}/config")
+async def get_model_decrypted_config(
+    model_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    _api_key: str = Depends(verify_api_key),
+):
+    """Return the full model config with decrypted API key.  Internal use only."""
+    config = await registry_service.get_decrypted_config(session, model_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    return config
+
+
 # ---------------------------------------------------------------------------
 # Test connection - LLM
 # ---------------------------------------------------------------------------

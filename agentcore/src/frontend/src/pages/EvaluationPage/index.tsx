@@ -1,6 +1,7 @@
 import { Play, Plus } from "lucide-react";
-import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
+import type { LangfuseEnvironment } from "../ObservabilityPage/types";
 import { api } from "@/controllers/API/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,6 +111,7 @@ export default function EvaluationPage() {
     private_share_users: [],
   });
   const [activeTab, setActiveTab] = useState("judges");
+  const [selectedEnvironment, setSelectedEnvironment] = useState<LangfuseEnvironment>("uat");
   const [status, setStatus] = useState<EvaluationStatus | null>(null);
   const [recentScores, setRecentScores] = useState<Score[]>([]);
   const [pendingTraces, setPendingTraces] = useState<TraceForReview[]>([]);
@@ -246,6 +248,15 @@ export default function EvaluationPage() {
     setRunOnExisting(true);
     setScoreForm({ trace_id: "", name: "", value: "0.5", comment: "" });
   };
+
+  const handleEnvironmentChange = useCallback((env: LangfuseEnvironment) => {
+    setSelectedEnvironment(env);
+    // Reset fetch guards so data is refetched for the new environment
+    hasFetchedScoresRef.current = false;
+    hasFetchedDatasetsRef.current = false;
+    setRecentScores([]);
+    setPendingTraces([]);
+  }, []);
 
   const shortId = (id?: string | null) =>
     id ? `${id.substring(0, 8)}...` : "-";
@@ -397,7 +408,7 @@ export default function EvaluationPage() {
       .catch(() => {
         setSavedEvaluators([]);
       });
-    getAgents()
+    getAgents({ environment: selectedEnvironment })
       .then((agents) => {
         const normalized =
           agents && Array.isArray(agents.data)
@@ -410,7 +421,7 @@ export default function EvaluationPage() {
       .catch(() => {
         setAgentList([]);
       });
-  }, []);
+  }, [selectedEnvironment]);
 
   // Refresh pending traces when opening the Run Judge dialog to ensure dropdown is populated
   useEffect(() => {
@@ -418,7 +429,7 @@ export default function EvaluationPage() {
     let mounted = true;
     (async () => {
       try {
-        const val = await getPendingReviews({ limit: 100 });
+        const val = await getPendingReviews({ limit: 100, environment: selectedEnvironment });
         if (!mounted) return;
         if (Array.isArray(val)) {
           setPendingTraces(val);
@@ -437,7 +448,7 @@ export default function EvaluationPage() {
     return () => {
       mounted = false;
     };
-  }, [isJudgeDialogOpen]);
+  }, [isJudgeDialogOpen, selectedEnvironment]);
 
   // Load visibility options when opening the judge dialog or datasets tab
   useEffect(() => {
@@ -458,14 +469,14 @@ export default function EvaluationPage() {
       .catch(() => {});
   }, [isJudgeDialogOpen, activeTab]);
 
-  // Lazy-load scores data only when the Scores tab becomes active
+  // Lazy-load scores data only when the Scores tab becomes active or environment changes
   useEffect(() => {
     if (activeTab !== "scores") return;
     if (!hasFetchedScoresRef.current) {
       hasFetchedScoresRef.current = true;
       fetchData();
     }
-  }, [activeTab]);
+  }, [activeTab, selectedEnvironment]);
 
   // Lazy-load dataset list and details only when the Datasets tab becomes active
   useEffect(() => {
@@ -538,7 +549,8 @@ export default function EvaluationPage() {
       limit: number;
       trace_id?: string;
       name?: string;
-    } = { limit: 20 };
+      environment?: string;
+    } = { limit: 20, environment: selectedEnvironment };
     const traceId = filters.trace_id.trim();
     const metricName = filters.name.trim();
     if (traceId) scoreQuery.trace_id = traceId;
@@ -551,7 +563,7 @@ export default function EvaluationPage() {
     try {
       const [scoresResult, pendingResult, statusResult] = await Promise.allSettled([
         getEvaluationScores(scoreQuery),
-        getPendingReviews({ limit: 20 }),
+        getPendingReviews({ limit: 20, environment: selectedEnvironment }),
         getEvaluationStatus(),
       ]);
       if (scoresResult.status === "fulfilled") {
@@ -647,7 +659,7 @@ export default function EvaluationPage() {
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
 
-      await createEvaluator(payload);
+      await createEvaluator(payload, { environment: selectedEnvironment });
       setIsJudgeDialogOpen(false);
       resetForms();
       // Refresh saved evaluators list
@@ -729,7 +741,7 @@ export default function EvaluationPage() {
         setSuccessData({ title: "Evaluator updated" });
         setEditingEvaluator(null);
       } else {
-        const created = await createEvaluator(payload);
+        const created = await createEvaluator(payload, { environment: selectedEnvironment });
         // Refresh saved evaluators from server to ensure list is consistent
         try {
           const items = await listEvaluators();
@@ -796,7 +808,7 @@ export default function EvaluationPage() {
     if (!id || runningEvaluatorId === id) return;
     setRunningEvaluatorId(id);
     try {
-      const result = await runEvaluator(id);
+      const result = await runEvaluator(id, { environment: selectedEnvironment });
       const enqueued = Number(result?.enqueued ?? 0);
       if (result?.status === "noop") {
         setNoticeData({
@@ -1940,12 +1952,28 @@ export default function EvaluationPage() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
-      <div className="flex flex-none flex-col justify-between border-b px-6 py-4">
+      <div className="flex flex-none items-center justify-between border-b px-6 py-4">
         <div className="flex flex-col gap-1">
           <h2 className="text-2xl font-semibold tracking-tight">Evaluation</h2>
           <p className="text-sm text-muted-foreground">
             Monitor quality metrics, run LLM judges, and review traces.
           </p>
+        </div>
+        {/* Environment Toggle */}
+        <div className="flex items-center rounded-lg border bg-gray-50 dark:bg-gray-800 p-1">
+          {([
+            { value: "uat" as const, label: "UAT" },
+            { value: "production" as const, label: "PROD" },
+          ]).map((env) => (
+            <button
+              key={env.value}
+              onClick={() => { if (selectedEnvironment !== env.value) handleEnvironmentChange(env.value); }}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${selectedEnvironment === env.value ? "shadow-sm" : "hover:bg-gray-100 dark:hover:bg-gray-700"}`}
+              style={selectedEnvironment === env.value ? { backgroundColor: "#da2128", color: "#fff" } : { color: "#6b7280" }}
+            >
+              {env.label}
+            </button>
+          ))}
         </div>
       </div>
       <div className="flex-1 overflow-hidden p-6">

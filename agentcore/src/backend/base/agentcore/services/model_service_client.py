@@ -451,6 +451,27 @@ async def create_registry_model_via_service(body: dict) -> dict:
         return resp.json()
 
 
+async def fetch_decrypted_model_config(model_id: str) -> dict | None:
+    """Fetch decrypted model config (with API key) from the Model microservice."""
+    try:
+        url, api_key = _get_model_service_settings()
+    except ValueError:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{url}/v1/registry/models/{model_id}/config",
+                headers=_headers(api_key),
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.warning("Failed to fetch decrypted model config from Model service: %s", e)
+        return None
+
+
 async def get_registry_model_via_service(model_id: str) -> dict | None:
     """Get a registry model by ID via the Model microservice."""
     url, api_key = _get_model_service_settings()
@@ -722,6 +743,10 @@ class MicroserviceChatModel(BaseChatModel):
         payload = self._build_payload(messages, stream=True)
         if stop:
             payload["stop"] = stop
+        # Request token usage in the streaming response
+        payload["stream_options"] = {"include_usage": True}
+
+        stream_usage: dict | None = None
 
         with httpx.Client(timeout=300.0) as client:
             with client.stream(
@@ -739,6 +764,9 @@ class MicroserviceChatModel(BaseChatModel):
                         break
                     try:
                         chunk = json.loads(data_str)
+                        # Capture usage from any chunk (typically the last one)
+                        if chunk.get("usage"):
+                            stream_usage = chunk["usage"]
                         choices = chunk.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
@@ -751,6 +779,22 @@ class MicroserviceChatModel(BaseChatModel):
                                 yield gen_chunk
                     except json.JSONDecodeError:
                         continue
+
+        # Yield a final empty chunk with usage_metadata so callers can extract tokens
+        if stream_usage:
+            usage_chunk = AIMessageChunk(
+                content="",
+                usage_metadata={
+                    "input_tokens": stream_usage.get("prompt_tokens", 0),
+                    "output_tokens": stream_usage.get("completion_tokens", 0),
+                    "total_tokens": stream_usage.get("total_tokens", 0),
+                },
+                response_metadata={
+                    "token_usage": stream_usage,
+                    "model_name": self.model,
+                },
+            )
+            yield ChatGenerationChunk(message=usage_chunk)
 
     async def _astream(
         self,
@@ -794,6 +838,10 @@ class MicroserviceChatModel(BaseChatModel):
         payload = self._build_payload(messages, stream=True)
         if stop:
             payload["stop"] = stop
+        # Request token usage in the streaming response
+        payload["stream_options"] = {"include_usage": True}
+
+        stream_usage: dict | None = None
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
@@ -811,6 +859,9 @@ class MicroserviceChatModel(BaseChatModel):
                         break
                     try:
                         chunk = json.loads(data_str)
+                        # Capture usage from any chunk (typically the last one)
+                        if chunk.get("usage"):
+                            stream_usage = chunk["usage"]
                         choices = chunk.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
@@ -823,6 +874,22 @@ class MicroserviceChatModel(BaseChatModel):
                                 yield gen_chunk
                     except json.JSONDecodeError:
                         continue
+
+        # Yield a final empty chunk with usage_metadata so callers can extract tokens
+        if stream_usage:
+            usage_chunk = AIMessageChunk(
+                content="",
+                usage_metadata={
+                    "input_tokens": stream_usage.get("prompt_tokens", 0),
+                    "output_tokens": stream_usage.get("completion_tokens", 0),
+                    "total_tokens": stream_usage.get("total_tokens", 0),
+                },
+                response_metadata={
+                    "token_usage": stream_usage,
+                    "model_name": self.model,
+                },
+            )
+            yield ChatGenerationChunk(message=usage_chunk)
 
 
 class MicroserviceEmbeddings(LCEmbeddings):

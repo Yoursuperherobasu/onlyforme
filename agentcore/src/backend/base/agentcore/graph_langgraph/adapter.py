@@ -715,7 +715,9 @@ class LangGraphAdapter:
             run_name = f"{self.agent_name} - {self.agent_id}"
             # Use the run_id we just set (converted to UUID)
             run_id = UUID(self._run_id) if self._run_id else uuid4()
-            logger.info(f" STARTING TRACERS: agent={self.agent_name}, user={self.user_id}, session={self._session_id}, run_id={run_id}")
+            # Determine Langfuse environment: prod deployments → "production", everything else → "uat"
+            langfuse_environment = "production" if self.prod_deployment_id else "uat"
+            logger.info(f" STARTING TRACERS: agent={self.agent_name}, user={self.user_id}, session={self._session_id}, run_id={run_id}, environment={langfuse_environment}")
             await self.tracing_service.start_tracers(
                 run_id=run_id,
                 run_name=run_name,
@@ -725,6 +727,7 @@ class LangGraphAdapter:
                 agent_name=self.agent_name,
                 observability_project_id=self.project_id,
                 observability_project_name=self.project_name,
+                environment=langfuse_environment,
             )
             logger.info(f"TRACERS STARTED: agent={self.agent_name}")
         else:

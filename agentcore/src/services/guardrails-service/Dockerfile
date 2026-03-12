@@ -20,9 +20,9 @@ print('NeMo embedding model pre-downloaded OK')"
 # Copy application code
 COPY app/ app/
 
-EXPOSE 8003
+EXPOSE 8005
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8003/health').raise_for_status()" || exit 1
+    CMD python -c "import httpx; httpx.get('http://localhost:8005/health').raise_for_status()" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8003"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]
