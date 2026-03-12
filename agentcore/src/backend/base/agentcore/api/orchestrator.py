@@ -464,19 +464,9 @@ async def _user_can_access_deployment(
             else str(deployment.visibility)
         )
         if str(visibility_value).upper() == "PUBLIC":
-            member_exists = (
-                await session.exec(
-                    select(UserDepartmentMembership.id)
-                    .where(
-                        UserDepartmentMembership.user_id == current_user.id,
-                        UserDepartmentMembership.department_id == deployment.dept_id,
-                        UserDepartmentMembership.status == "active",
-                    )
-                    .limit(1)
-                )
-            ).first()
-            if member_exists:
-                return True
+            # Keep Orchestration aligned with Registry behavior:
+            # PUBLIC PROD agents are visible/usable by authenticated users.
+            return True
 
     return False
 
@@ -543,23 +533,15 @@ async def list_orch_agents(
             )
             .exists()
         )
-        prod_dept_member_exists = (
-            select(UserDepartmentMembership.id)
-            .where(
-                UserDepartmentMembership.user_id == current_user.id,
-                UserDepartmentMembership.department_id == AgentDeploymentProd.dept_id,
-                UserDepartmentMembership.status == "active",
-            )
-            .exists()
-        )
         prod_private_access = (
             (AgentDeploymentProd.deployed_by == current_user.id)
             | prod_share_exists
         )
-        prod_public_access = prod_private_access | prod_dept_member_exists
+        # Keep Orchestration aligned with Registry behavior:
+        # PUBLIC PROD agents are visible to authenticated users.
+        prod_public_access = true()
         if is_admin:
             prod_private_access = prod_private_access | true()
-            prod_public_access = prod_public_access | true()
 
         prod_stmt = (
             select(AgentDeploymentProd)
@@ -608,10 +590,16 @@ async def list_orch_agents(
         prod_records = list((await session.exec(prod_stmt)).all())
         uat_records = list((await session.exec(uat_stmt)).all())
 
-        # Keep all PROD versions. Hide UAT rows only when a PROD exists for same agent_id.
-        prod_agent_ids = {str(rec.agent_id) for rec in prod_records}
+        # Keep all PROD versions. Hide only UAT rows that were promoted to a
+        # currently visible PROD deployment. Newer UAT versions for the same
+        # agent must still appear (so UAT badge can be shown in orchestration).
+        promoted_uat_ids_in_prod = {
+            str(rec.promoted_from_uat_id)
+            for rec in prod_records
+            if rec.promoted_from_uat_id is not None
+        }
         filtered_uat_records = [
-            rec for rec in uat_records if str(rec.agent_id) not in prod_agent_ids
+            rec for rec in uat_records if str(rec.id) not in promoted_uat_ids_in_prod
         ]
 
         records_with_env: list[tuple[AgentDeploymentProd | AgentDeploymentUAT, str]] = (

@@ -221,9 +221,16 @@ export default function AgentCatalogueView({
                   <div className="p-6">
                     <div className="mb-4 flex items-start gap-4">
                       <div className="min-w-0 flex-1">
-                        <h3 className="mb-1 truncate text-lg font-semibold">
-                          {agent.title}
-                        </h3>
+                        <div className="mb-1 flex items-center gap-2">
+                          <h3 className="truncate text-lg font-semibold">
+                            {agent.title}
+                          </h3>
+                          {agent.version_number && (
+                            <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                              {agent.version_number}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {(() => {
                             const rawName = agent.listed_by_username?.trim() || "";

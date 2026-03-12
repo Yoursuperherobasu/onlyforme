@@ -476,12 +476,14 @@ async def list_control_panel_agents(
                 )
             )
 
-        # Hide UAT rows when the same agent is already moved/running in PROD.
+        # Hide only UAT rows that have already been promoted to PROD.
+        # Newer UAT versions for the same agent must remain visible so they can
+        # go through the UAT -> PROD flow again.
         if env == ControlPanelEnv.UAT:
-            prod_exists_for_agent = (
+            promoted_uat_exists = (
                 select(AgentDeploymentProd.id)
                 .where(
-                    AgentDeploymentProd.agent_id == AgentDeploymentUAT.agent_id,
+                    AgentDeploymentProd.promoted_from_uat_id == AgentDeploymentUAT.id,
                     AgentDeploymentProd.status.in_(
                         [
                             DeploymentPRODStatusEnum.PUBLISHED,
@@ -491,7 +493,7 @@ async def list_control_panel_agents(
                 )
                 .exists()
             )
-            stmt = stmt.where(~prod_exists_for_agent)
+            stmt = stmt.where(~promoted_uat_exists)
 
         # ── Search filter ──────────────────────────────────────────
         if search:
@@ -555,6 +557,24 @@ async def list_control_panel_agents(
                     if owner_email and owner_email not in owner_emails_by_agent[agent_key]:
                         owner_emails_by_agent[agent_key].append(owner_email)
 
+        promoted_uat_ids: set[UUID] = set()
+        if env == ControlPanelEnv.UAT and rows:
+            uat_ids = [row[0].id for row in rows]
+            promoted_rows = (
+                await session.exec(
+                    select(AgentDeploymentProd.promoted_from_uat_id).where(
+                        AgentDeploymentProd.promoted_from_uat_id.in_(uat_ids),
+                        AgentDeploymentProd.status.in_(
+                            [
+                                DeploymentPRODStatusEnum.PUBLISHED,
+                                DeploymentPRODStatusEnum.PENDING_APPROVAL,
+                            ]
+                        ),
+                    )
+                )
+            ).all()
+            promoted_uat_ids = {dep_id for dep_id in promoted_rows if dep_id is not None}
+
         items: list[ControlPanelAgentItem] = []
         for row in rows:
             dep = row[0]  # deployment model instance
@@ -614,7 +634,11 @@ async def list_control_panel_agents(
                     last_run=last_run,
                     failed_runs=failed_runs,
                     input_type=_input_type,
-                    moved_to_prod=bool(env == ControlPanelEnv.PROD),
+                    moved_to_prod=(
+                        True
+                        if env == ControlPanelEnv.PROD
+                        else dep.id in promoted_uat_ids
+                    ),
                 )
             )
 
