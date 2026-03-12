@@ -35,6 +35,14 @@ export type AgentType = {
   access_type?: "PUBLIC" | "PRIVATE" | "PROTECTED";
 };
 
+export type PublishedVersionSelection = {
+  agentId: string;
+  deployId: string;
+  versionNumber: string;
+  environment: "uat" | "prod";
+  visibility?: "PUBLIC" | "PRIVATE";
+};
+
 export type GenericNodeType = Node<NodeDataType, "genericNode">;
 export type NoteNodeType = Node<NoteDataType, "noteNode">;
 
