@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
   TooltipContent,
@@ -61,9 +62,11 @@ function EmptyState({ message }: { message: string }) {
 function ManagedTable({
   packages,
   search,
+  showHistoryDates,
 }: {
   packages: ManagedPackage[];
   search: string;
+  showHistoryDates: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -74,7 +77,9 @@ function ManagedTable({
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.version_spec.toLowerCase().includes(q) ||
-        p.resolved_version.toLowerCase().includes(q),
+        p.resolved_version.toLowerCase().includes(q) ||
+        p.start_date.toLowerCase().includes(q) ||
+        p.end_date.toLowerCase().includes(q),
     );
   }, [packages, search]);
 
@@ -90,12 +95,21 @@ function ManagedTable({
             <th className="px-4 py-3 text-left font-medium">{t("Package")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Declared")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Resolved")}</th>
+            {showHistoryDates && (
+              <th className="px-4 py-3 text-left font-medium">{t("Start Date")}</th>
+            )}
+            {showHistoryDates && (
+              <th className="px-4 py-3 text-left font-medium">{t("End Date")}</th>
+            )}
+            {showHistoryDates && (
+              <th className="px-4 py-3 text-left font-medium">{t("Status")}</th>
+            )}
           </tr>
         </thead>
         <tbody>
           {filtered.map((pkg) => (
             <tr
-              key={pkg.name}
+              key={pkg.id}
               className="border-b last:border-0 transition-colors hover:bg-muted/30"
             >
               <td className="px-4 py-3 font-mono text-sm">{pkg.name}</td>
@@ -107,6 +121,23 @@ function ManagedTable({
                   {pkg.resolved_version}
                 </Badge>
               </td>
+              {showHistoryDates && (
+                <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.start_date}</td>
+              )}
+              {showHistoryDates && (
+                <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.end_date}</td>
+              )}
+              {showHistoryDates && (
+                <td className="px-4 py-3 text-sm whitespace-nowrap">
+                  <Badge
+                    variant="outline"
+                    size="sm"
+                    className={pkg.is_current ? "border-green-500/50 text-green-600" : ""}
+                  >
+                    {pkg.is_current ? t("Active Snapshot") : t("Historical Snapshot")}
+                  </Badge>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -128,9 +159,11 @@ function ManagedTable({
 function TransitiveTable({
   packages,
   search,
+  showHistoryDates,
 }: {
   packages: TransitivePackage[];
   search: string;
+  showHistoryDates: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -141,10 +174,11 @@ function TransitiveTable({
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.resolved_version.toLowerCase().includes(q) ||
-        p.required_by.some((r) => r.toLowerCase().includes(q)) ||
-        p.required_by_details.some(
+        p.managed_roots.some((r) => r.toLowerCase().includes(q)) ||
+        p.managed_root_details.some(
           (r) => r.name.toLowerCase().includes(q) || r.version.toLowerCase().includes(q),
         ) ||
+        p.dependency_paths.some((path) => path.toLowerCase().includes(q)) ||
         p.start_date.toLowerCase().includes(q) ||
         p.end_date.toLowerCase().includes(q),
     );
@@ -161,10 +195,13 @@ function TransitiveTable({
           <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
             <th className="px-4 py-3 text-left font-medium">{t("Package")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Version")}</th>
-            <th className="px-4 py-3 text-left font-medium">{t("Required By")}</th>
-            <th className="px-4 py-3 text-left font-medium">{t("Required By Version")}</th>
-            <th className="px-4 py-3 text-left font-medium">{t("Start Date")}</th>
-            <th className="px-4 py-3 text-left font-medium">{t("End Date")}</th>
+            <th className="px-4 py-3 text-left font-medium">{t("Managed Root")}</th>
+            {showHistoryDates && (
+              <th className="px-4 py-3 text-left font-medium">{t("Start Date")}</th>
+            )}
+            {showHistoryDates && (
+              <th className="px-4 py-3 text-left font-medium">{t("End Date")}</th>
+            )}
             <th className="px-4 py-3 text-left font-medium">{t("Status")}</th>
           </tr>
         </thead>
@@ -181,40 +218,79 @@ function TransitiveTable({
                 </Badge>
               </td>
               <td className="px-4 py-3 text-sm text-muted-foreground">
-                {pkg.required_by.length > 0 ? (
-                  <span>
-                    {pkg.required_by.slice(0, 3).join(", ")}
-                    {pkg.required_by.length > 3 &&
-                      ` +${pkg.required_by.length - 3} more`}
-                  </span>
+                {pkg.managed_root_details.length > 0 ? (
+                  <div className="flex flex-col gap-1 leading-tight">
+                    {pkg.managed_root_details.slice(0, 3).map((d) => (
+                      <div key={`${pkg.id}-${d.name}-${d.version}`}>
+                        {d.name}: {d.version}
+                      </div>
+                    ))}
+                    {pkg.managed_root_details.length > 3 && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="w-fit cursor-help text-xs text-muted-foreground/80 underline decoration-dotted underline-offset-2"
+                            >
+                              +{pkg.managed_root_details.length - 3} more
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-md">
+                            <div className="flex max-h-64 flex-col gap-1 overflow-auto text-xs">
+                              {pkg.managed_root_details.slice(3).map((d) => (
+                                <div key={`${pkg.id}-more-${d.name}-${d.version}`}>
+                                  {d.name}: {d.version}
+                                </div>
+                              ))}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                    {pkg.dependency_paths.length > 0 && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="mt-1 w-fit cursor-help text-xs text-muted-foreground/80 underline decoration-dotted underline-offset-2"
+                            >
+                              {t("View paths")}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-2xl">
+                            <div className="flex max-h-72 flex-col gap-1 overflow-auto text-xs">
+                              {pkg.dependency_paths.map((path, idx) => (
+                                <div key={`${pkg.id}-path-${idx}`}>{path}</div>
+                              ))}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </div>
                 ) : (
                   "-"
                 )}
               </td>
-              <td className="px-4 py-3 text-sm text-muted-foreground">
-                {pkg.required_by_details.length > 0 ? (
-                  <span>
-                    {pkg.required_by_details
-                      .slice(0, 3)
-                      .map((d) => `${d.name}: ${d.version}`)
-                      .join(", ")}
-                    {pkg.required_by_details.length > 3 &&
-                      ` +${pkg.required_by_details.length - 3} more`}
-                  </span>
-                ) : (
-                  "-"
-                )}
-              </td>
-              <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.start_date}</td>
-              <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.end_date}</td>
-              <td className="px-4 py-3 text-sm">
-                <Badge
-                  variant="outline"
-                  size="sm"
-                  className={pkg.is_current ? "border-green-500/50 text-green-600" : ""}
-                >
-                  {pkg.is_current ? t("Current") : t("Historical")}
-                </Badge>
+              {showHistoryDates && (
+                <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.start_date}</td>
+              )}
+              {showHistoryDates && (
+                <td className="px-4 py-3 text-sm text-muted-foreground">{pkg.end_date}</td>
+              )}
+              <td className="px-4 py-3 text-sm whitespace-nowrap">
+                <div className="inline-flex min-w-[170px] items-center gap-1">
+                  <Badge
+                    variant="outline"
+                    size="sm"
+                    className={pkg.is_current ? "border-green-500/50 text-green-600" : ""}
+                  >
+                    {pkg.is_current ? t("Active Snapshot") : t("Historical Snapshot")}
+                  </Badge>
+                  <InfoTooltip text={t("Based on package snapshot history, not approval state.")} />
+                </div>
               </td>
             </tr>
           ))}
@@ -253,11 +329,19 @@ export default function PackagesPage() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabKey>("managed");
   const [searchQuery, setSearchQuery] = useState("");
+  const [includeManagedHistory, setIncludeManagedHistory] = useState(false);
+  const [includeHistory, setIncludeHistory] = useState(false);
+  const [includeFullGraph, setIncludeFullGraph] = useState(false);
 
   const { data: managedPackages, isLoading: loadingManaged } =
-    useGetManagedPackages();
+    useGetManagedPackages({
+      include_history: includeManagedHistory,
+    });
   const { data: transitivePackages, isLoading: loadingTransitive } =
-    useGetTransitivePackages();
+    useGetTransitivePackages({
+      include_history: includeHistory,
+      include_full_graph: includeFullGraph,
+    });
 
   const isLoading =
     (activeTab === "managed" && loadingManaged) ||
@@ -331,6 +415,43 @@ export default function PackagesPage() {
         })}
       </div>
 
+      {activeTab === "transitive" && (
+        <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-4 border-b bg-muted/20 px-8 py-3">
+          <div className="text-xs text-muted-foreground">
+            {includeFullGraph
+              ? t("Scope: Full lock graph (includes optional extras)")
+              : t("Scope: Managed closure (strict)")}
+          </div>
+          <div className="flex flex-wrap items-center gap-6">
+            <label className="flex items-center gap-2 text-xs text-foreground">
+              <Switch
+                checked={includeHistory}
+                onCheckedChange={(checked) => setIncludeHistory(Boolean(checked))}
+              />
+              <span>{t("Include historical snapshots")}</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-foreground">
+              <Switch
+                checked={includeFullGraph}
+                onCheckedChange={(checked) => setIncludeFullGraph(Boolean(checked))}
+              />
+              <span>{t("Include optional extras / full lock graph")}</span>
+            </label>
+          </div>
+        </div>
+      )}
+      {activeTab === "managed" && (
+        <div className="flex flex-shrink-0 items-center justify-end gap-6 border-b bg-muted/20 px-8 py-3">
+          <label className="flex items-center gap-2 text-xs text-foreground">
+            <Switch
+              checked={includeManagedHistory}
+              onCheckedChange={(checked) => setIncludeManagedHistory(Boolean(checked))}
+            />
+            <span>{t("Include historical snapshots")}</span>
+          </label>
+        </div>
+      )}
+
       {/* ── Scrollable Content ───────────────────────────────────── */}
       <div className="flex-1 overflow-auto p-8">
         {isLoading ? (
@@ -346,12 +467,14 @@ export default function PackagesPage() {
               <ManagedTable
                 packages={managedPackages ?? []}
                 search={searchQuery}
+                showHistoryDates={includeManagedHistory}
               />
             )}
             {activeTab === "transitive" && (
               <TransitiveTable
                 packages={transitivePackages ?? []}
                 search={searchQuery}
+                showHistoryDates={includeHistory}
               />
             )}
           </>
