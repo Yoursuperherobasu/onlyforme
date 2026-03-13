@@ -146,8 +146,12 @@ async def delete_guardrail_via_service(guardrail_id: str | UUID) -> None:
 async def apply_nemo_guardrail_via_service(
     input_text: str,
     guardrail_id: str,
+    environment: str | None = None,
 ) -> dict[str, Any]:
     """Apply a NeMo guardrail to input_text via the microservice.
+
+    When *environment* is ``"prod"``, the microservice resolves the frozen
+    production copy of the guardrail (via ``source_guardrail_id``).
 
     Returns a dict with keys:
       output_text, action, guardrail_id,
@@ -155,11 +159,78 @@ async def apply_nemo_guardrail_via_service(
       llm_calls_count, model, provider
     """
     url, api_key = _get_guardrails_service_settings()
+    payload: dict[str, Any] = {"input_text": input_text, "guardrail_id": guardrail_id}
+    if environment:
+        payload["environment"] = environment
     async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
         resp = await client.post(
             f"{url}/v1/guardrails/apply",
             headers=_headers(api_key),
-            json={"input_text": input_text, "guardrail_id": guardrail_id},
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Guardrail promotion (UAT → PROD)
+# ---------------------------------------------------------------------------
+
+
+async def promote_guardrail_via_service(
+    guardrail_id: str | UUID,
+    promoted_by: str | UUID,
+) -> dict[str, Any]:
+    """Promote a UAT guardrail to production via the microservice.
+
+    Creates a frozen prod copy (or reuses an existing one). Increments
+    ``prod_ref_count`` on the UAT record.
+
+    Returns a dict with keys: prod_guardrail_id, source_guardrail_id,
+    promoted_at, in_sync.
+    """
+    url, api_key = _get_guardrails_service_settings()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{url}/v1/guardrails/{guardrail_id}/promote",
+            headers=_headers(api_key),
+            json={"promoted_by": str(promoted_by)},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def demote_guardrail_via_service(
+    guardrail_id: str | UUID,
+) -> dict[str, Any]:
+    """Decrement prod_ref_count when a production deployment is removed.
+
+    Returns a dict with keys: source_guardrail_id, prod_ref_count.
+    """
+    url, api_key = _get_guardrails_service_settings()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{url}/v1/guardrails/{guardrail_id}/demote",
+            headers=_headers(api_key),
+            json={},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def get_guardrail_sync_status_via_service(
+    guardrail_id: str | UUID,
+) -> dict[str, Any]:
+    """Get sync status between a UAT guardrail and its prod copy.
+
+    Returns a dict with keys: has_prod_copy, prod_guardrail_id, in_sync,
+    uat_updated_at, prod_promoted_at, prod_ref_count.
+    """
+    url, api_key = _get_guardrails_service_settings()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{url}/v1/guardrails/{guardrail_id}/sync-status",
+            headers=_headers(api_key),
         )
         resp.raise_for_status()
         return resp.json()

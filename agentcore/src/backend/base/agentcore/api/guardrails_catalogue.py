@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlmodel import select
@@ -415,6 +416,12 @@ def _serialize_guardrail(row: dict[str, Any], model_row: ModelRegistry | None = 
         "public_scope": row.get("public_scope"),
         "public_dept_ids": row.get("public_dept_ids") or [],
         "shared_user_ids": row.get("shared_user_ids") or [],
+        # Environment separation fields
+        "environment": row.get("environment") or "uat",
+        "sourceGuardrailId": str(row["source_guardrail_id"]) if row.get("source_guardrail_id") else None,
+        "promotedAt": row.get("promoted_at"),
+        "promotedBy": str(row["promoted_by"]) if row.get("promoted_by") else None,
+        "prodRefCount": int(row.get("prod_ref_count") or 0),
     }
     return serialized
 
@@ -440,6 +447,7 @@ async def list_guardrails_catalogue(
     current_user: CurrentActiveUser,
     session: DbSession,
     framework: str | None = None,
+    environment: str | None = None,
 ) -> list[dict]:
     await _require_guardrail_permission(current_user, "view_guardrail_page")
 
@@ -447,6 +455,10 @@ async def list_guardrails_catalogue(
 
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     rows = [row for row in rows if _can_access_guardrail(row, current_user, org_ids, dept_pairs)]
+
+    # Filter by environment if specified (default: show only UAT guardrails)
+    env_filter = environment or "uat"
+    rows = [row for row in rows if (row.get("environment") or "uat") == env_filter]
 
     model_ids = {UUID(row["model_registry_id"]) for row in rows if row.get("model_registry_id")}
     model_by_id: dict[str, ModelRegistry] = {}
@@ -687,8 +699,37 @@ async def delete_guardrail_catalogue(
     if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
 
+    # ── Guard: prevent deletion of guardrails used in production ──
+    try:
+        from agentcore.services.guardrail_service_client import get_guardrail_sync_status_via_service
+
+        sync_status = await get_guardrail_sync_status_via_service(guardrail_id)
+        if sync_status.get("prod_ref_count", 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Cannot delete this guardrail — it is referenced by "
+                    f"{sync_status['prod_ref_count']} active production deployment(s). "
+                    "Deprecate or remove the production agents first."
+                ),
+            )
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        # Sync-status check is best-effort; the microservice also guards deletion
+        logger.warning(
+            "Could not check guardrail prod sync status before deletion (non-fatal): guardrail_id=%s",
+            guardrail_id,
+            exc_info=True,
+        )
+
     try:
         await delete_guardrail_via_service(guardrail_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409:
+            raise HTTPException(status_code=409, detail=exc.response.json().get("detail", str(exc))) from exc
+        logger.exception(f"Guardrail deletion via service failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"Guardrails service error: {exc}") from exc
     except Exception as exc:
         logger.exception(f"Guardrail deletion via service failed: {exc}")
         raise HTTPException(status_code=502, detail=f"Guardrails service error: {exc}") from exc

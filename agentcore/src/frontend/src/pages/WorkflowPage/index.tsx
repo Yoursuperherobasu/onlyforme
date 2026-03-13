@@ -41,6 +41,7 @@ interface WorkagentType {
   agentId?: string;
   name: string;
   description: string;
+  version?: string;
   user: string;
   userEmail?: string;
   owner?: string;
@@ -139,6 +140,7 @@ export default function WorkflowsView({
       agentId: item.agent_id,
       name: item.agent_name,
       description: item.agent_description ?? "",
+      version: item.version_number ?? "-",
       user: item.creator_name ?? "-",
       userEmail: item.creator_email ?? undefined,
       owner: item.owner_name ?? "-",
@@ -607,6 +609,9 @@ export default function WorkflowsView({
                   {t("Agent Name")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  {t("Version")}
+                </th>
+                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   {t("Creator")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
@@ -676,6 +681,9 @@ export default function WorkflowsView({
                       <div className="mt-1 text-xs text-muted-foreground">
                         {workflow.description}
                       </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm font-medium">
+                      {workflow.version ?? "-"}
                     </td>
 
                     <td className="px-6 py-4 text-sm">

@@ -169,12 +169,19 @@ class Data(BaseModel):
         files = self.data.get("files", [])
         if sender == MESSAGE_SENDER_USER:
             if files:
-                from agentcore.schema.image import get_file_paths
+                from agentcore.schema.image import Image, is_image_file
 
-                resolved_file_paths = get_file_paths(files)
-                contents = [create_image_content_dict(file_path) for file_path in resolved_file_paths]
-                # add to the beginning of the list
-                contents.insert(0, {"type": "text", "text": text})
+                contents = [{"type": "text", "text": text}]
+                for file in files:
+                    try:
+                        if isinstance(file, Image):
+                            contents.append(file.to_content_dict())
+                        elif is_image_file(file):
+                            img = Image(path=file if isinstance(file, str) else str(file))
+                            contents.append(img.to_content_dict())
+                    except ValueError:
+                        from loguru import logger
+                        logger.warning(f"Could not resolve image file: {file}")
                 human_message = HumanMessage(content=contents)
             else:
                 human_message = HumanMessage(

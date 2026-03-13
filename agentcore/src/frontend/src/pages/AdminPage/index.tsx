@@ -249,107 +249,143 @@ export default function AdminPage() {
   }
 
   function overwriteExistingUser(existingUserId: string, user: UserInputType) {
-    mutateUpdateUser(
-      {
-        user_id: existingUserId,
-        user: {
-          is_active: user.is_active,
-          role: user.role,
-          ...(user.organization_name
-            ? { organization_name: user.organization_name }
-            : {}),
-          ...(user.organization_description
-            ? { organization_description: user.organization_description }
-            : {}),
-          ...(user.department_name ? { department_name: user.department_name } : {}),
-          ...(user.department_id ? { department_id: user.department_id } : {}),
-          ...(user.department_admin_email
-            ? { department_admin_email: user.department_admin_email }
-            : {}),
-        } as any,
-      },
-      {
-        onSuccess: () => {
-          resetFilter();
-          setSuccessData({
-            title: USER_ADD_SUCCESS_ALERT,
-          });
+    return new Promise<void>((resolve, reject) => {
+      mutateUpdateUser(
+        {
+          user_id: existingUserId,
+          user: {
+            is_active: user.is_active,
+            role: user.role,
+            ...(user.organization_name
+              ? { organization_name: user.organization_name }
+              : {}),
+            ...(user.organization_description
+              ? { organization_description: user.organization_description }
+              : {}),
+            ...(user.department_name ? { department_name: user.department_name } : {}),
+            ...(user.department_id ? { department_id: user.department_id } : {}),
+            ...(user.department_admin_email
+              ? { department_admin_email: user.department_admin_email }
+              : {}),
+          } as any,
         },
-        onError: (updateError) => {
-          setErrorData({
-            title: USER_ADD_ERROR_ALERT,
-            list: normalizeErrorMessages(updateError),
-          });
+        {
+          onSuccess: () => {
+            resolve();
+          },
+          onError: (updateError) => {
+            reject(updateError);
+          },
         },
-      },
-    );
+      );
+    });
   }
 
-  function handleNewUser(user: UserInputType) {
-    mutateAddUser(user, {
-      onSuccess: () => {
-        resetFilter();
-        setSuccessData({
-          title: USER_ADD_SUCCESS_ALERT,
-        });
-      },
-      onError: (error) => {
-        // Upsert behavior: if username exists, overwrite role/active/org fields.
-        if (isAlreadyExistsError(error)) {
-          const existingUser = (userList.current as Users[]).find(
-            (u) =>
-              String(u.username || "").toLowerCase() ===
-              String(user.username || "").toLowerCase(),
-          );
-
-          if (existingUser?.id) {
-            overwriteExistingUser(existingUser.id, user);
-            return;
-          }
-
-          mutateGetUsers(
-            {
-              skip: 0,
-              limit: 200,
-              q: user.username,
-            },
-            {
-              onSuccess: (res: any) => {
-                const rows: Users[] = Array.isArray(res)
-                  ? res
-                  : Array.isArray(res?.users)
-                    ? res.users
-                    : [];
-                const matched = rows.find(
-                  (u) =>
-                    String(u.username || "").toLowerCase() ===
-                    String(user.username || "").toLowerCase(),
-                );
-                if (matched?.id) {
-                  overwriteExistingUser(matched.id, user);
-                  return;
-                }
-                setErrorData({
-                  title: USER_ADD_ERROR_ALERT,
-                  list: normalizeErrorMessages(error),
-                });
-              },
-              onError: () => {
-                setErrorData({
-                  title: USER_ADD_ERROR_ALERT,
-                  list: normalizeErrorMessages(error),
-                });
-              },
-            },
-          );
-          return;
-        }
-        setErrorData({
-          title: USER_ADD_ERROR_ALERT,
-          list: normalizeErrorMessages(error),
-        });
-      },
+  function addUserAsync(user: UserInputType) {
+    return new Promise<void>((resolve, reject) => {
+      mutateAddUser(user, {
+        onSuccess: () => resolve(),
+        onError: (error) => reject(error),
+      });
     });
+  }
+
+  function getUsersAsync(payload: { skip: number; limit: number; q?: string }) {
+    return new Promise<any>((resolve, reject) => {
+      mutateGetUsers(payload, {
+        onSuccess: (res) => resolve(res),
+        onError: (error) => reject(error),
+      });
+    });
+  }
+
+  async function createOrOverwriteUser(user: UserInputType): Promise<void> {
+    try {
+      await addUserAsync(user);
+      return;
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+
+      const existingUser = (userList.current as Users[]).find(
+        (u) =>
+          String(u.username || "").toLowerCase() ===
+          String(user.username || "").toLowerCase(),
+      );
+
+      if (existingUser?.id) {
+        await overwriteExistingUser(existingUser.id, user);
+        return;
+      }
+
+      const res = await getUsersAsync({
+        skip: 0,
+        limit: 200,
+        q: user.username,
+      });
+      const rows: Users[] = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.users)
+          ? res.users
+          : [];
+      const matched = rows.find(
+        (u) =>
+          String(u.username || "").toLowerCase() ===
+          String(user.username || "").toLowerCase(),
+      );
+
+      if (matched?.id) {
+        await overwriteExistingUser(matched.id, user);
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  async function handleNewUser(user: UserInputType) {
+    const candidates = (
+      Array.isArray(user.usernames) && user.usernames.length > 0
+        ? user.usernames
+        : [user.username]
+    )
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+
+    const usernames = Array.from(new Set(candidates));
+    const errors: string[] = [];
+    let successCount = 0;
+
+    for (const username of usernames) {
+      const payload: UserInputType = { ...user, username };
+      delete payload.usernames;
+      try {
+        await createOrOverwriteUser(payload);
+        successCount += 1;
+      } catch (error) {
+        const normalized = normalizeErrorMessages(error);
+        errors.push(`${username}: ${normalized.join(" | ")}`);
+      }
+    }
+
+    resetFilter();
+
+    if (successCount > 0) {
+      setSuccessData({
+        title:
+          usernames.length > 1
+            ? `${successCount} user(s) added/updated successfully.`
+            : USER_ADD_SUCCESS_ALERT,
+      });
+    }
+
+    if (errors.length > 0) {
+      setErrorData({
+        title: USER_ADD_ERROR_ALERT,
+        list: errors,
+      });
+    }
   }
 
   // Helper function to format role for display
@@ -453,7 +489,7 @@ export default function AdminPage() {
                   {!isPending && can("view_admin_page") && (
                     
                     <TableBody>
-                      {filterUserList.map((user: UserInputType, index) => (
+                      {filterUserList.map((user: Users, index) => (
                         
                         <TableRow key={index}>
                           

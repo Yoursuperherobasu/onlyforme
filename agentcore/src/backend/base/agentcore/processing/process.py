@@ -30,6 +30,7 @@ async def run_graph_internal(
     session_id: str | None = None,
     inputs: list[InputValueRequest] | None = None,
     outputs: list[str] | None = None,
+    files: list[str] | None = None,
     event_manager: EventManager | None = None,
 ) -> tuple[list[RunOutputs], str]:
     """Run the graph and generate the result."""
@@ -56,6 +57,7 @@ async def run_graph_internal(
         stream=stream,
         session_id=effective_session_id or "",
         fallback_to_env_vars=fallback_to_env_vars,
+        files=files,
         event_manager=event_manager,
     )
 

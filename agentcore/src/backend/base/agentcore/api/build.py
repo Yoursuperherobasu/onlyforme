@@ -366,6 +366,25 @@ async def generate_agent_events(
             else:
                 return graph.sort_vertices()
 
+    # ── Wait for the SSE consumer to connect BEFORE building the graph ──
+    # generate_agent_events() runs as a background task the moment POST /run
+    # returns.  The frontend then makes a SECOND request: GET /events.  On the
+    # first message of a new session, the graph must be built from scratch
+    # (DB fetch + LangGraph compilation) which can take several seconds.
+    # If we wait for the consumer AFTER the build, the build finishes and
+    # astream() fires all events as a burst before the consumer is ready.
+    # By waiting here, the consumer connects while the graph builds, so
+    # when astream() starts the consumer is already listening.
+    _consumer_ready_ev: asyncio.Event | None = event_manager.__dict__.get("_consumer_ready")
+    if _consumer_ready_ev is not None:
+        try:
+            await asyncio.wait_for(_consumer_ready_ev.wait(), timeout=5.0)
+            # Brief yield so consume_and_yield() can start iterating the queue
+            # before any events fire.
+            await asyncio.sleep(0.05)
+        except asyncio.TimeoutError:
+            logger.warning(f"[{run_id}] SSE consumer did not connect within 5 s, proceeding anyway")
+
     try:
         ids, vertices_to_run, graph = await build_graph_and_get_order()
     except Exception as e:
@@ -377,29 +396,6 @@ async def generate_agent_events(
         raise
 
     event_manager.on_vertices_sorted(data={"ids": ids, "to_run": vertices_to_run})
-
-    # ── Wait for the SSE consumer to connect before starting astream() ──
-    # generate_agent_events() runs as a background task the moment POST /run
-    # returns.  The frontend then makes a SECOND request: GET /events.  On the
-    # first message of a new browser session this requires a fresh TCP
-    # connection (~100-400ms).  Without this gate, astream() fires all events
-    # before the consumer connects; they queue up and flush as a burst → the
-    # user sees a blank chat with no streaming.
-    #
-    # start_agent_build() attaches an asyncio.Event (_consumer_ready) to the
-    # event_manager.  get_agent_events_response() sets it at its very start
-    # (before the streaming/polling branch) so BOTH delivery modes unblock us.
-    # We check __dict__ directly because EventManager.__getattr__ never raises
-    # AttributeError — hasattr() would always return True there.
-    _consumer_ready_ev: asyncio.Event | None = event_manager.__dict__.get("_consumer_ready")
-    if _consumer_ready_ev is not None:
-        try:
-            await asyncio.wait_for(_consumer_ready_ev.wait(), timeout=5.0)
-            # Brief yield so consume_and_yield() can start iterating the queue
-            # before the first astream() event fires.
-            await asyncio.sleep(0.05)
-        except asyncio.TimeoutError:
-            logger.warning(f"[{run_id}] SSE consumer did not connect within 5 s, proceeding anyway")
 
     # ── LangGraph compiled execution via astream() ──
     # All graphs (including cyclic ones) execute through the compiled graph.

@@ -57,8 +57,9 @@ class ConversationBase(SQLModel):
             for file in message.files:
                 if hasattr(file, "path") and hasattr(file, "url") and file.path:
                     session_id = message.session_id
-                    if session_id:
-                        image_paths.append(f"{session_id}{file.path.split(str(session_id))[1]}")
+                    if session_id and str(session_id) in file.path:
+                        parts = file.path.split(str(session_id))
+                        image_paths.append(f"{session_id}{parts[1]}" if len(parts) > 1 else file.path)
                     else:
                         image_paths.append(file.path)
             if image_paths:

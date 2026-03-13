@@ -19,6 +19,7 @@ import useAgentStore from "../../stores/agentStore";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useTranslation } from "react-i18next";
 import { AuthContext } from "@/contexts/authContext";
+import VersionSavePrompt from "@/components/core/agentToolbarComponent/components/version-save-prompt";
 import {
   AgentSearchProvider,
   AgentSidebarComponent,
@@ -227,6 +228,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
 
   return (
     <>
+      <VersionSavePrompt />
       <div className="agent-page-positioning">
         {currentAgent && (
           <div className="flex h-full overflow-hidden">

@@ -70,23 +70,53 @@ def _to_uuid(value: str) -> UUID:
         raise ValueError(msg) from exc
 
 
-async def _get_guardrail(session: AsyncSession, guardrail_id: UUID) -> GuardrailCatalogue:
-    logger.info(f"NeMo guardrail lookup started: guardrail_id={guardrail_id}")
-    row = await session.get(GuardrailCatalogue, guardrail_id)
+async def _get_guardrail(
+    session: AsyncSession,
+    guardrail_id: UUID,
+    environment: str | None = None,
+) -> GuardrailCatalogue:
+    """Look up a guardrail by ID.
+
+    When *environment* is ``"prod"``, the *guardrail_id* is treated as a UAT
+    source ID and the corresponding frozen prod copy is resolved instead.
+    """
+    logger.info(
+        "NeMo guardrail lookup started: guardrail_id=%s, environment=%s",
+        guardrail_id, environment or "uat",
+    )
+
+    if environment == "prod":
+        # Resolve the prod copy via source_guardrail_id
+        stmt = select(GuardrailCatalogue).where(
+            GuardrailCatalogue.source_guardrail_id == guardrail_id,
+            GuardrailCatalogue.environment == "prod",
+        )
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        if not row:
+            msg = (
+                f"No production copy found for guardrail {guardrail_id}. "
+                "The guardrail may not have been promoted to prod yet."
+            )
+            logger.warning("NeMo guardrail lookup failed: %s", msg)
+            raise ValueError(msg)
+    else:
+        row = await session.get(GuardrailCatalogue, guardrail_id)
 
     if not row:
         msg = f"Guardrail {guardrail_id} was not found."
-        logger.warning(f"NeMo guardrail lookup failed: {msg}")
+        logger.warning("NeMo guardrail lookup failed: %s", msg)
         raise ValueError(msg)
 
     if (row.status or "").lower() != "active":
         msg = f"Guardrail {guardrail_id} is not active."
-        logger.warning(f"NeMo guardrail lookup failed: {msg}")
+        logger.warning("NeMo guardrail lookup failed: %s", msg)
         raise ValueError(msg)
 
     logger.info(
         "NeMo guardrail lookup succeeded: "
-        f"guardrail_id={guardrail_id}, name={row.name}, model_registry_id={row.model_registry_id}"
+        "guardrail_id=%s, resolved_id=%s, environment=%s, name=%s, model_registry_id=%s",
+        guardrail_id, row.id, row.environment, row.name, row.model_registry_id,
     )
     return row
 
@@ -1069,6 +1099,7 @@ async def apply_nemo_guardrail_text(
     input_text: str,
     guardrail_id: str,
     session: AsyncSession,
+    environment: str | None = None,
 ) -> GuardrailExecutionResult:
     """Apply NeMo guardrails to input_text using the guardrail identified by guardrail_id."""
     started_at = perf_counter()
@@ -1081,7 +1112,7 @@ async def apply_nemo_guardrail_text(
         guardrail_uuid = _to_uuid(guardrail_id)
 
         step = "lookup_guardrail"
-        guardrail = await _get_guardrail(session, guardrail_uuid)
+        guardrail = await _get_guardrail(session, guardrail_uuid, environment=environment)
 
         step = "lookup_model_registry"
         model_config = await _get_model_registry_config(session, guardrail)

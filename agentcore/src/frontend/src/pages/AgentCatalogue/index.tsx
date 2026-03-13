@@ -46,7 +46,7 @@ export default function AgentCatalogueView({
   const [score, setScore] = useState(5);
   const [review, setReview] = useState("");
 
-  const { permissions } = useContext(AuthContext);
+  const { permissions, role, userData } = useContext(AuthContext);
   const navigate = useCustomNavigate();
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -85,11 +85,34 @@ export default function AgentCatalogueView({
     return () => clearTimeout(timer);
   }, [searchQuery, setSearch]);
 
+  const normalizedRole = String(role ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  const isAdminRole = [
+    "root",
+    "super_admin",
+    "department_admin",
+    "admin",
+    "root_admin",
+  ].includes(normalizedRole);
+  const currentUserEmail = String(userData?.email ?? "").toLowerCase();
+
+  const foldersForClone = useMemo(() => {
+    if (!isAdminRole) return folders;
+    return folders.filter((folder) => {
+      if (folder.is_own_project) return true;
+      if (folder.created_by_email) {
+        return folder.created_by_email.toLowerCase() === currentUserEmail;
+      }
+      return false;
+    });
+  }, [folders, isAdminRole, currentUserEmail]);
+
   useEffect(() => {
-    if (!selectedProjectId && folders.length > 0) {
-      setSelectedProjectId(String(folders[0].id || ""));
+    if (!selectedProjectId && foldersForClone.length > 0) {
+      setSelectedProjectId(String(foldersForClone[0].id || ""));
     }
-  }, [folders, selectedProjectId]);
+  }, [foldersForClone, selectedProjectId]);
 
   const openCloneModal = (entry: RegistryEntry) => {
     setSelectedEntry(entry);
@@ -221,9 +244,16 @@ export default function AgentCatalogueView({
                   <div className="p-6">
                     <div className="mb-4 flex items-start gap-4">
                       <div className="min-w-0 flex-1">
-                        <h3 className="mb-1 truncate text-lg font-semibold">
-                          {agent.title}
-                        </h3>
+                        <div className="mb-1 flex items-center gap-2">
+                          <h3 className="truncate text-lg font-semibold">
+                            {agent.title}
+                          </h3>
+                          {agent.version_number && (
+                            <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                              {agent.version_number}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {(() => {
                             const rawName = agent.listed_by_username?.trim() || "";
@@ -407,7 +437,7 @@ export default function AgentCatalogueView({
                 className="w-full rounded-md border bg-card px-3 py-2"
               >
                 <option value="">{t("Select project")}</option>
-                {folders.map((folder) => (
+                {foldersForClone.map((folder) => (
                   <option
                     key={folder.id || folder.name}
                     value={String(folder.id || "")}

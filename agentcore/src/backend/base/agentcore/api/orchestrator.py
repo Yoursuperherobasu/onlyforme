@@ -64,6 +64,7 @@ class OrchChatRequest(BaseModel):
     deployment_id: UUID | None = None
     input_value: str
     version_number: int | None = None
+    files: list[str] | None = None
 
 
 class OrchMessageResponse(BaseModel):
@@ -76,6 +77,7 @@ class OrchMessageResponse(BaseModel):
     agent_id: UUID | None = None
     deployment_id: UUID | None = None
     category: str = "message"
+    files: list[str] | None = None
     properties: dict | None = None
     content_blocks: list | None = None
 
@@ -321,6 +323,7 @@ async def _run_agent_from_snapshot(
     input_value: str,
     session_id: str | None,
     user_id: str | None,
+    files: list[str] | None = None,
     stream: bool = False,
     event_manager: EventManager | None = None,
     deployment_id: str | None = None,
@@ -359,6 +362,7 @@ async def _run_agent_from_snapshot(
         session_id=session_id,
         inputs=inputs,
         outputs=outputs,
+        files=files,
         stream=stream,
         event_manager=event_manager,
     )
@@ -464,19 +468,9 @@ async def _user_can_access_deployment(
             else str(deployment.visibility)
         )
         if str(visibility_value).upper() == "PUBLIC":
-            member_exists = (
-                await session.exec(
-                    select(UserDepartmentMembership.id)
-                    .where(
-                        UserDepartmentMembership.user_id == current_user.id,
-                        UserDepartmentMembership.department_id == deployment.dept_id,
-                        UserDepartmentMembership.status == "active",
-                    )
-                    .limit(1)
-                )
-            ).first()
-            if member_exists:
-                return True
+            # Keep Orchestration aligned with Registry behavior:
+            # PUBLIC PROD agents are visible/usable by authenticated users.
+            return True
 
     return False
 
@@ -543,23 +537,15 @@ async def list_orch_agents(
             )
             .exists()
         )
-        prod_dept_member_exists = (
-            select(UserDepartmentMembership.id)
-            .where(
-                UserDepartmentMembership.user_id == current_user.id,
-                UserDepartmentMembership.department_id == AgentDeploymentProd.dept_id,
-                UserDepartmentMembership.status == "active",
-            )
-            .exists()
-        )
         prod_private_access = (
             (AgentDeploymentProd.deployed_by == current_user.id)
             | prod_share_exists
         )
-        prod_public_access = prod_private_access | prod_dept_member_exists
+        # Keep Orchestration aligned with Registry behavior:
+        # PUBLIC PROD agents are visible to authenticated users.
+        prod_public_access = true()
         if is_admin:
             prod_private_access = prod_private_access | true()
-            prod_public_access = prod_public_access | true()
 
         prod_stmt = (
             select(AgentDeploymentProd)
@@ -608,10 +594,16 @@ async def list_orch_agents(
         prod_records = list((await session.exec(prod_stmt)).all())
         uat_records = list((await session.exec(uat_stmt)).all())
 
-        # Keep all PROD versions. Hide UAT rows only when a PROD exists for same agent_id.
-        prod_agent_ids = {str(rec.agent_id) for rec in prod_records}
+        # Keep all PROD versions. Hide only UAT rows that were promoted to a
+        # currently visible PROD deployment. Newer UAT versions for the same
+        # agent must still appear (so UAT badge can be shown in orchestration).
+        promoted_uat_ids_in_prod = {
+            str(rec.promoted_from_uat_id)
+            for rec in prod_records
+            if rec.promoted_from_uat_id is not None
+        }
         filtered_uat_records = [
-            rec for rec in uat_records if str(rec.agent_id) not in prod_agent_ids
+            rec for rec in uat_records if str(rec.id) not in promoted_uat_ids_in_prod
         ]
 
         records_with_env: list[tuple[AgentDeploymentProd | AgentDeploymentUAT, str]] = (
@@ -689,7 +681,7 @@ async def orch_chat(
             user_id=current_user.id,
             deployment_id=deployment_id,
             timestamp=msg_ts,
-            files=[],
+            files=body.files or [],
             properties={},
             category="message",
             content_blocks=[],
@@ -706,6 +698,7 @@ async def orch_chat(
             input_value=body.input_value,
             session_id=body.session_id,
             user_id=str(current_user.id),
+            files=body.files,
             deployment_id=str(deployment_id),
             org_id=str(deployment.org_id) if deployment.org_id else None,
             dept_id=str(deployment.dept_id) if deployment.dept_id else None,
@@ -808,7 +801,7 @@ async def orch_chat_stream(
         user_id=current_user.id,
         deployment_id=deployment_id,
         timestamp=stream_msg_ts,
-        files=[],
+        files=body.files or [],
         properties={},
         category="message",
         content_blocks=[],
@@ -835,6 +828,7 @@ async def orch_chat_stream(
     dep_org_id = str(deployment.org_id) if deployment.org_id else None
     dep_dept_id = str(deployment.dept_id) if deployment.dept_id else None
     dep_is_prod = isinstance(deployment, AgentDeploymentProd)
+    dep_files = body.files
 
     async def _run_and_persist():
         """Background coroutine: run the agent, persist reply, close the queue."""
@@ -846,6 +840,7 @@ async def orch_chat_stream(
                 input_value=input_value,
                 session_id=chat_session_id,
                 user_id=user_id_str,
+                files=dep_files,
                 stream=True,
                 event_manager=event_manager,
                 deployment_id=str(dep_deployment_id),
@@ -1054,6 +1049,7 @@ async def get_orch_session_messages(
                 agent_id=m.agent_id,
                 deployment_id=m.deployment_id,
                 category=m.category or "message",
+                files=m.files if m.files else None,
                 properties=m.properties if isinstance(m.properties, dict) else None,
                 content_blocks=m.content_blocks if m.content_blocks else None,
             )

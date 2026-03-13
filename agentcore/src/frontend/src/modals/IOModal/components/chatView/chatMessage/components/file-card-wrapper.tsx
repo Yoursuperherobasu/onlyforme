@@ -15,13 +15,13 @@ export default function FileCardWrapper({
   let type: string = "";
   let pathString: string = "";
   if (typeof path === "string") {
-    name = path.split("/").pop() || "";
+    name = path.split(/[/\\]/).pop() || "";
     type = path.split(".").pop() || "";
     pathString = path;
   } else {
-    name = path.name;
-    type = path.type;
-    pathString = path.path;
+    pathString = path.path || "";
+    name = path.name || pathString.split(/[/\\]/).pop() || "";
+    type = path.type || name.split(".").pop() || "";
   }
 
   return (

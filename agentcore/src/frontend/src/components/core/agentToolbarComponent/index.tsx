@@ -33,6 +33,9 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
   const undo = useAgentsManagerStore((state) => state.undo);
   const redo = useAgentsManagerStore((state) => state.redo);
   const autoSaving = useAgentsManagerStore((state) => state.autoSaving);
+  const autoSaveDisabled = useAgentsManagerStore(
+    (state) => !!state.autoSaveDisabledAgents?.[state.currentAgentId],
+  );
   const saveLoading = useAgentsManagerStore((state) => state.saveLoading);
   const isBuilding = useAgentStore((state) => state.isBuilding);
   const changesNotSaved = useUnsavedChanges();
@@ -77,15 +80,18 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
 
   const customComponent = data?.["custom_component"]?.["CustomComponent"] ?? null;
 
-  const autoSaveStatus = autoSaving
-    ? saveLoading
-      ? "Auto-saving..."
-      : updatedAt
-        ? `Auto-saved at ${new Date(updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-        : changesNotSaved
-          ? "Unsaved changes"
-          : "Auto-save on"
-    : "Auto-save off";
+  const effectiveAutoSaving = autoSaving && !autoSaveDisabled;
+  const autoSaveStatus = autoSaveDisabled
+    ? "Auto-save off for this agent"
+    : effectiveAutoSaving
+      ? saveLoading
+        ? "Auto-saving..."
+        : updatedAt
+          ? `Auto-saved at ${new Date(updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+          : changesNotSaved
+            ? "Unsaved changes"
+            : "Auto-save on"
+      : "Auto-save off";
 
   return (
     <>
@@ -171,7 +177,13 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
 
             <div className="h-5 w-px bg-border" />
 
-            <ShadTooltip content={autoSaving ? "Turn off auto-save in settings to enable manual save only" : "Save agent"}>
+            <ShadTooltip
+              content={
+                effectiveAutoSaving
+                  ? "Turn off auto-save in settings to enable manual save only"
+                  : "Save agent"
+              }
+            >
               <div>
                 <Button
                   variant="outline"

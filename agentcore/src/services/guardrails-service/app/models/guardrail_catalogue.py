@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, SQLModel
 
 
@@ -61,6 +62,19 @@ class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     )
     published_by: UUID | None = Field(default=None, nullable=True)
     published_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+
+    # ── Environment separation (UAT / PROD) ──
+    environment: str = Field(
+        default="uat",
+        sa_column=Column(String(10), nullable=False, default="uat", index=True),
+    )
+    source_guardrail_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(PG_UUID(as_uuid=True), nullable=True, index=True),
+    )
+    promoted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    promoted_by: UUID | None = Field(default=None, nullable=True)
+    prod_ref_count: int = Field(default=0, sa_column=Column(Integer, nullable=False, default=0))
 
     class Config:
         # Disable automatic table arg generation to avoid FK constraint conflicts
@@ -146,6 +160,12 @@ class GuardrailCatalogueRead(BaseModel):
     updated_at: datetime
     published_by: UUID | None
     published_at: datetime | None
+    # Environment separation fields
+    environment: str = "uat"
+    source_guardrail_id: UUID | None = None
+    promoted_at: datetime | None = None
+    promoted_by: UUID | None = None
+    prod_ref_count: int = 0
 
     @classmethod
     def from_orm_model(cls, row: GuardrailCatalogue) -> "GuardrailCatalogueRead":
@@ -173,6 +193,11 @@ class GuardrailCatalogueRead(BaseModel):
             updated_at=row.updated_at,
             published_by=row.published_by,
             published_at=row.published_at,
+            environment=row.environment,
+            source_guardrail_id=row.source_guardrail_id,
+            promoted_at=row.promoted_at,
+            promoted_by=row.promoted_by,
+            prod_ref_count=row.prod_ref_count,
         )
 
     model_config = {"from_attributes": True}

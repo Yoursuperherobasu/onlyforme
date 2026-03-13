@@ -73,6 +73,7 @@ class RegistryEntryResponse(BaseModel):
     listed_by: UUID
     listed_by_username: str | None = None
     listed_by_email: str | None = None
+    version_number: str | None = None
     listed_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -281,11 +282,23 @@ async def browse_registry(
 
         records = (await session.exec(stmt)).all()
 
-        # Enrich with lister username
+        # Enrich with lister username + deployment version
         items: list[RegistryEntryResponse] = []
         lister_ids = {r.listed_by for r in records}
         lister_map: dict[UUID, str] = {}
         lister_email_map: dict[UUID, str | None] = {}
+        prod_deploy_ids = {
+            r.agent_deployment_id
+            for r in records
+            if r.deployment_env == RegistryDeploymentEnvEnum.PROD
+        }
+        uat_deploy_ids = {
+            r.agent_deployment_id
+            for r in records
+            if r.deployment_env == RegistryDeploymentEnvEnum.UAT
+        }
+        prod_version_map: dict[UUID, str] = {}
+        uat_version_map: dict[UUID, str] = {}
         if lister_ids:
             users = (await session.exec(
                 select(User).where(User.id.in_(lister_ids))  # type: ignore[union-attr]
@@ -299,8 +312,31 @@ async def browse_registry(
                 )
                 for u in users
             }
+        if prod_deploy_ids:
+            prod_rows = (
+                await session.exec(
+                    select(AgentDeploymentProd.id, AgentDeploymentProd.version_number).where(
+                        AgentDeploymentProd.id.in_(prod_deploy_ids)
+                    )
+                )
+            ).all()
+            prod_version_map = {dep_id: f"v{version}" for dep_id, version in prod_rows}
+        if uat_deploy_ids:
+            uat_rows = (
+                await session.exec(
+                    select(AgentDeploymentUAT.id, AgentDeploymentUAT.version_number).where(
+                        AgentDeploymentUAT.id.in_(uat_deploy_ids)
+                    )
+                )
+            ).all()
+            uat_version_map = {dep_id: f"v{version}" for dep_id, version in uat_rows}
 
         for r in records:
+            version_number = (
+                prod_version_map.get(r.agent_deployment_id)
+                if r.deployment_env == RegistryDeploymentEnvEnum.PROD
+                else uat_version_map.get(r.agent_deployment_id)
+            )
             items.append(
                 RegistryEntryResponse(
                     id=r.id,
@@ -317,6 +353,7 @@ async def browse_registry(
                     listed_by=r.listed_by,
                     listed_by_username=lister_map.get(r.listed_by),
                     listed_by_email=lister_email_map.get(r.listed_by),
+                    version_number=version_number,
                     listed_at=r.listed_at,
                     created_at=r.created_at,
                     updated_at=r.updated_at,

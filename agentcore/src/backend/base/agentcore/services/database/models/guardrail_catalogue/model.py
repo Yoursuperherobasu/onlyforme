@@ -64,6 +64,16 @@ class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     published_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     published_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
+    # ── Environment separation (UAT / PROD) ──
+    environment: str = Field(
+        default="uat",
+        sa_column=Column(String(10), nullable=False, default="uat", index=True),
+    )
+    source_guardrail_id: UUID | None = Field(default=None, nullable=True, index=True)
+    promoted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    promoted_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
+    prod_ref_count: int = Field(default=0, sa_column=Column(Integer, nullable=False, default=0))
+
     __table_args__ = (
         CheckConstraint("(dept_id IS NULL) OR (org_id IS NOT NULL)", name="ck_guardrail_scope_consistency"),
         ForeignKeyConstraint(
@@ -71,8 +81,9 @@ class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
             ["department.org_id", "department.id"],
             name="fk_guardrail_org_dept_department",
         ),
-        UniqueConstraint("org_id", "dept_id", "name", name="uq_guardrail_scope_name"),
+        UniqueConstraint("org_id", "dept_id", "name", "environment", name="uq_guardrail_scope_name_env"),
         Index("ix_guardrail_org_id", "org_id"),
         Index("ix_guardrail_dept_id", "dept_id"),
         Index("ix_guardrail_org_dept", "org_id", "dept_id"),
+        Index("ix_guardrail_source_guardrail_id", "source_guardrail_id"),
     )

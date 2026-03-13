@@ -7,16 +7,37 @@ import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import type { AllNodeType, EdgeType, AgentType } from "@/types/agent";
 import { customStringify } from "@/utils/reactFlowUtils";
 
+type SaveAgentOptions = {
+  skipVersionGuard?: boolean;
+};
+
 const useSaveAgent = () => {
   const setAgents = useAgentsManagerStore((state) => state.setAgents);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSaveLoading = useAgentsManagerStore((state) => state.setSaveLoading);
   const setCurrentAgent = useAgentStore((state) => state.setCurrentAgent);
+  const openVersionSavePrompt = useAgentsManagerStore(
+    (state) => state.openVersionSavePrompt,
+  );
 
   const { mutate: getAgent } = useGetAgent();
   const { mutate } = usePatchUpdateAgent();
 
-  const saveAgent = async (agent?: AgentType): Promise<void> => {
+  const saveAgent = async (
+    agent?: AgentType,
+    options?: SaveAgentOptions,
+  ): Promise<void> => {
+    const activePublishedVersion = useAgentStore.getState().activePublishedVersion;
+    const existingPrompt = useAgentsManagerStore.getState().versionSavePrompt;
+    if (activePublishedVersion && !options?.skipVersionGuard) {
+      if (!existingPrompt) {
+        openVersionSavePrompt({
+          source: "manual",
+          version: activePublishedVersion,
+        });
+      }
+      return;
+    }
     const currentAgent = useAgentStore.getState().currentAgent;
     const currentSavedAgent = useAgentsManagerStore.getState().currentAgent;
     if (

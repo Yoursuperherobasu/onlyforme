@@ -1,4 +1,9 @@
 import type { AgentType } from "../../agent";
+import type { AgentType, PublishedVersionSelection } from "@/types/agent";
+export type VersionSavePrompt = {
+  source: "auto" | "manual";
+  version: PublishedVersionSelection;
+};
 
 export type AgentsManagerStoreType = {
   autoSaving: boolean;
@@ -28,6 +33,11 @@ export type AgentsManagerStoreType = {
   setHealthCheckMaxRetries: (healthCheckMaxRetries: number) => void;
   IOModalOpen: boolean;
   setIOModalOpen: (IOModalOpen: boolean) => void;
+  autoSaveDisabledAgents: Record<string, boolean>;
+  setAutoSaveDisabledForAgent: (agentId: string, disabled: boolean) => void;
+  versionSavePrompt: VersionSavePrompt | null;
+  openVersionSavePrompt: (prompt: VersionSavePrompt) => void;
+  clearVersionSavePrompt: () => void;
   resetStore: () => void;
 };
 
