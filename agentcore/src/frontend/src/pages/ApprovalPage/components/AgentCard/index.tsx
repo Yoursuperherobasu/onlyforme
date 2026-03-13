@@ -14,7 +14,14 @@ interface AgentCardProps {
   submittedBy: {
     name: string;
     avatar?: string;
+    email?: string | null;
   };
+  approver?: {
+    id?: string | null;
+    name: string;
+    email?: string | null;
+    role?: string | null;
+  } | null;
   project: string;
   submitted: string;
   version: string;
@@ -41,6 +48,7 @@ export function AgentCard({
   status,
   description,
   submittedBy,
+  approver,
   project,
   submitted,
   version,
@@ -60,8 +68,18 @@ export function AgentCard({
     rejected: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   };
 
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions, role, userData } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const currentUserId = String(userData?.id ?? "");
+  const approverNameRaw = approver?.name?.trim() ?? "";
+  const approverEmail = approver?.email?.trim() ?? "";
+  const isApproverYou =
+    approver?.id && String(approver.id) === currentUserId && currentUserId !== "";
+  const approverLabel = approver
+    ? isApproverYou
+      ? t("You")
+      : approverNameRaw || t("Unknown")
+    : "";
   const submittedDisplay = (() => {
     const dt = new Date(submitted);
     if (Number.isNaN(dt.getTime())) return submitted;
@@ -101,6 +119,19 @@ export function AgentCard({
             >
               {t(status.charAt(0).toUpperCase() + status.slice(1))}
             </span>
+            {approverLabel && status !== "pending" && (
+              approverEmail ? (
+                <ShadTooltip content={approverEmail}>
+                  <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                    {t("by")} {approverLabel}
+                  </span>
+                </ShadTooltip>
+              ) : (
+                <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                  {t("by")} {approverLabel}
+                </span>
+              )
+            )}
           </div>
           <p className="text-sm text-muted-foreground">{description}</p>
         </div>

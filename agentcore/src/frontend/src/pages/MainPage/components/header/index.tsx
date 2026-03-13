@@ -23,6 +23,7 @@ interface HeaderComponentProps {
   setSearch: (search: string) => void;
   isEmptyFolder: boolean;
   selectedAgents: string[];
+  allowCreateInProject: boolean;
 }
 
 const HeaderComponent = ({
@@ -35,6 +36,7 @@ const HeaderComponent = ({
   setSearch,
   isEmptyFolder,
   selectedAgents,
+  allowCreateInProject,
 }: HeaderComponentProps) => {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -56,6 +58,7 @@ const HeaderComponent = ({
     can("edit_agents") ||
     can("view_projects_page") ||
     can("view_project_page");
+  const canCreateAgentInProject = canCreateAgent && allowCreateInProject;
 
   useEffect(() => {
     debouncedSetSearch(debouncedSearch);
@@ -197,7 +200,7 @@ const HeaderComponent = ({
                     </Button>
                   </DeleteConfirmationModal>
                 </div>
-                {canCreateAgent && (
+                {canCreateAgentInProject && (
                 <ShadTooltip content="New Agent" side="bottom">
                   <Button
                     variant="default"

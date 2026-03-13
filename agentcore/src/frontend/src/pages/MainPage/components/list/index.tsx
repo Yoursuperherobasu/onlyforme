@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useState } from "react";
 import { useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import useDragStart from "@/components/core/cardComponent/hooks/use-on-drag-start";
@@ -26,6 +26,7 @@ import { AuthContext } from "@/contexts/authContext";
 import useDescriptionModal from "../../hooks/use-description-modal";
 import { timeElapsed } from "../../utils/time-elapse";
 import DropdownComponent from "../dropdown";
+import AgentTransferModal from "../AgentTransferModal";
 
 const ListComponent = ({
   agentData,
@@ -50,12 +51,17 @@ const ListComponent = ({
   const { folderId } = useParams();
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
+  const [transferMode, setTransferMode] = useState<"move" | "copy" | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
   const { userData, role } = useContext(AuthContext);
   const currentUserId = String(userData?.id ?? "");
   const normalizedRole = String(role ?? "")
     .toLowerCase()
     .replace(/\s+/g, "_");
   const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
+    normalizedRole,
+  );
+  const isRestrictedDuplicateRole = ["super_admin", "department_admin"].includes(
     normalizedRole,
   );
   const isComponent = agentData.is_component ?? false;
@@ -70,6 +76,7 @@ const ListComponent = ({
   const requesterId = String(
     publishStatus?.pending_requested_by || publishStatus?.latest_prod_published_by || "",
   );
+  const hasDeployment = Boolean(publishStatus?.uat || publishStatus?.prod);
   const showRequesterBadge = !isComponent && !!requesterId && requesterId === currentUserId;
   const badgeLabel = workflowLocked
     ? "Awaiting Approval"
@@ -83,9 +90,32 @@ const ListComponent = ({
   const readOnlyAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}?readonly=1`;
   const isAgentOwnedByCurrentUser = agentData.user_id
     ? String(agentData.user_id) === currentUserId
-     : true;
+    : false;
   const shouldForceReadOnly = folderId && isAdminRole && !isAgentOwnedByCurrentUser;
   const canModifyAgent = !shouldForceReadOnly;
+  const canDuplicateAgent = !isRestrictedDuplicateRole || isAgentOwnedByCurrentUser;
+  const canTransferAgent = Boolean(folderId) && isAgentOwnedByCurrentUser;
+  const canMoveAgent = canTransferAgent && !hasDeployment;
+  const canCopyAgent = canTransferAgent;
+
+  const handleOpenTransfer = (mode: "move" | "copy") => {
+    if (mode === "move" && hasDeployment) {
+      setErrorData({
+        title: "Move disabled for UAT/PROD agents",
+        list: ["This agent has a UAT/PROD version. Only copying is allowed."],
+      });
+      return;
+    }
+    setTransferMode(mode);
+    setTransferOpen(true);
+  };
+
+  const handleTransferOpenChange = (open: boolean) => {
+    setTransferOpen(open);
+    if (!open) {
+      setTransferMode(null);
+    }
+  };
 
   const handleClick = async () => {
     if (effectiveDisabled) return; // Prevent click when disabled
@@ -275,6 +305,11 @@ const ListComponent = ({
                   setOpenSettings(true);
                 }}
                 canModifyAgent={canModifyAgent}
+                canDuplicateAgent={canDuplicateAgent}
+                canCopyAgent={canCopyAgent}
+                canMoveAgent={canMoveAgent}
+                onCopyToProject={() => handleOpenTransfer("copy")}
+                onMoveToProject={() => handleOpenTransfer("move")}
               />
             </DropdownMenuContent>
           </DropdownMenu>
@@ -299,6 +334,16 @@ const ListComponent = ({
         setOpen={setOpenSettings}
         agentData={agentData}
       />
+      {transferMode && (
+        <AgentTransferModal
+          open={transferOpen}
+          setOpen={handleTransferOpenChange}
+          mode={transferMode}
+          agent={agentData}
+          currentProjectId={folderId}
+          deploymentWarning={hasDeployment}
+        />
+      )}
     </>
   );
 };

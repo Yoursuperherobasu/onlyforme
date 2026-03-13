@@ -11,6 +11,11 @@ type DropdownComponentProps = {
   handleExport: () => void;
   handleEdit: () => void;
   canModifyAgent: boolean;
+  canDuplicateAgent: boolean;
+  canCopyAgent: boolean;
+  canMoveAgent: boolean;
+  onMoveToProject: () => void;
+  onCopyToProject: () => void;
 };
 
 const DropdownComponent = ({
@@ -19,6 +24,11 @@ const DropdownComponent = ({
   handleExport,
   handleEdit,
   canModifyAgent,
+  canDuplicateAgent,
+  canCopyAgent,
+  canMoveAgent,
+  onMoveToProject,
+  onCopyToProject,
 }: DropdownComponentProps) => {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -80,8 +90,9 @@ const DropdownComponent = ({
           e.stopPropagation();
           handleSelectOptionsChange("duplicate");
         }}
-        className="cursor-pointer"
+        className={canDuplicateAgent ? "cursor-pointer" : "cursor-not-allowed opacity-60"}
         data-testid="btn-duplicate-agent"
+        disabled={!canDuplicateAgent}
       >
         <ForwardedIconComponent
           name="CopyPlus"
@@ -90,6 +101,40 @@ const DropdownComponent = ({
         />
         Duplicate
       </DropdownMenuItem>
+      {canCopyAgent && !agentData.is_component && (
+        <>
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopyToProject();
+            }}
+            className="cursor-pointer"
+            data-testid="btn-copy-agent-project"
+          >
+            <ForwardedIconComponent
+              name="Copy"
+              aria-hidden="true"
+              className="mr-2 h-4 w-4"
+            />
+            Copy to project
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveToProject();
+            }}
+            className={canMoveAgent ? "cursor-pointer" : "cursor-not-allowed opacity-60"}
+            data-testid="btn-move-agent-project"
+          >
+            <ForwardedIconComponent
+              name="ArrowRightLeft"
+              aria-hidden="true"
+              className="mr-2 h-4 w-4"
+            />
+            Move to project
+          </DropdownMenuItem>
+        </>
+      )}
       {canModifyAgent && (
         <DropdownMenuItem
           onClick={(e) => {

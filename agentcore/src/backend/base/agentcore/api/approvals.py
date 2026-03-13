@@ -40,6 +40,8 @@ from agentcore.services.database.models.model_registry.model import (
     ModelRegistry,
     ModelVisibilityScope,
 )
+from agentcore.services.database.models.role.model import Role
+from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.registry_service import sync_agent_registry
 
@@ -50,6 +52,13 @@ class SubmittedBy(BaseModel):
     email: str | None = None
 
 
+class ApproverInfo(BaseModel):
+    id: str | None = None
+    name: str
+    email: str | None = None
+    role: str | None = None
+
+
 class ApprovalAgent(BaseModel):
     id: str
     entityType: str = "agent"  # agent | mcp | model
@@ -57,6 +66,7 @@ class ApprovalAgent(BaseModel):
     status: str  # pending, approved, rejected
     description: str
     submittedBy: SubmittedBy
+    approver: ApproverInfo | None = None
     project: str
     submitted: str
     version: str
@@ -90,6 +100,18 @@ class ProdPromotionHandoffResponse(BaseModel):
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
+
+def _build_approver_info(user: User | None) -> ApproverInfo | None:
+    if not user:
+        return None
+    name = user.display_name or user.username or "Unknown"
+    email = user.email or (user.username if user.username and "@" in user.username else None)
+    return ApproverInfo(
+        id=str(user.id),
+        name=name,
+        email=email,
+        role=getattr(user, "role", None),
+    )
 
 def _build_prod_promotion_handoff_payload(
     deployment: AgentDeploymentProd,
@@ -156,6 +178,22 @@ def _is_global_approver(user: CurrentActiveUser) -> bool:
     return str(getattr(user, "role", "")).lower() in {"root", "super_admin"}
 
 
+async def _current_user_org_ids(session: DbSession, user_id: UUID) -> set[UUID]:
+    rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.status == "active",
+            )
+        )
+    ).all()
+    return {r if isinstance(r, UUID) else r[0] for r in rows}
+
+
+def _is_org_scoped_super_admin(current_user: CurrentActiveUser) -> bool:
+    return str(getattr(current_user, "role", "")).lower() == "super_admin"
+
+
 async def _get_approval_for_action(
     *,
     session: DbSession,
@@ -179,14 +217,17 @@ async def _get_approval_for_action(
             .where(ApprovalRequest.decision == None)  # noqa: E711
             .order_by(ApprovalRequest.requested_at.desc())
         )
-        if not _is_global_approver(current_user):
-            stmt = stmt.where(ApprovalRequest.request_to == current_user.id)
+        stmt = stmt.where(ApprovalRequest.request_to == current_user.id)
         req = (await session.exec(stmt)).first()
 
     if not req:
         raise HTTPException(status_code=404, detail="Approval request not found")
 
-    if not _is_global_approver(current_user) and req.request_to != current_user.id:
+    if req.request_to != current_user.id:
+        if _is_org_scoped_super_admin(current_user):
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            if req.org_id and req.org_id in org_ids:
+                return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
 
     return req
@@ -211,13 +252,24 @@ async def _get_approval_for_view(
     # Direct match by approval request id.
     req = (await session.exec(select(ApprovalRequest).where(ApprovalRequest.id == target_uuid))).first()
     if req:
-        if _is_global_approver(current_user) or req.request_to == current_user.id or req.requested_by == current_user.id:
+        if req.request_to == current_user.id or req.requested_by == current_user.id:
             return req
+        if _is_org_scoped_super_admin(current_user):
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            if req.org_id and req.org_id in org_ids:
+                return req
         raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
     # Fallback by agent id: latest request visible to user.
     stmt = select(ApprovalRequest).where(ApprovalRequest.agent_id == target_uuid).order_by(ApprovalRequest.requested_at.desc())
-    if not _is_global_approver(current_user):
+    if _is_org_scoped_super_admin(current_user):
+        org_ids = await _current_user_org_ids(session, current_user.id)
+        stmt = stmt.where(
+            (ApprovalRequest.request_to == current_user.id)
+            | (ApprovalRequest.requested_by == current_user.id)
+            | (ApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
+        )
+    else:
         stmt = stmt.where(
             (ApprovalRequest.request_to == current_user.id) | (ApprovalRequest.requested_by == current_user.id)
         )
@@ -248,12 +300,15 @@ async def _get_mcp_approval_for_action(
             .where(McpApprovalRequest.mcp_id == target_uuid, McpApprovalRequest.decision == None)  # noqa: E711
             .order_by(McpApprovalRequest.requested_at.desc())
         )
-        if not _is_global_approver(current_user):
-            stmt = stmt.where(McpApprovalRequest.request_to == current_user.id)
+        stmt = stmt.where(McpApprovalRequest.request_to == current_user.id)
         req = (await session.exec(stmt)).first()
     if not req:
         raise HTTPException(status_code=404, detail="MCP approval request not found")
-    if not _is_global_approver(current_user) and req.request_to != current_user.id:
+    if req.request_to != current_user.id:
+        if _is_org_scoped_super_admin(current_user):
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            if req.org_id and req.org_id in org_ids:
+                return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
     return req
 
@@ -276,15 +331,18 @@ async def _get_mcp_approval_for_view(
         stmt = select(McpApprovalRequest).where(McpApprovalRequest.mcp_id == target_uuid).order_by(
             McpApprovalRequest.requested_at.desc()
         )
-        if not _is_global_approver(current_user):
-            stmt = stmt.where(
-                (McpApprovalRequest.request_to == current_user.id) | (McpApprovalRequest.requested_by == current_user.id)
-            )
+        stmt = stmt.where(
+            (McpApprovalRequest.request_to == current_user.id) | (McpApprovalRequest.requested_by == current_user.id)
+        )
         req = (await session.exec(stmt)).first()
     if not req:
         raise HTTPException(status_code=404, detail="MCP approval request not found")
-    if _is_global_approver(current_user) or req.request_to == current_user.id or req.requested_by == current_user.id:
+    if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
+    if _is_org_scoped_super_admin(current_user):
+        org_ids = await _current_user_org_ids(session, current_user.id)
+        if req.org_id and req.org_id in org_ids:
+            return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
 
@@ -315,6 +373,10 @@ async def _get_model_approval_for_action(
     if not req:
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to != current_user.id:
+        if _is_org_scoped_super_admin(current_user):
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            if req.org_id and req.org_id in org_ids:
+                return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
     if req.requested_by == current_user.id:
         raise HTTPException(status_code=400, detail="No user can approve their own request")
@@ -349,6 +411,10 @@ async def _get_model_approval_for_view(
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
+    if _is_org_scoped_super_admin(current_user):
+        org_ids = await _current_user_org_ids(session, current_user.id)
+        if req.org_id and req.org_id in org_ids:
+            return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
 
@@ -361,8 +427,25 @@ def _next_model_environment(env: str) -> str | None:
     return None
 
 
-async def _resolve_super_admin_user_id(*, session: DbSession, exclude_user_id: UUID | None = None) -> UUID:
-    stmt = select(User).where(User.role == "super_admin").order_by(User.create_at.asc())
+async def _resolve_super_admin_user_id(
+    *,
+    session: DbSession,
+    org_id: UUID | None,
+    exclude_user_id: UUID | None = None,
+) -> UUID:
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Organization id is required for super admin resolution")
+    stmt = (
+        select(User)
+        .join(UserOrganizationMembership, UserOrganizationMembership.user_id == User.id)
+        .join(Role, Role.id == UserOrganizationMembership.role_id)
+        .where(
+            UserOrganizationMembership.org_id == org_id,
+            UserOrganizationMembership.status == "active",
+            func.lower(Role.name) == "super_admin",
+        )
+        .order_by(User.create_at.asc())
+    )
     rows = (await session.exec(stmt)).all()
     for row in rows:
         if exclude_user_id and row.id == exclude_user_id:
@@ -449,7 +532,10 @@ async def get_approvals(
     """Fetch approvals for the current approver."""
     try:
         stmt = select(ApprovalRequest).order_by(ApprovalRequest.requested_at.desc())
-        if not _is_global_approver(current_user):
+        if _is_org_scoped_super_admin(current_user):
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            stmt = stmt.where(ApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
+        else:
             stmt = stmt.where(ApprovalRequest.request_to == current_user.id)
         rows = (await session.exec(stmt)).all()
 
@@ -460,6 +546,8 @@ async def get_approvals(
                 continue
 
             requester = await session.get(User, req.requested_by)
+            approver_id = req.reviewed_by or req.request_to
+            approver = await session.get(User, approver_id) if approver_id else None
             agent = await session.get(Agent, req.agent_id)
             project_name = ""
             if agent and agent.project_id:
@@ -492,6 +580,7 @@ async def get_approvals(
                     status=_to_status_label(req.decision),
                     description=description,
                     submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
+                    approver=_build_approver_info(approver),
                     project=project_name,
                     submitted=(
                         req.updated_at.replace(tzinfo=timezone.utc).isoformat()
@@ -504,7 +593,10 @@ async def get_approvals(
             )
 
         mcp_stmt = select(McpApprovalRequest).order_by(McpApprovalRequest.requested_at.desc())
-        if not _is_global_approver(current_user):
+        if _is_org_scoped_super_admin(current_user):
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            mcp_stmt = mcp_stmt.where(McpApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
+        else:
             mcp_stmt = mcp_stmt.where(McpApprovalRequest.request_to == current_user.id)
         mcp_rows = (await session.exec(mcp_stmt)).all()
         for req in mcp_rows:
@@ -512,6 +604,8 @@ async def get_approvals(
             if not row:
                 continue
             requester = await session.get(User, req.requested_by)
+            approver_id = req.reviewed_by or req.request_to
+            approver = await session.get(User, approver_id) if approver_id else None
             dept_name = ""
             if req.dept_id:
                 dept = await session.get(Department, req.dept_id)
@@ -541,6 +635,7 @@ async def get_approvals(
                     status=_to_status_label_any(req.decision),
                     description=row.description or "",
                     submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
+                    approver=_build_approver_info(approver),
                     project=dept_name,
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()
@@ -553,13 +648,19 @@ async def get_approvals(
             )
         model_stmt = select(ModelApprovalRequest).order_by(ModelApprovalRequest.requested_at.desc())
         # Always filter by request_to — each approver only sees their own model requests
-        model_stmt = model_stmt.where(ModelApprovalRequest.request_to == current_user.id)
+        if _is_org_scoped_super_admin(current_user):
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            model_stmt = model_stmt.where(ModelApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
+        else:
+            model_stmt = model_stmt.where(ModelApprovalRequest.request_to == current_user.id)
         model_rows = (await session.exec(model_stmt)).all()
         for req in model_rows:
             row = await session.get(ModelRegistry, req.model_id)
             if not row:
                 continue
             requester = await session.get(User, req.requested_by)
+            approver_id = req.reviewed_by or req.request_to
+            approver = await session.get(User, approver_id) if approver_id else None
             dept_name = ""
             if req.dept_id:
                 dept = await session.get(Department, req.dept_id)
@@ -592,6 +693,7 @@ async def get_approvals(
                     status=_to_status_label_any(req.decision),
                     description=row.description or "",
                     submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
+                    approver=_build_approver_info(approver),
                     project=model_project_name,
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()
@@ -671,6 +773,7 @@ async def approve_agent(
             )
         mcp_req.decision = ApprovalDecisionEnum.APPROVED
         mcp_req.justification = comments.strip() if comments else None
+        mcp_req.reviewed_by = current_user.id
         existing = mcp_req.file_path if isinstance(mcp_req.file_path, dict) else {}
         existing_files = existing.get("files", [])
         if uploaded_files:
@@ -716,6 +819,7 @@ async def approve_agent(
             )
         model_req.decision = ApprovalDecisionEnum.APPROVED
         model_req.justification = comments.strip() if comments else None
+        model_req.reviewed_by = current_user.id
         existing = model_req.file_path if isinstance(model_req.file_path, dict) else {}
         existing_files = existing.get("files", [])
         if uploaded_files:
@@ -765,6 +869,7 @@ async def approve_agent(
             ):
                 super_admin_id = await _resolve_super_admin_user_id(
                     session=session,
+                    org_id=model_row.org_id,
                     exclude_user_id=model_req.requested_by,
                 )
                 follow_up = ModelApprovalRequest(
@@ -872,6 +977,7 @@ async def approve_agent(
 
     req.decision = ApprovalDecisionEnum.APPROVED
     req.justification = comments.strip() if comments else None
+    req.reviewed_by = current_user.id
     existing = req.file_path if isinstance(req.file_path, dict) else {}
     existing_files = existing.get("files", [])
     if uploaded_files:
@@ -1024,6 +1130,7 @@ async def reject_agent(
         justification = comments.strip()
         mcp_req.decision = ApprovalDecisionEnum.REJECTED
         mcp_req.justification = f"{rejection_reason}: {justification}" if justification else rejection_reason
+        mcp_req.reviewed_by = current_user.id
         existing = mcp_req.file_path if isinstance(mcp_req.file_path, dict) else {}
         existing_files = existing.get("files", [])
         if uploaded_files:
@@ -1069,6 +1176,7 @@ async def reject_agent(
         justification = comments.strip()
         model_req.decision = ApprovalDecisionEnum.REJECTED
         model_req.justification = f"{rejection_reason}: {justification}" if justification else rejection_reason
+        model_req.reviewed_by = current_user.id
         existing = model_req.file_path if isinstance(model_req.file_path, dict) else {}
         existing_files = existing.get("files", [])
         if uploaded_files:
@@ -1130,6 +1238,7 @@ async def reject_agent(
     justification = comments.strip()
     req.decision = ApprovalDecisionEnum.REJECTED
     req.justification = f"{rejection_reason}: {justification}" if justification else rejection_reason
+    req.reviewed_by = current_user.id
     existing = req.file_path if isinstance(req.file_path, dict) else {}
     existing_files = existing.get("files", [])
     if uploaded_files:
@@ -1294,6 +1403,8 @@ async def get_agent_details(
         if not row:
             raise HTTPException(status_code=404, detail="Linked MCP server not found")
         requester = await session.get(User, mcp_req.requested_by)
+        approver_id = mcp_req.reviewed_by or mcp_req.request_to
+        approver = await session.get(User, approver_id) if approver_id else None
         submitted_at = mcp_req.requested_at
         return ApprovalAgent(
             id=str(mcp_req.id),
@@ -1308,7 +1419,17 @@ async def get_agent_details(
                     else (requester.username if requester else "Unknown")
                 ),
                 avatar=None,
+                email=(
+                    requester.email
+                    if requester and requester.email
+                    else (
+                        requester.username
+                        if requester and requester.username and "@" in requester.username
+                        else None
+                    )
+                ),
             ),
+            approver=_build_approver_info(approver),
             project="",
             submitted=(
                 submitted_at.replace(tzinfo=timezone.utc).isoformat()
@@ -1325,6 +1446,8 @@ async def get_agent_details(
         if not row:
             raise HTTPException(status_code=404, detail="Linked model not found")
         requester = await session.get(User, model_req.requested_by)
+        approver_id = model_req.reviewed_by or model_req.request_to
+        approver = await session.get(User, approver_id) if approver_id else None
         submitted_at = model_req.requested_at
         provider_cfg = row.provider_config if isinstance(row.provider_config, dict) else {}
         request_meta = provider_cfg.get("request_meta", {})
@@ -1342,7 +1465,17 @@ async def get_agent_details(
                     else (requester.username if requester else "Unknown")
                 ),
                 avatar=None,
+                email=(
+                    requester.email
+                    if requester and requester.email
+                    else (
+                        requester.username
+                        if requester and requester.username and "@" in requester.username
+                        else None
+                    )
+                ),
             ),
+            approver=_build_approver_info(approver),
             project=model_project_name,
             submitted=(
                 submitted_at.replace(tzinfo=timezone.utc).isoformat()
@@ -1359,6 +1492,8 @@ async def get_agent_details(
     if not deployment:
         raise HTTPException(status_code=404, detail="Linked deployment not found")
     requester = await session.get(User, req.requested_by)
+    approver_id = req.reviewed_by or req.request_to
+    approver = await session.get(User, approver_id) if approver_id else None
     agent = await session.get(Agent, req.agent_id)
     project_name = ""
     if agent and agent.project_id:
@@ -1375,7 +1510,17 @@ async def get_agent_details(
         submittedBy=SubmittedBy(
             name=(requester.display_name if requester and requester.display_name else (requester.username if requester else "Unknown")),
             avatar=None,
+            email=(
+                requester.email
+                if requester and requester.email
+                else (
+                    requester.username
+                    if requester and requester.username and "@" in requester.username
+                    else None
+                )
+            ),
         ),
+        approver=_build_approver_info(approver),
         project=project_name,
         submitted=(
             req.updated_at.replace(tzinfo=timezone.utc).isoformat()

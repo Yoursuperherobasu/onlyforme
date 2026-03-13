@@ -468,6 +468,11 @@ async def list_control_panel_agents(
                 )
             )
         else:
+            current_role = str(getattr(current_user, "role", "")).lower()
+            uat_admin_public_roles = {"super_admin", "department_admin", "root"}
+            if current_role in uat_admin_public_roles:
+                # Admins should be able to see private UAT deployments in control panel.
+                private_access_expr = private_access_expr | true()
             stmt = base_stmt.where(
                 (Model.visibility == public_visibility)  # type: ignore[arg-type]
                 | (
