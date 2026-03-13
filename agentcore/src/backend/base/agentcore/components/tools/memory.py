@@ -7,6 +7,7 @@ from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
 from agentcore.inputs.inputs import DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
 from agentcore.memory import aget_messages, astore_message
+from agentcore.schema.content_block import ContentBlock
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame
 from agentcore.schema.dotdict import dotdict
@@ -204,7 +205,20 @@ class MemoryComponent(Node):
             return
         try:
             cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
-            data = [{"text": m.text or "", "sender": m.sender or "", "sender_name": m.sender_name or ""} for m in messages]
+            data = []
+            for m in messages:
+                entry = {
+                    "text": m.text or "",
+                    "sender": m.sender or "",
+                    "sender_name": m.sender_name or "",
+                    "files": [str(f.path) if hasattr(f, "path") else str(f) for f in (m.files or [])],
+                }
+                if m.content_blocks:
+                    entry["content_blocks"] = [
+                        cb.model_dump() if hasattr(cb, "model_dump") else cb
+                        for cb in m.content_blocks
+                    ]
+                data.append(entry)
             await redis.setex(cache_key, ttl, json.dumps(data))
             logger.debug(f"[STM] Cached {len(messages)} messages for session={session_id}, ttl={ttl}s")
         except Exception as e:
@@ -407,10 +421,19 @@ class MemoryComponent(Node):
                 # Try Redis cache first
                 cached = await self._get_stm_cache(session_id, n_messages)
                 if cached is not None:
-                    history_messages = [
-                        Message(text=m["text"], sender=m.get("sender", ""), sender_name=m.get("sender_name", ""))
-                        for m in cached
-                    ]
+                    history_messages = []
+                    for m in cached:
+                        msg = Message(
+                            text=m["text"],
+                            sender=m.get("sender", ""),
+                            sender_name=m.get("sender_name", ""),
+                            files=m.get("files") or [],
+                        )
+                        if m.get("content_blocks"):
+                            msg.content_blocks = [
+                                ContentBlock(**cb) for cb in m["content_blocks"]
+                            ]
+                        history_messages.append(msg)
                     # Check if the current user message is already in the cached history
                     # (ChatInput stored it in DB but cache may not have it yet)
                     if current_text and already_stored:
@@ -421,6 +444,7 @@ class MemoryComponent(Node):
                                 text=current_text,
                                 sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
                                 sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
+                                files=current_input.files if isinstance(current_input, Message) else [],
                             )
                             history_messages.append(user_msg)
                             # Trim to n_messages limit
@@ -445,6 +469,13 @@ class MemoryComponent(Node):
                     if history_messages:
                         await self._set_stm_cache(session_id, n_messages, history_messages)
 
+        # Log file info for each history message to trace image flow
+        for i, msg in enumerate(history_messages):
+            file_count = len(msg.files) if msg.files else 0
+            if file_count > 0:
+                file_paths = [str(f.path) if hasattr(f, "path") else str(f) for f in msg.files]
+                logger.info(f"[STM] History msg[{i}] has {file_count} files: {file_paths}")
+
         logger.info(
             f"[STM] Fetched {len(history_messages)} history messages | "
             f"source={history_source} | session_id={session_id} | n_messages={n_messages}"
@@ -466,15 +497,34 @@ class MemoryComponent(Node):
         else:
             enriched_text = current_text
 
+        # Collect all files from history messages and current input
+        all_files = []
+        for msg in history_messages:
+            if msg.files:
+                all_files.extend(msg.files)
+        current_files = []
+        if isinstance(current_input, Message) and current_input.files:
+            current_files = current_input.files
+        all_files.extend(current_files)
+
         # Create a new message with the enriched text, preserving original message properties
         enriched_message = Message(text=enriched_text)
         if isinstance(current_input, Message):
             enriched_message.sender = current_input.sender
             enriched_message.sender_name = current_input.sender_name
             enriched_message.session_id = current_input.session_id or session_id
-            enriched_message.files = current_input.files
         else:
             enriched_message.session_id = session_id
+        enriched_message.files = all_files if all_files else []
+
+        # Log current input files
+        if current_files:
+            logger.info(f"[STM] Current input has {len(current_files)} files: {[str(f.path) if hasattr(f, 'path') else str(f) for f in current_files]}")
+        logger.info(f"[STM] Enriched message total files: {len(all_files)}")
+
+        # Pre-fetch image data from storage so downstream to_lc_message() can
+        # build multimodal content synchronously (same as ChatInput does).
+        await enriched_message.resolve_images()
 
         logger.info(
             f"[STM] session_id={session_id} | "

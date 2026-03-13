@@ -1,4 +1,7 @@
+import base64
+import re
 from collections.abc import Generator
+from datetime import datetime, timezone
 from typing import Any
 
 import orjson
@@ -8,8 +11,10 @@ from loguru import logger
 from agentcore.base.io.chat import ChatNode
 from agentcore.helpers.data import safe_convert
 from agentcore.inputs.inputs import BoolInput, DropdownInput, HandleInput, MessageTextInput
+from agentcore.schema.content_types import MediaContent, ToolContent
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame
+from agentcore.schema.image import IMAGE_ENDPOINT
 from agentcore.schema.message import Message
 from agentcore.schema.properties import Source
 from agentcore.template.field.base import Output
@@ -18,6 +23,10 @@ from agentcore.utils.constants import (
     MESSAGE_SENDER_NAME_AI,
     MESSAGE_SENDER_USER,
 )
+
+# Regex to find base64 image data URLs in markdown and raw strings
+_BASE64_IMG_MD_RE = re.compile(r"!\[([^\]]*)\]\((data:image/([^;]+);base64,([A-Za-z0-9+/=\s]+))\)")
+_BASE64_DATA_URL_RE = re.compile(r"data:image/([^;]+);base64,([A-Za-z0-9+/=\s]+)")
 
 
 class ChatOutput(ChatNode):
@@ -150,7 +159,11 @@ class ChatOutput(ChatNode):
                 message.properties.text_color = text_color
             if self.chat_icon:
                 message.properties.icon = icon
+            # Persist any base64 images to blob storage
+            await self._persist_ai_images(message)
             self.status = message
+            # Update STM cache even for pre-stored messages (e.g. Agent component responses)
+            await self._update_stm_cache(message)
             if message.sender == MESSAGE_SENDER_AI:
                 preview = (message.text or "")[:150]
                 logger.info(f"[AI_MESSAGE] AI: {preview}")
@@ -174,53 +187,165 @@ class ChatOutput(ChatNode):
         message.properties.background_color = background_color
         message.properties.text_color = text_color
 
+        # Persist any base64 images in the AI response to blob storage
+        # (replaces data URLs with file-serving URLs before DB store)
+        await self._persist_ai_images(message)
+
         # Store message if needed
         if self.session_id and self.should_store_message:
             stored_message = await self.send_message(message)
             self.message.value = stored_message
             message = stored_message
 
-            # Update STM cache: append this AI response so next STM read gets a cache HIT
-            # with the complete conversation including this response.
-            try:
-                import json
-                from agentcore.services.deps import get_settings_service
-                from agentcore.services.cache.redis_client import get_redis_client
-
-                settings_service = get_settings_service()
-                if settings_service.settings.cache_type == "redis":
-                    redis_client = get_redis_client(settings_service)
-                    stm_prefix = "stm:history:"
-                    ttl = getattr(settings_service.settings, "stm_cache_ttl", 300)
-                    pattern = f"{stm_prefix}{self.session_id}:*"
-                    async for key in redis_client.scan_iter(match=pattern, count=100):
-                        existing = await redis_client.get(key)
-                        if existing:
-                            cached_msgs = json.loads(existing)
-                            # Append the AI response
-                            ai_entry = {
-                                "text": message.text or "",
-                                "sender": message.sender or "",
-                                "sender_name": message.sender_name or "",
-                            }
-                            cached_msgs.append(ai_entry)
-                            # Trim to the n_messages limit (extract from key: stm:history:{sid}:{n})
-                            try:
-                                n_limit = int(str(key).rsplit(":", 1)[-1])
-                                if n_limit and len(cached_msgs) > n_limit:
-                                    cached_msgs = cached_msgs[-n_limit:]
-                            except (ValueError, IndexError):
-                                pass
-                            await redis_client.setex(key, ttl, json.dumps(cached_msgs))
-                            logger.info(f"[ChatOutput] Updated STM cache with AI response for session={self.session_id}, total={len(cached_msgs)} msgs")
-            except Exception as e:
-                logger.debug(f"[ChatOutput] STM cache update skipped: {e}")
+            await self._update_stm_cache(message)
 
         self.status = message
         if message.sender == MESSAGE_SENDER_AI:
             preview = (message.text or "")[:150]
             logger.info(f"[AI_MESSAGE] AI: {preview}")
         return message
+
+    async def _persist_ai_images(self, message: Message) -> None:
+        """Extract base64 images from the AI response, save them to storage,
+        and replace the inline data URLs with proper file-serving URLs.
+
+        Handles images in:
+        1. Markdown in message.text  — ``![alt](data:image/png;base64,...)``
+        2. content_blocks → MediaContent.urls  — raw ``data:image/...`` URLs
+        3. content_blocks → ToolContent.output  — markdown with data URLs
+        """
+        try:
+            from agentcore.services.deps import get_storage_service
+
+            storage_service = get_storage_service()
+        except Exception:
+            logger.debug("[ChatOutput] Storage service unavailable, skipping image persistence")
+            return
+
+        agent_id = str(self.graph.agent_id) if hasattr(self, "graph") and self.graph.agent_id else None
+        if not agent_id:
+            return
+
+        saved_paths: list[str] = []
+        counter = 0
+
+        async def _save_and_get_url(img_format: str, b64_data: str) -> str | None:
+            """Decode base64, save to storage, return the serving URL."""
+            nonlocal counter
+            try:
+                raw = base64.b64decode(b64_data.replace("\n", "").replace(" ", ""))
+            except Exception:
+                return None
+            ext = img_format.split("+")[0]  # e.g. "svg+xml" → "svg"
+            ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+            file_name = f"{ts}_ai_generated_{counter}.{ext}"
+            counter += 1
+            await storage_service.save_file(agent_id=agent_id, file_name=file_name, data=raw)
+            file_path = f"{agent_id}/{file_name}"
+            saved_paths.append(file_path)
+            return f"{IMAGE_ENDPOINT}{file_path}"
+
+        # --- 1. Process markdown images in message.text ---
+        if isinstance(message.text, str):
+            new_text = message.text
+            for match in list(_BASE64_IMG_MD_RE.finditer(new_text)):
+                alt = match.group(1)
+                img_format = match.group(3)
+                b64_data = match.group(4)
+                url = await _save_and_get_url(img_format, b64_data)
+                if url:
+                    new_text = new_text.replace(match.group(0), f"![{alt}]({url})")
+            message.text = new_text
+
+        # --- 2. Process content_blocks ---
+        for block in message.content_blocks or []:
+            for content in block.contents:
+                # MediaContent — urls list may contain data URLs
+                if isinstance(content, MediaContent):
+                    new_urls = []
+                    for url in content.urls:
+                        m = _BASE64_DATA_URL_RE.match(url)
+                        if m:
+                            stored_url = await _save_and_get_url(m.group(1), m.group(2))
+                            new_urls.append(stored_url or url)
+                        else:
+                            new_urls.append(url)
+                    content.urls = new_urls
+
+                # ToolContent — output may contain markdown with data URLs
+                if isinstance(content, ToolContent) and content.output:
+                    output_str = str(content.output)
+                    for match in list(_BASE64_IMG_MD_RE.finditer(output_str)):
+                        alt = match.group(1)
+                        img_format = match.group(3)
+                        b64_data = match.group(4)
+                        url = await _save_and_get_url(img_format, b64_data)
+                        if url:
+                            output_str = output_str.replace(match.group(0), f"![{alt}]({url})")
+                    content.output = output_str
+
+        # --- 3. Add saved images to message.files for DB storage ---
+        if saved_paths:
+            if not message.files:
+                message.files = []
+            message.files.extend(saved_paths)
+            logger.info(f"[ChatOutput] Persisted {len(saved_paths)} AI-generated images to storage for agent={agent_id}")
+
+    @staticmethod
+    def _message_to_cache_entry(message: Message) -> dict:
+        """Serialize a Message to a dict suitable for STM Redis cache."""
+        entry = {
+            "text": message.text or "",
+            "sender": message.sender or "",
+            "sender_name": message.sender_name or "",
+            "files": [str(f.path) if hasattr(f, "path") else str(f) for f in (message.files or [])],
+        }
+        # Persist content_blocks (e.g. media/images returned by the LLM)
+        if message.content_blocks:
+            entry["content_blocks"] = [
+                cb.model_dump() if hasattr(cb, "model_dump") else cb
+                for cb in message.content_blocks
+            ]
+        return entry
+
+    async def _update_stm_cache(self, message: Message) -> None:
+        """Append the message to all STM cache entries for this session."""
+        session_id = self.session_id
+        if not session_id:
+            return
+        try:
+            import json
+
+            from agentcore.services.cache.redis_client import get_redis_client
+            from agentcore.services.deps import get_settings_service
+
+            settings_service = get_settings_service()
+            if settings_service.settings.cache_type != "redis":
+                return
+            redis_client = get_redis_client(settings_service)
+            ttl = getattr(settings_service.settings, "stm_cache_ttl", 300)
+            stm_prefix = "stm:history:"
+            pattern = f"{stm_prefix}{session_id}:*"
+            ai_entry = self._message_to_cache_entry(message)
+            async for key in redis_client.scan_iter(match=pattern, count=100):
+                existing = await redis_client.get(key)
+                if existing:
+                    cached_msgs = json.loads(existing)
+                    cached_msgs.append(ai_entry)
+                    # Trim to the n_messages limit (extract from key: stm:history:{sid}:{n})
+                    try:
+                        n_limit = int(str(key).rsplit(":", 1)[-1])
+                        if n_limit and len(cached_msgs) > n_limit:
+                            cached_msgs = cached_msgs[-n_limit:]
+                    except (ValueError, IndexError):
+                        pass
+                    await redis_client.setex(key, ttl, json.dumps(cached_msgs))
+                    logger.info(
+                        f"[ChatOutput] Updated STM cache for session={session_id}, "
+                        f"total={len(cached_msgs)} msgs"
+                    )
+        except Exception as e:
+            logger.debug(f"[ChatOutput] STM cache update skipped: {e}")
 
     def _serialize_data(self, data: Data) -> str:
         """Serialize Data object to JSON string."""
