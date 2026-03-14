@@ -22,6 +22,7 @@ from agentcore.services.deps import session_scope
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]  # agentcore_clean_code/agentcore
 _PYPROJECT = _PROJECT_ROOT / "pyproject.toml"
 _UV_LOCK = _PROJECT_ROOT / "uv.lock"
+_BACKEND_SERVICE_NAME = "backend"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -140,9 +141,13 @@ async def sync_packages_to_db() -> None:
         rows.append(
             {
                 "name": dep["name"],
+                "service_name": _BACKEND_SERVICE_NAME,
                 "version": lock_entry.get("version", "unknown"),
                 "version_spec": dep["version_spec"] or None,
                 "package_type": "managed",
+                "snapshot_id": None,
+                "build_id": None,
+                "commit_sha": None,
                 "release_id": release_id,
                 "required_by": None,
                 "required_by_details": None,
@@ -165,9 +170,13 @@ async def sync_packages_to_db() -> None:
         rows.append(
             {
                 "name": pkg["name"],
+                "service_name": _BACKEND_SERVICE_NAME,
                 "version": pkg.get("version", "unknown"),
                 "version_spec": None,
                 "package_type": "transitive",
+                "snapshot_id": None,
+                "build_id": None,
+                "commit_sha": None,
                 "release_id": release_id,
                 "required_by": required_by_map.get(norm, []) or None,
                 "required_by_details": required_by_details_map.get(norm, []) or None,
@@ -176,26 +185,36 @@ async def sync_packages_to_db() -> None:
         )
 
     async with session_scope() as session:
+        # Startup sync is backend-only: never mutate package rows owned by other services.
         current_rows = (
-            await session.exec(select(Package).where(Package.end_date == open_end_date))
+            await session.exec(
+                select(Package).where(
+                    Package.end_date == open_end_date,
+                    Package.service_name == _BACKEND_SERVICE_NAME,
+                )
+            )
         ).all()
         current_map = {
-            (_normalize(row.name), row.package_type): row
+            (_normalize(row.name), row.package_type, row.service_name): row
             for row in current_rows
         }
 
         incoming_keys = set()
         for row in rows:
-            key = (_normalize(row["name"]), row["package_type"])
+            key = (_normalize(row["name"]), row["package_type"], row["service_name"])
             incoming_keys.add(key)
             existing = current_map.get(key)
             if existing is None:
                 session.add(
                     Package(
                         name=row["name"],
+                        service_name=row["service_name"],
                         version=row["version"],
                         version_spec=row["version_spec"],
                         package_type=row["package_type"],
+                        snapshot_id=row["snapshot_id"],
+                        build_id=row["build_id"],
+                        commit_sha=row["commit_sha"],
                         release_id=row["release_id"],
                         required_by=row["required_by"],
                         required_by_details=row["required_by_details"],
@@ -210,6 +229,9 @@ async def sync_packages_to_db() -> None:
             same_payload = (
                 existing.version == row["version"]
                 and (existing.version_spec or None) == (row["version_spec"] or None)
+                and (existing.snapshot_id or None) == (row["snapshot_id"] or None)
+                and (existing.build_id or None) == (row["build_id"] or None)
+                and (existing.commit_sha or None) == (row["commit_sha"] or None)
                 and (existing.required_by or None) == (row["required_by"] or None)
                 and (existing.required_by_details or None) == (row["required_by_details"] or None)
                 and (existing.source or None) == (row["source"] or None)
@@ -224,9 +246,13 @@ async def sync_packages_to_db() -> None:
             session.add(
                 Package(
                     name=row["name"],
+                    service_name=row["service_name"],
                     version=row["version"],
                     version_spec=row["version_spec"],
                     package_type=row["package_type"],
+                    snapshot_id=row["snapshot_id"],
+                    build_id=row["build_id"],
+                    commit_sha=row["commit_sha"],
                     release_id=row["release_id"],
                     required_by=row["required_by"],
                     required_by_details=row["required_by_details"],

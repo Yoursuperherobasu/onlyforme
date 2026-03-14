@@ -7,13 +7,14 @@ import { useTranslation } from "react-i18next";
 
 interface AgentCardProps {
   id: string;
-  entityType?: "agent" | "model" | "mcp";
+  entityType?: "agent" | "model" | "mcp" | "package";
   title: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "deployed" | "cancelled";
   description: string;
   submittedBy: {
     name: string;
     avatar?: string;
+    email?: string | null;
   };
   project: string;
   submitted: string;
@@ -23,16 +24,19 @@ interface AgentCardProps {
   onApprove: () => void;
   onReviewDetails: () => void;
   onViewMcpConfig?: () => void;
+  onDeploy?: () => void;
 }
 
 const ENTITY_BADGE_CLASSES: Record<string, string> = {
   model: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
   mcp: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+  package: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
 };
 
 const ENTITY_LABELS: Record<string, string> = {
   model: "Model",
   mcp: "MCP",
+  package: "Package",
 };
 
 export function AgentCard({
@@ -49,6 +53,7 @@ export function AgentCard({
   onApprove,
   onReviewDetails,
   onViewMcpConfig,
+  onDeploy,
 }: AgentCardProps) {
   const { t } = useTranslation();
 
@@ -58,10 +63,14 @@ export function AgentCard({
     approved:
       "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
     rejected: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    deployed:
+      "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    cancelled: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   };
 
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canModerate = entityType === "package" ? true : can("prod_publish_approval_required");
   const submittedDisplay = (() => {
     const dt = new Date(submitted);
     if (Number.isNaN(dt.getTime())) return submitted;
@@ -118,10 +127,12 @@ export function AgentCard({
             <div className="truncate font-medium">{submittedByDisplay}</div>
           )}
         </div>
-        <div>
-          <div className="text-xs text-muted-foreground">{t("Project")}</div>
-          <div className="font-medium">{project}</div>
-        </div>
+        {entityType !== "package" && (
+          <div>
+            <div className="text-xs text-muted-foreground">{t("Project")}</div>
+            <div className="font-medium">{project}</div>
+          </div>
+        )}
         <div>
           <div className="text-xs text-muted-foreground">{t("Version")}</div>
           <div className="font-medium">{version || "-"}</div>
@@ -133,7 +144,7 @@ export function AgentCard({
       </div>
 
       {/* Recent Changes - hidden for models */}
-      {entityType !== "model" && (
+      {entityType !== "model" && entityType !== "package" && (
         <div className="mb-4 rounded-md bg-muted/50 p-3">
           <div className="mb-1 text-xs font-medium text-muted-foreground">
             {t("Recent Changes")}
@@ -152,7 +163,7 @@ export function AgentCard({
               <FileCode2 className="h-4 w-4" />
               {t("MCP Config")}
             </Button>
-          ) : (
+          ) : entityType === "package" ? null : (
             <Button variant="outline" onClick={onReviewDetails} className="gap-2">
               <FileCode2 className="h-4 w-4" />
               {t("Review Details")}
@@ -163,14 +174,14 @@ export function AgentCard({
         {/* RIGHT actions */}
         {status === "pending" && (
           <div className="ml-auto flex items-center gap-2">
-           <ShadTooltip 
-  content={!can("prod_publish_approval_required") ? t("You don't have permission to reject") : ""}
+<ShadTooltip 
+  content={!canModerate ? t("You don't have permission to reject") : ""}
 >
   <span className="inline-block">
     <Button
       variant="outline"
       onClick={onReject}
-      disabled={!can("prod_publish_approval_required")}
+      disabled={!canModerate}
       className="
         gap-2
         border-red-500 text-red-600
@@ -185,8 +196,8 @@ export function AgentCard({
   </span>
 </ShadTooltip>
            
-          <ShadTooltip 
-  content={!can("prod_publish_approval_required") ? t("You don't have permission to approve") : ""}
+<ShadTooltip 
+  content={!canModerate ? t("You don't have permission to approve") : ""}
 >
             <Button
               variant="outline"
@@ -202,12 +213,24 @@ export function AgentCard({
     dark:disabled:!border-green-700
     dark:hover:!bg-green-950/30 dark:hover:!text-green-400
   "
-  disabled={!can("prod_publish_approval_required")}
+  disabled={!canModerate}
             >
               <CheckCircle2 className="h-4 w-4" />
               {t("Approve")}
             </Button>
           </ShadTooltip>
+          </div>
+        )}
+        {status === "approved" && entityType === "package" && (
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={onDeploy}
+              className="gap-2 border-blue-600 text-blue-600 hover:bg-blue-50"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {t("Mark Deployed")}
+            </Button>
           </div>
         )}
       </div>

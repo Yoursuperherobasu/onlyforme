@@ -10,23 +10,278 @@ Endpoints:
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections import deque
+from datetime import date, datetime, timezone
 from typing import Any
+from uuid import UUID
 
-from datetime import date
-
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.package.model import Package
+from agentcore.services.database.models.package_request.model import PackageRequest
+from agentcore.services.database.models.user.model import User
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 ACTIVE_END_DATE = date(9999, 12, 31)
+DEFAULT_SERVICE_NAME = "all"
+PACKAGE_REQUEST_STATUSES = {"PENDING", "APPROVED", "REJECTED", "DEPLOYED", "CANCELLED"}
 
 
 def _normalize(name: str) -> str:
     return name.strip().lower().replace("_", "-").replace(".", "-")
+
+
+def _normalize_service_param(service: str | None) -> str:
+    if not service:
+        return DEFAULT_SERVICE_NAME
+    return service.strip().lower()
+
+
+def _is_all_services(service: str) -> bool:
+    return service == "all"
+
+
+def _is_root_user(current_user: CurrentActiveUser) -> bool:
+    return str(getattr(current_user, "role", "")).strip().lower() == "root"
+
+
+class PackageRequestCreate(BaseModel):
+    service_name: str = Field(min_length=2, max_length=100)
+    package_name: str = Field(min_length=1, max_length=255)
+    requested_version: str = Field(min_length=1, max_length=100)
+    justification: str = Field(min_length=5, max_length=2000)
+
+
+class PackageRequestAction(BaseModel):
+    comments: str | None = Field(default=None, max_length=2000)
+
+
+class PackageRequestDeploy(BaseModel):
+    deployment_notes: str | None = Field(default=None, max_length=2000)
+
+
+def _to_package_request_payload(
+    row: PackageRequest,
+    *,
+    requested_by_user: User | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "service_name": row.service_name,
+        "package_name": row.package_name,
+        "requested_version": row.requested_version,
+        "justification": row.justification,
+        "status": row.status.lower(),
+        "requested_by": str(row.requested_by),
+        "requested_by_name": requested_by_user.username if requested_by_user else None,
+        "requested_by_email": requested_by_user.email if requested_by_user else None,
+        "reviewed_by": str(row.reviewed_by) if row.reviewed_by else None,
+        "deployed_by": str(row.deployed_by) if row.deployed_by else None,
+        "review_comments": row.review_comments,
+        "deployment_notes": row.deployment_notes,
+        "requested_at": row.requested_at.isoformat(),
+        "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+        "deployed_at": row.deployed_at.isoformat() if row.deployed_at else None,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
+def _validate_status_filter(status_value: str | None) -> str | None:
+    if not status_value:
+        return None
+    normalized = status_value.strip().upper()
+    if normalized not in PACKAGE_REQUEST_STATUSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid package request status filter.")
+    return normalized
+
+
+async def _get_package_request_or_404(
+    *,
+    session: DbSession,
+    request_id: str,
+) -> PackageRequest:
+    try:
+        request_uuid = UUID(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package request not found.") from exc
+    row = await session.get(PackageRequest, request_uuid)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package request not found.")
+    return row
+
+
+@router.post("/requests")
+async def create_package_request(
+    payload: PackageRequestCreate,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    row = PackageRequest(
+        service_name=payload.service_name.strip().lower(),
+        package_name=payload.package_name.strip().lower(),
+        requested_version=payload.requested_version.strip(),
+        justification=payload.justification.strip(),
+        status="PENDING",
+        requested_by=current_user.id,
+        requested_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    requested_by_user = await session.get(User, row.requested_by)
+    return _to_package_request_payload(row, requested_by_user=requested_by_user)
+
+
+@router.get("/requests/mine")
+async def get_my_package_requests(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> list[dict[str, Any]]:
+    rows = (
+        await session.exec(
+            select(PackageRequest)
+            .where(PackageRequest.requested_by == current_user.id)
+            .order_by(PackageRequest.requested_at.desc())
+        )
+    ).all()
+    return [_to_package_request_payload(row, requested_by_user=current_user) for row in rows]
+
+
+@router.get("/requests")
+async def get_package_requests_for_root(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+    status: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    if not _is_root_user(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only root users can view all package requests.",
+        )
+
+    stmt = select(PackageRequest).order_by(PackageRequest.requested_at.desc())
+    normalized = _validate_status_filter(status)
+    if normalized:
+        stmt = stmt.where(PackageRequest.status == normalized)
+    rows = (await session.exec(stmt)).all()
+    requester_ids = {row.requested_by for row in rows}
+    user_map: dict[Any, User] = {}
+    if requester_ids:
+        users = (await session.exec(select(User).where(User.id.in_(requester_ids)))).all()
+        user_map = {user.id: user for user in users}
+    return [
+        _to_package_request_payload(row, requested_by_user=user_map.get(row.requested_by))
+        for row in rows
+    ]
+
+
+@router.post("/requests/{request_id}/approve")
+async def approve_package_request(
+    request_id: str,
+    payload: PackageRequestAction,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict[str, Any]:
+    if not _is_root_user(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only root users can approve package requests.")
+
+    row = await _get_package_request_or_404(session=session, request_id=request_id)
+    if row.status != "PENDING":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending requests can be approved.")
+
+    now = datetime.now(timezone.utc)
+    row.status = "APPROVED"
+    row.reviewed_by = current_user.id
+    row.reviewed_at = now
+    row.review_comments = payload.comments.strip() if payload.comments else None
+    row.updated_at = now
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    requested_by_user = await session.get(User, row.requested_by)
+    return _to_package_request_payload(row, requested_by_user=requested_by_user)
+
+
+@router.post("/requests/{request_id}/reject")
+async def reject_package_request(
+    request_id: str,
+    payload: PackageRequestAction,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict[str, Any]:
+    if not _is_root_user(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only root users can reject package requests.")
+
+    row = await _get_package_request_or_404(session=session, request_id=request_id)
+    if row.status != "PENDING":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending requests can be rejected.")
+
+    now = datetime.now(timezone.utc)
+    row.status = "REJECTED"
+    row.reviewed_by = current_user.id
+    row.reviewed_at = now
+    row.review_comments = payload.comments.strip() if payload.comments else None
+    row.updated_at = now
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    requested_by_user = await session.get(User, row.requested_by)
+    return _to_package_request_payload(row, requested_by_user=requested_by_user)
+
+
+@router.post("/requests/{request_id}/deploy")
+async def deploy_package_request(
+    request_id: str,
+    payload: PackageRequestDeploy,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict[str, Any]:
+    if not _is_root_user(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only root users can deploy package requests.")
+
+    row = await _get_package_request_or_404(session=session, request_id=request_id)
+    if row.status != "APPROVED":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only approved requests can be deployed.")
+
+    now = datetime.now(timezone.utc)
+    row.status = "DEPLOYED"
+    row.deployed_by = current_user.id
+    row.deployed_at = now
+    row.deployment_notes = payload.deployment_notes.strip() if payload.deployment_notes else None
+    row.updated_at = now
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    requested_by_user = await session.get(User, row.requested_by)
+    return _to_package_request_payload(row, requested_by_user=requested_by_user)
+
+
+@router.post("/requests/{request_id}/cancel")
+async def cancel_package_request(
+    request_id: str,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict[str, Any]:
+    row = await _get_package_request_or_404(session=session, request_id=request_id)
+    if row.requested_by != current_user.id and not _is_root_user(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to cancel this request.")
+    if row.status not in {"PENDING"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending requests can be cancelled.")
+    row.status = "CANCELLED"
+    row.updated_at = datetime.now(timezone.utc)
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    requested_by_user = await session.get(User, row.requested_by)
+    return _to_package_request_payload(row, requested_by_user=requested_by_user)
 
 
 def _compute_managed_reachable_transitives(
@@ -123,9 +378,13 @@ async def get_managed_packages(
     current_user: CurrentActiveUser,
     session: DbSession,
     include_history: bool = Query(default=False),
+    service: str = Query(default=DEFAULT_SERVICE_NAME),
 ) -> list[dict[str, Any]]:
     """Return declared dependencies with their resolved version."""
+    normalized_service = _normalize_service_param(service)
     conditions = [Package.package_type == "managed"]
+    if not _is_all_services(normalized_service):
+        conditions.append(Package.service_name == normalized_service)
     if not include_history:
         conditions.append(Package.end_date == ACTIVE_END_DATE)
 
@@ -143,6 +402,7 @@ async def get_managed_packages(
             "name": row.name,
             "version_spec": row.version_spec or "",
             "resolved_version": row.version,
+            "service_name": row.service_name,
             "start_date": row.start_date.isoformat(),
             "end_date": row.end_date.isoformat(),
             "is_current": row.end_date == ACTIVE_END_DATE,
@@ -152,15 +412,42 @@ async def get_managed_packages(
     ]
 
 
+@router.get("/services")
+async def get_package_services(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+    include_history: bool = Query(default=False),
+) -> list[str]:
+    """Return distinct service names available in package snapshots."""
+    conditions = []
+    if not include_history:
+        conditions.append(Package.end_date == ACTIVE_END_DATE)
+
+    rows = (
+        await session.exec(
+            select(Package.service_name)
+            .where(*conditions)
+            .distinct()
+            .order_by(Package.service_name.asc())
+        )
+    ).all()
+    services = [row[0] if isinstance(row, tuple) else row for row in rows]
+    return [service for service in services if service]
+
+
 @router.get("/transitive")
 async def get_transitive_packages(
     current_user: CurrentActiveUser,
     session: DbSession,
     include_history: bool = Query(default=False),
     include_full_graph: bool = Query(default=False),
+    service: str = Query(default=DEFAULT_SERVICE_NAME),
 ) -> list[dict[str, Any]]:
     """Return transitive deps with strict managed-closure scope by default."""
+    normalized_service = _normalize_service_param(service)
     conditions = [Package.package_type == "transitive"]
+    if not _is_all_services(normalized_service):
+        conditions.append(Package.service_name == normalized_service)
     if not include_history:
         conditions.append(Package.end_date == ACTIVE_END_DATE)
 
@@ -174,45 +461,80 @@ async def get_transitive_packages(
 
     current_managed_rows = (
         await session.exec(
-            select(Package).where(
-                Package.package_type == "managed",
-                Package.end_date == ACTIVE_END_DATE,
-            )
+            select(Package).where(*(
+                [
+                    Package.package_type == "managed",
+                    Package.end_date == ACTIVE_END_DATE,
+                ]
+                + ([] if _is_all_services(normalized_service) else [Package.service_name == normalized_service])
+            ))
         )
     ).all()
-    managed_names = {_normalize(row.name) for row in current_managed_rows}
 
     current_transitive_rows = (
         await session.exec(
-            select(Package).where(
-                Package.package_type == "transitive",
-                Package.end_date == ACTIVE_END_DATE,
-            )
+            select(Package).where(*(
+                [
+                    Package.package_type == "transitive",
+                    Package.end_date == ACTIVE_END_DATE,
+                ]
+                + ([] if _is_all_services(normalized_service) else [Package.service_name == normalized_service])
+            ))
         )
     ).all()
-    reachable_transitives = _compute_managed_reachable_transitives(
-        managed_names=managed_names,
-        transitive_rows=current_transitive_rows,
-    )
-    parents_by_child = _build_parent_map(current_transitive_rows)
-    display_names: dict[str, str] = {}
-    for row in current_managed_rows:
-        display_names[_normalize(row.name)] = row.name
-    for row in current_transitive_rows:
-        display_names[_normalize(row.name)] = row.name
-    managed_by_norm = {_normalize(pkg.name): pkg for pkg in current_managed_rows}
+    managed_by_service: dict[str, list[Package]] = defaultdict(list)
+    for pkg in current_managed_rows:
+        managed_by_service[pkg.service_name].append(pkg)
+    transitive_by_service: dict[str, list[Package]] = defaultdict(list)
+    for pkg in current_transitive_rows:
+        transitive_by_service[pkg.service_name].append(pkg)
+
+    service_graph_data: dict[str, dict[str, Any]] = {}
+    service_names = set(managed_by_service) | set(transitive_by_service)
+    for service_name in service_names:
+        service_managed_rows = managed_by_service.get(service_name, [])
+        service_transitive_rows = transitive_by_service.get(service_name, [])
+        managed_names = {_normalize(row.name) for row in service_managed_rows}
+        reachable_transitives = _compute_managed_reachable_transitives(
+            managed_names=managed_names,
+            transitive_rows=service_transitive_rows,
+        )
+        parents_by_child = _build_parent_map(service_transitive_rows)
+        display_names: dict[str, str] = {}
+        for row in service_managed_rows:
+            display_names[_normalize(row.name)] = row.name
+        for row in service_transitive_rows:
+            display_names[_normalize(row.name)] = row.name
+        managed_lookup = {_normalize(pkg.name): pkg for pkg in service_managed_rows}
+        service_graph_data[service_name] = {
+            "managed_names": managed_names,
+            "reachable_transitives": reachable_transitives,
+            "parents_by_child": parents_by_child,
+            "display_names": display_names,
+            "managed_by_norm": managed_lookup,
+        }
 
     response_rows: list[dict[str, Any]] = []
     for row in rows:
+        graph_data = service_graph_data.get(
+            row.service_name,
+            {
+                "managed_names": set(),
+                "reachable_transitives": set(),
+                "parents_by_child": {},
+                "display_names": {},
+                "managed_by_norm": {},
+            },
+        )
         normalized_name = _normalize(row.name)
-        if not include_full_graph and normalized_name not in reachable_transitives:
+        if not include_full_graph and normalized_name not in graph_data["reachable_transitives"]:
             continue
 
         managed_root_names, dependency_paths = _compute_managed_root_data(
             transitive_name=row.name,
-            parents_by_child=parents_by_child,
-            managed_names=managed_names,
-            display_names=display_names,
+            parents_by_child=graph_data["parents_by_child"],
+            managed_names=graph_data["managed_names"],
+            display_names=graph_data["display_names"],
         )
         root_order = {root: idx for idx, root in enumerate(managed_root_names)}
         dependency_paths = sorted(
@@ -225,7 +547,7 @@ async def get_transitive_packages(
         managed_root_details = []
         for root_name in managed_root_names:
             root_norm = _normalize(root_name)
-            managed_pkg = managed_by_norm.get(root_norm)
+            managed_pkg = graph_data["managed_by_norm"].get(root_norm)
             if managed_pkg is None:
                 continue
             managed_root_details.append(
@@ -237,6 +559,7 @@ async def get_transitive_packages(
                 "id": str(row.id),
                 "name": row.name,
                 "resolved_version": row.version,
+                "service_name": row.service_name,
                 # Backward-compatible fields (legacy UI support)
                 "required_by": row.required_by or [],
                 "required_by_details": row.required_by_details or [],

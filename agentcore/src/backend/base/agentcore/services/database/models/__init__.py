@@ -37,6 +37,7 @@ from .package import Package
 from .product_release import ProductRelease
 from .release_detail import ReleaseDetail
 from .release_package_snapshot import ReleasePackageSnapshot
+from .package_request import PackageRequest
 from .teams_app import TeamsApp
 from .hitl_request import HITLRequest
 from .trigger_config import TriggerConfigTable, TriggerExecutionLogTable
@@ -97,6 +98,7 @@ __all__ = [
     "ProductRelease",
     "ReleaseDetail",
     "ReleasePackageSnapshot",
+    "PackageRequest",
     "User",
     "HITLRequest",
     "TriggerConfigTable",

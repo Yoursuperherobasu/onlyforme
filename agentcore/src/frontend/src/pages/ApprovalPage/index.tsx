@@ -9,18 +9,20 @@ import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
+import { useDeployPackageRequest, useGetPackageRequestsForApproval } from "@/controllers/API/queries/packages";
 
 import { useGetApprovals, type ApprovalAgent } from "@/controllers/API/queries/approvals";
 import { useApprovalActionModal, useApprovalActions } from "./hooks";
 import CustomLoader from "@/customization/components/custom-loader";
 
-type FilterType = "all" | "pending" | "approved" | "rejected";
-type ApprovalTabType = "agent" | "model" | "mcp";
+type FilterType = "all" | "pending" | "approved" | "rejected" | "deployed" | "cancelled";
+type ApprovalTabType = "agent" | "model" | "mcp" | "package";
 
 const APPROVAL_TABS: Array<{ id: ApprovalTabType; label: string; permission: string }> = [
   { id: "agent", label: "AI Agent", permission: "view_agent" },
   { id: "model", label: "Model", permission: "view_model" },
   { id: "mcp", label: "MCP", permission: "view_mcp" },
+  { id: "package", label: "Package", permission: "view_packages_page" },
 ];
 
 export default function ApprovalPage() {
@@ -30,10 +32,12 @@ export default function ApprovalPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ApprovalTabType>("agent");
   const navigate = useCustomNavigate();
-  const { permissions } = useContext(AuthContext);
+  const { permissions, role } = useContext(AuthContext);
   const setNoticeData = useAlertStore((state) => state.setNoticeData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const isRoot = String(role ?? "").toLowerCase() === "root";
   const [isMcpConfigOpen, setIsMcpConfigOpen] = useState(false);
   const [selectedMcpApprovalId, setSelectedMcpApprovalId] = useState<string | null>(null);
 
@@ -45,7 +49,18 @@ export default function ApprovalPage() {
   /* ================= API QUERIES ================= */
   // Fetch all approvals from backend
   const { data: agents = [], isLoading: isLoadingAgents } = useGetApprovals();
-  const visibleTabs = APPROVAL_TABS.filter((tab) => can(tab.permission));
+  const { data: packageRequests = [], isLoading: isLoadingPackageRequests } =
+    useGetPackageRequestsForApproval(
+      {},
+      {
+        enabled: isRoot,
+      },
+    );
+  const deployPackageRequestMutation = useDeployPackageRequest();
+
+  const visibleTabs = isRoot
+    ? APPROVAL_TABS.filter((tab) => tab.id === "package")
+    : APPROVAL_TABS.filter((tab) => tab.id !== "package" && can(tab.permission));
 
   useEffect(() => {
     if (visibleTabs.length === 0) return;
@@ -54,8 +69,35 @@ export default function ApprovalPage() {
     }
   }, [activeTab, visibleTabs]);
 
+  useEffect(() => {
+    if (activeTab !== "package" && (filter === "deployed" || filter === "cancelled")) {
+      setFilter("all");
+    }
+  }, [activeTab, filter]);
+
   /* ================= FILTERING & CALCULATIONS ================= */
-  const filteredAgents = agents.filter((agent) => {
+  const packageApprovalCards: ApprovalAgent[] = packageRequests.map((request) => ({
+    id: request.id,
+    entityType: "package",
+    title: `${request.package_name}`,
+    status: request.status,
+    description: request.justification,
+    submittedBy: {
+      name:
+        request.requested_by_name ||
+        request.requested_by_email ||
+        request.requested_by,
+      email: request.requested_by_email ?? null,
+    },
+    project: request.service_name,
+    submitted: request.requested_at,
+    version: request.requested_version,
+    recentChanges: request.review_comments || request.deployment_notes || "-",
+  }));
+
+  const sourceApprovals = activeTab === "package" ? packageApprovalCards : agents;
+
+  const filteredAgents = sourceApprovals.filter((agent) => {
     const entityType = (agent.entityType || "agent") as ApprovalTabType;
     const matchesTab = entityType === activeTab;
     const matchesFilter = filter === "all" ? true : agent.status === filter;
@@ -67,7 +109,7 @@ export default function ApprovalPage() {
     return matchesTab && matchesFilter && matchesSearch;
   });
 
-  const pendingCount = agents.filter((a) => a.status === "pending").length;
+  const pendingCount = sourceApprovals.filter((a) => a.status === "pending").length;
   const noAgentsMessage =
     filter === "pending"
       ? t("No pending agents found")
@@ -75,7 +117,11 @@ export default function ApprovalPage() {
         ? t("No approved agents found")
         : filter === "rejected"
           ? t("No rejected agents found")
-          : t("No agents found");
+          : filter === "deployed"
+            ? t("No deployed requests found")
+            : filter === "cancelled"
+              ? t("No cancelled requests found")
+              : t("No agents found");
 
   useEffect(() => {
     if (pendingCount > 0) {
@@ -100,6 +146,27 @@ export default function ApprovalPage() {
     if ((agent.entityType || "agent") !== "mcp") return;
     setSelectedMcpApprovalId(agent.id);
     setIsMcpConfigOpen(true);
+  };
+
+  const handlePackageDeploy = async (agent: ApprovalAgent) => {
+    await new Promise((resolve, reject) => {
+      deployPackageRequestMutation.mutate(
+        {
+          requestId: agent.id,
+          deployment_notes: "Marked as deployed by root admin",
+        },
+        {
+          onSuccess: () => {
+            setSuccessData({ title: `Package "${agent.title}" marked as deployed.` });
+            resolve(null);
+          },
+          onError: () => {
+            setErrorData({ title: `Failed to mark package "${agent.title}" as deployed.` });
+            reject(new Error("Package deploy action failed"));
+          },
+        },
+      );
+    });
   };
 
   /**
@@ -129,7 +196,7 @@ export default function ApprovalPage() {
             <h1 className="text-2xl font-semibold">{t("Review & Approval")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("Review and approve model, MCP, and AI agent requests")}
+            {t("Review and approve model, MCP, AI agent, and package requests")}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -162,22 +229,23 @@ export default function ApprovalPage() {
 
       {/* Status Tabs */}
       <div className="flex items-center gap-3 border-b border-border px-8 py-4">
-        {(["all", "pending", "approved", "rejected"] as FilterType[]).map(
-          (type) => (
-            <Button
-              key={type}
-              variant={filter === type ? "default" : "outline"}
-              onClick={() => setFilter(type)}
-            >
-              {t(type.charAt(0).toUpperCase() + type.slice(1))}
-            </Button>
-          ),
-        )}
+        {(activeTab === "package"
+          ? (["all", "pending", "approved", "rejected", "deployed", "cancelled"] as FilterType[])
+          : (["all", "pending", "approved", "rejected"] as FilterType[])
+        ).map((type) => (
+          <Button
+            key={type}
+            variant={filter === type ? "default" : "outline"}
+            onClick={() => setFilter(type)}
+          >
+            {t(type.charAt(0).toUpperCase() + type.slice(1))}
+          </Button>
+        ))}
       </div>
 
       {/* Agent Cards */}
       <div className="flex-1 overflow-auto p-8">
-        {isLoadingAgents ? (
+        {isLoadingAgents || (activeTab === "package" && isLoadingPackageRequests) ? (
           <div className="flex h-full items-center justify-center">
             <CustomLoader />
           </div>
@@ -202,9 +270,12 @@ export default function ApprovalPage() {
                   onReviewDetails={() =>
                     agent.entityType === "mcp"
                       ? setErrorData({ title: t("Use MCP Config for MCP approvals") })
+                      : agent.entityType === "package"
+                        ? undefined
                       : navigate(`/approval/${agent.id}/review`)
                   }
                   onViewMcpConfig={() => handleMcpConfigClick(agent)}
+                  onDeploy={() => handlePackageDeploy(agent)}
                 />
               ))
             )}

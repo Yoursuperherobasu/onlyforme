@@ -362,6 +362,7 @@ const SideBarFoldersButtonsComponent = ({
     "view_dashboard",
     "view_platform_configs",
     "view_help_support_page",
+    "view_approval_page",
   ]);
   const can = (permissionKey: string) =>
     isRootAdmin

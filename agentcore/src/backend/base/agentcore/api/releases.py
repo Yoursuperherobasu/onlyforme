@@ -3,13 +3,14 @@ from __future__ import annotations
 import csv
 import json
 import re
+from collections import defaultdict, deque
 from datetime import date, datetime, timezone
 from enum import Enum
 from io import BytesIO, StringIO
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from openpyxl import load_workbook
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.exc import ProgrammingError
@@ -94,6 +95,155 @@ def _detail_to_payload(detail: ReleaseDetail) -> dict[str, Any]:
         "sort_order": detail.sort_order,
         "created_at": detail.created_at.isoformat(),
     }
+
+
+def _release_package_to_payload(snapshot: ReleasePackageSnapshot) -> dict[str, Any]:
+    return {
+        "id": str(snapshot.id),
+        "release_id": str(snapshot.release_id),
+        "service_name": snapshot.service_name,
+        "name": snapshot.name,
+        "version": snapshot.version,
+        "version_spec": snapshot.version_spec,
+        "package_type": snapshot.package_type,
+        "required_by": snapshot.required_by or [],
+        "source": snapshot.source or {},
+        "captured_at": snapshot.captured_at.isoformat(),
+    }
+
+
+def _normalize_pkg(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _extract_parent_name(raw_parent: str) -> str:
+    parent = (raw_parent or "").strip()
+    if not parent:
+        return ""
+    if ":" in parent:
+        parent = parent.split(":", 1)[0].strip()
+    return parent
+
+
+def _build_release_parent_map(
+    snapshots: list[ReleasePackageSnapshot],
+) -> dict[str, set[str]]:
+    parents_by_child: dict[str, set[str]] = {}
+    for row in snapshots:
+        if row.package_type != "transitive":
+            continue
+        child = _normalize_pkg(row.name)
+        parents = {
+            _normalize_pkg(parent_name)
+            for parent_name in (_extract_parent_name(parent) for parent in (row.required_by or []))
+            if parent_name
+        }
+        if parents:
+            parents_by_child.setdefault(child, set()).update(parents)
+    return parents_by_child
+
+
+def _compute_reachable_transitives_from_packages(
+    managed_rows: list[Package],
+    transitive_rows: list[Package],
+) -> set[str]:
+    managed_names = {_normalize_pkg(row.name) for row in managed_rows}
+    children_by_parent: dict[str, set[str]] = {}
+
+    for row in transitive_rows:
+        child = _normalize_pkg(row.name)
+        parent_names: set[str] = set()
+        for detail in row.required_by_details or []:
+            parent = (detail.get("name") or "").strip()
+            if parent:
+                parent_names.add(_normalize_pkg(parent))
+        for parent_name in (_extract_parent_name(parent) for parent in (row.required_by or [])):
+            if parent_name:
+                parent_names.add(_normalize_pkg(parent_name))
+        for parent in parent_names:
+            children_by_parent.setdefault(parent, set()).add(child)
+
+    reachable: set[str] = set()
+    queue = deque(managed_names)
+    seen: set[str] = set(managed_names)
+    while queue:
+        parent = queue.popleft()
+        for child in children_by_parent.get(parent, set()):
+            if child in reachable:
+                continue
+            reachable.add(child)
+            if child not in seen:
+                seen.add(child)
+                queue.append(child)
+    return reachable
+
+
+def _compute_reachable_transitives_from_snapshot(
+    managed_rows: list[ReleasePackageSnapshot],
+    transitive_rows: list[ReleasePackageSnapshot],
+) -> set[str]:
+    managed_names = {_normalize_pkg(row.name) for row in managed_rows}
+    children_by_parent: dict[str, set[str]] = {}
+
+    for row in transitive_rows:
+        child = _normalize_pkg(row.name)
+        parent_names: set[str] = set()
+        for parent_name in (_extract_parent_name(parent) for parent in (row.required_by or [])):
+            if parent_name:
+                parent_names.add(_normalize_pkg(parent_name))
+        for parent in parent_names:
+            children_by_parent.setdefault(parent, set()).add(child)
+
+    reachable: set[str] = set()
+    queue = deque(managed_names)
+    seen: set[str] = set(managed_names)
+    while queue:
+        parent = queue.popleft()
+        for child in children_by_parent.get(parent, set()):
+            if child in reachable:
+                continue
+            reachable.add(child)
+            if child not in seen:
+                seen.add(child)
+                queue.append(child)
+    return reachable
+
+
+def _compute_managed_root_data_for_snapshot(
+    package_name: str,
+    parents_by_child: dict[str, set[str]],
+    managed_names: set[str],
+    display_names: dict[str, str],
+) -> tuple[list[str], list[str]]:
+    child = _normalize_pkg(package_name)
+    roots: set[str] = set()
+    paths: list[str] = []
+    max_paths = 25
+
+    stack: list[tuple[str, list[str]]] = [(child, [child])]
+    seen_states: set[tuple[str, tuple[str, ...]]] = set()
+
+    while stack and len(paths) < max_paths:
+        node, upward_path = stack.pop()
+        state = (node, tuple(upward_path))
+        if state in seen_states:
+            continue
+        seen_states.add(state)
+
+        for parent in parents_by_child.get(node, set()):
+            if parent in upward_path:
+                continue
+            next_path = upward_path + [parent]
+            if parent in managed_names:
+                roots.add(parent)
+                root_to_child = list(reversed(next_path))
+                paths.append(" -> ".join(display_names.get(n, n) for n in root_to_child))
+                continue
+            stack.append((parent, next_path))
+
+    root_list = sorted(display_names.get(name, name) for name in roots)
+    unique_paths = list(dict.fromkeys(paths))
+    return root_list, unique_paths
 
 
 def _normalize_header(text: str) -> str:
@@ -408,7 +558,9 @@ async def _create_release(
         current_packages = (
             await session.exec(
                 select(Package)
-                .where(Package.end_date == ACTIVE_END_DATE)
+                .where(
+                    Package.end_date == ACTIVE_END_DATE,
+                )
                 .order_by(Package.name.asc(), Package.package_type.asc(), Package.synced_at.desc())
             )
         ).all()
@@ -418,19 +570,37 @@ async def _create_release(
         else:
             raise
 
-    seen_keys: set[tuple[str, str]] = set()
+    seen_keys: set[tuple[str, str, str]] = set()
     packages: list[Package] = []
     for pkg in current_packages:
-        key = (pkg.name.lower(), pkg.package_type)
+        key = (pkg.service_name, pkg.name.lower(), pkg.package_type)
         if key in seen_keys:
             continue
         seen_keys.add(key)
         packages.append(pkg)
 
+    packages_by_service: dict[str, list[Package]] = defaultdict(list)
     for pkg in packages:
+        packages_by_service[pkg.service_name].append(pkg)
+
+    filtered_packages: list[Package] = []
+    for service_name, service_packages in packages_by_service.items():
+        managed_rows = [pkg for pkg in service_packages if pkg.package_type == "managed"]
+        transitive_rows = [pkg for pkg in service_packages if pkg.package_type == "transitive"]
+        reachable_transitives = _compute_reachable_transitives_from_packages(
+            managed_rows=managed_rows,
+            transitive_rows=transitive_rows,
+        )
+        filtered_packages.extend(managed_rows)
+        filtered_packages.extend(
+            [pkg for pkg in transitive_rows if _normalize_pkg(pkg.name) in reachable_transitives]
+        )
+
+    for pkg in filtered_packages:
         session.add(
             ReleasePackageSnapshot(
                 release_id=new_release.id,
+                service_name=pkg.service_name,
                 name=pkg.name,
                 version=pkg.version,
                 version_spec=pkg.version_spec,
@@ -445,7 +615,7 @@ async def _create_release(
     await session.commit()
     await session.refresh(new_release)
 
-    return _release_to_payload(new_release, package_count=len(packages))
+    return _release_to_payload(new_release, package_count=len(filtered_packages))
 
 
 @router.get("")
@@ -499,6 +669,89 @@ async def get_release_details(
     ).all()
 
     return [_detail_to_payload(item) for item in details]
+
+
+@router.get("/{release_id}/packages")
+async def get_release_packages(
+    release_id: UUID,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+    service: str = Query(default="all"),
+) -> list[dict[str, Any]]:
+    release = await session.get(ProductRelease, release_id)
+    if release is None:
+        raise HTTPException(status_code=404, detail="Release not found")
+
+    normalized_service = service.strip().lower()
+    snapshots = (
+        await session.exec(
+            select(ReleasePackageSnapshot)
+            .where(
+                ReleasePackageSnapshot.release_id == release_id,
+                *(()
+                  if normalized_service == "all"
+                  else (ReleasePackageSnapshot.service_name == normalized_service,)),
+            )
+            .order_by(
+                ReleasePackageSnapshot.service_name.asc(),
+                ReleasePackageSnapshot.package_type.asc(),
+                ReleasePackageSnapshot.name.asc(),
+            )
+        )
+    ).all()
+
+    payloads: list[dict[str, Any]] = []
+    snapshots_by_service: dict[str, list[ReleasePackageSnapshot]] = defaultdict(list)
+    for row in snapshots:
+        snapshots_by_service[row.service_name].append(row)
+
+    for service_name, service_rows in snapshots_by_service.items():
+        managed_rows = [row for row in service_rows if row.package_type == "managed"]
+        transitive_rows = [row for row in service_rows if row.package_type == "transitive"]
+        reachable_transitives = _compute_reachable_transitives_from_snapshot(
+            managed_rows=managed_rows,
+            transitive_rows=transitive_rows,
+        )
+        managed_names = {_normalize_pkg(row.name) for row in managed_rows}
+        managed_by_norm = {_normalize_pkg(row.name): row for row in managed_rows}
+        display_names = {_normalize_pkg(row.name): row.name for row in service_rows}
+        parents_by_child = _build_release_parent_map(service_rows)
+
+        for item in service_rows:
+            payload = _release_package_to_payload(item)
+            if item.package_type == "transitive":
+                normalized_name = _normalize_pkg(item.name)
+                if normalized_name not in reachable_transitives:
+                    continue
+                managed_roots, dependency_paths = _compute_managed_root_data_for_snapshot(
+                    package_name=item.name,
+                    parents_by_child=parents_by_child,
+                    managed_names=managed_names,
+                    display_names=display_names,
+                )
+                root_order = {root: idx for idx, root in enumerate(managed_roots)}
+                dependency_paths = sorted(
+                    dependency_paths,
+                    key=lambda path: (
+                        root_order.get(path.split(" -> ", 1)[0], 10_000),
+                        path,
+                    ),
+                )
+                managed_root_details = []
+                for root_name in managed_roots:
+                    root_row = managed_by_norm.get(_normalize_pkg(root_name))
+                    if root_row is None:
+                        continue
+                    managed_root_details.append({"name": root_row.name, "version": root_row.version})
+                payload["managed_roots"] = managed_roots
+                payload["managed_root_details"] = managed_root_details
+                payload["dependency_paths"] = dependency_paths
+            else:
+                payload["managed_roots"] = []
+                payload["managed_root_details"] = []
+                payload["dependency_paths"] = []
+            payloads.append(payload)
+    return payloads
 
 
 @router.post("/bump")
