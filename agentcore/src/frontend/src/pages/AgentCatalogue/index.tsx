@@ -44,6 +44,7 @@ export default function AgentCatalogueView({
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDescription, setNewProjectDescription] = useState("");
   const [score, setScore] = useState(5);
+  const [scoreInput, setScoreInput] = useState("5");
   const [review, setReview] = useState("");
 
   const { permissions, role, userData } = useContext(AuthContext);
@@ -127,6 +128,7 @@ export default function AgentCatalogueView({
     setSelectedEntry(entry);
     setRatingOpen(true);
     setScore(5);
+    setScoreInput("5");
     setReview("");
   };
 
@@ -189,12 +191,34 @@ export default function AgentCatalogueView({
       });
       await refetchRatings();
       setSuccessData({ title: t("Rating submitted successfully") });
+      setRatingOpen(false);
     } catch (error: any) {
       setErrorData({
         title: t("Failed to submit rating"),
         list: [error?.response?.data?.detail || t("Please try again")],
       });
     }
+  };
+
+  const handleScoreChange = (raw: string) => {
+    let next = raw.replace(/[^\d.]/g, "");
+    if (next.includes(".")) {
+      const [intPart, ...rest] = next.split(".");
+      next = `${intPart}.${rest.join("")}`;
+    }
+    next = next.replace(/^0+(?=\d)/, "");
+    if (next === "") {
+      setScoreInput("");
+      return;
+    }
+    const parsed = Number(next);
+    if (Number.isNaN(parsed)) {
+      setScoreInput("");
+      return;
+    }
+    const clamped = Math.min(5, Math.max(1, parsed));
+    setScore(clamped);
+    setScoreInput(Number.isInteger(clamped) ? String(clamped) : String(clamped));
   };
 
   return (
@@ -479,8 +503,8 @@ export default function AgentCatalogueView({
                 min={1}
                 max={5}
                 step={0.5}
-                value={score}
-                onChange={(e) => setScore(Number(e.target.value))}
+                value={scoreInput}
+                onChange={(e) => handleScoreChange(e.target.value)}
                 className="w-full rounded-md border bg-card px-3 py-2"
               />
             </div>

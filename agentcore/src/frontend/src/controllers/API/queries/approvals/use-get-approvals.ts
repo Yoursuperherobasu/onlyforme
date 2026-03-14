@@ -14,6 +14,12 @@ export interface ApprovalAgent {
     avatar?: string;
     email?: string | null;
   };
+  approver?: {
+    id?: string | null;
+    name: string;
+    email?: string | null;
+    role?: string | null;
+  } | null;
   project: string;
   submitted: string;
   version: string;

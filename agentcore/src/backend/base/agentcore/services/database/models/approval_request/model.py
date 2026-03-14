@@ -51,6 +51,12 @@ class ApprovalRequestBase(SQLModel):
         nullable=False,
         description="Admin/approver the request is sent to",
     )
+    reviewed_by: UUID | None = Field(
+        default=None,
+        foreign_key="user.id",
+        nullable=True,
+        description="User who reviewed (approved/rejected) the request",
+    )
     requested_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         nullable=False,
@@ -154,6 +160,7 @@ class ApprovalRequestRead(BaseModel):
     deployment_id: UUID
     requested_by: UUID
     request_to: UUID
+    reviewed_by: UUID | None = None
     requested_at: datetime
     reviewed_at: datetime | None = None
     decision: ApprovalDecisionEnum | None = None

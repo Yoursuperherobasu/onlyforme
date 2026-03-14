@@ -154,12 +154,10 @@ export default function UserManagementModal({
   const isDepartmentAdminCreator = userData?.role === "department_admin";
   const isCreatingSuperAdmin = effectiveRole === "super_admin";
   const isCreatingDepartmentAdmin = effectiveRole === "department_admin";
-  const isDepartmentAssignableRole =
-    effectiveRole !== "root" &&
-    effectiveRole !== "super_admin" &&
-    effectiveRole !== "department_admin";
+  const adminExcludedRoles = ["root", "root_admin", "super_admin", "department_admin", "admin"];
+  const isDepartmentAssignableRole = !adminExcludedRoles.includes(effectiveRole);
   const enableBulkDepartmentAdd =
-    !data && isDepartmentAdminCreator && isDepartmentAssignableRole;
+    !data && (isDepartmentAdminCreator || isSuperAdmin) && isDepartmentAssignableRole;
   const requiresOrganizationBootstrap = isRootAdmin && isCreatingSuperAdmin;
   const requiresDepartmentAdminSelection =
     isSuperAdmin && !isCreatingDepartmentAdmin;
