@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import or_, true
+from sqlalchemy import func, or_, true
 from sqlmodel import col, select
 
 from fastapi.responses import StreamingResponse
@@ -32,9 +32,15 @@ from agentcore.services.database.models.agent_deployment_uat.model import (
 from agentcore.services.database.models.agent_publish_recipient.model import (
     AgentPublishRecipient,
 )
+from agentcore.services.database.models.department.model import Department
+from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user_department_membership.model import (
     UserDepartmentMembership,
 )
+from agentcore.services.database.models.user_organization_membership.model import (
+    UserOrganizationMembership,
+)
+from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
 from agentcore.services.database.models.orch_conversation.crud import (
     orch_add_message,
@@ -48,6 +54,69 @@ from agentcore.services.database.models.orch_transaction.crud import (
     orch_delete_session_transactions,
 )
 router = APIRouter(prefix="/orchestrator", tags=["Orchestrator"])
+
+
+async def _resolve_super_admin_user_id(
+    *,
+    session: DbSession,
+    org_id: UUID | None,
+) -> UUID | None:
+    if not org_id:
+        return None
+    stmt = (
+        select(User)
+        .join(UserOrganizationMembership, UserOrganizationMembership.user_id == User.id)
+        .join(Role, Role.id == UserOrganizationMembership.role_id)
+        .where(
+            UserOrganizationMembership.org_id == org_id,
+            UserOrganizationMembership.status == "active",
+            func.lower(Role.name) == "super_admin",
+        )
+        .order_by(User.create_at.asc())
+    )
+    rows = (await session.exec(stmt)).all()
+    return rows[0].id if rows else None
+
+
+async def _designated_super_admin_org_ids(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> set[UUID]:
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "super_admin":
+        return set()
+    rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == current_user.id,
+                UserOrganizationMembership.status == "active",
+            )
+        )
+    ).all()
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in rows}
+    if not org_ids:
+        return set()
+    allowed: set[UUID] = set()
+    for org_id in org_ids:
+        super_admin_id = await _resolve_super_admin_user_id(session=session, org_id=org_id)
+        if super_admin_id == current_user.id:
+            allowed.add(org_id)
+    return allowed
+
+
+async def _department_admin_dept_ids(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> set[UUID]:
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "department_admin":
+        return set()
+    rows = (
+        await session.exec(
+            select(Department.id).where(Department.admin_user_id == current_user.id)
+        )
+    ).all()
+    return {r if isinstance(r, UUID) else r[0] for r in rows}
 
 class OrchAgentSummary(BaseModel):
     deploy_id: UUID
@@ -64,6 +133,7 @@ class OrchChatRequest(BaseModel):
     deployment_id: UUID | None = None
     input_value: str
     version_number: int | None = None
+    files: list[str] | None = None
 
 
 class OrchMessageResponse(BaseModel):
@@ -76,6 +146,7 @@ class OrchMessageResponse(BaseModel):
     agent_id: UUID | None = None
     deployment_id: UUID | None = None
     category: str = "message"
+    files: list[str] | None = None
     properties: dict | None = None
     content_blocks: list | None = None
 
@@ -321,6 +392,7 @@ async def _run_agent_from_snapshot(
     input_value: str,
     session_id: str | None,
     user_id: str | None,
+    files: list[str] | None = None,
     stream: bool = False,
     event_manager: EventManager | None = None,
     deployment_id: str | None = None,
@@ -359,6 +431,7 @@ async def _run_agent_from_snapshot(
         session_id=session_id,
         inputs=inputs,
         outputs=outputs,
+        files=files,
         stream=stream,
         event_manager=event_manager,
     )
@@ -434,8 +507,16 @@ async def _user_can_access_deployment(
     deployment: AgentDeploymentProd | AgentDeploymentUAT,
 ) -> bool:
     role = str(getattr(current_user, "role", "")).lower()
-    if role in {"super_admin", "department_admin", "root"}:
+    if role == "root":
         return True
+    if role == "department_admin":
+        dept_ids = await _department_admin_dept_ids(session, current_user)
+        if dept_ids and deployment.dept_id in dept_ids:
+            return True
+    if role == "super_admin":
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
+        if org_ids and deployment.org_id in org_ids:
+            return True
 
     if deployment.deployed_by == current_user.id:
         return True
@@ -519,7 +600,9 @@ async def list_orch_agents(
     """Return accessible UAT/PROD deployed agents for orchestration chat."""
     try:
         current_role = str(getattr(current_user, "role", "")).lower()
-        is_admin = current_role in {"super_admin", "department_admin", "root"}
+        is_root = current_role == "root"
+        dept_ids = await _department_admin_dept_ids(session, current_user)
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
 
         prod_share_exists = (
             select(AgentPublishRecipient.id)
@@ -540,8 +623,12 @@ async def list_orch_agents(
         # Keep Orchestration aligned with Registry behavior:
         # PUBLIC PROD agents are visible to authenticated users.
         prod_public_access = true()
-        if is_admin:
+        if is_root:
             prod_private_access = prod_private_access | true()
+        elif current_role == "department_admin" and dept_ids:
+            prod_private_access = prod_private_access | AgentDeploymentProd.dept_id.in_(list(dept_ids))
+        elif current_role == "super_admin" and org_ids:
+            prod_private_access = prod_private_access | AgentDeploymentProd.org_id.in_(list(org_ids))
 
         prod_stmt = (
             select(AgentDeploymentProd)
@@ -576,8 +663,12 @@ async def list_orch_agents(
             (AgentDeploymentUAT.deployed_by == current_user.id)
             | uat_share_exists
         )
-        if is_admin:
+        if is_root:
             uat_access = uat_access | true()
+        elif current_role == "department_admin" and dept_ids:
+            uat_access = uat_access | AgentDeploymentUAT.dept_id.in_(list(dept_ids))
+        elif current_role == "super_admin" and org_ids:
+            uat_access = uat_access | AgentDeploymentUAT.org_id.in_(list(org_ids))
 
         uat_stmt = (
             select(AgentDeploymentUAT)
@@ -677,7 +768,7 @@ async def orch_chat(
             user_id=current_user.id,
             deployment_id=deployment_id,
             timestamp=msg_ts,
-            files=[],
+            files=body.files or [],
             properties={},
             category="message",
             content_blocks=[],
@@ -694,6 +785,7 @@ async def orch_chat(
             input_value=body.input_value,
             session_id=body.session_id,
             user_id=str(current_user.id),
+            files=body.files,
             deployment_id=str(deployment_id),
             org_id=str(deployment.org_id) if deployment.org_id else None,
             dept_id=str(deployment.dept_id) if deployment.dept_id else None,
@@ -796,7 +888,7 @@ async def orch_chat_stream(
         user_id=current_user.id,
         deployment_id=deployment_id,
         timestamp=stream_msg_ts,
-        files=[],
+        files=body.files or [],
         properties={},
         category="message",
         content_blocks=[],
@@ -823,6 +915,7 @@ async def orch_chat_stream(
     dep_org_id = str(deployment.org_id) if deployment.org_id else None
     dep_dept_id = str(deployment.dept_id) if deployment.dept_id else None
     dep_is_prod = isinstance(deployment, AgentDeploymentProd)
+    dep_files = body.files
 
     async def _run_and_persist():
         """Background coroutine: run the agent, persist reply, close the queue."""
@@ -834,6 +927,7 @@ async def orch_chat_stream(
                 input_value=input_value,
                 session_id=chat_session_id,
                 user_id=user_id_str,
+                files=dep_files,
                 stream=True,
                 event_manager=event_manager,
                 deployment_id=str(dep_deployment_id),
@@ -1042,6 +1136,7 @@ async def get_orch_session_messages(
                 agent_id=m.agent_id,
                 deployment_id=m.deployment_id,
                 category=m.category or "message",
+                files=m.files if m.files else None,
                 properties=m.properties if isinstance(m.properties, dict) else None,
                 content_blocks=m.content_blocks if m.content_blocks else None,
             )

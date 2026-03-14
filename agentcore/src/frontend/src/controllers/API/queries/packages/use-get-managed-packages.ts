@@ -6,27 +6,40 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 export type ManagedPackage = {
+  id: string;
   name: string;
   version_spec: string;
   resolved_version: string;
+  start_date: string;
+  end_date: string;
+  is_current: boolean;
   source: Record<string, unknown>;
 };
 
+export type GetManagedPackagesParams = {
+  include_history?: boolean;
+};
+
 export const useGetManagedPackages: useQueryFunctionType<
-  undefined,
+  GetManagedPackagesParams,
   ManagedPackage[]
-> = (options?) => {
+> = (params, options?) => {
   const { query } = UseRequestProcessor();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const includeHistory = params?.include_history ?? false;
 
   const getManagedPackagesFn = async (): Promise<ManagedPackage[]> => {
     if (!isAuthenticated) return [];
-    const res = await api.get(`${getURL("PACKAGES")}/managed`);
+    const res = await api.get(`${getURL("PACKAGES")}/managed`, {
+      params: {
+        include_history: includeHistory,
+      },
+    });
     return res.data;
   };
 
   const queryResult: UseQueryResult<ManagedPackage[], any> = query(
-    ["useGetManagedPackages"],
+    ["useGetManagedPackages", includeHistory],
     getManagedPackagesFn,
     {
       refetchOnWindowFocus: false,

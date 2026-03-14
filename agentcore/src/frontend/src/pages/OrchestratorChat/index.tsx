@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -13,8 +13,10 @@ import type {
   OrchSessionSummary,
   OrchMessageResponse,
 } from "@/controllers/API/queries/orchestrator";
+import { usePostUploadFile } from "@/controllers/API/queries/files/use-post-upload-file";
 import { api, performStreamingRequest } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
+import { BASE_URL_API } from "@/constants/constants";
 import { MarkdownField } from "@/modals/IOModal/components/chatView/chatMessage/components/edit-message";
 import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
 import type { ContentBlock } from "@/types/chat";
@@ -42,10 +44,19 @@ interface Message {
   category?: string;
   contentBlocks?: ContentBlock[];
   blocksState?: string;
+  files?: string[];
   // HITL (Human-in-the-Loop) approval fields
   hitl?: boolean;
   hitlActions?: string[];
   hitlThreadId?: string;
+}
+
+interface FilePreview {
+  id: string;
+  file: File;
+  path?: string;
+  loading: boolean;
+  error: boolean;
 }
 
 /* ------------------ COLOR PALETTE ------------------ */
@@ -81,6 +92,7 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
       ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       : "",
     category: m.category || "message",
+    files: m.files && m.files.length > 0 ? m.files : undefined,
     // Restore HITL metadata from persisted properties
     hitl: !!m.properties?.hitl,
     hitlActions: m.properties?.hitl ? (m.properties.actions ?? []) : undefined,
@@ -135,10 +147,67 @@ export default function AgentOrchestrator() {
   const [hitlDoneMap, setHitlDoneMap] = useState<Record<string, string>>({});
   const [hitlLoadingId, setHitlLoadingId] = useState<string | null>(null);
   const [hitlLoadingAction, setHitlLoadingAction] = useState<string | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<FilePreview[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+
+  /* ------------------ FILE UPLOAD ------------------ */
+
+  const { mutate: uploadFileMutate } = usePostUploadFile();
+  const ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg"];
+
+  const uploadFile = (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (!ext || !ALLOWED_EXTENSIONS.includes(ext)) return;
+
+    const id = crypto.randomUUID().slice(0, 10);
+    setUploadFiles((prev) => [...prev, { id, file, loading: true, error: false }]);
+
+    const agentId = selectedAgent?.agent_id || "";
+    uploadFileMutate(
+      { file, id: agentId },
+      {
+        onSuccess: (data: any) => {
+          setUploadFiles((prev) =>
+            prev.map((f) => (f.id === id ? { ...f, loading: false, path: data.file_path } : f)),
+          );
+        },
+        onError: () => {
+          setUploadFiles((prev) =>
+            prev.map((f) => (f.id === id ? { ...f, loading: false, error: true } : f)),
+          );
+        },
+      },
+    );
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) uploadFile(file);
+    e.target.value = "";
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const blob = items[i].getAsFile();
+        if (blob) {
+          e.preventDefault();
+          uploadFile(blob);
+          return;
+        }
+      }
+    }
+  };
+
+  const removeFile = (id: string) => {
+    setUploadFiles((prev) => prev.filter((f) => f.id !== id));
+  };
 
   /* ------------------ API HOOKS ------------------ */
 
@@ -369,7 +438,14 @@ export default function AgentOrchestrator() {
   /* ------------------ SEND MESSAGE ------------------ */
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || isSending || agents.length === 0) return;
+    const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
+    if ((!input.trim() && !hasFiles) || isSending || agents.length === 0) return;
+
+    // Collect uploaded file paths and clear previews
+    const filePaths = uploadFiles
+      .filter((f) => f.path && !f.loading && !f.error)
+      .map((f) => f.path!);
+    setUploadFiles([]);
 
     // Detect explicit @mention vs implicit (sticky) routing.
     // Sort by name length descending so "rag agent_new" matches before "rag agent".
@@ -404,6 +480,7 @@ export default function AgentOrchestrator() {
       sender: "user",
       content: input,
       timestamp: timeNow(),
+      files: filePaths.length > 0 ? filePaths : undefined,
     };
     flushSync(() => {
       setMessages((prev) => [
@@ -479,13 +556,16 @@ export default function AgentOrchestrator() {
 
     // Always send agent_id — explicit @mention or sticky selectedModel.
     // Backend sticky routing acts as fallback if agent_id is somehow missing.
-    const requestBody = {
+    const requestBody: any = {
       session_id: currentSessionId,
       agent_id: targetAgent.agent_id,
       deployment_id: targetAgent.deploy_id,
       input_value: cleanedInput,
       version_number: targetAgent.version_number,
     };
+    if (filePaths.length > 0) {
+      requestBody.files = filePaths;
+    }
 
     const buildController = new AbortController();
 
@@ -671,10 +751,10 @@ export default function AgentOrchestrator() {
 
         {/* Chat History */}
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="shrink-0 px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {t("Conversations")}
           </div>
-          <div className="flex-1 overflow-y-auto px-2">
+          <div className="flex-1 overflow-y-auto scroll-smooth px-2" style={{ scrollbarWidth: "thin" }}>
             {Object.entries(grouped).map(([date, chats]) => (
               <div key={date} className="mb-4">
                 <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -714,10 +794,10 @@ export default function AgentOrchestrator() {
 
         {/* Agents Panel */}
         <div className="flex min-h-0 flex-1 flex-col border-t border-border">
-          <div className="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="shrink-0 px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {t("Agents")}
           </div>
-          <div className="flex-1 overflow-y-auto px-2 pb-2">
+          <div className="flex-1 overflow-y-auto scroll-smooth px-2 pb-2" style={{ scrollbarWidth: "thin" }}>
             <div className="flex flex-col gap-0.5">
               {agents.map((agent) => (
                 <button
@@ -870,6 +950,18 @@ export default function AgentOrchestrator() {
                     ) : isUser ? (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
                         {highlightMentions(msg.content)}
+                        {msg.files && msg.files.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {msg.files.map((filePath, idx) => (
+                              <img
+                                key={idx}
+                                src={`${BASE_URL_API}files/images/${filePath}`}
+                                alt="uploaded"
+                                className="max-h-48 max-w-xs rounded-lg border border-border object-contain"
+                              />
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
@@ -986,10 +1078,37 @@ export default function AgentOrchestrator() {
 
             {/* Text Input */}
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+              {/* File previews */}
+              {uploadFiles.length > 0 && (
+                <div className="flex flex-wrap gap-2 px-4 pt-3">
+                  {uploadFiles.map((f) => (
+                    <div
+                      key={f.id}
+                      className="relative flex items-center gap-1.5 rounded-lg border border-border bg-muted px-2.5 py-1.5 text-xs"
+                    >
+                      {f.loading ? (
+                        <Loader2 size={14} className="animate-spin text-muted-foreground" />
+                      ) : f.error ? (
+                        <span className="text-destructive">Failed</span>
+                      ) : (
+                        <ImagePlus size={14} className="text-muted-foreground" />
+                      )}
+                      <span className="max-w-[120px] truncate">{f.file.name}</span>
+                      <button
+                        onClick={() => removeFile(f.id)}
+                        className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
+                onPaste={handlePaste}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -1000,12 +1119,26 @@ export default function AgentOrchestrator() {
                 rows={1}
                 className="w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
               />
-              <div className="flex items-center justify-end px-3 pb-3">
+              <div className="flex items-center justify-between px-3 pb-3">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title={t("Upload image")}
+                >
+                  <ImagePlus size={16} />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".png,.jpg,.jpeg"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim() || isSending}
+                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending}
                   className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                    input.trim() && !isSending
+                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending
                       ? "bg-foreground text-background hover:opacity-90"
                       : "bg-muted text-muted-foreground"
                   }`}

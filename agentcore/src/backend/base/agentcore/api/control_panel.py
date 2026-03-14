@@ -45,6 +45,8 @@ from agentcore.services.database.models.transaction_prod.model import Transactio
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.agent.model import Agent, LifecycleStatusEnum
 from agentcore.services.database.models.department.model import Department
+from agentcore.services.database.models.role.model import Role
+from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.registry_service import sync_agent_registry
 
@@ -194,6 +196,69 @@ class PromoteFromUATResponse(BaseModel):
 
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 ADMIN_ROLES = {"root", "super_admin", "admin", "department_admin"}
+
+
+async def _resolve_super_admin_user_id(
+    *,
+    session: DbSession,
+    org_id: UUID | None,
+) -> UUID | None:
+    if not org_id:
+        return None
+    stmt = (
+        select(User)
+        .join(UserOrganizationMembership, UserOrganizationMembership.user_id == User.id)
+        .join(Role, Role.id == UserOrganizationMembership.role_id)
+        .where(
+            UserOrganizationMembership.org_id == org_id,
+            UserOrganizationMembership.status == "active",
+            func.lower(Role.name) == "super_admin",
+        )
+        .order_by(User.create_at.asc())
+    )
+    rows = (await session.exec(stmt)).all()
+    return rows[0].id if rows else None
+
+
+async def _designated_super_admin_org_ids(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> set[UUID]:
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "super_admin":
+        return set()
+    rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == current_user.id,
+                UserOrganizationMembership.status == "active",
+            )
+        )
+    ).all()
+    org_ids = {r if isinstance(r, UUID) else r[0] for r in rows}
+    if not org_ids:
+        return set()
+    allowed: set[UUID] = set()
+    for org_id in org_ids:
+        super_admin_id = await _resolve_super_admin_user_id(session=session, org_id=org_id)
+        if super_admin_id == current_user.id:
+            allowed.add(org_id)
+    return allowed
+
+
+async def _department_admin_dept_ids(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> set[UUID]:
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "department_admin":
+        return set()
+    rows = (
+        await session.exec(
+            select(Department.id).where(Department.admin_user_id == current_user.id)
+        )
+    ).all()
+    return {r if isinstance(r, UUID) else r[0] for r in rows}
 
 
 def _normalize_email_list(raw_emails: list[str]) -> list[str]:
@@ -446,12 +511,18 @@ async def list_control_panel_agents(
             .outerjoin(User, Model.deployed_by == User.id)  # type: ignore[arg-type]
             .where(Model.status == published_status)  # type: ignore[arg-type]
         )
+        current_role = str(getattr(current_user, "role", "")).lower()
+        if current_role == "department_admin":
+            dept_ids = await _department_admin_dept_ids(session, current_user)
+            base_stmt = base_stmt.where(Model.dept_id.in_(list(dept_ids)) if dept_ids else False)
+        elif current_role == "super_admin":
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
+            base_stmt = base_stmt.where(Model.org_id.in_(list(org_ids)) if org_ids else False)
         private_access_expr = (
             (Model.deployed_by == current_user.id)  # type: ignore[arg-type]
             | private_share_exists
         )
         if env == ControlPanelEnv.PROD:
-            current_role = str(getattr(current_user, "role", "")).lower()
             prod_admin_public_roles = {"super_admin", "department_admin", "root"}
             if current_role in prod_admin_public_roles:
                 # Admins should be able to see private PROD deployments in control panel.
@@ -468,7 +539,6 @@ async def list_control_panel_agents(
                 )
             )
         else:
-            current_role = str(getattr(current_user, "role", "")).lower()
             uat_admin_public_roles = {"super_admin", "department_admin", "root"}
             if current_role in uat_admin_public_roles:
                 # Admins should be able to see private UAT deployments in control panel.
@@ -1139,6 +1209,46 @@ async def promote_uat_to_prod(
         await session.refresh(new_record)
 
         if is_admin:
+            # Admin publish: no approval required — promote guardrails now.
+            try:
+                snapshot = uat_dep.agent_snapshot or {}
+                for node in snapshot.get("nodes", []):
+                    node_data = node.get("data", {})
+                    node_type = node_data.get("type", "")
+                    if node_type != "NemoGuardrails":
+                        continue
+                    template = node_data.get("node", {}).get("template", {})
+                    field = template.get("guardrail_id")
+                    if not field:
+                        continue
+                    value = field.get("value") if isinstance(field, dict) else field
+                    guardrail_id = None
+                    if isinstance(value, str) and "|" in value:
+                        parts = [p.strip() for p in value.split("|")]
+                        if len(parts) >= 2:
+                            guardrail_id = parts[1]
+                    elif isinstance(value, str) and value.strip():
+                        guardrail_id = value.strip()
+                    if guardrail_id:
+                        from agentcore.services.guardrail_service_client import promote_guardrail_via_service
+                        promo_result = await promote_guardrail_via_service(
+                            guardrail_id=guardrail_id,
+                            promoted_by=str(current_user.id),
+                        )
+                        logger.info(
+                            "[GUARDRAIL_PROMOTION] Guardrail promoted (admin direct publish): "
+                            f"uat_id={guardrail_id}, prod_id={promo_result.get('prod_guardrail_id')}, "
+                            f"agent_id={uat_dep.agent_id}, deploy_id={new_record.id}"
+                        )
+            except Exception as guardrail_err:
+                logger.warning(
+                    f"[GUARDRAIL_PROMOTION] Failed to promote guardrails for PROD deploy {new_record.id}: {guardrail_err}",
+                    exc_info=True,
+                )
+            # Non-admin: guardrail promotion is deferred until admin approval.
+            # See approvals.py approve_agent().
+
+        if is_admin:
             try:
                 await sync_agent_registry(
                     session=session,
@@ -1150,6 +1260,31 @@ async def promote_uat_to_prod(
                 await session.commit()
             except Exception as sync_err:
                 logger.warning(f"Registry sync failed for promoted PROD deploy {new_record.id}: {sync_err}")
+
+            # ─── HTTP notify (for downstream deployment orchestration) ──
+            try:
+                import httpx
+                from agentcore.services.deps import get_settings_service
+                settings = get_settings_service().settings
+                base_url = f"http://{settings.host}:{settings.port}"
+                payload = {
+                    "agent_id": str(uat_dep.agent_id),
+                    "environment": "prod",
+                    "version_number": str(next_version),
+                    "deployment_id": str(new_record.id),
+                }
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+                    resp.raise_for_status()
+                    verified = resp.json()
+                logger.info(
+                    f"[PROMOTE_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+                    f"deployment_id={verified.get('deployment_id')} "
+                    f"version={verified.get('version_number')} "
+                    f"status={verified.get('status')} is_active={verified.get('is_active')}",
+                )
+            except Exception as notify_err:
+                logger.warning(f"Post-promote notify API failed for PROD deploy {new_record.id}: {notify_err}")
 
         return PromoteFromUATResponse(
             success=True,

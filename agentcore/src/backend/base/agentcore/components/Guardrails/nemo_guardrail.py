@@ -183,10 +183,22 @@ class NemoGuardrailComponent(Node):
             self._decision_evaluated = True
             return decision
 
+        # Detect production context — prod agents must use the frozen prod guardrail copy
+        environment: str | None = None
+        if self._vertex:
+            is_prod = bool(getattr(self._vertex.graph, "prod_deployment_id", None))
+            if is_prod:
+                environment = "prod"
+                logger.info(
+                    "NeMo guardrail node detected production context: "
+                    f"guardrail_id={guardrail_id}, prod_deployment_id={getattr(self._vertex.graph, 'prod_deployment_id', None)}"
+                )
+
         try:
             result = await apply_nemo_guardrail_via_service(
                 input_text=input_text,
                 guardrail_id=guardrail_id,
+                environment=environment,
             )
             self.trace_output_metadata = {
                 "agentcore_usage": {

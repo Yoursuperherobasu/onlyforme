@@ -88,9 +88,9 @@ async def _run_async_migrations() -> None:
     # (which sanitizes the URL for async compatibility)
     # Only fallback to environment variables if config option is not set
     url = config.get_main_option("sqlalchemy.url") or os.getenv("DATABASE_URL") or os.getenv("AGENTCORE_DATABASE_URL")
-    # Validate that we have a real URL
-    if not url or url.startswith("driver://"):
-        url = os.getenv("DATABASE_URL")
+    # Validate that we have a real URL (skip placeholder values from alembic.ini)
+    if not url or url.startswith("driver://") or url.startswith("${"):
+        url = os.getenv("DATABASE_URL") or os.getenv("AGENTCORE_DATABASE_URL")
    
     connectable = create_async_engine(url, poolclass=pool.NullPool)
  

@@ -11,27 +11,45 @@ export type TransitivePackage = {
   resolved_version: string;
   required_by: string[];
   required_by_details: { name: string; version: string }[];
+  required_by_chain: string[];
+  required_by_chain_details: { name: string; version: string }[];
+  managed_roots: string[];
+  managed_root_details: { name: string; version: string }[];
+  dependency_paths: string[];
   start_date: string;
   end_date: string;
   is_current: boolean;
+  scope: "managed_closure" | "full_graph";
   source: Record<string, unknown>;
 };
 
+export type GetTransitivePackagesParams = {
+  include_history?: boolean;
+  include_full_graph?: boolean;
+};
+
 export const useGetTransitivePackages: useQueryFunctionType<
-  undefined,
+  GetTransitivePackagesParams,
   TransitivePackage[]
-> = (options?) => {
+> = (params, options?) => {
   const { query } = UseRequestProcessor();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const includeHistory = params?.include_history ?? false;
+  const includeFullGraph = params?.include_full_graph ?? false;
 
   const getTransitivePackagesFn = async (): Promise<TransitivePackage[]> => {
     if (!isAuthenticated) return [];
-    const res = await api.get(`${getURL("PACKAGES")}/transitive`);
+    const res = await api.get(`${getURL("PACKAGES")}/transitive`, {
+      params: {
+        include_history: includeHistory,
+        include_full_graph: includeFullGraph,
+      },
+    });
     return res.data;
   };
 
   const queryResult: UseQueryResult<TransitivePackage[], any> = query(
-    ["useGetTransitivePackages"],
+    ["useGetTransitivePackages", includeHistory, includeFullGraph],
     getTransitivePackagesFn,
     {
       refetchOnWindowFocus: false,

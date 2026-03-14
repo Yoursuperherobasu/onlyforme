@@ -326,10 +326,6 @@ const NodeToolbarComponent = memo(
           case "save":
             saveComponent();
             break;
-          case "freezeAll":
-            takeSnapshot();
-            FreezeAllVertices({ agentId: currentAgentId, stopNodeId: data.id });
-            break;
           case "code":
             setOpenModal(!openModal);
             break;
@@ -470,24 +466,6 @@ const NodeToolbarComponent = memo(
                 s.name.toLowerCase().startsWith("advanced"),
               )}
               dataTestId="edit-button-modal"
-            />
-          )}
-          {!hasToolMode && (
-            <ToolbarButton
-              icon="FreezeAll"
-              label="Freeze"
-              dataTestId="freeze-all-button-modal"
-              onClick={() => {
-                takeSnapshot();
-                FreezeAllVertices({
-                  agentId: currentAgentId,
-                  stopNodeId: data.id,
-                });
-              }}
-              shortcut={shortcuts.find((s) =>
-                s.name.toLowerCase().startsWith("freeze"),
-              )}
-              className={cn("node-toolbar-buttons", frozen && "text-blue-500")}
             />
           )}
           {hasToolMode && (
@@ -690,24 +668,6 @@ const NodeToolbarComponent = memo(
                       value={"Ungroup"}
                       icon={"Ungroup"}
                       dataTestId="group-button-modal"
-                    />
-                  </SelectItem>
-                )}
-                {hasToolMode && (
-                  <SelectItem
-                    value="freezeAll"
-                    data-testid="freeze-all-button-modal"
-                  >
-                    <ToolbarSelectItem
-                      shortcut={
-                        shortcuts.find((obj) =>
-                          obj.name.toLowerCase().startsWith("freeze"),
-                        )?.shortcut!
-                      }
-                      value={"Freeze"}
-                      icon={"FreezeAll"}
-                      dataTestId="freeze-path-button"
-                      style={`${frozen ? " text-ice" : ""} transition-all`}
                     />
                   </SelectItem>
                 )}

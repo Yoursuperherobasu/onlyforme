@@ -48,6 +48,7 @@ async def apply_guardrail(
             input_text=body.input_text,
             guardrail_id=body.guardrail_id,
             session=session,
+            environment=body.environment,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

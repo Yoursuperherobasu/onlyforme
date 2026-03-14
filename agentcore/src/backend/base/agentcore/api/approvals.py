@@ -91,11 +91,21 @@ class ApprovalResponse(BaseModel):
     approvedBy: str | None = None
 
 
+class GuardrailPromotionResult(BaseModel):
+    uat_guardrail_id: str
+    prod_guardrail_id: str | None = None
+    in_sync: bool = False
+    ready: bool = False
+    error: str | None = None
+
+
 class ProdPromotionHandoffResponse(BaseModel):
     id: UUID
     agent_id: UUID
     promoted_from_uat_id: UUID | None = None
     version_number: int
+    guardrails_ready: bool = False
+    guardrail_promotions: list[GuardrailPromotionResult] = []
 
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -112,15 +122,73 @@ def _build_approver_info(user: User | None) -> ApproverInfo | None:
         email=email,
         role=getattr(user, "role", None),
     )
+async def _promote_guardrails_for_deployment(
+    snapshot: dict,
+    promoted_by: UUID,
+) -> list[GuardrailPromotionResult]:
+    """Extract NemoGuardrails nodes from the agent snapshot and promote each to prod.
+
+    Returns a list of promotion results (one per guardrail node found).
+    """
+    from agentcore.services.guardrail_service_client import promote_guardrail_via_service
+
+    results: list[GuardrailPromotionResult] = []
+    for node in snapshot.get("nodes", []):
+        node_data = node.get("data", {})
+        if node_data.get("type") != "NemoGuardrails":
+            continue
+        template = node_data.get("node", {}).get("template", {})
+        field = template.get("guardrail_id")
+        if not field:
+            continue
+        value = field.get("value") if isinstance(field, dict) else field
+        guardrail_id: str | None = None
+        if isinstance(value, str) and "|" in value:
+            parts = [p.strip() for p in value.split("|")]
+            if len(parts) >= 2:
+                guardrail_id = parts[1]
+        elif isinstance(value, str) and value.strip():
+            guardrail_id = value.strip()
+        if not guardrail_id:
+            continue
+
+        result = GuardrailPromotionResult(uat_guardrail_id=guardrail_id)
+        try:
+            promo = await promote_guardrail_via_service(
+                guardrail_id=guardrail_id,
+                promoted_by=str(promoted_by),
+            )
+            result.prod_guardrail_id = promo.get("prod_guardrail_id")
+            result.in_sync = promo.get("in_sync", False)
+            result.ready = True
+            logger.info(
+                "[GUARDRAIL_PROMOTION] Guardrail promoted on approval: "
+                f"uat_id={guardrail_id}, prod_id={result.prod_guardrail_id}, "
+                f"in_sync={result.in_sync}"
+            )
+        except Exception as exc:
+            result.error = str(exc)
+            logger.warning(
+                f"[GUARDRAIL_PROMOTION] Failed to promote guardrail {guardrail_id}: {exc}",
+                exc_info=True,
+            )
+        results.append(result)
+    return results
+
 
 def _build_prod_promotion_handoff_payload(
     deployment: AgentDeploymentProd,
+    guardrail_promotions: list[GuardrailPromotionResult] | None = None,
 ) -> ProdPromotionHandoffResponse:
+    promo_list = guardrail_promotions or []
+    all_ready = all(g.ready for g in promo_list) if promo_list else True
     return ProdPromotionHandoffResponse(
         id=deployment.id,
         agent_id=deployment.agent_id,
         promoted_from_uat_id=deployment.promoted_from_uat_id,
         version_number=deployment.version_number,
+        guardrails_ready=all_ready,
+        guardrail_promotions=promo_list,
     )
 
 
@@ -194,6 +262,29 @@ def _is_org_scoped_super_admin(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "super_admin"
 
 
+async def _designated_super_admin_org_ids(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> set[UUID]:
+    if not _is_org_scoped_super_admin(current_user):
+        return set()
+    org_ids = await _current_user_org_ids(session, current_user.id)
+    if not org_ids:
+        return set()
+    allowed: set[UUID] = set()
+    for org_id in org_ids:
+        try:
+            super_admin_id = await _resolve_super_admin_user_id(
+                session=session,
+                org_id=org_id,
+            )
+        except HTTPException:
+            continue
+        if super_admin_id == current_user.id:
+            allowed.add(org_id)
+    return allowed
+
+
 async def _get_approval_for_action(
     *,
     session: DbSession,
@@ -225,7 +316,7 @@ async def _get_approval_for_action(
 
     if req.request_to != current_user.id:
         if _is_org_scoped_super_admin(current_user):
-            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
             if req.org_id and req.org_id in org_ids:
                 return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
@@ -255,7 +346,7 @@ async def _get_approval_for_view(
         if req.request_to == current_user.id or req.requested_by == current_user.id:
             return req
         if _is_org_scoped_super_admin(current_user):
-            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
             if req.org_id and req.org_id in org_ids:
                 return req
         raise HTTPException(status_code=403, detail="Not allowed to view this approval")
@@ -263,7 +354,7 @@ async def _get_approval_for_view(
     # Fallback by agent id: latest request visible to user.
     stmt = select(ApprovalRequest).where(ApprovalRequest.agent_id == target_uuid).order_by(ApprovalRequest.requested_at.desc())
     if _is_org_scoped_super_admin(current_user):
-        org_ids = await _current_user_org_ids(session, current_user.id)
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
         stmt = stmt.where(
             (ApprovalRequest.request_to == current_user.id)
             | (ApprovalRequest.requested_by == current_user.id)
@@ -306,7 +397,7 @@ async def _get_mcp_approval_for_action(
         raise HTTPException(status_code=404, detail="MCP approval request not found")
     if req.request_to != current_user.id:
         if _is_org_scoped_super_admin(current_user):
-            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
             if req.org_id and req.org_id in org_ids:
                 return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
@@ -340,7 +431,7 @@ async def _get_mcp_approval_for_view(
     if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
     if _is_org_scoped_super_admin(current_user):
-        org_ids = await _current_user_org_ids(session, current_user.id)
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
         if req.org_id and req.org_id in org_ids:
             return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
@@ -374,7 +465,7 @@ async def _get_model_approval_for_action(
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to != current_user.id:
         if _is_org_scoped_super_admin(current_user):
-            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
             if req.org_id and req.org_id in org_ids:
                 return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
@@ -412,7 +503,7 @@ async def _get_model_approval_for_view(
     if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
     if _is_org_scoped_super_admin(current_user):
-        org_ids = await _current_user_org_ids(session, current_user.id)
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
         if req.org_id and req.org_id in org_ids:
             return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
@@ -533,7 +624,7 @@ async def get_approvals(
     try:
         stmt = select(ApprovalRequest).order_by(ApprovalRequest.requested_at.desc())
         if _is_org_scoped_super_admin(current_user):
-            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
             stmt = stmt.where(ApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
         else:
             stmt = stmt.where(ApprovalRequest.request_to == current_user.id)
@@ -594,7 +685,7 @@ async def get_approvals(
 
         mcp_stmt = select(McpApprovalRequest).order_by(McpApprovalRequest.requested_at.desc())
         if _is_org_scoped_super_admin(current_user):
-            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
             mcp_stmt = mcp_stmt.where(McpApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
         else:
             mcp_stmt = mcp_stmt.where(McpApprovalRequest.request_to == current_user.id)
@@ -649,7 +740,7 @@ async def get_approvals(
         model_stmt = select(ModelApprovalRequest).order_by(ModelApprovalRequest.requested_at.desc())
         # Always filter by request_to — each approver only sees their own model requests
         if _is_org_scoped_super_admin(current_user):
-            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_ids = await _designated_super_admin_org_ids(session, current_user)
             model_stmt = model_stmt.where(ModelApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
         else:
             model_stmt = model_stmt.where(ModelApprovalRequest.request_to == current_user.id)
@@ -1034,6 +1125,21 @@ async def approve_agent(
         except Exception as fm_err:
             logger.warning(f"FileTrigger sync failed after approval {req.id}: {fm_err}")
 
+    # ── Promote guardrails used by this agent to PROD ──
+    guardrail_promotions: list[GuardrailPromotionResult] = []
+    if deployment.agent_snapshot:
+        try:
+            guardrail_promotions = await _promote_guardrails_for_deployment(
+                snapshot=deployment.agent_snapshot,
+                promoted_by=current_user.id,
+            )
+        except Exception as guardrail_err:
+            logger.warning(
+                f"[GUARDRAIL_PROMOTION] Failed to promote guardrails for PROD deploy "
+                f"{deployment.id}: {guardrail_err}",
+                exc_info=True,
+            )
+
     # ─── Publish notification (DB-verified) ──
     try:
         from agentcore.api.publish import _notify_publish_event
@@ -1050,9 +1156,36 @@ async def approve_agent(
     except Exception as notify_err:
         logger.warning(f"Publish notification failed after approval {req.id}: {notify_err}")
 
+    # ─── HTTP notify (for downstream deployment) ──
+    try:
+        import httpx
+        from agentcore.services.deps import get_settings_service
+        settings = get_settings_service().settings
+        base_url = f"http://{settings.host}:{settings.port}"
+        payload = {
+            "agent_id": str(deployment.agent_id),
+            "environment": "prod",
+            "version_number": str(deployment.version_number),
+            "deployment_id": str(deployment.id),
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+            resp.raise_for_status()
+            verified = resp.json()
+        logger.info(
+            f"[APPROVAL_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+            f"deployment_id={verified.get('deployment_id')} "
+            f"version={verified.get('version_number')} "
+            f"status={verified.get('status')} is_active={verified.get('is_active')}",
+        )
+    except Exception as notify_err:
+        logger.warning(f"Post-approval notify API failed for approval {req.id}: {notify_err}")
+
     # Trigger handoff payload only for approved AGENT promotions (never on reject).
     try:
-        handoff_payload = _build_prod_promotion_handoff_payload(deployment)
+        handoff_payload = _build_prod_promotion_handoff_payload(
+            deployment, guardrail_promotions=guardrail_promotions,
+        )
         logger.info(
             f"[PROD_PROMOTION_HANDOFF_TRIGGER] {handoff_payload.model_dump()}",
         )
@@ -1070,7 +1203,7 @@ async def approve_agent(
     )
     logger.info(
         f"[APPROVE_RESPONSE] {response_payload.model_dump()} "
-        f"handoff={_build_prod_promotion_handoff_payload(deployment).model_dump()}",
+        f"handoff={_build_prod_promotion_handoff_payload(deployment, guardrail_promotions).model_dump()}",
     )
     return response_payload
 
