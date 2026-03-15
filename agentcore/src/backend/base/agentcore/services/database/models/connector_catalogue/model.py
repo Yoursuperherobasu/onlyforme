@@ -22,7 +22,7 @@ class ConnectorCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     database_name: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
     schema_name: str | None = Field(default="public", sa_column=Column(String(255), nullable=True))
     username: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
-    password_encrypted: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    password_secret_name: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
     ssl_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     # Provider-specific config for non-DB connectors (Azure Blob, SharePoint, etc.)
     provider_config: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))

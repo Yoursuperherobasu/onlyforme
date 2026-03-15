@@ -1,4 +1,4 @@
-"""Approval API router backed by database tables.
+﻿"""Approval API router backed by database tables.
 
 This exposes approval requests for approvers (department admins) and lets them
 approve/reject pending PROD publish requests.
@@ -345,10 +345,6 @@ async def _get_approval_for_view(
     if req:
         if req.request_to == current_user.id or req.requested_by == current_user.id:
             return req
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            if req.org_id and req.org_id in org_ids:
-                return req
         raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
     # Fallback by agent id: latest request visible to user.
@@ -430,10 +426,6 @@ async def _get_mcp_approval_for_view(
         raise HTTPException(status_code=404, detail="MCP approval request not found")
     if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
-    if _is_org_scoped_super_admin(current_user):
-        org_ids = await _designated_super_admin_org_ids(session, current_user)
-        if req.org_id and req.org_id in org_ids:
-            return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
 
@@ -458,16 +450,12 @@ async def _get_model_approval_for_action(
             .where(ModelApprovalRequest.model_id == target_uuid, ModelApprovalRequest.decision == None)  # noqa: E711
             .order_by(ModelApprovalRequest.requested_at.desc())
         )
-        # Model approvals are strictly routed — only assigned approver can act
+        # Model approvals are strictly routed â€” only assigned approver can act
         stmt = stmt.where(ModelApprovalRequest.request_to == current_user.id)
         req = (await session.exec(stmt)).first()
     if not req:
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to != current_user.id:
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            if req.org_id and req.org_id in org_ids:
-                return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
     if req.requested_by == current_user.id:
         raise HTTPException(status_code=400, detail="No user can approve their own request")
@@ -502,17 +490,11 @@ async def _get_model_approval_for_view(
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
-    if _is_org_scoped_super_admin(current_user):
-        org_ids = await _designated_super_admin_org_ids(session, current_user)
-        if req.org_id and req.org_id in org_ids:
-            return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
 
 def _next_model_environment(env: str) -> str | None:
     normalized = str(env or "").strip().lower()
-    if normalized == ModelEnvironment.TEST.value:
-        return ModelEnvironment.UAT.value
     if normalized == ModelEnvironment.UAT.value:
         return ModelEnvironment.PROD.value
     return None
@@ -738,12 +720,8 @@ async def get_approvals(
                 )
             )
         model_stmt = select(ModelApprovalRequest).order_by(ModelApprovalRequest.requested_at.desc())
-        # Always filter by request_to — each approver only sees their own model requests
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            model_stmt = model_stmt.where(ModelApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
-        else:
-            model_stmt = model_stmt.where(ModelApprovalRequest.request_to == current_user.id)
+        # Model approvals are strictly routed — only assigned approver sees them.
+        model_stmt = model_stmt.where(ModelApprovalRequest.request_to == current_user.id)
         model_rows = (await session.exec(model_stmt)).all()
         for req in model_rows:
             row = await session.get(ModelRegistry, req.model_id)
@@ -919,7 +897,7 @@ async def approve_agent(
         model_req.reviewed_at = now
         model_req.updated_at = now
 
-        current_env = str(model_row.environment or ModelEnvironment.TEST.value).lower()
+        current_env = str(model_row.environment or ModelEnvironment.UAT.value).lower()
         current_visibility = str(model_row.visibility_scope or ModelVisibilityScope.PRIVATE.value).lower()
         model_row.review_comments = model_req.justification
         model_row.review_attachments = model_req.file_path
@@ -932,10 +910,8 @@ async def approve_agent(
             if not expected_next or str(model_req.target_environment).lower() != expected_next:
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid promotion path. Backend enforces DEV->UAT->PROD only.",
+                    detail="Invalid promotion path. Backend enforces UAT->PROD only.",
                 )
-            if current_env == ModelEnvironment.TEST.value and str(model_req.target_environment).lower() == ModelEnvironment.PROD.value:
-                raise HTTPException(status_code=400, detail="Direct DEV->PROD promotion is blocked")
             model_row.environment = str(model_req.target_environment).lower()
             model_row.approval_status = ModelApprovalStatus.APPROVED.value
             model_row.is_active = True
@@ -993,8 +969,25 @@ async def approve_agent(
                     org_id=model_row.org_id,
                     dept_id=model_row.dept_id,
                 )
-        elif model_req.request_type == ModelApprovalRequestType.VISIBILITY:
-            model_row.visibility_scope = str(model_req.visibility_requested).lower()
+            elif model_req.request_type == ModelApprovalRequestType.VISIBILITY:
+                model_row.visibility_scope = str(model_req.visibility_requested).lower()
+                if model_req.visibility_requested == ModelVisibilityScope.DEPARTMENT.value:
+                    if model_req.org_id:
+                        model_row.org_id = model_req.org_id
+                    if model_req.dept_id:
+                        model_row.dept_id = model_req.dept_id
+                    if getattr(model_req, "public_dept_ids", None):
+                        model_row.public_dept_ids = list(model_req.public_dept_ids or [])
+                elif model_req.visibility_requested == ModelVisibilityScope.ORGANIZATION.value:
+                    if model_req.org_id:
+                        model_row.org_id = model_req.org_id
+                    model_row.dept_id = None
+                    model_row.public_dept_ids = None
+                else:
+                    if model_req.org_id:
+                        model_row.org_id = model_req.org_id
+                    model_row.dept_id = None
+                    model_row.public_dept_ids = None
             model_row.approval_status = ModelApprovalStatus.APPROVED.value
             model_row.is_active = True
             model_row.request_to = None
@@ -1108,7 +1101,7 @@ async def approve_agent(
     except Exception as reg_err:
         logger.warning(f"Registry sync failed after approval {req.id}: {reg_err}")
 
-    # Sync FileTrigger nodes → auto-create trigger_config entries
+    # Sync FileTrigger nodes â†’ auto-create trigger_config entries
     if deployment.agent_snapshot:
         try:
             from agentcore.services.deps import get_trigger_service
@@ -1125,7 +1118,7 @@ async def approve_agent(
         except Exception as fm_err:
             logger.warning(f"FileTrigger sync failed after approval {req.id}: {fm_err}")
 
-    # ── Promote guardrails used by this agent to PROD ──
+    # â”€â”€ Promote guardrails used by this agent to PROD â”€â”€
     guardrail_promotions: list[GuardrailPromotionResult] = []
     if deployment.agent_snapshot:
         try:
@@ -1140,7 +1133,7 @@ async def approve_agent(
                 exc_info=True,
             )
 
-    # ─── Publish notification (DB-verified) ──
+    # â”€â”€â”€ Publish notification (DB-verified) â”€â”€
     try:
         from agentcore.api.publish import _notify_publish_event
         await _notify_publish_event(
@@ -1156,7 +1149,7 @@ async def approve_agent(
     except Exception as notify_err:
         logger.warning(f"Publish notification failed after approval {req.id}: {notify_err}")
 
-    # ─── HTTP notify (for downstream deployment) ──
+    # â”€â”€â”€ HTTP notify (for downstream deployment) â”€â”€
     try:
         import httpx
         from agentcore.services.deps import get_settings_service
@@ -1981,3 +1974,8 @@ async def reset_agent_status(
         "agentId": str(req.agent_id),
         "newStatus": "pending",
     }
+
+
+
+
+

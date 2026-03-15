@@ -66,7 +66,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
     page: "Model Registry",
     sections: [
       { name: "Page Access", keys: ["view_models"] },
-      { name: "Actions", keys: ["add_new_model", "request_new_model", "retire_model"] },
+      { name: "Actions", keys: ["add_new_model", "request_new_model", "retire_model", "edit_model_registry", "delete_model_registry"] },
     ],
   },
   {

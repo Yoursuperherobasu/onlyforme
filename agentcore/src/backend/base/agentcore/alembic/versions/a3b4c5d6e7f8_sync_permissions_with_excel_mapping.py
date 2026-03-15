@@ -34,6 +34,8 @@ PERMISSIONS = [
     ("add_new_model", "Model Registry"),
     ("request_new_model", "Model Registry"),
     ("retire_model", "Model Registry"),
+    ("edit_model_registry", "Model Registry"),
+    ("delete_model_registry", "Model Registry"),
     ("view_control_panel", "Agent Control Panel"),
     ("share_agent", "Agent Control Panel"),
     ("start_stop_agent", "Agent Control Panel"),

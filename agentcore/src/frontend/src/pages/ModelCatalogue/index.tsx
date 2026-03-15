@@ -58,13 +58,11 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 const ENV_LABELS: Record<string, string> = {
   all: "All Envs",
-  test: "DEV",
   uat: "UAT",
   prod: "PROD",
 };
 
 const ENV_BADGE_CLASSES: Record<string, string> = {
-  test: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
   uat: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
   prod: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
 };
@@ -102,17 +100,18 @@ export default function ModelCatalogue(): JSX.Element {
     departments: [],
   });
 
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions, role, userData } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const normalizedRole = (role ?? "").toLowerCase();
+  const normalizedRole = (role ?? "").toLowerCase().replace(" ", "_");
+  const isRoot = normalizedRole === "root" || normalizedRole === "root_admin";
   const isModelAdmin =
-    normalizedRole === "root" ||
-    normalizedRole === "super_admin" ||
-    normalizedRole === "department_admin";
+    isRoot || normalizedRole === "super_admin" || normalizedRole === "department_admin";
   const canAddModel = isModelAdmin && can("add_new_model");
   const canRequestModel = can("request_new_model");
   const isDepartmentAdmin = normalizedRole === "department_admin";
   const isSuperAdmin = normalizedRole === "super_admin";
+  const currentUserId = userData?.id;
+  const canSeeActions = isModelAdmin && (can("edit_model_registry") || can("delete_model_registry"));
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -188,6 +187,34 @@ export default function ModelCatalogue(): JSX.Element {
 
   const getProviderName = (provider: string) =>
     PROVIDER_LABELS[provider] ?? provider;
+
+  const canEditModel = (model: ModelType) => {
+    if (!isModelAdmin || !can("edit_model_registry")) return false;
+    if (model.approval_status === "pending") return false;
+    if (isRoot || isSuperAdmin) return true;
+    if (isDepartmentAdmin) {
+      return Boolean(
+        currentUserId &&
+          (model.reviewed_by === currentUserId ||
+            (model.created_by_id === currentUserId && model.approval_status === "approved")),
+      );
+    }
+    return false;
+  };
+
+  const canDeleteModel = (model: ModelType) => {
+    if (!isModelAdmin || !can("delete_model_registry")) return false;
+    if (model.approval_status === "pending") return false;
+    if (isRoot || isSuperAdmin) return true;
+    if (isDepartmentAdmin) {
+      return Boolean(
+        currentUserId &&
+          (model.reviewed_by === currentUserId ||
+            (model.created_by_id === currentUserId && model.approval_status === "approved")),
+      );
+    }
+    return false;
+  };
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmModel) return;
@@ -368,7 +395,7 @@ export default function ModelCatalogue(): JSX.Element {
                       ...(isSuperAdmin ? ["Department Scope"] : []),
                       "Type",
                       "Status",
-                      "Actions",
+                    ...(canSeeActions ? ["Actions"] : []),
                     ].map((h) => (
                       <th
                         key={h}
@@ -384,7 +411,7 @@ export default function ModelCatalogue(): JSX.Element {
                   {filteredModels.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0)}
+                        colSpan={8 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canSeeActions ? 1 : 0)}
                         className="px-6 py-12 text-center text-sm text-muted-foreground"
                       >
                         {displayModels.length === 0
@@ -428,10 +455,16 @@ export default function ModelCatalogue(): JSX.Element {
                         <td className="px-6 py-4">
                           <span
                             className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium uppercase ${
-                              ENV_BADGE_CLASSES[model.environment] ?? "bg-gray-100 text-gray-700"
+                              model.environment === "test"
+                                ? ENV_BADGE_CLASSES.uat
+                                : ENV_BADGE_CLASSES[model.environment] ?? "bg-gray-100 text-gray-700"
                             }`}
                           >
-                            {t(ENV_LABELS[model.environment] ?? model.environment)}
+                            {t(
+                              model.environment === "test"
+                                ? "UAT"
+                                : ENV_LABELS[model.environment] ?? model.environment,
+                            )}
                           </span>
                         </td>
 
@@ -524,38 +557,49 @@ export default function ModelCatalogue(): JSX.Element {
                           )}
                         </td>
 
-                        {/* Actions */}
-                        <td className="px-6 py-4">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button className="opacity-0 group-hover:opacity-100 transition-opacity">
-                                <MoreVertical className="h-4 w-4" />
-                              </button>
-                            </DropdownMenuTrigger>
+                        {canSeeActions ? (
+                          <td className="px-6 py-4">
+                            {canEditModel(model) || canDeleteModel(model) ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </button>
+                                </DropdownMenuTrigger>
 
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setSelectedModel(model);
-                                  setIsEditModalOpen(true);
-                                }}
-                              >
-                                <Edit2 className="mr-2 h-4 w-4" />
-                                {t("Edit")}
-                              </DropdownMenuItem>
+                                <DropdownMenuContent align="end">
+                                  {canEditModel(model) ? (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setSelectedModel(model);
+                                        setIsEditModalOpen(true);
+                                      }}
+                                    >
+                                      <Edit2 className="mr-2 h-4 w-4" />
+                                      {t("Edit")}
+                                    </DropdownMenuItem>
+                                  ) : null}
 
-                              <DropdownMenuSeparator />
+                                  {canEditModel(model) && canDeleteModel(model) ? (
+                                    <DropdownMenuSeparator />
+                                  ) : null}
 
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => setDeleteConfirmModel(model)}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                {t("Delete")}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </td>
+                                  {canDeleteModel(model) ? (
+                                    <DropdownMenuItem
+                                      className="text-destructive"
+                                      onClick={() => setDeleteConfirmModel(model)}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      {t("Delete")}
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        ) : null}
                       </tr>
                     ))
                   )}
