@@ -47,6 +47,7 @@ from agentcore.services.database.models.agent_deployment_prod.model import (
 )
 from agentcore.services.database.models.agent_deployment_uat.model import (
     AgentDeploymentUAT,
+    DeploymentLifecycleEnum,
     DeploymentUATStatusEnum,
     DeploymentVisibilityEnum,
 )
@@ -176,6 +177,7 @@ class PublishRecordSummary(BaseModel):
     published_by: UUID
     published_at: datetime
     is_active: bool
+    is_enabled: bool
     status: str
     visibility: str
     error_message: str | None = None
@@ -1198,6 +1200,7 @@ def _record_to_summary(record: AgentDeploymentUAT | AgentDeploymentProd, environ
         published_by=record.deployed_by,
         published_at=record.deployed_at,
         is_active=record.is_active,
+        is_enabled=record.is_enabled,
         status=record.status.value if hasattr(record.status, "value") else str(record.status),
         visibility=record.visibility.value if hasattr(record.visibility, "value") else str(record.visibility),
         error_message=record.error_message,
@@ -1684,6 +1687,135 @@ async def prod_deploy_action(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# UAT/PROD DELETE (archive) ENDPOINTS
+
+
+@router.delete("/uat/{deploy_id}", response_model=PublishActionResponse, status_code=200)
+async def delete_uat_deployment(
+    *,
+    session: DbSession,
+    deploy_id: UUID,
+    current_user: CurrentActiveUser,
+):
+    """Archive (soft-delete) a UAT deployment version.
+
+    Requires the deployment to be disabled in Control Panel and stopped.
+    """
+    record = (
+        await session.exec(
+            select(AgentDeploymentUAT).where(AgentDeploymentUAT.id == deploy_id)
+        )
+    ).first()
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"UAT deployment record {deploy_id} not found",
+        )
+
+    dept_id = record.dept_id
+    if dept_id is None:
+        agent = await session.get(Agent, record.agent_id)
+        dept_id = agent.dept_id if agent else None
+    await _require_undeploy_permission(
+        session,
+        current_user=current_user,
+        department_id=dept_id,
+    )
+
+    status_val = record.status.value if hasattr(record.status, "value") else str(record.status)
+    if record.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Disable the agent in Control Panel before deleting this version. "
+                f"Current: status={status_val}, is_active={record.is_active}, is_enabled={record.is_enabled}."
+            ),
+        )
+    if record.lifecycle_step != DeploymentLifecycleEnum.ARCHIVED:
+        record.lifecycle_step = DeploymentLifecycleEnum.ARCHIVED
+    if record.status != DeploymentUATStatusEnum.UNPUBLISHED:
+        record.status = DeploymentUATStatusEnum.UNPUBLISHED
+    record.is_enabled = False
+    record.is_active = False
+    record.updated_at = datetime.now(timezone.utc)
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+
+    return PublishActionResponse(
+        success=True,
+        message=f"UAT v{record.version_number} archived",
+        publish_id=record.id,
+        environment="uat",
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        is_active=record.is_active,
+        version_number=f"v{record.version_number}",
+    )
+
+
+@router.delete("/prod/{deploy_id}", response_model=PublishActionResponse, status_code=200)
+async def delete_prod_deployment(
+    *,
+    session: DbSession,
+    deploy_id: UUID,
+    current_user: CurrentActiveUser,
+):
+    """Archive (soft-delete) a PROD deployment version.
+
+    Requires the deployment to be disabled in Control Panel and stopped.
+    """
+    record = (
+        await session.exec(
+            select(AgentDeploymentProd).where(AgentDeploymentProd.id == deploy_id)
+        )
+    ).first()
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"PROD deployment record {deploy_id} not found",
+        )
+
+    dept_id = record.dept_id
+    if dept_id is None:
+        agent = await session.get(Agent, record.agent_id)
+        dept_id = agent.dept_id if agent else None
+    await _require_undeploy_permission(
+        session,
+        current_user=current_user,
+        department_id=dept_id,
+    )
+
+    status_val = record.status.value if hasattr(record.status, "value") else str(record.status)
+    if record.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Disable the agent in Control Panel before deleting this version. "
+                f"Current: status={status_val}, is_active={record.is_active}, is_enabled={record.is_enabled}."
+            ),
+        )
+    if record.lifecycle_step != ProdDeploymentLifecycleEnum.ARCHIVED:
+        record.lifecycle_step = ProdDeploymentLifecycleEnum.ARCHIVED
+    if record.status != DeploymentPRODStatusEnum.UNPUBLISHED:
+        record.status = DeploymentPRODStatusEnum.UNPUBLISHED
+    record.is_enabled = False
+    record.is_active = False
+    record.updated_at = datetime.now(timezone.utc)
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+
+    return PublishActionResponse(
+        success=True,
+        message=f"PROD v{record.version_number} archived",
+        publish_id=record.id,
+        environment="prod",
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        is_active=record.is_active,
+        version_number=f"v{record.version_number}",
+    )
+
+
 # UNIFIED PUBLISH ENDPOINT
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1774,6 +1906,9 @@ async def publish_agent(
                 f"Promoting from UAT v{uat_record.version_number} ({promoted_from_uat_id}) "
                 f"to PROD for agent {agent_id}"
             )
+            uat_record.moved_to_prod = True
+            uat_record.updated_at = datetime.now(timezone.utc)
+            session.add(uat_record)
 
         # ── Derive agent input type from snapshot nodes ──────────
         _node_types = {n.get("data", {}).get("type") for n in snapshot.get("nodes", [])}
@@ -2157,6 +2292,8 @@ async def get_agent_publish_status(
             select(AgentDeploymentUAT).where(
                 AgentDeploymentUAT.agent_id == agent_id,
                 AgentDeploymentUAT.is_active == True,  # noqa: E712
+                AgentDeploymentUAT.is_enabled == True,  # noqa: E712
+                AgentDeploymentUAT.lifecycle_step != DeploymentLifecycleEnum.ARCHIVED,
             ).order_by(col(AgentDeploymentUAT.deployed_at).desc())
         )).first()
 
@@ -2165,6 +2302,8 @@ async def get_agent_publish_status(
             select(AgentDeploymentProd).where(
                 AgentDeploymentProd.agent_id == agent_id,
                 AgentDeploymentProd.is_active == True,  # noqa: E712
+                AgentDeploymentProd.is_enabled == True,  # noqa: E712
+                AgentDeploymentProd.lifecycle_step != ProdDeploymentLifecycleEnum.ARCHIVED,
             ).order_by(col(AgentDeploymentProd.deployed_at).desc())
         )).first()
 
@@ -2219,6 +2358,7 @@ async def get_version_history(
     session: DbSession,
     agent_id: UUID,
     env: str,
+    include_archived: bool = False,
     current_user: CurrentActiveUser,
 ):
     """Get version history for an agent in a specific environment.
@@ -2251,6 +2391,13 @@ async def get_version_history(
             .where(table_class.agent_id == agent_id)
             .order_by(col(table_class.deployed_at).desc())
         )
+        if not include_archived:
+            archived_status = (
+                DeploymentLifecycleEnum.ARCHIVED
+                if env == "uat"
+                else ProdDeploymentLifecycleEnum.ARCHIVED
+            )
+            stmt = stmt.where(table_class.lifecycle_step != archived_status)
         records = (await session.exec(stmt)).all()
 
         return [_record_to_summary(r, env) for r in records]

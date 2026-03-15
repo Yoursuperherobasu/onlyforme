@@ -1089,6 +1089,10 @@ async def promote_uat_to_prod(
         session.add(new_record)
         await session.flush()
 
+        uat_dep.moved_to_prod = True
+        uat_dep.updated_at = datetime.now(timezone.utc)
+        session.add(uat_dep)
+
         if is_admin:
             agent.lifecycle_status = LifecycleStatusEnum.PUBLISHED
         else:

@@ -124,6 +124,11 @@ class AgentDeploymentUATBase(SQLModel):
         sa_column=Column(Text, nullable=True),
         description="Error message if status is ERROR",
     )
+    moved_to_prod: bool = Field(
+        default=False,
+        nullable=False,
+        description="True if this UAT deployment has been promoted to PROD.",
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         nullable=False,
@@ -195,6 +200,7 @@ class AgentDeploymentUATRead(BaseModel):
     deployed_by: UUID
     deployed_at: datetime
     error_message: str | None = None
+    moved_to_prod: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -208,3 +214,4 @@ class AgentDeploymentUATUpdate(BaseModel):
     lifecycle_step: DeploymentLifecycleEnum | None = None
     visibility: DeploymentVisibilityEnum | None = None
     error_message: str | None = None
+    moved_to_prod: bool | None = None

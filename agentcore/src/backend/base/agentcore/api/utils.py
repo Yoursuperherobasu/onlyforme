@@ -416,8 +416,12 @@ async def cascade_delete_agent(session: AsyncSession, agent_id: uuid.UUID) -> No
         await session.exec(delete(VertexBuildTable).where(VertexBuildTable.agent_id == agent_id))
         await session.exec(delete(Agent).where(Agent.id == agent_id))
     except Exception as e:
-        msg = f"Unable to cascade delete agent: {agent_id}"
-        raise RuntimeError(msg, e) from e
+        msg = (
+            f"Unable to delete agent {agent_id}. "
+            "It has related records (deployments, runs, or usage). "
+            "Disable/undeploy in Control Panel, then delete."
+        )
+        raise RuntimeError(msg) from e
 
 
 def custom_params(
@@ -427,5 +431,4 @@ def custom_params(
     if page is None and size is None:
         return None
     return Params(page=page or MIN_PAGE_SIZE, size=size or MAX_PAGE_SIZE)
-
 

@@ -14,7 +14,10 @@ import { getURL } from "@/controllers/API/helpers/constants";
 import useAlertStore from "@/stores/alertStore";
 import useAgentStore from "@/stores/agentStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
+import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import type { AgentType, PublishedVersionSelection } from "@/types/agent";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const buildDraftSnapshot = (): AgentType | null => {
   const currentAgent = useAgentStore.getState().currentAgent;
@@ -37,6 +40,7 @@ const buildDraftSnapshot = (): AgentType | null => {
 
 const PublishVersionDropdown = (): JSX.Element | null => {
   const setErrorData = useAlertStore((state) => state.setErrorData);
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);
   const currentAgent = useAgentsManagerStore((state) => state.currentAgent);
   const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
@@ -44,7 +48,12 @@ const PublishVersionDropdown = (): JSX.Element | null => {
   const setActivePublishedVersion = useAgentStore(
     (state) => state.setActivePublishedVersion,
   );
+  const queryClient = useQueryClient();
   const [loadingVersionId, setLoadingVersionId] = useState<string | null>(null);
+  const [deleteVersionOpen, setDeleteVersionOpen] = useState(false);
+  const [deleteVersionError, setDeleteVersionError] = useState<string | null>(
+    null,
+  );
   const draftAgentRef = useRef<AgentType | null>(null);
 
   const { data: uatVersions } = useGetPublishVersions(
@@ -140,40 +149,109 @@ const PublishVersionDropdown = (): JSX.Element | null => {
     ? `${activePublishedVersion.environment.toUpperCase()} ${activePublishedVersion.versionNumber}`
     : "Draft";
 
+  const activeRecord = activePublishedVersion
+    ? allVersions.find((record) => record.id === activePublishedVersion.deployId) ??
+      null
+    : null;
+
+  const handleOpenDeleteVersion = () => {
+    if (!activeRecord) {
+      return;
+    }
+    setDeleteVersionError(null);
+    if (activeRecord.is_enabled) {
+      setDeleteVersionError("Disable this version in Control Panel before deleting.");
+    }
+    setDeleteVersionOpen(true);
+  };
+
+  const handleDeleteVersion = async () => {
+    if (!activeRecord) return;
+    if (activeRecord.is_enabled) {
+      setDeleteVersionError("Disable this version in Control Panel before deleting.");
+      return;
+    }
+    setDeleteVersionError(null);
+    try {
+      await api.delete(
+        `${getURL("PUBLISH")}/${activeRecord.environment}/${activeRecord.id}`,
+      );
+      setSuccessData({
+        title: `Deleted ${activeRecord.environment.toUpperCase()} ${activeRecord.version_number}`,
+      });
+      await queryClient.refetchQueries({
+        queryKey: ["useGetPublishVersions", currentAgentId],
+      });
+      if (activePublishedVersion?.deployId === activeRecord.id) {
+        handleSelectDraft();
+      }
+      setDeleteVersionOpen(false);
+    } catch (error: any) {
+      setDeleteVersionError(
+        error?.response?.data?.detail || error?.message || "Please try again",
+      );
+    }
+  };
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          data-testid="publish-version-dropdown"
-        >
-          <span className="text-xs text-muted-foreground">Version</span>
-          <span className="font-medium">{activeLabel}</span>
-          <IconComponent name="ChevronDown" className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[210px]">
-        <DropdownMenuItem
-          onClick={handleSelectDraft}
-          disabled={!draftAgentRef.current && !currentAgent}
-        >
-          Draft (current)
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        {allVersions.map((record) => (
-          <DropdownMenuItem
-            key={record.id}
-            disabled={loadingVersionId === record.id}
-            onClick={() => handleSelectVersion(record)}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            data-testid="publish-version-dropdown"
           >
-            {record.environment.toUpperCase()} {record.version_number}
-            {record.is_active ? " • Active" : ""}
+            <span className="text-xs text-muted-foreground">Version</span>
+            <span className="font-medium">{activeLabel}</span>
+            <IconComponent name="ChevronDown" className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[210px]">
+          <DropdownMenuItem
+            onClick={handleSelectDraft}
+            disabled={!draftAgentRef.current && !currentAgent}
+          >
+            Draft (current)
           </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <DropdownMenuSeparator />
+          {allVersions.map((record) => (
+            <DropdownMenuItem
+              key={record.id}
+              disabled={loadingVersionId === record.id}
+              onClick={() => handleSelectVersion(record)}
+            >
+              {record.environment.toUpperCase()} {record.version_number}
+              {record.is_active ? " • Active" : ""}
+            </DropdownMenuItem>
+          ))}
+          {activeRecord ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleOpenDeleteVersion}
+                className="cursor-pointer text-destructive"
+              >
+                Delete selected version
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <DeleteConfirmationModal
+        open={deleteVersionOpen}
+        setOpen={setDeleteVersionOpen}
+        onConfirm={handleDeleteVersion}
+        description={
+          activeRecord
+            ? `${activeRecord.environment.toUpperCase()} ${activeRecord.version_number} version`
+            : "version"
+        }
+        errorMessage={deleteVersionError ?? undefined}
+        closeOnConfirm={false}
+      />
+    </>
   );
 };
 
