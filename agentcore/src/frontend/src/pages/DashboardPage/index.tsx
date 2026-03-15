@@ -71,7 +71,7 @@ type SectionConfig = {
 const sections: SectionConfig[] = [
   {
     id: "platform",
-    label: "A. Platform Health & Reliability",
+    label: " Platform Health & Reliability",
     headline: "Platform Health & Reliability KPIs",
     kpis: [
       { name: "Platform Uptime", value: "99.96%" },
@@ -123,7 +123,7 @@ const sections: SectionConfig[] = [
   },
   {
     id: "governance",
-    label: "B. Governance & Guardrail",
+    label: " Governance & Guardrail",
     headline: "Governance & Guardrail KPIs",
     kpis: [
       { name: "Guardrail Violation Rate", value: "0.7%" },
@@ -176,7 +176,7 @@ const sections: SectionConfig[] = [
   },
   {
     id: "cost",
-    label: "C. Cost & Financial",
+    label: " Cost & Financial",
     headline: "Cost & Financial KPIs",
     kpis: [
       { name: "Total Token Consumption", value: "92.4M" },
@@ -229,7 +229,7 @@ const sections: SectionConfig[] = [
   },
   {
     id: "lifecycle",
-    label: "D. Environment & Lifecycle",
+    label: " Environment & Lifecycle",
     headline: "Environment & Lifecycle Governance",
     kpis: [
       { name: "Agents in UAT", value: "18" },
@@ -279,7 +279,7 @@ const sections: SectionConfig[] = [
 const departmentSections: SectionConfig[] = [
   {
     id: "usage",
-    label: "A. Department Usage",
+    label: " Department Usage",
     headline: "Department Usage KPIs",
     kpis: [
       { name: "Active Agents in Dept", value: "42" },
@@ -327,7 +327,7 @@ const departmentSections: SectionConfig[] = [
   },
   {
     id: "approval",
-    label: "B. Approval & Governance",
+    label: " Approval & Governance",
     headline: "Approval & Governance KPIs",
     kpis: [
       { name: "Pending Approvals", value: "31" },
@@ -376,7 +376,7 @@ const departmentSections: SectionConfig[] = [
   },
   {
     id: "hitl",
-    label: "C. HITL Governance",
+    label: " HITL Governance",
     headline: "HITL Governance KPIs",
     kpis: [
       { name: "HITL Invocation Rate", value: "3.6%" },
@@ -424,7 +424,7 @@ const departmentSections: SectionConfig[] = [
   },
   {
     id: "rag",
-    label: "D. RAG Governance",
+    label: " RAG Governance",
     headline: "RAG Governance KPIs",
     kpis: [
       { name: "Total Documents Indexed", value: "420K" },
@@ -474,7 +474,7 @@ const departmentSections: SectionConfig[] = [
 const developerSections: SectionConfig[] = [
   {
     id: "quality",
-    label: "A. Agent Quality",
+    label: " Agent Quality",
     headline: "Agent Quality KPIs (Langfuse Evaluations)",
     kpis: [
       { name: "Task Success Rate", value: "93%" },
@@ -524,7 +524,7 @@ const developerSections: SectionConfig[] = [
   },
   {
     id: "performance",
-    label: "B. Performance",
+    label: " Performance",
     headline: "Performance KPIs",
     kpis: [
       { name: "Avg Agent Latency", value: "610ms" },
@@ -575,7 +575,7 @@ const developerSections: SectionConfig[] = [
   },
   {
     id: "code",
-    label: "C. Code & Version Governance",
+    label: " Code & Version Governance",
     headline: "Code & Version Governance KPIs",
     kpis: [
       { name: "Version Count per Agent", value: "7" },
@@ -623,7 +623,7 @@ const developerSections: SectionConfig[] = [
 const businessSections: SectionConfig[] = [
   {
     id: "productivity",
-    label: "A. Productivity",
+    label: " Productivity",
     headline: "Productivity KPIs",
     kpis: [
       { name: "Tasks Completed", value: "1,240" },
@@ -671,7 +671,7 @@ const businessSections: SectionConfig[] = [
   },
   {
     id: "experience",
-    label: "B. Experience",
+    label: " Experience",
     headline: "Experience KPIs",
     kpis: [
       { name: "Avg Response Time", value: "820ms" },
@@ -724,7 +724,7 @@ const businessSections: SectionConfig[] = [
 const rootSections: SectionConfig[] = [
   {
     id: "roi",
-    label: "A. ROI & Financial Health",
+    label: " ROI & Financial Health",
     headline: "ROI & Financial Health",
     kpis: [
       { name: "Cost vs Productivity Gain", value: "2.6x" },
@@ -771,7 +771,7 @@ const rootSections: SectionConfig[] = [
   },
   {
     id: "maturity",
-    label: "B. AI Maturity Indicators",
+    label: " AI Maturity Indicators",
     headline: "AI Maturity Indicators",
     kpis: [
       { name: "% Agents with Guardrails", value: "88%" },
@@ -817,7 +817,7 @@ const rootSections: SectionConfig[] = [
   },
   {
     id: "risk",
-    label: "C. Enterprise Risk Indicators",
+    label: " Enterprise Risk Indicators",
     headline: "Enterprise Risk Indicators",
     kpis: [
       { name: "High-Risk Autonomous Agents", value: "6" },
