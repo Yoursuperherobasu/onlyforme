@@ -66,6 +66,11 @@ import useAuthStore from "./stores/authStore";
 
 function DefaultLandingRedirect() {
   const permissions = useAuthStore((state) => state.permissions);
+  const role = useAuthStore((state) => state.role);
+
+  if (String(role ?? "").toLowerCase() === "root") {
+    return <CustomNavigate replace to="approval" />;
+  }
 
   if (permissions.includes("view_dashboard")) {
     return <CustomNavigate replace to="dashboard-admin" />;

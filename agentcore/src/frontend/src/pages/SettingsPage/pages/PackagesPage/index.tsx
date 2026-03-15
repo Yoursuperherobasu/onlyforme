@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
@@ -15,16 +16,27 @@ import {
   useGetManagedPackages,
   type ManagedPackage,
 } from "@/controllers/API/queries/packages/use-get-managed-packages";
+import { useGetPackageServices } from "@/controllers/API/queries/packages/use-get-package-services";
 import {
   useGetTransitivePackages,
   type TransitivePackage,
 } from "@/controllers/API/queries/packages/use-get-transitive-packages";
+import RequestPackageModal from "./components/request-package-modal";
+import MyPackageRequestsModal from "./components/my-package-requests-modal";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
 type TabKey = "managed" | "transitive";
+
+function toServiceLabel(serviceName: string): string {
+  if (serviceName === "all") return "All Services";
+  return serviceName
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 function InfoTooltip({ text }: { text: string }) {
   return (
@@ -76,6 +88,7 @@ function ManagedTable({
     return packages.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
+        p.service_name.toLowerCase().includes(q) ||
         p.version_spec.toLowerCase().includes(q) ||
         p.resolved_version.toLowerCase().includes(q) ||
         p.start_date.toLowerCase().includes(q) ||
@@ -93,6 +106,7 @@ function ManagedTable({
         <thead>
           <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
             <th className="px-4 py-3 text-left font-medium">{t("Package")}</th>
+            <th className="px-4 py-3 text-left font-medium">{t("Service")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Declared")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Resolved")}</th>
             {showHistoryDates && (
@@ -113,6 +127,11 @@ function ManagedTable({
               className="border-b last:border-0 transition-colors hover:bg-muted/30"
             >
               <td className="px-4 py-3 font-mono text-sm">{pkg.name}</td>
+              <td className="px-4 py-3 text-sm">
+                <Badge variant="gray" size="sm">
+                  {pkg.service_name}
+                </Badge>
+              </td>
               <td className="px-4 py-3 text-sm text-muted-foreground">
                 {pkg.version_spec || "*"}
               </td>
@@ -173,6 +192,7 @@ function TransitiveTable({
     return packages.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
+        p.service_name.toLowerCase().includes(q) ||
         p.resolved_version.toLowerCase().includes(q) ||
         p.managed_roots.some((r) => r.toLowerCase().includes(q)) ||
         p.managed_root_details.some(
@@ -194,6 +214,7 @@ function TransitiveTable({
         <thead>
           <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
             <th className="px-4 py-3 text-left font-medium">{t("Package")}</th>
+            <th className="px-4 py-3 text-left font-medium">{t("Service")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Version")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Managed Root")}</th>
             {showHistoryDates && (
@@ -212,6 +233,11 @@ function TransitiveTable({
               className="border-b last:border-0 transition-colors hover:bg-muted/30"
             >
               <td className="px-4 py-3 font-mono text-sm">{pkg.name}</td>
+              <td className="px-4 py-3 text-sm">
+                <Badge variant="gray" size="sm">
+                  {pkg.service_name}
+                </Badge>
+              </td>
               <td className="px-4 py-3 text-sm">
                 <Badge variant="outline" size="sm">
                   {pkg.resolved_version}
@@ -329,19 +355,38 @@ export default function PackagesPage() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabKey>("managed");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedService, setSelectedService] = useState("all");
   const [includeManagedHistory, setIncludeManagedHistory] = useState(false);
   const [includeHistory, setIncludeHistory] = useState(false);
   const [includeFullGraph, setIncludeFullGraph] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isMyRequestsOpen, setIsMyRequestsOpen] = useState(false);
 
   const { data: managedPackages, isLoading: loadingManaged } =
     useGetManagedPackages({
       include_history: includeManagedHistory,
+      service: selectedService,
     });
   const { data: transitivePackages, isLoading: loadingTransitive } =
     useGetTransitivePackages({
       include_history: includeHistory,
       include_full_graph: includeFullGraph,
+      service: selectedService,
     });
+  const { data: services = [] } = useGetPackageServices({
+    include_history: true,
+  });
+
+  const serviceOptions = useMemo(
+    () => [
+      { value: "all", label: toServiceLabel("all") },
+      ...services.map((serviceName) => ({
+        value: serviceName,
+        label: toServiceLabel(serviceName),
+      })),
+    ],
+    [services],
+  );
 
   const isLoading =
     (activeTab === "managed" && loadingManaged) ||
@@ -355,66 +400,89 @@ export default function PackagesPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* ── Fixed Header ─────────────────────────────────────────── */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
-        <div>
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">
-              {t("Dependency Governance")}
-            </h1>
+      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-8 py-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold">{t("Dependency Governance")}</h1>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {t(
-              "View and manage project packages. Dependencies are read from pyproject.toml and resolved via uv.lock.",
-            )}
-          </p>
-        </div>
-
-        {/* Search */}
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              placeholder={t("Search packages...")}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-            />
+          <div className="flex items-center gap-3">
+            <Button onClick={() => setIsRequestModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              {t("Request Package")}
+            </Button>
+            <Button variant="outline" onClick={() => setIsMyRequestsOpen(true)}>
+              {t("My Requests")}
+            </Button>
           </div>
         </div>
-      </div>
 
-      {/* ── Tabs ─────────────────────────────────────────────────── */}
-      <div className="flex flex-shrink-0 gap-1 border-b px-8 pt-2">
-        {TABS.map((tab) => {
-          const isActive = activeTab === tab.key;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => {
-                setActiveTab(tab.key);
-                setSearchQuery("");
-              }}
-              className={`relative flex items-center gap-2 rounded-t-md px-4 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? "bg-background text-foreground after:absolute after:bottom-[-1px] after:left-0 after:h-[2px] after:w-full after:bg-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {t(tab.label)}
-              {counts[tab.key] > 0 && (
-                <Badge
-                  variant={isActive ? "secondaryStatic" : "gray"}
-                  size="sm"
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-1">
+            {TABS.map((tab) => {
+              const isActive = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => {
+                    setActiveTab(tab.key);
+                    setSearchQuery("");
+                  }}
+                  className={`relative flex items-center gap-2 rounded-t-md px-4 py-2.5 text-sm font-medium transition-colors ${
+                    isActive
+                      ? "bg-background text-foreground after:absolute after:bottom-[-1px] after:left-0 after:h-[2px] after:w-full after:bg-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
-                  {counts[tab.key]}
-                </Badge>
-              )}
-              <InfoTooltip text={t(tab.tooltip)} />
-            </button>
-          );
-        })}
+                  {t(tab.label)}
+                  {counts[tab.key] > 0 && (
+                    <Badge variant={isActive ? "secondaryStatic" : "gray"} size="sm">
+                      {counts[tab.key]}
+                    </Badge>
+                  )}
+                  <InfoTooltip text={t(tab.tooltip)} />
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                placeholder={
+                  activeTab === "managed"
+                    ? t("Search managed packages...")
+                    : t("Search transitive packages...")
+                }
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            <select
+              value={selectedService}
+              onChange={(e) => setSelectedService(e.target.value)}
+              className="h-[42px] rounded-lg border border-border bg-card px-3 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {serviceOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {t(opt.label)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
+      <RequestPackageModal
+        open={isRequestModalOpen}
+        onOpenChange={setIsRequestModalOpen}
+        services={services}
+      />
+      <MyPackageRequestsModal
+        open={isMyRequestsOpen}
+        onOpenChange={setIsMyRequestsOpen}
+      />
       {activeTab === "transitive" && (
         <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-4 border-b bg-muted/20 px-8 py-3">
           <div className="text-xs text-muted-foreground">

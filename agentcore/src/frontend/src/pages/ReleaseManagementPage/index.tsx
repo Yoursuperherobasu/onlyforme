@@ -5,9 +5,16 @@ import { Input } from "@/components/ui/input";
 import Loading from "@/components/ui/loading";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   type ReleaseDetailInputPayload,
   useGetCurrentRelease,
   useGetReleaseDetails,
+  useGetReleasePackages,
   useGetReleases,
   usePostBumpReleaseWithDetails,
 } from "@/controllers/API/queries/releases";
@@ -115,6 +122,226 @@ function ExpandedReleaseDetails({ releaseId }: { releaseId: string }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ExpandedReleasePackages({ releaseId }: { releaseId: string }) {
+  const { t } = useTranslation();
+  const [selectedService, setSelectedService] = useState("all");
+  const { data, isLoading } = useGetReleasePackages({ releaseId, service: selectedService });
+  const [activeTab, setActiveTab] = useState<"managed" | "transitive">("managed");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const normalizedData = useMemo(
+    () =>
+      (data ?? []).map((row) => ({
+        ...row,
+        service_name: row.service_name || "unknown",
+        version: row.version || "",
+        version_spec: row.version_spec || "",
+        managed_roots: row.managed_roots ?? [],
+        managed_root_details: row.managed_root_details ?? [],
+        dependency_paths: row.dependency_paths ?? [],
+      })),
+    [data],
+  );
+
+  const managedPackages = normalizedData.filter((row) => row.package_type === "managed");
+  const transitivePackages = normalizedData.filter((row) => row.package_type === "transitive");
+  const serviceOptions = useMemo(() => {
+    const values = Array.from(new Set(normalizedData.map((row) => row.service_name))).sort();
+    return ["all", ...values];
+  }, [normalizedData]);
+  const visiblePackages = activeTab === "managed" ? managedPackages : transitivePackages;
+  const filteredPackages = visiblePackages.filter((row) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      row.name.toLowerCase().includes(q) ||
+      row.service_name.toLowerCase().includes(q) ||
+      row.version.toLowerCase().includes(q) ||
+      row.version_spec.toLowerCase().includes(q) ||
+      row.managed_roots.some((root) => root.toLowerCase().includes(q)) ||
+      row.managed_root_details.some(
+        (root) => root.name.toLowerCase().includes(q) || root.version.toLowerCase().includes(q),
+      ) ||
+      row.dependency_paths.some((path) => path.toLowerCase().includes(q))
+    );
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <Loading />
+      </div>
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <p className="py-6 text-center text-sm italic text-muted-foreground">
+        {t("No package snapshot attached to this release.")}
+      </p>
+    );
+  }
+
+  return (
+    <div className="px-5 py-4">
+      <div className="rounded-lg border border-border/50 bg-card">
+        <div className="grid grid-cols-[minmax(0,1fr)_12rem_16rem] items-center gap-3 border-b border-border/50 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap pr-1">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("managed");
+                setSearchQuery("");
+              }}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                activeTab === "managed"
+                  ? "bg-background text-foreground ring-1 ring-border"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t("Managed")}
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{managedPackages.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("transitive");
+                setSearchQuery("");
+              }}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                activeTab === "transitive"
+                  ? "bg-background text-foreground ring-1 ring-border"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t("Transitive")}
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{transitivePackages.length}</span>
+            </button>
+          </div>
+          <select
+            value={selectedService}
+            onChange={(e) => setSelectedService(e.target.value)}
+            className="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {serviceOptions.map((serviceName) => (
+              <option key={serviceName} value={serviceName}>
+                {serviceName === "all" ? t("All Services") : serviceName}
+              </option>
+            ))}
+          </select>
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={
+              activeTab === "managed"
+                ? t("Search managed packages...")
+                : t("Search transitive packages...")
+            }
+            className="h-8 w-full text-sm"
+          />
+        </div>
+        {filteredPackages.length === 0 ? (
+          <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+            {searchQuery ? t("No packages match your search.") : t("No packages found in this view.")}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-sm">
+              <thead>
+                <tr className="border-b border-border/40 bg-muted/30 text-xs text-muted-foreground">
+                  <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Package")}</th>
+                  <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Service")}</th>
+                  {activeTab === "managed" && (
+                    <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Declared")}</th>
+                  )}
+                  <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Resolved")}</th>
+                  {activeTab === "transitive" && (
+                    <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Managed Root")}</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPackages.map((row) => (
+                  <tr
+                    key={row.id}
+                    className="border-b border-border/25 transition-colors hover:bg-muted/20"
+                  >
+                    <td className="px-4 py-2.5 font-mono text-sm">{row.name}</td>
+                    <td className="px-4 py-2.5 text-sm text-muted-foreground">{row.service_name}</td>
+                    {activeTab === "managed" && (
+                      <td className="px-4 py-2.5 text-muted-foreground">{row.version_spec || "—"}</td>
+                    )}
+                    <td className="px-4 py-2.5">{row.version}</td>
+                    {activeTab === "transitive" && (
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {row.managed_root_details.length > 0 ? (
+                          <div className="flex flex-col gap-1 leading-tight">
+                            {row.managed_root_details.slice(0, 3).map((d) => (
+                              <div key={`${row.id}-${d.name}-${d.version}`}>
+                                {d.name}: {d.version}
+                              </div>
+                            ))}
+                            {row.managed_root_details.length > 3 && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="w-fit cursor-help text-xs text-muted-foreground/80 underline decoration-dotted underline-offset-2"
+                                    >
+                                      +{row.managed_root_details.length - 3} more
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-md">
+                                    <div className="flex max-h-64 flex-col gap-1 overflow-auto text-xs">
+                                      {row.managed_root_details.slice(3).map((d) => (
+                                        <div key={`${row.id}-more-${d.name}-${d.version}`}>
+                                          {d.name}: {d.version}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                            {row.dependency_paths.length > 0 && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="mt-1 w-fit cursor-help text-xs text-muted-foreground/80 underline decoration-dotted underline-offset-2"
+                                    >
+                                      {t("View paths")}
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-2xl">
+                                    <div className="flex max-h-72 flex-col gap-1 overflow-auto text-xs">
+                                      {row.dependency_paths.map((path, idx) => (
+                                        <div key={`${row.id}-path-${idx}`}>{path}</div>
+                                      ))}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -650,6 +877,17 @@ export default function ReleaseManagementPage() {
                                     </span>
                                   </div>
                                   <ExpandedReleaseDetails releaseId={release.id} />
+                                  <div className="flex items-center gap-3 border-y border-border/30 bg-muted/20 px-5 py-2.5">
+                                    <div className="h-3.5 w-0.5 rounded-full bg-primary/50" />
+                                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
+                                      {t("Package Snapshot")}
+                                    </p>
+                                    <span className="text-xs text-muted-foreground/40">·</span>
+                                    <span className="font-mono text-sm font-bold text-foreground">
+                                      {release.version}
+                                    </span>
+                                  </div>
+                                  <ExpandedReleasePackages releaseId={release.id} />
                                 </td>
                               </tr>
                             )}

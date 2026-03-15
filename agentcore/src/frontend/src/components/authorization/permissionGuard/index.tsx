@@ -11,9 +11,14 @@ export const ProtectedPermissionRoute = ({
 }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const permissions = useAuthStore((state) => state.permissions);
+  const role = useAuthStore((state) => state.role);
 
   if (!isAuthenticated) {
     return <LoadingPage />;
+  }
+
+  if (String(role ?? "").toLowerCase() === "root") {
+    return children;
   }
 
   if (!permissions.includes(permission)) {
