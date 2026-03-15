@@ -379,8 +379,14 @@ class A2AAgentsComponent(Node):
         if resolved:
             vertex.update_raw_params(resolved, overwrite=True)
 
-        # Override the task input
-        task_msg = Message(text=task)
+        # Forward any uploaded files (images, documents) from the original user
+        # message so workers can process them (e.g. vision models analysing images).
+        files_from_state = lg_state.get("files") or []
+        if not files_from_state and isinstance(self.input_data, Message) and self.input_data.files:
+            files_from_state = self.input_data.files
+
+        # Override the task input, preserving any uploaded files.
+        task_msg = Message(text=task, files=files_from_state or [])
         if "input_message" in getattr(vertex, "template", {}):
             vertex.update_raw_params({"input_message": task_msg}, overwrite=True)
         else:
@@ -410,7 +416,7 @@ class A2AAgentsComponent(Node):
                 vertex.build(
                     user_id=user_id,
                     inputs={},
-                    files=None,
+                    files=files_from_state or None,
                     event_manager=None,
                     fallback_to_env_vars=False,
                 ),

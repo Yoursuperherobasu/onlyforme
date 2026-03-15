@@ -443,7 +443,13 @@ Your expertise: {agent_descriptions.get(agent_name, 'your role')}
 
 Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
 
-        vertex.update_raw_params({"input_value": Message(text=prompt)}, overwrite=True)
+        # Forward any uploaded files (images, documents) from the original user
+        # message so agent workers can process them (e.g. vision models analysing images).
+        files_from_state = lg_state.get("files") or []
+        if not files_from_state and isinstance(self.input_data, Message) and self.input_data.files:
+            files_from_state = self.input_data.files
+
+        vertex.update_raw_params({"input_value": Message(text=prompt, files=files_from_state or [])}, overwrite=True)
 
         # Reset built state so the vertex executes fresh.
         vertex.built = False
@@ -463,7 +469,7 @@ Reply with your contribution, PASS, or DONE: [answer]. Nothing else."""
                 vertex.build(
                     user_id=user_id,
                     inputs={},
-                    files=None,
+                    files=files_from_state or None,
                     event_manager=getattr(self._vertex.graph, "_event_manager", None),
                     fallback_to_env_vars=False,
                 ),

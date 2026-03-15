@@ -132,6 +132,7 @@ class ChildAgentAdapter:
         parent_context: ParentAgentContext,
         session_id: str | None = None,
         tweaks: dict | None = None,
+        files: list | None = None,
     ) -> ChildAgentResult:
         """Execute this agent as a child agent."""
         start_time = datetime.now()
@@ -183,6 +184,7 @@ class ChildAgentAdapter:
                     graph=graph,
                     user_id=self.user_id,
                     session_id=effective_session_id,
+                    files=files,
                 )
 
                 output_text, content_blocks = self._extract_output(run_outputs)
@@ -283,6 +285,7 @@ class ChildAgentAdapter:
         parent_context: ParentAgentContext,
         session_id: str | None = None,
         tweaks: dict | None = None,
+        files: list | None = None,
     ) -> ChildAgentResult:
         """Execute with an existing A2A task."""
         return await self.execute(
@@ -290,6 +293,7 @@ class ChildAgentAdapter:
             parent_context=parent_context,
             session_id=session_id,
             tweaks=tweaks,
+            files=files,
         )
 
     async def _prebuild_dependencies(self, graph, input_value: str) -> None:
