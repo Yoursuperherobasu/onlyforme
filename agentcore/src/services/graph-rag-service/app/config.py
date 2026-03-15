@@ -11,7 +11,7 @@ from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore
 
 logger = logging.getLogger(__name__)
 
-_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+_ROOT_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 def _read_root_env_key(name: str) -> str:

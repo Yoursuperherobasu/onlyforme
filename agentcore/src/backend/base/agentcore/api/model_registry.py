@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import func
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -38,6 +39,7 @@ from agentcore.services.database.models.model_registry.model import (
     TestConnectionResponse,
 )
 from agentcore.services.database.models.organization.model import Organization
+from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
@@ -186,8 +188,31 @@ async def _resolve_department_admin_approver(
     return dept.admin_user_id
 
 
-async def _resolve_super_admin_approver(session: DbSession, current_user: CurrentActiveUser) -> UUID:
-    stmt = select(User).where(User.role == "super_admin", User.id != current_user.id).order_by(User.create_at.asc())
+async def _resolve_super_admin_approver(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    org_id: UUID | None,
+) -> UUID:
+    resolved_org_id = org_id
+    if not resolved_org_id:
+        org_ids, _ = await _get_scope_memberships(session, current_user.id)
+        resolved_org_id = next(iter(org_ids), None)
+
+    if not resolved_org_id:
+        raise HTTPException(status_code=400, detail="No organization scope available for approval routing")
+
+    stmt = (
+        select(User)
+        .join(UserOrganizationMembership, UserOrganizationMembership.user_id == User.id)
+        .join(Role, Role.id == UserOrganizationMembership.role_id)
+        .where(
+            UserOrganizationMembership.org_id == resolved_org_id,
+            UserOrganizationMembership.status == "active",
+            func.lower(Role.name) == "super_admin",
+            User.id != current_user.id,
+        )
+        .order_by(User.create_at.asc())
+    )
     row = (await session.exec(stmt)).first()
     if not row:
         if _can_self_approve(current_user):
@@ -394,7 +419,7 @@ async def _resolve_approver_for_model_request(
         target_environment=target_environment,
         visibility_scope=visibility_scope,
     ):
-        return await _resolve_super_admin_approver(session, current_user)
+        return await _resolve_super_admin_approver(session, current_user, org_id)
     return await _resolve_department_admin_approver(session, current_user, org_id, dept_id)
 
 

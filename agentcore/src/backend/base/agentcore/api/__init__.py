@@ -29,6 +29,7 @@ from agentcore.api.packages import router as packages_router
 from agentcore.api.releases import router as releases_router
 from agentcore.api.teams import router as teams_router
 from agentcore.api.triggers import router as triggers_router
+from agentcore.api.package_inventory import router as package_inventory_router
 
 __all__ = [
     "api_key_router",
@@ -62,4 +63,5 @@ __all__ = [
     "releases_router",
     "teams_router",
     "triggers_router",
+    "package_inventory_router",
 ]

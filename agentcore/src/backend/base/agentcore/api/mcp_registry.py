@@ -39,6 +39,7 @@ from agentcore.services.database.models.mcp_registry.model import (
 from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
 from agentcore.services.database.models.mcp_audit_log.model import McpAuditLog
 from agentcore.services.database.models.organization.model import Organization
+from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
@@ -392,8 +393,28 @@ async def _resolve_request_approver(
 async def _resolve_super_admin_approver(
     session: DbSession,
     current_user: CurrentActiveUser,
+    org_id: UUID | None,
 ) -> UUID:
-    stmt = select(User).where(User.role == "super_admin", User.id != current_user.id).order_by(User.create_at.asc())
+    resolved_org_id = org_id
+    if not resolved_org_id:
+        org_ids, _ = await _get_scope_memberships(session, current_user.id)
+        resolved_org_id = next(iter(org_ids), None)
+
+    if not resolved_org_id:
+        raise HTTPException(status_code=400, detail="No organization scope available for approval routing")
+
+    stmt = (
+        select(User)
+        .join(UserOrganizationMembership, UserOrganizationMembership.user_id == User.id)
+        .join(Role, Role.id == UserOrganizationMembership.role_id)
+        .where(
+            UserOrganizationMembership.org_id == resolved_org_id,
+            UserOrganizationMembership.status == "active",
+            func.lower(Role.name) == "super_admin",
+            User.id != current_user.id,
+        )
+        .order_by(User.create_at.asc())
+    )
     row = (await session.exec(stmt)).first()
     if not row:
         if _can_self_approve(current_user):
@@ -551,7 +572,7 @@ async def create_mcp_server(
         await session.commit()
         return created_dict
 
-    approver_id = await _resolve_super_admin_approver(session, current_user)
+    approver_id = await _resolve_super_admin_approver(session, current_user, body.org_id)
     body.request_to = approver_id
     body.reviewed_at = None
     body.reviewed_by = None
@@ -646,7 +667,7 @@ async def request_mcp_server(
         visibility=visibility,
         public_scope=public_scope,
     ):
-        approver_id = await _resolve_super_admin_approver(session, current_user)
+        approver_id = await _resolve_super_admin_approver(session, current_user, body.org_id)
     else:
         approver_id = await _resolve_request_approver(session, current_user, body.org_id, body.dept_id)
     body.request_to = approver_id

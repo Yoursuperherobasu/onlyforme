@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { Plus, Folder, MoreVertical, Edit2, Trash2, FileText, X, Info } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
@@ -6,7 +5,7 @@ import { usePostFolders } from "@/controllers/API/queries/folders";
 import useAlertStore from "@/stores/alertStore";
 import { track } from "@/customization/utils/analytics";
 import type { FolderType } from "@/pages/MainPage/entities";
-import { useContext } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import {
   DropdownMenu,
@@ -46,6 +45,15 @@ export default function FolderCardsView({
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedFolderDetail, setSelectedFolderDetail] = useState<FolderType | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDepartment, setSelectedDepartment] = useState("all");
+  const [selectedCreator, setSelectedCreator] = useState("all");
+  const [sortByDate, setSortByDate] = useState<"newest" | "oldest">("newest");
+  const [sortByAgents, setSortByAgents] = useState<"none" | "most" | "least">("none");
+  const [agentCountFilter, setAgentCountFilter] = useState("all");
+  const [showFilters, setShowFilters] = useState(false);
+  const [activeFilterTab, setActiveFilterTab] = useState<
+    "department" | "creator" | "sort" | "agents"
+  >("department");
   
   const { mutate: mutateAddFolder, isPending } = usePostFolders();
 
@@ -68,33 +76,89 @@ export default function FolderCardsView({
   const showCreatedBy = normalizedRole === "department_admin" || normalizedRole === "super_admin" || normalizedRole === "root";
   const showDepartment = normalizedRole === "super_admin" || normalizedRole === "root";
   const showOrganization = normalizedRole === "root";
-  // Filter folders based on search query
-  const filteredFolders = displayFolders.filter(folder => 
-    folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    folder.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-  
-  // Sort by updated_at descending (most recently updated first). Fallback to created_at.
+  const agentCountByFolder = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!agents || agents.length === 0) return map;
+    for (const agent of agents) {
+      const key = agent.project_id;
+      if (!key) continue;
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }, [agents]);
+
+  const getAgentCount = (folderId: string) => agentCountByFolder.get(folderId) || 0;
+
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const folder of displayFolders) {
+      if (folder.department_name) names.add(folder.department_name);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [displayFolders]);
+
+  const creatorOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const folder of displayFolders) {
+      if (folder.is_own_project) {
+        names.add("You");
+      } else if (folder.created_by_email) {
+        names.add(folder.created_by_email);
+      }
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [displayFolders]);
+
+  const filteredFolders = displayFolders.filter((folder) => {
+    const matchesSearch =
+      folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      folder.description?.toLowerCase().includes(searchQuery.toLowerCase());
+
+    const matchesDepartment =
+      selectedDepartment === "all" ||
+      (selectedDepartment === "__none__" && !folder.department_name) ||
+      folder.department_name === selectedDepartment;
+
+    const creatorLabel = folder.is_own_project ? "You" : folder.created_by_email || "";
+    const matchesCreator =
+      selectedCreator === "all" ||
+      (selectedCreator === "__none__" && !creatorLabel) ||
+      creatorLabel === selectedCreator;
+
+    const count = getAgentCount(folder.id);
+    const matchesAgentCount =
+      agentCountFilter === "all" ||
+      (agentCountFilter === "0" && count === 0) ||
+      (agentCountFilter === "1-5" && count >= 1 && count <= 5) ||
+      (agentCountFilter === "6-10" && count >= 6 && count <= 10) ||
+      (agentCountFilter === "11+" && count >= 11);
+
+    return matchesSearch && matchesDepartment && matchesCreator && matchesAgentCount;
+  });
+
   const sortedFolders = [...filteredFolders].sort((a, b) => {
+    if (sortByAgents !== "none") {
+      const aCount = getAgentCount(a.id);
+      const bCount = getAgentCount(b.id);
+      if (aCount !== bCount) {
+        return sortByAgents === "most" ? bCount - aCount : aCount - bCount;
+      }
+    }
     const aDate = a.updated_at || a.created_at;
     const bDate = b.updated_at || b.created_at;
-    if (!aDate && !bDate) return 0;
-    if (!aDate) return 1;
-    if (!bDate) return -1;
-    return new Date(bDate).getTime() - new Date(aDate).getTime();
+    const dateDiff = (() => {
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return 1;
+      if (!bDate) return -1;
+      return new Date(aDate).getTime() - new Date(bDate).getTime();
+    })();
+    const dateOrder = sortByDate === "newest" ? -dateDiff : dateDiff;
+    return dateOrder;
   });
   
   // Split folders into recent (top 4) and older
   const recentFolders = sortedFolders.slice(0, 4);
   const olderFolders = sortedFolders.slice(4);
-
-  // Count agents per folder
-  const getAgentCount = (folderId: string) => {
-    if (!agents || agents.length === 0) return 0;
-    const count = agents.filter((agent) => agent.project_id === folderId).length;
-    console.log(`Folder ${folderId} has ${count} agents`);
-    return count;
-  };
 
   // Format date
   const formatDate = (dateString: string) => {
@@ -190,7 +254,7 @@ export default function FolderCardsView({
             </p>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {/* Search Bar */}
             <div className="relative">
               <input
@@ -210,6 +274,18 @@ export default function FolderCardsView({
               )}
             </div>
 
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowFilters(true);
+                if (showDepartment) setActiveFilterTab("department");
+                else if (showCreatedBy) setActiveFilterTab("creator");
+                else setActiveFilterTab("sort");
+              }}
+            >
+              Filters
+            </Button>
+
             {onFilesClick && (
               <Button
                 onClick={onFilesClick}
@@ -222,6 +298,186 @@ export default function FolderCardsView({
             )}
           </div>
         </div>
+
+        {showFilters && (
+          <>
+            <div
+              className="fixed inset-0 z-[60] bg-black/40 transition-opacity"
+              onClick={() => setShowFilters(false)}
+            />
+            <div className="fixed inset-x-0 top-0 z-[70] flex h-full w-full items-start justify-center p-4">
+              <div className="flex h-full max-h-[720px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-background shadow-xl transition-transform">
+                <div className="flex items-center justify-between border-b px-5 py-4">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setShowFilters(false)}
+                      className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+                      aria-label="Close filters"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                    <h2 className="text-lg font-semibold">Filters</h2>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedDepartment("all");
+                      setSelectedCreator("all");
+                      setSortByDate("newest");
+                      setSortByAgents("none");
+                      setAgentCountFilter("all");
+                    }}
+                    className="text-sm text-primary hover:underline"
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+
+                <div className="flex flex-1 overflow-hidden">
+                  <div className="w-40 border-r bg-muted/40 p-3 text-sm">
+                    <div className="flex flex-col gap-1">
+                      {showDepartment && (
+                        <button
+                          onClick={() => setActiveFilterTab("department")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "department"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Department
+                        </button>
+                      )}
+                      {showCreatedBy && (
+                        <button
+                          onClick={() => setActiveFilterTab("creator")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "creator"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Created By
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setActiveFilterTab("sort")}
+                        className={`rounded-md px-3 py-2 text-left ${
+                          activeFilterTab === "sort"
+                            ? "bg-background font-semibold shadow-sm"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        Sort
+                      </button>
+                      <button
+                        onClick={() => setActiveFilterTab("agents")}
+                        className={`rounded-md px-3 py-2 text-left ${
+                          activeFilterTab === "agents"
+                            ? "bg-background font-semibold shadow-sm"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        Agents
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-auto p-5">
+                    {activeFilterTab === "department" && showDepartment && (
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">Department</h3>
+                        <select
+                          value={selectedDepartment}
+                          onChange={(e) => setSelectedDepartment(e.target.value)}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        >
+                          <option value="all">All departments</option>
+                          <option value="__none__">Unassigned</option>
+                          {departmentOptions.map((dept) => (
+                            <option key={dept} value={dept}>
+                              {dept}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {activeFilterTab === "creator" && showCreatedBy && (
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">Created By</h3>
+                        <select
+                          value={selectedCreator}
+                          onChange={(e) => setSelectedCreator(e.target.value)}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        >
+                          <option value="all">All creators</option>
+                          <option value="__none__">Unassigned</option>
+                          {creatorOptions.map((creator) => (
+                            <option key={creator} value={creator}>
+                              {creator}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {activeFilterTab === "sort" && (
+                      <div className="space-y-6">
+                        <div className="space-y-3">
+                          <h3 className="text-sm font-semibold">Sort by date</h3>
+                          <select
+                            value={sortByDate}
+                            onChange={(e) => setSortByDate(e.target.value as "newest" | "oldest")}
+                            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                          >
+                            <option value="newest">Newest first</option>
+                            <option value="oldest">Oldest first</option>
+                          </select>
+                        </div>
+                        <div className="space-y-3">
+                          <h3 className="text-sm font-semibold">Sort by agents</h3>
+                          <select
+                            value={sortByAgents}
+                            onChange={(e) => setSortByAgents(e.target.value as "none" | "most" | "least")}
+                            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                          >
+                            <option value="none">No agent sort</option>
+                            <option value="most">Most agents</option>
+                            <option value="least">Least agents</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeFilterTab === "agents" && (
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">Agent count</h3>
+                        <select
+                          value={agentCountFilter}
+                          onChange={(e) => setAgentCountFilter(e.target.value)}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        >
+                          <option value="all">Any agent count</option>
+                          <option value="0">0 agents</option>
+                          <option value="1-5">1-5 agents</option>
+                          <option value="6-10">6-10 agents</option>
+                          <option value="11+">11+ agents</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between border-t bg-background px-5 py-4">
+                  <span className="text-xs text-muted-foreground">
+                    {filteredFolders.length} projects found
+                  </span>
+                  <Button onClick={() => setShowFilters(false)}>Apply</Button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Cards Section - Recent Projects */}
         <div className="border-b bg-muted/30 px-6 py-6">

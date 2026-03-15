@@ -71,7 +71,7 @@ class GuardrailCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     )
     source_guardrail_id: UUID | None = Field(default=None, nullable=True)
     promoted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    promoted_by: UUID | None = Field(default=None, nullable=True)
+    promoted_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     prod_ref_count: int = Field(default=0, sa_column=Column(Integer, nullable=False, default=0))
 
     __table_args__ = (

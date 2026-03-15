@@ -10,7 +10,7 @@ from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore
 
 # Locate the project root .env so we can read WEBUI_SECRET_KEY even when
 # this microservice is started as an independent process.
-_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+_ROOT_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 def _read_root_env_key(name: str) -> str:

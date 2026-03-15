@@ -3,7 +3,7 @@ import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import and_, distinct, exists, func, or_
+from sqlalchemy import and_, distinct, exists, func, or_, asc, desc
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -670,6 +670,32 @@ async def list_visible_departments(
     return [{"id": str(dept.id), "name": dept.name, "org_id": str(dept.org_id)} for dept in depts]
 
 
+@router.get("/organizations")
+async def list_visible_organizations(
+    session: DbSession,
+    current_user: User = Depends(PermissionChecker(["view_admin_page"])),
+) -> list[dict]:
+    current_role = normalize_role(current_user.role)
+    if current_role == "root":
+        orgs = (await session.exec(select(Organization).order_by(Organization.name.asc()))).all()
+    else:
+        org_ids = await _get_admin_org_ids(session, current_user)
+        if not org_ids:
+            return []
+        orgs = (
+            await session.exec(
+                select(Organization)
+                .where(
+                    Organization.id.in_(list(org_ids)),
+                    Organization.status == "active",
+                )
+                .order_by(Organization.name.asc())
+            )
+        ).all()
+
+    return [{"id": str(org.id), "name": org.name} for org in orgs]
+
+
 @router.get("/whoami", response_model=UserReadWithPermissions)
 async def read_current_user(
     current_user: CurrentActiveUser,
@@ -728,6 +754,10 @@ async def read_all_users(
     limit: int = 10,
     role: str | None = None,
     q: str | None = None,
+    organization_id: UUID | None = None,
+    department_id: UUID | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
     session: DbSession,
     current_admin: User = Depends(PermissionChecker(["view_admin_page"])),
 ) -> UsersResponse:
@@ -760,16 +790,81 @@ async def read_all_users(
         query = query.where(User.role == normalize_role(role))
     if q:
         query = query.where(User.username.ilike(f"%{q}%"))
+
+    if organization_id:
+        org_exists = exists(
+            select(1).where(
+                UserOrganizationMembership.user_id == User.id,
+                UserOrganizationMembership.org_id == organization_id,
+                UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+            )
+        )
+        query = query.where(org_exists)
+
+    if department_id:
+        dept_exists = exists(
+            select(1).where(
+                UserDepartmentMembership.user_id == User.id,
+                UserDepartmentMembership.department_id == department_id,
+                UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+            )
+        )
+        query = query.where(dept_exists)
+
+    sort_key = (sort_by or "").strip().lower()
+    sort_dir = (sort_order or "asc").strip().lower()
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = "asc"
+    order_func = asc if sort_dir == "asc" else desc
+
+    if sort_key:
+        if sort_key == "organization":
+            org_name_subq = (
+                select(Organization.name)
+                .join(
+                    UserOrganizationMembership,
+                    Organization.id == UserOrganizationMembership.org_id,
+                )
+                .where(
+                    UserOrganizationMembership.user_id == User.id,
+                    UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+                )
+                .order_by(Organization.name.asc())
+                .limit(1)
+                .scalar_subquery()
+            )
+            query = query.order_by(order_func(org_name_subq), User.username.asc())
+        elif sort_key == "department":
+            dept_name_subq = (
+                select(Department.name)
+                .join(
+                    UserDepartmentMembership,
+                    Department.id == UserDepartmentMembership.department_id,
+                )
+                .where(
+                    UserDepartmentMembership.user_id == User.id,
+                    UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+                )
+                .order_by(Department.name.asc())
+                .limit(1)
+                .scalar_subquery()
+            )
+            query = query.order_by(order_func(dept_name_subq), User.username.asc())
+        elif sort_key == "username":
+            query = query.order_by(order_func(User.username))
+        elif sort_key == "role":
+            query = query.order_by(order_func(User.role))
+        elif sort_key == "created_at":
+            query = query.order_by(order_func(User.create_at))
+        elif sort_key == "updated_at":
+            query = query.order_by(order_func(User.updated_at))
+
     query = query.offset(skip).limit(limit)
     users = (await session.exec(query)).fetchall()
 
-    count_query = (
-        select(func.count())
-        .select_from(User)
-        .where(
-            User.id.in_(list(visible_user_ids)),
-            User.deleted_at.is_(None),
-        )
+    count_query = select(func.count(distinct(User.id))).select_from(User).where(
+        User.id.in_(list(visible_user_ids)),
+        User.deleted_at.is_(None),
     )
     if normalize_role(current_admin.role) != "root":
         count_query = count_query.where(User.role != "root")
@@ -791,6 +886,24 @@ async def read_all_users(
         count_query = count_query.where(User.role == normalize_role(role))
     if q:
         count_query = count_query.where(User.username.ilike(f"%{q}%"))
+    if organization_id:
+        org_exists = exists(
+            select(1).where(
+                UserOrganizationMembership.user_id == User.id,
+                UserOrganizationMembership.org_id == organization_id,
+                UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+            )
+        )
+        count_query = count_query.where(org_exists)
+    if department_id:
+        dept_exists = exists(
+            select(1).where(
+                UserDepartmentMembership.user_id == User.id,
+                UserDepartmentMembership.department_id == department_id,
+                UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+            )
+        )
+        count_query = count_query.where(dept_exists)
     total_count = (await session.exec(count_query)).first()
 
     user_ids = [user.id for user in users]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, Date, DateTime, String
+from sqlalchemy import JSON, Column, Date, DateTime, Index, String
 from sqlmodel import Field, SQLModel
 
 
@@ -14,9 +14,13 @@ class Package(SQLModel, table=True):  # type: ignore[call-arg]
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(sa_column=Column(String(255), nullable=False, index=True))
+    service_name: str = Field(sa_column=Column(String(100), nullable=False, index=True, default="backend"))
     version: str = Field(sa_column=Column(String(100), nullable=False))
     version_spec: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
     package_type: str = Field(sa_column=Column(String(20), nullable=False, index=True))
+    snapshot_id: str | None = Field(default=None, sa_column=Column(String(100), nullable=True, index=True))
+    build_id: str | None = Field(default=None, sa_column=Column(String(100), nullable=True))
+    commit_sha: str | None = Field(default=None, sa_column=Column(String(64), nullable=True))
     release_id: UUID | None = Field(default=None, nullable=True, foreign_key="product_release.id", index=True)
     required_by: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     required_by_details: list[dict[str, str]] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -26,4 +30,8 @@ class Package(SQLModel, table=True):  # type: ignore[call-arg]
     synced_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    __table_args__ = (
+        Index("ix_package_name_package_type_service", "name", "package_type", "service_name"),
     )
