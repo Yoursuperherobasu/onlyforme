@@ -92,6 +92,7 @@ async def run_agent(
     run_id: str | None = None,
     session_id: str | None = None,
     graph: LangGraphAdapter | None = None,
+    files: list | None = None,
 ) -> list[RunOutputs]:
     if user_id is None:
         msg = "Session is invalid"
@@ -134,6 +135,7 @@ async def run_agent(
         inputs_components=inputs_components,
         types=types,
         fallback_to_env_vars=fallback_to_env_vars,
+        files=files,
     )
 
 
