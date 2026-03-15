@@ -121,6 +121,8 @@ ACTIONS = {
     "VIEW_AGENT_EDITOR": "view_agent_editor",
     "CONNECTORE_PAGE": "connectore_page",
     "ADD_CONNECTOR": "add_connector",
+    "EDIT_MODEL_REGISTRY": "edit_model_registry",
+    "DELETE_MODEL_REGISTRY": "delete_model_registry",
 }
 
 ROLE_PERMISSIONS: Dict[str, List[str]] = {
@@ -167,6 +169,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_AGENT_EDITOR"],
         ACTIONS["CONNECTORE_PAGE"],
         ACTIONS["ADD_CONNECTOR"],
+        ACTIONS["EDIT_MODEL_REGISTRY"],
+        ACTIONS["DELETE_MODEL_REGISTRY"],
     ],
     "super_admin": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -214,6 +218,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["RETIRE_GUARDRAILS"],
         ACTIONS["CONNECTORE_PAGE"],
         ACTIONS["ADD_CONNECTOR"],
+        ACTIONS["EDIT_MODEL_REGISTRY"],
+        ACTIONS["DELETE_MODEL_REGISTRY"],
     ],
     "department_admin": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -248,6 +254,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["ADD_SCHEDULER"],
         ACTIONS["CONNECTORE_PAGE"],
         ACTIONS["ADD_CONNECTOR"],
+        ACTIONS["EDIT_MODEL_REGISTRY"],
+        ACTIONS["DELETE_MODEL_REGISTRY"],
     ],
     "developer": [
         ACTIONS["VIEW_DASHBOARD"],
@@ -290,7 +298,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v10"  # bump when permissions change
+PERMISSION_VERSION = "v11"  # bump when permissions change
 
 
 class PermissionCacheService:

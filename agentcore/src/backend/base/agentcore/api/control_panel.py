@@ -1212,6 +1212,7 @@ async def promote_uat_to_prod(
         await session.commit()
         await session.refresh(new_record)
 
+        guardrails_ready = True
         if is_admin:
             # Admin publish: no approval required — promote guardrails now.
             try:
@@ -1245,6 +1246,7 @@ async def promote_uat_to_prod(
                             f"agent_id={uat_dep.agent_id}, deploy_id={new_record.id}"
                         )
             except Exception as guardrail_err:
+                guardrails_ready = False
                 logger.warning(
                     f"[GUARDRAIL_PROMOTION] Failed to promote guardrails for PROD deploy {new_record.id}: {guardrail_err}",
                     exc_info=True,
@@ -1265,30 +1267,35 @@ async def promote_uat_to_prod(
             except Exception as sync_err:
                 logger.warning(f"Registry sync failed for promoted PROD deploy {new_record.id}: {sync_err}")
 
-            # ─── HTTP notify (for downstream deployment orchestration) ──
-            try:
-                import httpx
-                from agentcore.services.deps import get_settings_service
-                settings = get_settings_service().settings
-                base_url = f"http://{settings.host}:{settings.port}"
-                payload = {
-                    "agent_id": str(uat_dep.agent_id),
-                    "environment": "prod",
-                    "version_number": str(next_version),
-                    "deployment_id": str(new_record.id),
-                }
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
-                    resp.raise_for_status()
-                    verified = resp.json()
-                logger.info(
-                    f"[PROMOTE_NOTIFY] API triggered: agent={verified.get('agent_name')} "
-                    f"deployment_id={verified.get('deployment_id')} "
-                    f"version={verified.get('version_number')} "
-                    f"status={verified.get('status')} is_active={verified.get('is_active')}",
+            # ─── HTTP notify (only if guardrail promotion succeeded) ──
+            if guardrails_ready:
+                try:
+                    import httpx
+                    from agentcore.services.deps import get_settings_service
+                    settings = get_settings_service().settings
+                    base_url = f"http://{settings.host}:{settings.port}"
+                    payload = {
+                        "agent_id": str(uat_dep.agent_id),
+                        "environment": "prod",
+                        "version_number": str(next_version),
+                        "deployment_id": str(new_record.id),
+                    }
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+                        resp.raise_for_status()
+                        verified = resp.json()
+                    logger.info(
+                        f"[PROMOTE_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+                        f"deployment_id={verified.get('deployment_id')} "
+                        f"version={verified.get('version_number')} "
+                        f"status={verified.get('status')} is_active={verified.get('is_active')}",
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Post-promote notify API failed for PROD deploy {new_record.id}: {notify_err}")
+            else:
+                logger.warning(
+                    f"[PROMOTE_NOTIFY] Skipped — guardrail promotion failed for PROD deploy {new_record.id}"
                 )
-            except Exception as notify_err:
-                logger.warning(f"Post-promote notify API failed for PROD deploy {new_record.id}: {notify_err}")
 
         return PromoteFromUATResponse(
             success=True,

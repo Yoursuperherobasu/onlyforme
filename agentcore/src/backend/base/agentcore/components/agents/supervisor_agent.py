@@ -626,8 +626,17 @@ Respond with ONLY a JSON array — no explanation, no markdown:
         if resolved:
             vertex.update_raw_params(resolved, overwrite=True)
 
-        # Override input_value with the task dispatched by the supervisor.
-        vertex.update_raw_params({"input_value": Message(text=task)}, overwrite=True)
+        # Forward any uploaded files (images, documents) from the original user
+        # message so workers can process them (e.g. vision models analysing images).
+        files_from_state = lg_state.get("files") or []
+        # Also check if the supervisor's own input_data carries files.
+        if not files_from_state and isinstance(self.input_data, Message) and self.input_data.files:
+            files_from_state = self.input_data.files
+
+        # Override input_value with the task dispatched by the supervisor,
+        # preserving any uploaded files so the worker LLM can see them.
+        task_message = Message(text=task, files=files_from_state or [])
+        vertex.update_raw_params({"input_value": task_message}, overwrite=True)
 
         # Reset built state so the vertex executes fresh on this hop.
         vertex.built = False
@@ -660,7 +669,7 @@ Respond with ONLY a JSON array — no explanation, no markdown:
                 vertex.build(
                     user_id=user_id,
                     inputs={},
-                    files=None,
+                    files=files_from_state or None,
                     event_manager=getattr(self._vertex.graph, "_event_manager", None),
                     fallback_to_env_vars=False,
                 ),

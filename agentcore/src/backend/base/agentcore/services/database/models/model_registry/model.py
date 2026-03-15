@@ -18,7 +18,6 @@ from sqlmodel import Field, SQLModel
 class ModelEnvironment(str, Enum):
     """Environment where the model is deployed / available."""
 
-    TEST = "test"
     UAT = "uat"
     PROD = "prod"
 
@@ -57,8 +56,8 @@ class ModelRegistry(SQLModel, table=True):
     base_url: str | None = Field(default=None)
     api_key_secret_ref: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
 
-    # Environment tag: test (default), uat, prod
-    environment: str = Field(default=ModelEnvironment.TEST.value, index=True)
+    # Environment tag: uat (default), prod
+    environment: str = Field(default=ModelEnvironment.UAT.value, index=True)
     source_model_id: UUID | None = Field(default=None, foreign_key="model_registry.id", nullable=True, index=True)
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
@@ -109,7 +108,7 @@ class ModelRegistryCreate(BaseModel):
     model_type: str = "llm"  # "llm" or "embedding"
     base_url: str | None = None
     api_key: str | None = None  # plain-text; encrypted before storage
-    environment: str = ModelEnvironment.TEST.value  # defaults to test
+    environment: str = ModelEnvironment.UAT.value  # defaults to uat
     visibility_scope: str = ModelVisibilityScope.PRIVATE.value
     org_id: UUID | None = None
     dept_id: UUID | None = None
@@ -173,13 +172,14 @@ class ModelRegistryRead(BaseModel):
     model_name: str
     model_type: str = "llm"
     base_url: str | None = None
-    environment: str = ModelEnvironment.TEST.value
+    environment: str = ModelEnvironment.UAT.value
     source_model_id: UUID | None = None
     org_id: UUID | None = None
     dept_id: UUID | None = None
     public_dept_ids: list[str] | None = None
     visibility_scope: str = ModelVisibilityScope.PRIVATE.value
     approval_status: str = ModelApprovalStatus.APPROVED.value
+    created_by_id: UUID | None = None
     requested_by: UUID | None = None
     request_to: UUID | None = None
     requested_at: datetime | None = None

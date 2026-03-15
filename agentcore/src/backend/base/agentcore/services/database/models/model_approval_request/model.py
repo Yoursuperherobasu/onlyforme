@@ -25,18 +25,19 @@ class ModelApprovalRequestBase(SQLModel):
         sa_column=Column(String(20), nullable=False, server_default=text("'create'")),
     )
     source_environment: str = Field(
-        default=ModelEnvironment.TEST.value,
-        sa_column=Column(String(20), nullable=False, server_default=text("'test'")),
+        default=ModelEnvironment.UAT.value,
+        sa_column=Column(String(20), nullable=False, server_default=text("'uat'")),
     )
     target_environment: str = Field(
-        default=ModelEnvironment.TEST.value,
-        sa_column=Column(String(20), nullable=False, server_default=text("'test'")),
+        default=ModelEnvironment.UAT.value,
+        sa_column=Column(String(20), nullable=False, server_default=text("'uat'")),
     )
     final_target_environment: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))
     visibility_requested: str = Field(
         default=ModelVisibilityScope.PRIVATE.value,
         sa_column=Column(String(20), nullable=False, server_default=text("'private'")),
     )
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     requested_by: UUID = Field(foreign_key="user.id", nullable=False)
     request_to: UUID = Field(foreign_key="user.id", nullable=False)
     reviewed_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
@@ -77,12 +78,13 @@ class ModelApprovalRequestCreate(SQLModel):
     requested_by: UUID
     request_to: UUID
     request_type: ModelApprovalRequestType = ModelApprovalRequestType.CREATE
-    source_environment: str = ModelEnvironment.TEST.value
-    target_environment: str = ModelEnvironment.TEST.value
+    source_environment: str = ModelEnvironment.UAT.value
+    target_environment: str = ModelEnvironment.UAT.value
     final_target_environment: str | None = None
     visibility_requested: str = ModelVisibilityScope.PRIVATE.value
     org_id: UUID | None = None
     dept_id: UUID | None = None
+    public_dept_ids: list[str] | None = None
 
 
 class ModelApprovalRequestRead(BaseModel):
@@ -103,6 +105,7 @@ class ModelApprovalRequestRead(BaseModel):
     decision: ApprovalDecisionEnum | None = None
     justification: str | None = None
     file_path: dict | None = None
+    public_dept_ids: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 
