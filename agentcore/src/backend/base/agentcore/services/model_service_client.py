@@ -841,6 +841,12 @@ class MicroserviceEmbeddings(LCEmbeddings):
     provider_config: dict = {}
     dimensions: int | None = None
 
+    def __init__(self, **kwargs):
+        super().__init__()
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+
     def _build_payload(self, texts: list[str]) -> dict:
         config: dict = dict(self.provider_config)
         if self.registry_model_id:

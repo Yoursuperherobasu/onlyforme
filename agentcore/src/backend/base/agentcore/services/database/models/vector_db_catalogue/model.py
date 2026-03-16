@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, String, Text, UniqueConstraint
+import sqlalchemy as sa
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -20,6 +21,29 @@ class VectorDBCatalogue(SQLModel, table=True):  # type: ignore[call-arg]
     status: str = Field(sa_column=Column(String(50), nullable=False))
     vector_count: str = Field(sa_column=Column(String(50), nullable=False))
     is_custom: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+
+    # Environment: uat / prod
+    environment: str = Field(default="uat", sa_column=Column(String(10), nullable=True, index=True))
+
+    # Pinecone-specific tracking
+    index_name: str | None = Field(default=None, sa_column=Column(String(256), nullable=True))
+    namespace: str | None = Field(default=None, sa_column=Column(String(256), nullable=True))
+
+    # Agent association
+    agent_id: UUID | None = Field(default=None, sa_column=Column("agent_id", sa.Uuid(), nullable=True, index=True))
+    agent_name: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
+
+    # UAT → PROD lineage
+    source_entry_id: UUID | None = Field(
+        default=None,
+        sa_column=Column("source_entry_id", sa.Uuid(), ForeignKey("vector_db_catalogue.id"), nullable=True),
+    )
+
+    # Migration tracking
+    migration_status: str | None = Field(default=None, sa_column=Column(String(50), nullable=True))
+    migrated_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    vectors_copied: int | None = Field(default=0, sa_column=Column(Integer, nullable=True))
+
     created_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),

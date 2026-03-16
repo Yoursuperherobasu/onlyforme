@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     ingest_batch_size: int = 50
     sparse_batch_size: int = 96
 
+    # Azure Key Vault integration
+    key_vault_url: str | None = None
+    key_vault_secret_prefix: str = "agentcore-pinecone"
+    key_vault_tenant_id: str | None = None
+    key_vault_client_id: str | None = None
+    key_vault_client_secret: str | None = None
+    key_vault_api_key_secret_name: str | None = None
+    key_vault_pinecone_api_key_secret_name: str | None = None
+    key_vault_database_url_secret_name: str | None = None
+
     model_config = SettingsConfigDict(
         env_prefix="PINECONE_SERVICE_",
         env_file=".env",
@@ -79,6 +89,37 @@ def get_settings() -> Settings:
         "your-fernet-key-here",
     ):
         settings.encryption_key = _derive_encryption_key()
+
+    # Resolve secrets from Azure Key Vault if configured
+    if settings.key_vault_url:
+        from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore
+
+        kv_store = KeyVaultSecretStore.from_config(
+            KeyVaultConfig(
+                vault_url=settings.key_vault_url,
+                secret_prefix=settings.key_vault_secret_prefix,
+                tenant_id=settings.key_vault_tenant_id,
+                client_id=settings.key_vault_client_id,
+                client_secret=settings.key_vault_client_secret,
+            )
+        )
+
+        if kv_store:
+            if settings.key_vault_api_key_secret_name:
+                secret = kv_store.get_secret(settings.key_vault_api_key_secret_name.strip())
+                if secret:
+                    settings.api_key = secret
+
+            if settings.key_vault_pinecone_api_key_secret_name:
+                secret = kv_store.get_secret(settings.key_vault_pinecone_api_key_secret_name.strip())
+                if secret:
+                    settings.pinecone_api_key = secret
+
+            if settings.key_vault_database_url_secret_name:
+                secret = kv_store.get_secret(settings.key_vault_database_url_secret_name.strip())
+                if secret:
+                    settings.database_url = secret
+
     # Also read PINECONE_API_KEY from root .env if not set
     if not settings.pinecone_api_key:
         settings.pinecone_api_key = os.getenv("PINECONE_API_KEY", "") or _read_root_env_key("PINECONE_API_KEY")

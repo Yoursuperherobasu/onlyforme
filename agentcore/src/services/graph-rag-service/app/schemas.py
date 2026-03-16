@@ -215,3 +215,24 @@ class TestConnectionResponse(BaseModel):
     success: bool
     message: str
     node_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Copy graph_kb (UAT → PROD migration)
+# ---------------------------------------------------------------------------
+
+
+class CopyGraphKbRequest(BaseModel):
+    source_graph_kb_id: str = Field(..., min_length=1, max_length=256)
+    target_graph_kb_id: str = Field(..., min_length=1, max_length=256)
+    batch_size: int = Field(default=200, ge=1, le=2000)
+
+
+class CopyGraphKbResponse(BaseModel):
+    success: bool
+    entities_copied: int
+    relationships_copied: int
+    communities_copied: int
+    source_graph_kb_id: str
+    target_graph_kb_id: str
+    message: str = ""

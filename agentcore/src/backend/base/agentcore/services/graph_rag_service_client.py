@@ -12,6 +12,15 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Connection timeout: fail fast if service is unreachable (15s).
+# Read/write timeout: None for long-running ops (ingest, copy, embeddings)
+# so they run until completion without being cut off.
+_CONNECT_TIMEOUT = 15.0
+
+_TIMEOUT_LONG = httpx.Timeout(connect=_CONNECT_TIMEOUT, read=None, write=None, pool=None)
+_TIMEOUT_MEDIUM = httpx.Timeout(connect=_CONNECT_TIMEOUT, read=120.0, write=60.0, pool=None)
+_TIMEOUT_SHORT = httpx.Timeout(connect=_CONNECT_TIMEOUT, read=30.0, write=30.0, pool=None)
+
 
 # ---------------------------------------------------------------------------
 # Settings helpers
@@ -56,6 +65,57 @@ def _raise_with_detail(resp: httpx.Response) -> None:
     )
 
 
+def _request(
+    method: str,
+    endpoint: str,
+    payload: dict,
+    timeout: httpx.Timeout,
+    operation: str,
+) -> dict:
+    """Central request helper with proper error logging."""
+    try:
+        url, api_key = _get_graph_rag_service_settings()
+    except ValueError as e:
+        logger.error("[Graph RAG] %s failed: %s", operation, e)
+        raise
+
+    full_url = f"{url}{endpoint}"
+    logger.info("[Graph RAG] %s → %s", operation, full_url)
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.request(method, full_url, headers=_headers(api_key), json=payload)
+            _raise_with_detail(resp)
+            result = resp.json()
+            logger.info("[Graph RAG] %s completed (HTTP %s)", operation, resp.status_code)
+            return result
+    except httpx.ConnectError as e:
+        logger.error(
+            "[Graph RAG] %s failed — cannot connect to service at %s. "
+            "Is graph-rag-service running? Error: %s",
+            operation, url, e,
+        )
+        raise ValueError(
+            f"Graph RAG service is unreachable at {url}. "
+            f"Please ensure graph-rag-service is running."
+        ) from e
+    except httpx.TimeoutException as e:
+        logger.error(
+            "[Graph RAG] %s timed out after connecting to %s. Error: %s",
+            operation, url, e,
+        )
+        raise ValueError(
+            f"Graph RAG service request timed out for {operation}. "
+            f"The service may be overloaded or Neo4j may be unresponsive."
+        ) from e
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "[Graph RAG] %s returned HTTP %s: %s",
+            operation, e.response.status_code, e.args[0] if e.args else "",
+        )
+        raise
+
+
 def is_service_configured() -> bool:
     try:
         _get_graph_rag_service_settings()
@@ -65,20 +125,18 @@ def is_service_configured() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Ingest entities
+# Ingest entities (no read timeout — runs until completion)
 # ---------------------------------------------------------------------------
 
 
 def ingest_via_service(entities: list[dict], graph_kb_id: str = "default") -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=300.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/ingest",
-            headers=_headers(api_key),
-            json={"entities": entities, "graph_kb_id": graph_kb_id},
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    logger.info("[Graph RAG] Ingesting %d entities into graph '%s'", len(entities), graph_kb_id)
+    return _request(
+        "POST", "/v1/graph/ingest",
+        {"entities": entities, "graph_kb_id": graph_kb_id},
+        timeout=_TIMEOUT_LONG,
+        operation=f"Ingest ({len(entities)} entities, kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -87,19 +145,16 @@ def ingest_via_service(entities: list[dict], graph_kb_id: str = "default") -> di
 
 
 def fetch_unembedded_via_service(graph_kb_id: str = "default", batch_size: int = 200) -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=60.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/fetch-unembedded",
-            headers=_headers(api_key),
-            json={"graph_kb_id": graph_kb_id, "batch_size": batch_size},
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    return _request(
+        "POST", "/v1/graph/fetch-unembedded",
+        {"graph_kb_id": graph_kb_id, "batch_size": batch_size},
+        timeout=_TIMEOUT_MEDIUM,
+        operation=f"Fetch unembedded (kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
-# Store embeddings
+# Store embeddings (no read timeout — batch can be large)
 # ---------------------------------------------------------------------------
 
 
@@ -107,15 +162,13 @@ def store_embeddings_via_service(
     graph_kb_id: str,
     embeddings: list[dict],
 ) -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/store-embeddings",
-            headers=_headers(api_key),
-            json={"graph_kb_id": graph_kb_id, "embeddings": embeddings},
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    logger.info("[Graph RAG] Storing %d embeddings for graph '%s'", len(embeddings), graph_kb_id)
+    return _request(
+        "POST", "/v1/graph/store-embeddings",
+        {"graph_kb_id": graph_kb_id, "embeddings": embeddings},
+        timeout=_TIMEOUT_LONG,
+        operation=f"Store embeddings ({len(embeddings)} vectors, kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -124,15 +177,12 @@ def store_embeddings_via_service(
 
 
 def ensure_vector_index_via_service(graph_kb_id: str = "default") -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/ensure-vector-index",
-            headers=_headers(api_key),
-            json={"graph_kb_id": graph_kb_id},
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    return _request(
+        "POST", "/v1/graph/ensure-vector-index",
+        {"graph_kb_id": graph_kb_id},
+        timeout=_TIMEOUT_SHORT,
+        operation=f"Ensure vector index (kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,23 +199,20 @@ def search_via_service(
     expansion_hops: int = 2,
     include_source_chunks: bool = True,
 ) -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/search",
-            headers=_headers(api_key),
-            json={
-                "query": query,
-                "query_embedding": query_embedding,
-                "graph_kb_id": graph_kb_id,
-                "search_type": search_type,
-                "number_of_results": number_of_results,
-                "expansion_hops": expansion_hops,
-                "include_source_chunks": include_source_chunks,
-            },
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    return _request(
+        "POST", "/v1/graph/search",
+        {
+            "query": query,
+            "query_embedding": query_embedding,
+            "graph_kb_id": graph_kb_id,
+            "search_type": search_type,
+            "number_of_results": number_of_results,
+            "expansion_hops": expansion_hops,
+            "include_source_chunks": include_source_chunks,
+        },
+        timeout=_TIMEOUT_MEDIUM,
+        operation=f"Search (query='{query[:50]}', kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -174,19 +221,16 @@ def search_via_service(
 
 
 def get_stats_via_service(graph_kb_id: str = "default") -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/stats",
-            headers=_headers(api_key),
-            json={"graph_kb_id": graph_kb_id},
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    return _request(
+        "POST", "/v1/graph/stats",
+        {"graph_kb_id": graph_kb_id},
+        timeout=_TIMEOUT_SHORT,
+        operation=f"Stats (kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
-# Community detection
+# Community detection (no read timeout — can be slow for large graphs)
 # ---------------------------------------------------------------------------
 
 
@@ -195,19 +239,16 @@ def detect_communities_via_service(
     max_communities: int = 10,
     min_community_size: int = 2,
 ) -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/communities/detect",
-            headers=_headers(api_key),
-            json={
-                "graph_kb_id": graph_kb_id,
-                "max_communities": max_communities,
-                "min_community_size": min_community_size,
-            },
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    return _request(
+        "POST", "/v1/graph/communities/detect",
+        {
+            "graph_kb_id": graph_kb_id,
+            "max_communities": max_communities,
+            "min_community_size": min_community_size,
+        },
+        timeout=_TIMEOUT_LONG,
+        operation=f"Detect communities (kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -219,15 +260,12 @@ def store_communities_via_service(
     graph_kb_id: str,
     communities: list[dict],
 ) -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=60.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/communities/store",
-            headers=_headers(api_key),
-            json={"graph_kb_id": graph_kb_id, "communities": communities},
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    return _request(
+        "POST", "/v1/graph/communities/store",
+        {"graph_kb_id": graph_kb_id, "communities": communities},
+        timeout=_TIMEOUT_MEDIUM,
+        operation=f"Store communities ({len(communities)} communities, kb={graph_kb_id})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,17 +279,40 @@ def test_connection_via_service(
     neo4j_password: str | None = None,
     neo4j_database: str | None = None,
 ) -> dict:
-    url, api_key = _get_graph_rag_service_settings()
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(
-            f"{url}/v1/graph/test-connection",
-            headers=_headers(api_key),
-            json={
-                "neo4j_uri": neo4j_uri,
-                "neo4j_username": neo4j_username,
-                "neo4j_password": neo4j_password,
-                "neo4j_database": neo4j_database,
-            },
-        )
-        _raise_with_detail(resp)
-        return resp.json()
+    return _request(
+        "POST", "/v1/graph/test-connection",
+        {
+            "neo4j_uri": neo4j_uri,
+            "neo4j_username": neo4j_username,
+            "neo4j_password": neo4j_password,
+            "neo4j_database": neo4j_database,
+        },
+        timeout=_TIMEOUT_SHORT,
+        operation="Test Neo4j connection",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Copy graph_kb (UAT → PROD migration — no read timeout)
+# ---------------------------------------------------------------------------
+
+
+def copy_graph_kb_via_service(
+    source_graph_kb_id: str,
+    target_graph_kb_id: str,
+    batch_size: int = 200,
+) -> dict:
+    logger.info(
+        "[Graph RAG] Copying graph KB '%s' → '%s' (batch_size=%d)",
+        source_graph_kb_id, target_graph_kb_id, batch_size,
+    )
+    return _request(
+        "POST", "/v1/graph/copy-graph-kb",
+        {
+            "source_graph_kb_id": source_graph_kb_id,
+            "target_graph_kb_id": target_graph_kb_id,
+            "batch_size": batch_size,
+        },
+        timeout=_TIMEOUT_LONG,
+        operation=f"Copy graph KB ({source_graph_kb_id} → {target_graph_kb_id})",
+    )
