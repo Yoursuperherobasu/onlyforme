@@ -1544,6 +1544,7 @@ async def approve_agent(
                 f"Deployment {deployment.id} has been marked as ERROR and will not serve in PROD. "
                 f"Please retry the approval or contact support."
             ),
+        )
     # ─── HTTP notify (only if guardrail promotion succeeded) ──
     guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
     if guardrails_ready:
