@@ -309,6 +309,39 @@ class DatabaseService(Service):
             except Exception:  # noqa: BLE001
                 logger.debug("Alembic not initialized")
                 should_initialize_alembic = True
+
+        # Clean up stale revisions using a raw connection (committed immediately)
+        try:
+            from sqlalchemy import create_engine as _create_engine
+
+            sync_url = self.database_url.replace("postgresql+psycopg", "postgresql+psycopg")
+            sync_engine = _create_engine(sync_url, pool_pre_ping=True)
+            with sync_engine.connect() as conn:
+                from sqlalchemy import text as sa_text
+                from alembic.script import ScriptDirectory
+
+                agentcore_dir = Path(__file__).parent.parent.parent
+                script_dir = ScriptDirectory(str(agentcore_dir / "alembic"))
+                known_revisions = {r.revision for r in script_dir.walk_revisions()}
+
+                rows = conn.execute(sa_text("SELECT version_num FROM alembic_version")).fetchall()
+                for row in rows:
+                    rev = row[0]
+                    if rev not in known_revisions:
+                        logger.warning(f"Deleting stale alembic revision '{rev}'")
+                        conn.execute(sa_text("DELETE FROM alembic_version WHERE version_num = :rev"), {"rev": rev})
+                        conn.commit()
+
+                # Drop orphaned ltm_state table if it exists (no longer managed by alembic)
+                table_names = sa.inspect(conn).get_table_names()
+                if "ltm_state" in table_names:
+                    logger.warning("Dropping orphaned ltm_state table (now using in-memory/Redis)")
+                    conn.execute(sa_text("DROP TABLE ltm_state"))
+                    conn.commit()
+            sync_engine.dispose()
+        except Exception as e:
+            logger.debug(f"Stale revision cleanup skipped: {e}")
+
         await asyncio.to_thread(self._run_migrations, should_initialize_alembic, fix)
 
     @staticmethod

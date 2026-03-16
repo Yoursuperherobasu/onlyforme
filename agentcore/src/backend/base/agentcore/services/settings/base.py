@@ -127,6 +127,60 @@ class Settings(BaseSettings):
     stm_cache_ttl: int = int(os.getenv("STM_CACHE_TTL", "300"))
     """STM (Short Term Memory) cache TTL in seconds. Default is 300 (5 minutes)."""
 
+    # LTM (Long Term Memory) settings
+    ltm_enabled: bool = False
+    """Enable the Long Term Memory background processor."""
+    ltm_message_threshold: int = 10
+    """Trigger LTM processing after this many new messages per agent."""
+    ltm_time_interval_minutes: int = 15
+    """Trigger LTM processing every N minutes (time-based trigger)."""
+    ltm_embedding_provider: str = "openai"
+    """Embedding provider for LTM: 'openai' or 'azure_openai'."""
+    ltm_embedding_model: str = "text-embedding-3-small"
+    """Embedding model name (OpenAI) or deployment name (Azure)."""
+    ltm_embedding_api_key: str = ""
+    """API key for the LTM embedding model."""
+    ltm_azure_openai_endpoint: str = ""
+    """Azure OpenAI endpoint URL (e.g., https://your-resource.openai.azure.com/)."""
+    ltm_azure_openai_api_version: str = "2024-02-01"
+    """Azure OpenAI API version."""
+    ltm_embedding_dimensions: int = 0
+    """Optional: Reduce embedding dimensions (e.g., 512 to match Pinecone index). 0 = use model default."""
+    ltm_max_summary_tokens: int = 500
+    """Maximum tokens for LLM-generated conversation summaries."""
+    ltm_max_context_chars: int = 2000
+    """Maximum characters of LTM context prepended to user messages."""
+    ltm_pinecone_top_k: int = 5
+    """Number of summaries to retrieve from Pinecone."""
+    ltm_neo4j_top_k: int = 10
+    """Number of entities/relationships to retrieve from Neo4j."""
+    ltm_llm_provider: str = ""
+    """LLM provider for LTM summarization (e.g., groq, openai, azure). Uses model service."""
+    ltm_llm_model: str = ""
+    """LLM model name for LTM summarization (e.g., meta-llama/llama-4-scout-17b-16e-instruct)."""
+    ltm_llm_registry_model_id: str = ""
+    """Optional: Model Registry ID for LTM LLM. If set, provider/model are resolved from registry."""
+    # LTM Pinecone (separate free-tier instance)
+    ltm_pinecone_api_key: str = ""
+    """Pinecone API key for LTM (separate from the main RAG Pinecone)."""
+    ltm_pinecone_index: str = "ltm-summaries"
+    """Pinecone index name for storing LTM conversation summaries."""
+    ltm_pinecone_cloud: str = "aws"
+    """Pinecone cloud provider for LTM index."""
+    ltm_pinecone_region: str = "us-east-1"
+    """Pinecone cloud region for LTM index."""
+    # LTM Neo4j (separate free-tier instance)
+    ltm_neo4j_uri: str = ""
+    """Neo4j connection URI for LTM (separate from the main RAG Neo4j)."""
+    ltm_neo4j_username: str = ""
+    """Neo4j username for LTM."""
+    ltm_neo4j_password: str = ""
+    """Neo4j password for LTM."""
+    ltm_neo4j_database: str = "neo4j"
+    """Neo4j database name for LTM."""
+    ltm_neo4j_graph_kb_id: str = "ltm"
+    """Neo4j graph_kb_id for isolating LTM entities."""
+
     """The cache expire in seconds."""
     # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault
 
