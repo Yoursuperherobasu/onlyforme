@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.guardrail_catalogue import GuardrailCatalogue
 from app.models.model_registry import ModelRegistry
+from app.utils.crypto import decrypt_api_key
 from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore
 
 
@@ -175,18 +176,32 @@ async def _get_model_registry_config(
         "default_params": model_row.default_params or {},
     }
 
-    if model_row.api_key_secret_ref:
-        kv_store = _get_kv_store()
-        secret_value = kv_store.get_secret(model_row.api_key_secret_ref)
-        if not secret_value:
-            logger.warning(
-                "NeMo model registry secret ref not found in Key Vault: "
-                f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}, "
-                f"secret_ref={model_row.api_key_secret_ref}"
-            )
-            config["api_key"] = ""
+    secret_ref = model_row.api_key_secret_ref
+    if secret_ref:
+        if secret_ref.startswith("gAAAAA"):
+            # Fernet-encrypted token stored by the main backend
+            try:
+                settings = get_settings()
+                config["api_key"] = decrypt_api_key(secret_ref, settings.encryption_key)
+            except Exception:
+                logger.exception(
+                    "NeMo model registry Fernet decryption failed: "
+                    f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}"
+                )
+                config["api_key"] = ""
         else:
-            config["api_key"] = secret_value
+            # Azure Key Vault secret name
+            kv_store = _get_kv_store()
+            secret_value = kv_store.get_secret(secret_ref)
+            if not secret_value:
+                logger.warning(
+                    "NeMo model registry secret ref not found in Key Vault: "
+                    f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}, "
+                    f"secret_ref={secret_ref}"
+                )
+                config["api_key"] = ""
+            else:
+                config["api_key"] = secret_value
     else:
         config["api_key"] = ""
 
