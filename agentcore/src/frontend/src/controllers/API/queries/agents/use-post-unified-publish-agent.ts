@@ -3,6 +3,7 @@ import type { useMutationFunctionType } from "@/types/api";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
+import { emitDashboardRefresh } from "@/utils/dashboardRefresh";
 
 export interface IUnifiedPublishAgentRequest {
   agent_id: string;
@@ -56,10 +57,15 @@ export const usePostUnifiedPublishAgent: useMutationFunctionType<
     IUnifiedPublishAgentRequest
   > = mutate(["usePostUnifiedPublishAgent"], publishAgentFn, {
     ...options,
-    onSettled: () => {
+    onSuccess: (data, variables, context) => {
+      emitDashboardRefresh();
+      options?.onSuccess?.(data, variables, context);
+    },
+    onSettled: (data, error, variables, context) => {
       queryClient.invalidateQueries({
         queryKey: ["useGetPublishStatus"],
       });
+      options?.onSettled?.(data, error, variables, context);
     },
   });
 

@@ -4,6 +4,21 @@
   LineChart,
   ChevronDown,
   ChevronUp,
+  Server,
+  ShieldCheck,
+  GitBranch,
+  Users,
+  ClipboardCheck,
+  UserCog,
+  Database,
+  Microscope,
+  Zap,
+  Code2,
+  TrendingUp,
+  Star,
+  DollarSign,
+  BarChart2,
+  AlertTriangle,
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import {
@@ -79,6 +94,7 @@ type SectionConfig = {
   id: SectionId;
   label: string;
   headline: string;
+  description: string;
   kpis: SectionKpi[];
   charts: SectionChart[];
 };
@@ -117,6 +133,7 @@ const sections: SectionConfig[] = [
     id: "platform",
     label: "Platform Health & Reliability",
     headline: "Platform Health & Reliability KPIs",
+    description: "Infrastructure uptime, API latency percentiles, error rates, and AKS cluster resource saturation.",
     kpis: [
       { name: "Platform Uptime %", value: "--" },
       { name: "API Latency P95", value: "--" },
@@ -161,6 +178,7 @@ const sections: SectionConfig[] = [
     id: "governance",
     label: "Governance & Guardrail",
     headline: "Governance & Guardrail KPIs",
+    description: "Policy enforcement, unsafe content interception, breach attempts, and agents operating without guardrails.",
     kpis: [
       { name: "Guardrail Violation Rate", value: "0.7%" },
       { name: "Policy Breach Attempts", value: "41" },
@@ -174,6 +192,7 @@ const sections: SectionConfig[] = [
     id: "lifecycle",
     label: "Environment & Lifecycle",
     headline: "Environment & Lifecycle Governance",
+    description: "Agent promotion across UAT and production, conversion rates, and deprecated agent tracking.",
     kpis: [],
     charts: [],
   },
@@ -184,6 +203,7 @@ const departmentSections: SectionConfig[] = [
     id: "usage",
     label: "Department Usage",
     headline: "Department Usage KPIs",
+    description: "Active agents, success rates, token consumption, and response performance across your department.",
     kpis: [
       { name: "Active Agents in Dept (UAT)", value: "42" },
       { name: "Active Agents in Dept (PROD)", value: "18" },
@@ -199,6 +219,7 @@ const departmentSections: SectionConfig[] = [
     id: "approval",
     label: "Approval & Governance",
     headline: "Approval & Governance KPIs",
+    description: "Pending approval queue depth, rejection rates, and average time-to-decision for agent change requests.",
     kpis: [
       { name: "Pending Approvals", value: "--" },
       { name: "Rejection Rate", value: "--" },
@@ -220,6 +241,7 @@ const departmentSections: SectionConfig[] = [
     id: "hitl",
     label: "HITL Governance",
     headline: "HITL Governance KPIs",
+    description: "Human-in-the-loop invocation frequency, response time benchmarks, and daily escalation patterns.",
     kpis: [
       { name: "HITL Invocation Rate", value: "3.6%" },
       { name: "Avg HITL Response Time", value: "12 min" },
@@ -249,6 +271,7 @@ const departmentSections: SectionConfig[] = [
     id: "rag",
     label: "RAG Governance",
     headline: "RAG Governance KPIs",
+    description: "Document indexing health, retrieval accuracy, vector DB growth, Pinecone latency, and data governance compliance.",
     kpis: [
       { name: "Total Documents Indexed", value: "420K" },
       { name: "Vector DB Growth Rate", value: "+12%" },
@@ -285,6 +308,7 @@ const developerSections: SectionConfig[] = [
     id: "quality",
     label: "Agent Quality",
     headline: "Agent Quality KPIs (Langfuse Evaluations)",
+    description: "LLM evaluation scores — hallucination rates, RAG relevance, and tool call accuracy from Langfuse.",
     kpis: [
       { name: "Hallucination Score", value: "2.1%" },
       { name: "RAG Relevance Score", value: "0.84" },
@@ -296,6 +320,7 @@ const developerSections: SectionConfig[] = [
     id: "performance",
     label: "Performance",
     headline: "Performance KPIs",
+    description: "Agent response latency profiles — average, P95, and P99 percentiles to surface tail latency regressions.",
     kpis: [
       { name: "Avg Agent Latency", value: "--" },
       { name: "Latency P95", value: "--" },
@@ -318,6 +343,7 @@ const developerSections: SectionConfig[] = [
     id: "code",
     label: "Code & Version Governance",
     headline: "Code & Version Governance KPIs",
+    description: "Version control discipline and agent code lifecycle tracking across the development organization.",
     kpis: [{ name: "Avg. Version Count of Agents", value: "--" }],
     charts: [],
   },
@@ -328,6 +354,7 @@ const businessSections: SectionConfig[] = [
     id: "productivity",
     label: "Productivity",
     headline: "Productivity KPIs",
+    description: "Business-level impact of AI automation — task throughput, hours saved, and workforce efficiency gains.",
     kpis: [],
     charts: [],
   },
@@ -335,6 +362,7 @@ const businessSections: SectionConfig[] = [
     id: "experience",
     label: "Experience",
     headline: "Experience KPIs",
+    description: "End-user experience signals — response speed, satisfaction scores, and escalation frequency to human agents.",
     kpis: [
       { name: "Avg Response Time", value: "--" },
       { name: "User Satisfaction Score", value: "--" },
@@ -351,6 +379,7 @@ const rootSections: SectionConfig[] = [
     id: "roi",
     label: "ROI & Financial Health",
     headline: "ROI & Financial Health",
+    description: "Cost-efficiency ratios, automation savings by department, spend drivers, and model dependency risk.",
     kpis: [
       { name: "Cost vs Productivity Gain", value: "2.6x" },
       { name: "Automation Savings", value: "1,420 hrs" },
@@ -382,6 +411,7 @@ const rootSections: SectionConfig[] = [
     id: "maturity",
     label: "AI Maturity Indicators",
     headline: "AI Maturity Indicators",
+    description: "Governance capability adoption — guardrails, RAG, and HITL coverage as signals of enterprise AI maturity.",
     kpis: [
       { name: "% Agents with Guardrails", value: "88%" },
       { name: "% Agents with RAG", value: "64%" },
@@ -393,6 +423,7 @@ const rootSections: SectionConfig[] = [
     id: "risk",
     label: "Enterprise Risk Indicators",
     headline: "Enterprise Risk Indicators",
+    description: "High-risk autonomous agents, guardrail bypass attempts, data leakage incidents, and audit readiness posture.",
     kpis: [
       { name: "High-Risk Autonomous Agents", value: "6" },
       { name: "Guardrail Bypass Attempts", value: "14" },
@@ -426,32 +457,23 @@ const rootSections: SectionConfig[] = [
 
 const chartColors = ["#2563eb", "#14b8a6", "#f97316", "#a855f7"];
 
-const kpiCardStyles = [
-  "from-sky-50 via-white to-white ring-sky-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
-  "from-emerald-50 via-white to-white ring-emerald-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
-  "from-amber-50 via-white to-white ring-amber-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
-  "from-violet-50 via-white to-white ring-violet-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
-];
-
-const kpiAccentColors = ["#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6"];
-
-const sectionThemes: Record<SectionId, { badge: string; accent: string }> = {
-  platform:    { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
-  governance:  { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
-  cost:        { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
-  lifecycle:   { badge: "bg-violet-100 text-violet-700",  accent: "#8b5cf6" },
-  usage:       { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
-  approval:    { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
-  hitl:        { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
-  rag:         { badge: "bg-violet-100 text-violet-700",  accent: "#8b5cf6" },
-  quality:     { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
-  performance: { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
-  code:        { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
-  productivity:{ badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
-  experience:  { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
-  roi:         { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
-  maturity:    { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
-  risk:        { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
+const sectionThemes: Record<SectionId, { badge: string; accent: string; border: string; headerBg: string; iconBg: string; icon: React.ReactNode }> = {
+  platform:    { badge: "bg-sky-100 text-sky-700",         accent: "#0ea5e9", border: "border-l-sky-500",     headerBg: "bg-sky-50/60 dark:bg-sky-950/20",     iconBg: "bg-sky-100 dark:bg-sky-900/30",     icon: <Server className="h-4 w-4 text-sky-600 dark:text-sky-400" /> },
+  governance:  { badge: "bg-emerald-100 text-emerald-700", accent: "#10b981", border: "border-l-emerald-500", headerBg: "bg-emerald-50/60 dark:bg-emerald-950/20", iconBg: "bg-emerald-100 dark:bg-emerald-900/30", icon: <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> },
+  cost:        { badge: "bg-amber-100 text-amber-700",     accent: "#f59e0b", border: "border-l-amber-500",   headerBg: "bg-amber-50/60 dark:bg-amber-950/20",   iconBg: "bg-amber-100 dark:bg-amber-900/30",   icon: <DollarSign className="h-4 w-4 text-amber-600 dark:text-amber-400" /> },
+  lifecycle:   { badge: "bg-violet-100 text-violet-700",   accent: "#8b5cf6", border: "border-l-violet-500",  headerBg: "bg-violet-50/60 dark:bg-violet-950/20", iconBg: "bg-violet-100 dark:bg-violet-900/30", icon: <GitBranch className="h-4 w-4 text-violet-600 dark:text-violet-400" /> },
+  usage:       { badge: "bg-sky-100 text-sky-700",         accent: "#0ea5e9", border: "border-l-sky-500",     headerBg: "bg-sky-50/60 dark:bg-sky-950/20",     iconBg: "bg-sky-100 dark:bg-sky-900/30",     icon: <Users className="h-4 w-4 text-sky-600 dark:text-sky-400" /> },
+  approval:    { badge: "bg-amber-100 text-amber-700",     accent: "#f59e0b", border: "border-l-amber-500",   headerBg: "bg-amber-50/60 dark:bg-amber-950/20",   iconBg: "bg-amber-100 dark:bg-amber-900/30",   icon: <ClipboardCheck className="h-4 w-4 text-amber-600 dark:text-amber-400" /> },
+  hitl:        { badge: "bg-emerald-100 text-emerald-700", accent: "#10b981", border: "border-l-emerald-500", headerBg: "bg-emerald-50/60 dark:bg-emerald-950/20", iconBg: "bg-emerald-100 dark:bg-emerald-900/30", icon: <UserCog className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> },
+  rag:         { badge: "bg-violet-100 text-violet-700",   accent: "#8b5cf6", border: "border-l-violet-500",  headerBg: "bg-violet-50/60 dark:bg-violet-950/20", iconBg: "bg-violet-100 dark:bg-violet-900/30", icon: <Database className="h-4 w-4 text-violet-600 dark:text-violet-400" /> },
+  quality:     { badge: "bg-sky-100 text-sky-700",         accent: "#0ea5e9", border: "border-l-sky-500",     headerBg: "bg-sky-50/60 dark:bg-sky-950/20",     iconBg: "bg-sky-100 dark:bg-sky-900/30",     icon: <Microscope className="h-4 w-4 text-sky-600 dark:text-sky-400" /> },
+  performance: { badge: "bg-emerald-100 text-emerald-700", accent: "#10b981", border: "border-l-emerald-500", headerBg: "bg-emerald-50/60 dark:bg-emerald-950/20", iconBg: "bg-emerald-100 dark:bg-emerald-900/30", icon: <Zap className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> },
+  code:        { badge: "bg-amber-100 text-amber-700",     accent: "#f59e0b", border: "border-l-amber-500",   headerBg: "bg-amber-50/60 dark:bg-amber-950/20",   iconBg: "bg-amber-100 dark:bg-amber-900/30",   icon: <Code2 className="h-4 w-4 text-amber-600 dark:text-amber-400" /> },
+  productivity:{ badge: "bg-sky-100 text-sky-700",         accent: "#0ea5e9", border: "border-l-sky-500",     headerBg: "bg-sky-50/60 dark:bg-sky-950/20",     iconBg: "bg-sky-100 dark:bg-sky-900/30",     icon: <TrendingUp className="h-4 w-4 text-sky-600 dark:text-sky-400" /> },
+  experience:  { badge: "bg-emerald-100 text-emerald-700", accent: "#10b981", border: "border-l-emerald-500", headerBg: "bg-emerald-50/60 dark:bg-emerald-950/20", iconBg: "bg-emerald-100 dark:bg-emerald-900/30", icon: <Star className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> },
+  roi:         { badge: "bg-sky-100 text-sky-700",         accent: "#0ea5e9", border: "border-l-sky-500",     headerBg: "bg-sky-50/60 dark:bg-sky-950/20",     iconBg: "bg-sky-100 dark:bg-sky-900/30",     icon: <DollarSign className="h-4 w-4 text-sky-600 dark:text-sky-400" /> },
+  maturity:    { badge: "bg-emerald-100 text-emerald-700", accent: "#10b981", border: "border-l-emerald-500", headerBg: "bg-emerald-50/60 dark:bg-emerald-950/20", iconBg: "bg-emerald-100 dark:bg-emerald-900/30", icon: <BarChart2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> },
+  risk:        { badge: "bg-rose-100 text-rose-700",       accent: "#f43f5e", border: "border-l-rose-500",    headerBg: "bg-rose-50/60 dark:bg-rose-950/20",     iconBg: "bg-rose-100 dark:bg-rose-900/30",     icon: <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400" /> },
 };
 
 // ─── Tooltips ─────────────────────────────────────────────────────────────
@@ -618,100 +640,185 @@ function SectionCard({
   const isMaturity = section.id === "maturity";
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-card/90 shadow-sm">
-      {/* Clickable header */}
+    <div
+      className={`overflow-hidden rounded-2xl border border-border border-l-4 ${theme.border} bg-card shadow-sm transition-shadow duration-200 ${expanded ? "shadow-md" : "hover:shadow-md"}`}
+    >
+      {/* ── Clickable Header ── */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between px-6 py-4 text-left transition-colors hover:bg-muted/30"
+        className={`flex w-full items-center justify-between px-5 py-5 text-left transition-colors ${theme.headerBg} hover:brightness-95`}
       >
+        {/* Left: icon + label + description */}
         <div className="flex items-center gap-3 min-w-0">
-          <span className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${theme.badge}`}>
-            {t(section.label)}
-          </span>
-          <span className="truncate text-sm text-muted-foreground hidden sm:block">
-            {t(section.headline)}
-          </span>
+          {/* Icon badge */}
+          <div className={`shrink-0 flex h-8 w-8 items-center justify-center rounded-lg ${theme.iconBg}`}>
+            {theme.icon}
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-foreground leading-tight">
+                {t(section.label)}
+              </span>
+              {isEmpty && (
+                <span className="text-[10px] text-muted-foreground rounded-full border border-border bg-background px-2 py-0.5 leading-none">
+                  No data configured
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-[11px] text-muted-foreground truncate max-w-xl hidden sm:block">
+              {section.description}
+            </p>
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2 ml-4">
+
+        {/* Right: meta + chevron */}
+        <div className="flex shrink-0 items-center gap-3 ml-4">
           {!isEmpty && (
-            <span className="text-[11px] text-muted-foreground">
-              {displayKpis.length > 0 && `${displayKpis.length} KPI${displayKpis.length !== 1 ? "s" : ""}`}
-              {displayKpis.length > 0 && charts.length > 0 && " · "}
-              {charts.length > 0 && `${charts.length} chart${charts.length !== 1 ? "s" : ""}`}
-            </span>
+            <div className="hidden sm:flex items-center gap-1.5">
+              {displayKpis.length > 0 && (
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${theme.badge}`}>
+                  {displayKpis.length} KPI{displayKpis.length !== 1 ? "s" : ""}
+                </span>
+              )}
+              {charts.length > 0 && (
+                <span className="inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {charts.length} chart{charts.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
           )}
-          {isEmpty && (
-            <span className="text-[10px] text-muted-foreground rounded-full border border-border px-2 py-0.5">
-              No data configured
-            </span>
-          )}
-          {expanded
-            ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
-            : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          <div className={`rounded-full p-1 transition-colors ${expanded ? theme.iconBg : "bg-transparent"}`}>
+            {expanded
+              ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </div>
         </div>
       </button>
 
-      {/* Expanded body */}
+      {/* ── Collapsed Preview — KPI chips visible when closed ── */}
+      {!expanded && !isEmpty && displayKpis.length > 0 && (
+        <div
+          className="border-t border-border px-5 py-3 flex flex-wrap gap-2"
+          style={{ backgroundColor: theme.accent + "06" }}
+        >
+          {displayKpis.map((kpi) => (
+            <div
+              key={kpi.name}
+              className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 shadow-sm"
+            >
+              <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: theme.accent }} />
+              <span className="text-[11px] text-muted-foreground">{t(kpi.name)}</span>
+              <span className="text-[11px] font-bold text-foreground">{t(kpi.value)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Expanded Body ── */}
       {expanded && !isEmpty && (
-        <div className="border-t border-border px-6 pb-6">
-          {/* KPI cards */}
+        <div className="border-t border-border bg-card px-6 pb-6">
+
+          {/* KPI grid — uses section accent color consistently */}
           {displayKpis.length > 0 && (
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-              {displayKpis.map((kpi, i) => {
-                const accent = kpiAccentColors[i % kpiAccentColors.length];
-                return (
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+              {displayKpis.map((kpi, i) => (
+                <div
+                  key={kpi.name}
+                  className="group relative overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  {/* Left accent stripe */}
                   <div
-                    key={kpi.name}
-                    className={`relative overflow-hidden rounded-xl border bg-gradient-to-br ${kpiCardStyles[i % kpiCardStyles.length]} p-3.5 ring-1 border-border shadow-sm`}
+                    className="absolute left-0 top-0 bottom-0 w-0.5 rounded-l-xl"
+                    style={{ backgroundColor: theme.accent }}
+                  />
+                  {/* Index dot */}
+                  <div
+                    className="mb-3 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                    style={{ backgroundColor: theme.accent + "cc" }}
                   >
-                    <div className="h-0.5 w-8 rounded-full mb-2.5" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}40)` }} />
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground leading-snug">{t(kpi.name)}</p>
-                    <p className="mt-1.5 text-xl font-bold text-foreground leading-none">{t(kpi.value)}</p>
-                    <div className="pointer-events-none absolute -right-3 -bottom-3 h-12 w-12 rounded-full opacity-[0.06]" style={{ backgroundColor: accent }} />
+                    {i + 1}
                   </div>
-                );
-              })}
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground leading-snug font-medium">
+                    {t(kpi.name)}
+                  </p>
+                  <p className="mt-2 text-2xl font-bold text-foreground leading-none tracking-tight">
+                    {t(kpi.value)}
+                  </p>
+                  {/* subtle bg glow */}
+                  <div
+                    className="pointer-events-none absolute -right-4 -bottom-4 h-16 w-16 rounded-full opacity-[0.05] group-hover:opacity-[0.10] transition-opacity"
+                    style={{ backgroundColor: theme.accent }}
+                  />
+                </div>
+              ))}
             </div>
           )}
 
-          {/* Maturity progress bars (existing KPI values, visual enhancement only) */}
+          {/* Maturity progress bars */}
           {isMaturity && displayKpis.length > 0 && (
             <MaturityProgressBars kpis={displayKpis} accent={theme.accent} />
           )}
 
           {/* Charts */}
           {charts.length > 0 && (
-            <div className={`mt-5 grid grid-cols-1 gap-4 ${charts.length === 1 ? "lg:grid-cols-2" : "lg:grid-cols-2 xl:grid-cols-3"}`}>
-              {charts.map((chart) => {
-                const isApprovalChart = section.id === "approval" && chart.title === "Pending Approvals";
-                const isHitlChart = section.id === "hitl" && (chart.title === "Invocation Rate" || chart.title === "Response Time");
-                return (
-                  <div key={chart.title} className="rounded-xl border border-border bg-background/60 p-4 shadow-sm">
-                    <div className="mb-3 flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{t(chart.title)}</p>
-                        <p className="text-[11px] text-muted-foreground">{t(chart.subtitle)}</p>
+            <>
+              {/* Divider with label */}
+              <div className="mt-6 mb-4 flex items-center gap-3">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Charts
+                </span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+
+              <div className={`grid grid-cols-1 gap-4 ${charts.length === 1 ? "lg:grid-cols-2" : "lg:grid-cols-2 xl:grid-cols-3"}`}>
+                {charts.map((chart) => {
+                  const isApprovalChart = section.id === "approval" && chart.title === "Pending Approvals";
+                  const isHitlChart = section.id === "hitl" && (chart.title === "Invocation Rate" || chart.title === "Response Time");
+                  return (
+                    <div
+                      key={chart.title}
+                      className="overflow-hidden rounded-xl border border-border bg-background shadow-sm"
+                    >
+                      {/* Chart header strip */}
+                      <div
+                        className="flex items-center justify-between px-4 py-3 border-b border-border"
+                        style={{ backgroundColor: theme.accent + "0d" }}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-foreground leading-tight truncate">
+                            {t(chart.title)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">{t(chart.subtitle)}</p>
+                        </div>
+                        <div className="shrink-0 ml-3">
+                          {isApprovalChart && approvalRangeSelector}
+                          {isHitlChart && hitlRangeSelector}
+                          {!isApprovalChart && !isHitlChart && (
+                            <div
+                              className="rounded-lg p-1.5"
+                              style={{ backgroundColor: theme.accent + "1a" }}
+                            >
+                              {chart.type === "line" || chart.type === "area"
+                                ? <LineChart className="h-3.5 w-3.5" style={{ color: theme.accent }} />
+                                : chart.type === "bar"
+                                  ? <BarChart3 className="h-3.5 w-3.5" style={{ color: theme.accent }} />
+                                  : <Activity className="h-3.5 w-3.5" style={{ color: theme.accent }} />}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="shrink-0">
-                        {isApprovalChart && approvalRangeSelector}
-                        {isHitlChart && hitlRangeSelector}
-                        {!isApprovalChart && !isHitlChart && (
-                          <div className="rounded-full bg-slate-100 dark:bg-slate-800 p-1.5">
-                            {chart.type === "line" || chart.type === "area"
-                              ? <LineChart className="h-3.5 w-3.5 text-slate-500" />
-                              : chart.type === "bar"
-                                ? <BarChart3 className="h-3.5 w-3.5 text-slate-500" />
-                                : <Activity className="h-3.5 w-3.5 text-slate-500" />}
-                          </div>
-                        )}
+                      {/* Chart body */}
+                      <div className="p-4">
+                        <ChartBlock chart={chart} accentColor={theme.accent} />
                       </div>
                     </div>
-                    <ChartBlock chart={chart} accentColor={theme.accent} />
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -743,6 +850,7 @@ export default function DashboardAdmin(): JSX.Element {
   const [hitlRange, setHitlRange]                   = useState<"7d" | "30d" | "12w">("7d");
   const [hitlInvocationSeries, setHitlInvocationSeries] = useState<PendingSeriesPoint[] | null>(null);
   const [hitlResponseSeries, setHitlResponseSeries] = useState<PendingSeriesPoint[] | null>(null);
+  const tzOffsetMinutes = useMemo(() => -new Date().getTimezoneOffset(), []);
   const [devCodeKpis, setDevCodeKpis]               = useState<SectionKpi[] | null>(null);
   const [businessMaturityKpis, setBusinessMaturityKpis] = useState<SectionKpi[] | null>(null);
   const [rootMaturityKpis, setRootMaturityKpis]     = useState<SectionKpi[] | null>(null);
@@ -769,7 +877,7 @@ export default function DashboardAdmin(): JSX.Element {
   const businessExperienceFallback:SectionKpi[]=[{ name: "Avg Response Time", value: "--" }, { name: "Escalation to Human", value: "--" }, { name: "User Satisfaction Score", value: "--" }];
   const approvalRangeOptions = [{ value: "7d", label: "Last 7 days" }, { value: "30d", label: "Last 30 days" }, { value: "12w", label: "Last 12 weeks" }];
 
-  useEffect(() => { const id = setInterval(() => setRefreshTick((t) => t + 1), 60000); return () => clearInterval(id); }, []);
+  useEffect(() => { const id = setInterval(() => setRefreshTick((t) => t + 1), 15000); return () => clearInterval(id); }, []);
 
   // ── All API calls preserved exactly from original ──────────────────────
   useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/environment-lifecycle", p).then((r) => setLifecycleKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? lifecycleKpiFallback)).catch(() => setLifecycleKpis(lifecycleKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
@@ -826,16 +934,58 @@ export default function DashboardAdmin(): JSX.Element {
   useEffect(() => { if (!isBusinessUser) return; const now = Math.floor(Date.now() / 1000); api.get(`/api/metrics-dashboard/query-preset-range/response_time_trend`, { params: { start: now - 604800, end: now, step: "3600s" } }).then((r) => setBusinessResponseTimeSeries((r?.data?.series?.[0]?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => ({ date: new Date(Number(v?.[0] ?? 0) * 1000).toISOString().slice(0, 10), value: Number.isFinite(Number(v?.[1] ?? 0)) ? Number(v[1]) : 0 })))).catch(() => setBusinessResponseTimeSeries([])); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/business-experience").then((r) => { const next = r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? []; setBusinessExperienceKpis((prev) => { const m = new Map((prev ?? businessExperienceFallback).map((k) => [k.name, k.value])); for (const k of next) m.set(k.name, k.value); return Array.from(m.entries()).map(([name, value]) => ({ name, value })); }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isRootAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity").then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, refreshTick]);
-  useEffect(() => { if (!isDepartmentAdmin) return; api.get<PendingSeriesResponse>("/api/dashboard/sections/department-approval/pending-series", { params: { range: approvalRange } }).then((r) => setApprovalPendingSeries(r.data?.series ?? [])).catch(() => setApprovalPendingSeries([])); }, [approvalRange, isDepartmentAdmin, refreshTick]);
-  useEffect(() => { if (!isDepartmentAdmin) return; api.get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/invocation-series", { params: { range: hitlRange } }).then((r) => setHitlInvocationSeries(r.data?.series ?? [])).catch(() => setHitlInvocationSeries([])); }, [hitlRange, isDepartmentAdmin, refreshTick]);
-  useEffect(() => { if (!isDepartmentAdmin) return; api.get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/response-time-series", { params: { range: hitlRange } }).then((r) => setHitlResponseSeries(r.data?.series ?? [])).catch(() => setHitlResponseSeries([])); }, [hitlRange, isDepartmentAdmin, refreshTick]);
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<PendingSeriesResponse>("/api/dashboard/sections/department-approval/pending-series", {
+        params: { range: approvalRange, tz_offset_minutes: tzOffsetMinutes },
+      })
+      .then((r) => {
+        setApprovalPendingSeries(r.data?.series ?? []);
+      })
+      .catch((err) => {
+        console.log("[dashboard] approval pending-series error", err);
+        setApprovalPendingSeries([]);
+      });
+  }, [approvalRange, isDepartmentAdmin, refreshTick, tzOffsetMinutes]);
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/invocation-series", {
+        params: { range: hitlRange, tz_offset_minutes: tzOffsetMinutes },
+      })
+      .then((r) => {
+        setHitlInvocationSeries(r.data?.series ?? []);
+      })
+      .catch(() => setHitlInvocationSeries([]));
+  }, [hitlRange, isDepartmentAdmin, refreshTick, tzOffsetMinutes]);
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/response-time-series", {
+        params: { range: hitlRange, tz_offset_minutes: tzOffsetMinutes },
+      })
+      .then((r) => {
+        setHitlResponseSeries(r.data?.series ?? []);
+      })
+      .catch(() => setHitlResponseSeries([]));
+  }, [hitlRange, isDepartmentAdmin, refreshTick, tzOffsetMinutes]);
   useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", p).then((r) => setGovernanceKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? governanceKpiFallback)).catch(() => setGovernanceKpis(governanceKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
 
   // ── Chart data helpers ────────────────────────────────────────────────
 
   const mkDateSeries = (series: PendingSeriesPoint[] | null, days: number) => {
-    const fb = Array.from({ length: days }, (_, i) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - (days - 1 - i)); return { date: d.toISOString().slice(0, 10), value: 0 }; });
-    return (series?.length ? series : fb).map((pt) => ({ label: new Date(`${pt.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" }), value: pt.value }));
+    const fb = Array.from({ length: days }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (days - 1 - i));
+      const localDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const dateStr = `${localDate.getFullYear()}-${String(localDate.getMonth() + 1).padStart(2, "0")}-${String(localDate.getDate()).padStart(2, "0")}`;
+      return { date: dateStr, value: 0 };
+    });
+    return (series?.length ? series : fb).map((pt) => ({
+      label: new Date(`${pt.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      value: pt.value,
+    }));
   };
   const mkTsSeries = (n: number) => Array.from({ length: n }, (_, i) => { const ts = Math.floor(Date.now() / 1000) - (n - 1 - i) * 3600; return { label: new Date(ts * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }), ts }; });
 
@@ -922,30 +1072,29 @@ export default function DashboardAdmin(): JSX.Element {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* Header */}
+      {/* ── Page Header ── */}
       <div className="flex-shrink-0 border-b border-border bg-card">
         <div className="px-8 py-5">
-          <div className="flex items-center gap-3">
+          <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-foreground">{t("Dashboard")}</h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">{headerSubtitle}</p>
-            </div>
-            {/* Live indicator */}
-            <div className="ml-auto flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              <span className="text-[10px] font-medium text-muted-foreground">Live</span>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  {headerSubtitle}
+                </span>
+                <span className="text-muted-foreground text-[11px]">·</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {sectionsToRender.length} section{sectionsToRender.length !== 1 ? "s" : ""}
+                </span>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Body — all sections stacked, each collapsible */}
+      {/* ── Section Stack ── */}
       <div className="flex-1 overflow-auto bg-background px-8 py-6">
-        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.06),_transparent_50%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.06),_transparent_50%)]" />
-        <div className="relative space-y-3">
+        <div className="space-y-4">
           {sectionsToRender.map((section, i) => {
             const { kpis, charts } = resolveSection(section);
             return (

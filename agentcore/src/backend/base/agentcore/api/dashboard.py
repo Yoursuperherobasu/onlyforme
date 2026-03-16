@@ -431,12 +431,40 @@ def _range_to_days(range_key: str) -> int:
     raise HTTPException(status_code=400, detail="Unsupported range")
 
 
-def _normalize_day(value: date | datetime | str) -> date:
+def _coerce_tz_offset_minutes(tz_offset_minutes: int | None) -> int:
+    if tz_offset_minutes is None:
+        return 0
+    if tz_offset_minutes > 840:
+        return 840
+    if tz_offset_minutes < -840:
+        return -840
+    return int(tz_offset_minutes)
+
+
+def _apply_tz_offset(dt: datetime, tz_offset_minutes: int) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt + timedelta(minutes=tz_offset_minutes)
+
+
+def _normalize_day(value: date | datetime | str, tz_offset_minutes: int) -> date:
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
     if isinstance(value, datetime):
-        return value.date()
-    return datetime.fromisoformat(str(value)).date()
+        return _apply_tz_offset(value, tz_offset_minutes).date()
+    parsed = datetime.fromisoformat(str(value))
+    return _apply_tz_offset(parsed, tz_offset_minutes).date()
+
+
+def _local_range_window(days: int, tz_offset_minutes: int) -> tuple[date, datetime, datetime]:
+    now_utc = datetime.now(timezone.utc)
+    local_now = _apply_tz_offset(now_utc, tz_offset_minutes)
+    today_local = local_now.date()
+    start_day = today_local - timedelta(days=days - 1)
+    # Convert local day bounds back to UTC naive for DB comparisons.
+    start_dt = (datetime.combine(start_day, time.min) - timedelta(minutes=tz_offset_minutes)).replace(tzinfo=None)
+    end_dt = (datetime.combine(today_local + timedelta(days=1), time.min) - timedelta(minutes=tz_offset_minutes)).replace(tzinfo=None)
+    return start_day, start_dt, end_dt
 
 
 @router.get("/sections/department-approval/pending-series", response_model=PendingSeriesResponse, status_code=200)
@@ -445,6 +473,7 @@ async def get_department_approval_pending_series(
     session: DbSession,
     current_user: CurrentActiveUser,
     range_key: str = Query(default="7d", alias="range"),
+    tz_offset_minutes: int | None = Query(default=None),
 ):
     role = str(getattr(current_user, "role", "")).lower()
     if role != "department_admin":
@@ -452,11 +481,8 @@ async def get_department_approval_pending_series(
 
     dept_ids = await _department_admin_dept_ids(session, current_user)
     days = _range_to_days(range_key)
-    today = datetime.now(timezone.utc).date()
-    start_day = today - timedelta(days=days - 1)
-    # Use naive datetimes for DB compatibility (requested_at/reviewed_at are stored without tzinfo).
-    start_dt = datetime.combine(start_day, time.min).replace(tzinfo=None)
-    end_dt = datetime.combine(today + timedelta(days=1), time.min).replace(tzinfo=None)
+    tz_minutes = _coerce_tz_offset_minutes(tz_offset_minutes)
+    start_day, start_dt, end_dt = _local_range_window(days, tz_minutes)
 
     if not dept_ids:
         series = [
@@ -505,13 +531,13 @@ async def get_department_approval_pending_series(
     created_by_day: dict[date, int] = {}
     for row in created_rows:
         value = row[0] if isinstance(row, (list, tuple)) else row
-        day = _normalize_day(value)
+        day = _normalize_day(value, tz_minutes)
         created_by_day[day] = created_by_day.get(day, 0) + 1
 
     decided_by_day: dict[date, int] = {}
     for row in decided_rows:
         value = row[0] if isinstance(row, (list, tuple)) else row
-        day = _normalize_day(value)
+        day = _normalize_day(value, tz_minutes)
         decided_by_day[day] = decided_by_day.get(day, 0) + 1
 
     pending = int(baseline_pending or 0)
@@ -612,6 +638,7 @@ async def get_department_hitl_invocation_series(
     session: DbSession,
     current_user: CurrentActiveUser,
     range_key: str = Query(default="7d", alias="range"),
+    tz_offset_minutes: int | None = Query(default=None),
 ):
     role = str(getattr(current_user, "role", "")).lower()
     if role != "department_admin":
@@ -619,10 +646,8 @@ async def get_department_hitl_invocation_series(
 
     dept_ids = await _department_admin_dept_ids(session, current_user)
     days = _range_to_days(range_key)
-    today = datetime.now(timezone.utc).date()
-    start_day = today - timedelta(days=days - 1)
-    start_dt = datetime.combine(start_day, time.min).replace(tzinfo=None)
-    end_dt = datetime.combine(today + timedelta(days=1), time.min).replace(tzinfo=None)
+    tz_minutes = _coerce_tz_offset_minutes(tz_offset_minutes)
+    start_day, start_dt, end_dt = _local_range_window(days, tz_minutes)
 
     if not dept_ids:
         series = [
@@ -654,7 +679,7 @@ async def get_department_hitl_invocation_series(
     counts_by_day: dict[date, int] = {}
     for row in rows:
         value = row[0] if isinstance(row, (list, tuple)) else row
-        day = _normalize_day(value)
+        day = _normalize_day(value, tz_minutes)
         counts_by_day[day] = counts_by_day.get(day, 0) + 1
 
     series: list[TimeseriesPoint] = []
@@ -673,6 +698,7 @@ async def get_department_hitl_response_time_series(
     session: DbSession,
     current_user: CurrentActiveUser,
     range_key: str = Query(default="7d", alias="range"),
+    tz_offset_minutes: int | None = Query(default=None),
 ):
     role = str(getattr(current_user, "role", "")).lower()
     if role != "department_admin":
@@ -680,10 +706,8 @@ async def get_department_hitl_response_time_series(
 
     dept_ids = await _department_admin_dept_ids(session, current_user)
     days = _range_to_days(range_key)
-    today = datetime.now(timezone.utc).date()
-    start_day = today - timedelta(days=days - 1)
-    start_dt = datetime.combine(start_day, time.min).replace(tzinfo=None)
-    end_dt = datetime.combine(today + timedelta(days=1), time.min).replace(tzinfo=None)
+    tz_minutes = _coerce_tz_offset_minutes(tz_offset_minutes)
+    start_day, start_dt, end_dt = _local_range_window(days, tz_minutes)
 
     if not dept_ids:
         series = [
@@ -711,7 +735,7 @@ async def get_department_hitl_response_time_series(
         decided_at = row[1] if isinstance(row, (list, tuple)) else row.decided_at
         if not requested_at or not decided_at:
             continue
-        day = _normalize_day(requested_at)
+        day = _normalize_day(requested_at, tz_minutes)
         delta = decided_at - requested_at
         minutes = max(delta.total_seconds(), 0) / 60.0
         totals[day] = totals.get(day, 0.0) + minutes
