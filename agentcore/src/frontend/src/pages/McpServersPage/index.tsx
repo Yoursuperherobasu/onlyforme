@@ -37,8 +37,9 @@ import { useTranslation } from "react-i18next";
 
 export default function MCPServersPage() {
   const { t } = useTranslation();
-  const { permissions, userData } = useContext(AuthContext);
+  const { permissions, userData, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const normalizedRole = String(role || "").toLowerCase().replace(" ", "_");
   const { data: servers, isLoading } = useGetMCPServers({ active_only: false });
   const deleteMutation = useDeleteMCPServer();
   const patchMutation = usePatchMCPServer();
@@ -60,27 +61,82 @@ export default function MCPServersPage() {
 
   // Toggle state (tracks which servers are currently being toggled)
   const [togglingServerId, setTogglingServerId] = useState<string | null>(null);
+  const ENV_BADGE_CLASSES: Record<string, string> = {
+    uat: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    prod: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    both: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+  };
+  const VISIBILITY_LABELS: Record<string, string> = {
+    private: "Private",
+    department: "Department",
+    organization: "Organization",
+  };
+  const VISIBILITY_BADGE_CLASSES: Record<string, string> = {
+    private: "bg-gray-100 text-gray-700 dark:bg-gray-800/50 dark:text-gray-400",
+    department: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400",
+    organization: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
+  };
+  const formatEnvLabel = (server: McpRegistryType) => {
+    const envs = (server.environments || []).map((env) => String(env).toLowerCase());
+    if (envs.includes("uat") && envs.includes("prod")) return "UAT + PROD";
+    if (envs.length > 0) return envs[0].toUpperCase();
+    return String(server.deployment_env || "UAT").toUpperCase();
+  };
+  const getEnvBadgeClass = (server: McpRegistryType) => {
+    const envs = (server.environments || []).map((env) => String(env).toLowerCase());
+    if (envs.includes("uat") && envs.includes("prod")) return ENV_BADGE_CLASSES.both;
+    if (envs.length > 0) return ENV_BADGE_CLASSES[envs[0]] ?? "bg-gray-100 text-gray-700";
+    const fallback = String(server.deployment_env || "uat").toLowerCase();
+    return ENV_BADGE_CLASSES[fallback] ?? "bg-gray-100 text-gray-700";
+  };
+  const getVisibilityLabel = (server: McpRegistryType) => {
+    if (server.visibility === "public") {
+      if (server.public_scope === "organization") return VISIBILITY_LABELS.organization;
+      return VISIBILITY_LABELS.department;
+    }
+    return VISIBILITY_LABELS.private;
+  };
+  const getVisibilityBadgeClass = (server: McpRegistryType) => {
+    if (server.visibility === "public") {
+      if (server.public_scope === "organization") return VISIBILITY_BADGE_CLASSES.organization;
+      return VISIBILITY_BADGE_CLASSES.department;
+    }
+    return VISIBILITY_BADGE_CLASSES.private;
+  };
 
   const handleEdit = (server: McpRegistryType) => {
+    if (!canEditMcp(server)) return;
     setEditServer(server);
     setEditOpen(true);
   };
 
   const handleDelete = async (server: McpRegistryType) => {
+    if (!canDeleteMcp(server)) return;
     try {
       await deleteMutation.mutateAsync({ id: server.id });
-      setSuccessData({ title: t("MCP Server \"{{name}}\" deleted.", { name: server.server_name }) });
+      setSuccessData({
+        title: t("MCP server deleted"),
+        list: [t("{{name}} was removed.", { name: server.server_name })],
+      });
     } catch (e: any) {
-      setErrorData({ title: t("Error deleting server"), list: [e.message] });
+      setErrorData({ title: t("Delete failed"), list: [e.message] });
     }
   };
 
   const openDeleteModal = (server: McpRegistryType) => {
+    if (!canDeleteMcp(server)) return;
     setServerToDelete(server);
     setDeleteModalOpen(true);
   };
 
   const handleToggleActive = async (server: McpRegistryType) => {
+    if (server.approval_status === "pending") {
+      setErrorData({
+        title: t("Approval pending"),
+        list: [t("This MCP server cannot be connected or disconnected until the approval is completed.")],
+      });
+      return;
+    }
     const newActive = !server.is_active;
     setTogglingServerId(server.id);
     try {
@@ -89,9 +145,8 @@ export default function MCPServersPage() {
         data: { is_active: newActive },
       });
       setSuccessData({
-        title: newActive
-          ? t("\"{{name}}\" connected.", { name: server.server_name })
-          : t("\"{{name}}\" disconnected.", { name: server.server_name }),
+        title: newActive ? t("MCP server connected") : t("MCP server disconnected"),
+        list: [t("{{name}}", { name: server.server_name })],
       });
       // Clear probe result when disconnecting
       if (!newActive) {
@@ -107,22 +162,28 @@ export default function MCPServersPage() {
         });
       }
     } catch (e: any) {
-      setErrorData({ title: t("Error updating server"), list: [e.message] });
+      setErrorData({ title: t("Update failed"), list: [e.message] });
     } finally {
       setTogglingServerId(null);
     }
   };
 
   const handleProbe = async (server: McpRegistryType) => {
+    if (server.approval_status === "pending") {
+      setErrorData({
+        title: t("Approval pending"),
+        list: [t("This MCP server cannot be refreshed until the approval is completed.")],
+      });
+      return;
+    }
     setProbingServerId(server.id);
     try {
       const result = await probeMutation.mutateAsync({ id: server.id });
       setProbeResults((prev) => ({ ...prev, [server.id]: result }));
       if (result.success) {
         setSuccessData({
-          title: t("Connection successful. Found {{count}} tool(s).", {
-            count: result.tools_count ?? 0,
-          }),
+          title: t("Connection successful"),
+          list: [t("Found {{count}} tool(s).", { count: result.tools_count ?? 0 })],
         });
       } else {
         setErrorData({ title: t("Connection failed"), list: [result.message] });
@@ -159,7 +220,62 @@ export default function MCPServersPage() {
   );
   const canAddMcp = can("add_new_mcp");
   const canRequestMcp = can("request_new_mcp");
+  const isRoot = normalizedRole === "root";
+  const isSuperAdmin = normalizedRole === "super_admin";
+  const isDepartmentAdmin = normalizedRole === "department_admin";
+  const isMcpAdmin = isRoot || isSuperAdmin || isDepartmentAdmin;
+  const canSeeActions = isMcpAdmin && (can("edit_mcp_registry") || can("delete_mcp_registry"));
   const currentUserId = userData?.id;
+  const userDeptId = userData?.department_id ?? null;
+  const userDeptIds = userDeptId ? [userDeptId] : [];
+
+  const isDeptScopedForUser = (server: McpRegistryType) => {
+    if (userDeptIds.length === 0) return false;
+    const deptIdSet = new Set(userDeptIds);
+    if (server.visibility === "public" && server.public_scope === "department") {
+      if (server.public_dept_ids?.some((id) => deptIdSet.has(id))) return true;
+      if (server.dept_id && deptIdSet.has(server.dept_id)) return true;
+    }
+    if (server.visibility === "private") {
+      if (server.dept_id && deptIdSet.has(server.dept_id)) return true;
+    }
+    return false;
+  };
+
+  const isMultiDeptMcp = (server: McpRegistryType) => (server.public_dept_ids?.length ?? 0) > 1;
+
+  const canEditMcp = (server: McpRegistryType) => {
+    if (!isMcpAdmin || !can("edit_mcp_registry")) return false;
+    if (server.approval_status === "pending") return false;
+    if (isRoot || isSuperAdmin) return true;
+    if (isDepartmentAdmin) {
+      if (isMultiDeptMcp(server)) return false;
+      if (server.visibility === "public" && server.public_scope === "organization") return false;
+      return Boolean(
+        currentUserId &&
+          (isDeptScopedForUser(server) ||
+            server.reviewed_by === currentUserId ||
+            (server.created_by_id === currentUserId && server.approval_status === "approved")),
+      );
+    }
+    return false;
+  };
+
+  const canDeleteMcp = (server: McpRegistryType) => {
+    if (!isMcpAdmin || !can("delete_mcp_registry")) return false;
+    if (server.approval_status === "pending") return false;
+    if (isRoot || isSuperAdmin) return true;
+    if (isDepartmentAdmin) {
+      if (isMultiDeptMcp(server)) return false;
+      return Boolean(
+        currentUserId &&
+          (isDeptScopedForUser(server) ||
+            server.reviewed_by === currentUserId ||
+            (server.created_by_id === currentUserId && server.approval_status === "approved")),
+      );
+    }
+    return false;
+  };
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
@@ -239,22 +355,29 @@ export default function MCPServersPage() {
                       {t("Mode")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      {t("Environment")}
+                    </th>
+                    <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      {t("Visibility")}
+                    </th>
+                    <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       {t("Status")}
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       {t("Connection")}
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      {t("Actions")}
-                    </th>
+                    {canSeeActions ? (
+                      <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        {t("Actions")}
+                      </th>
+                    ) : null}
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-border">
                   {filteredServers?.map((server) => (
                     (() => {
-                      const isRequester = Boolean(currentUserId && server.requested_by === currentUserId);
-                      const isAwaitingApproval = isRequester && server.approval_status === "pending";
+                      const isAwaitingApproval = server.approval_status === "pending";
                       const controlsDisabled = isAwaitingApproval;
                       const approvalBadge =
                         server.approval_status === "pending"
@@ -277,7 +400,7 @@ export default function MCPServersPage() {
                             <div className={server.is_active ? "" : "opacity-50"}>
                               <div className="flex items-center gap-2">
                                 <div className="font-semibold">{server.server_name}</div>
-                                {isRequester && (
+                                {server.approval_status !== "approved" && (
                                   <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${approvalBadge.cls}`}>
                                     {approvalBadge.label}
                                   </span>
@@ -296,6 +419,28 @@ export default function MCPServersPage() {
                         <td className="px-6 py-4">
                           <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium uppercase">
                             {server.mode}
+                          </span>
+                        </td>
+
+                        {/* Environment */}
+                        <td className="px-6 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium uppercase ${getEnvBadgeClass(
+                              server,
+                            )}`}
+                          >
+                            {formatEnvLabel(server)}
+                          </span>
+                        </td>
+
+                        {/* Visibility */}
+                        <td className="px-6 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(
+                              server,
+                            )}`}
+                          >
+                            {t(getVisibilityLabel(server))}
                           </span>
                         </td>
 
@@ -320,104 +465,137 @@ export default function MCPServersPage() {
 
                         {/* Connection - Probe */}
                         <td className="px-6 py-4">
-                          {controlsDisabled ? (
-                            <span className="text-xs text-muted-foreground">
-                              {t("Awaiting approval")}
-                            </span>
-                          ) : !server.is_active ? (
-                            <span className="text-xs text-muted-foreground">
-                              {t("--")}
-                            </span>
-                          ) : probingServerId === server.id ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              {t("Probing...")}
-                            </span>
-                          ) : probeResults[server.id] ? (
-                            <div className="flex items-center gap-2">
-                              {probeResults[server.id].success ? (
-                                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
-                                  <Plug className="h-3.5 w-3.5" />
-                                  {t("OK")}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-xs font-medium text-red-500">
-                                  <XCircle className="h-3.5 w-3.5" />
-                                  {t("Failed")}
-                                </span>
-                              )}
-                              {probeResults[server.id].success &&
-                                probeResults[server.id].tools_count != null && (
-                                  <button
-                                    onClick={() => toggleRowExpand(server.id)}
-                                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-                                  >
-                                    <Wrench className="h-3 w-3" />
-                                    {probeResults[server.id].tools_count} {t("tools")}
-                                    {expandedRows.has(server.id) ? (
-                                      <ChevronDown className="h-3 w-3" />
-                                    ) : (
-                                      <ChevronRight className="h-3 w-3" />
+                          {(() => {
+                            const cachedTools = server.tools_snapshot ?? [];
+                            const latestProbe = probeResults[server.id];
+                            const liveTools = latestProbe?.success ? latestProbe.tools ?? [] : [];
+                            const hasCachedTools = cachedTools.length > 0;
+                            const hasLiveTools = liveTools.length > 0;
+                            const cachedToolCount =
+                              server.tools_count ?? (hasCachedTools ? cachedTools.length : null);
+                            const toolCount =
+                              latestProbe?.success
+                                ? (latestProbe.tools_count ?? cachedToolCount)
+                                : cachedToolCount;
+                            const canExpand = hasLiveTools || hasCachedTools;
+                            const isExpanded = expandedRows.has(server.id);
+                            const showWrench = toolCount != null && canExpand;
+                            const hasFailedRefresh = Boolean(latestProbe && !latestProbe.success);
+                            return (
+                              <>
+                                {controlsDisabled ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    {t("Awaiting approval")}
+                                  </span>
+                                ) : !server.is_active ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    {t("--")}
+                                  </span>
+                                ) : probingServerId === server.id ? (
+                                  <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    {t("Refreshing...")}
+                                  </span>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    {hasFailedRefresh ? (
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                                        <XCircle className="h-3.5 w-3.5" />
+                                        {t("Last refresh failed")}
+                                      </span>
+                                    ) : toolCount != null ? (
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
+                                        <Plug className="h-3.5 w-3.5" />
+                                        {t("Verified")}
+                                      </span>
+                                    ) : null}
+                                    {showWrench && (
+                                      <button
+                                        onClick={() => toggleRowExpand(server.id)}
+                                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                                      >
+                                        <Wrench className="h-3 w-3" />
+                                        {toolCount} {t("tools")}
+                                        {isExpanded ? (
+                                          <ChevronDown className="h-3 w-3" />
+                                        ) : (
+                                          <ChevronRight className="h-3 w-3" />
+                                        )}
+                                      </button>
                                     )}
-                                  </button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleProbe(server)}
+                                      className="h-7 text-xs"
+                                      disabled={controlsDisabled}
+                                    >
+                                      <Plug className="mr-1 h-3.5 w-3.5" />
+                                      {toolCount != null ? t("Refresh Connection") : t("Test Connection")}
+                                    </Button>
+                                  </div>
                                 )}
-                            </div>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleProbe(server)}
-                              className="h-7 text-xs"
-                              disabled={controlsDisabled}
-                            >
-                              <Plug className="mr-1 h-3.5 w-3.5" />
-                              {t("Test Connection")}
-                            </Button>
-                          )}
+                              </>
+                            );
+                          })()}
                         </td>
 
                         {/* Actions */}
-                        <td className="px-6 py-4">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-accent group-hover:opacity-100 disabled:cursor-not-allowed"
-                                data-testid={`mcp-server-menu-button-${server.server_name}`}
-                                disabled={controlsDisabled}
-                              >
-                                <MoreVertical className="h-4 w-4 text-foreground" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={() => handleEdit(server)}
-                              >
-                                <Edit2 className="mr-2 h-4 w-4" />
-                                {t("Edit")}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => openDeleteModal(server)}
-                                className="text-destructive"
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                {t("Delete")}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </td>
+                        {canSeeActions ? (
+                          <td className="px-6 py-4">
+                            {canEditMcp(server) || canDeleteMcp(server) ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-accent group-hover:opacity-100 disabled:cursor-not-allowed"
+                                    data-testid={`mcp-server-menu-button-${server.server_name}`}
+                                    disabled={controlsDisabled}
+                                  >
+                                    <MoreVertical className="h-4 w-4 text-foreground" />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {canEditMcp(server) && (
+                                    <DropdownMenuItem
+                                      onClick={() => handleEdit(server)}
+                                    >
+                                      <Edit2 className="mr-2 h-4 w-4" />
+                                      {t("Edit")}
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canDeleteMcp(server) && (
+                                    <DropdownMenuItem
+                                      onClick={() => openDeleteModal(server)}
+                                      className="text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      {t("Delete")}
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">--</span>
+                            )}
+                          </td>
+                        ) : null}
                       </tr>
 
                       {/* Expandable tool list */}
                       {expandedRows.has(server.id) &&
-                        probeResults[server.id]?.tools &&
-                        probeResults[server.id].tools!.length > 0 && (
+                        ((probeResults[server.id]?.success &&
+                          probeResults[server.id]?.tools &&
+                          probeResults[server.id].tools!.length > 0) ||
+                          (server.tools_snapshot && server.tools_snapshot.length > 0)) && (
                           <tr key={`${server.id}-tools`} className="bg-muted/30">
-                            <td colSpan={5} className="px-6 py-3">
+                            <td colSpan={canSeeActions ? 7 : 6} className="px-6 py-3">
                               <div className="ml-[52px] space-y-1">
                                 <div className="mb-2 text-xs font-medium text-muted-foreground">
                                   {t("Discovered Tools:")}
                                 </div>
-                                {probeResults[server.id].tools!.map((tool) => (
+                                {((probeResults[server.id]?.success
+                                  ? probeResults[server.id]?.tools
+                                  : null) ?? server.tools_snapshot ?? []).map((tool) => (
                                   <div
                                     key={tool.name}
                                     className="flex items-start gap-2 py-1"
@@ -480,4 +658,3 @@ export default function MCPServersPage() {
     </div>
   );
 }
-

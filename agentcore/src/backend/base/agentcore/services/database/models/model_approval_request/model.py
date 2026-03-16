@@ -32,7 +32,8 @@ class ModelApprovalRequestBase(SQLModel):
         default=ModelEnvironment.UAT.value,
         sa_column=Column(String(20), nullable=False, server_default=text("'uat'")),
     )
-    final_target_environment: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))
+    requested_environments: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # final_target_environment removed (replaced by requested_environments)
     visibility_requested: str = Field(
         default=ModelVisibilityScope.PRIVATE.value,
         sa_column=Column(String(20), nullable=False, server_default=text("'private'")),
@@ -80,7 +81,8 @@ class ModelApprovalRequestCreate(SQLModel):
     request_type: ModelApprovalRequestType = ModelApprovalRequestType.CREATE
     source_environment: str = ModelEnvironment.UAT.value
     target_environment: str = ModelEnvironment.UAT.value
-    final_target_environment: str | None = None
+    requested_environments: list[str] | None = None
+    # final_target_environment removed (replaced by requested_environments)
     visibility_requested: str = ModelVisibilityScope.PRIVATE.value
     org_id: UUID | None = None
     dept_id: UUID | None = None
@@ -95,7 +97,8 @@ class ModelApprovalRequestRead(BaseModel):
     request_type: ModelApprovalRequestType
     source_environment: str
     target_environment: str
-    final_target_environment: str | None = None
+    requested_environments: list[str] | None = None
+    # final_target_environment removed (replaced by requested_environments)
     visibility_requested: str
     requested_by: UUID
     request_to: UUID
@@ -115,4 +118,5 @@ class ModelApprovalRequestUpdate(BaseModel):
     decision: ApprovalDecisionEnum | None = None
     justification: str | None = None
     file_path: dict | None = None
-    final_target_environment: str | None = None
+    requested_environments: list[str] | None = None
+    # final_target_environment removed (replaced by requested_environments)

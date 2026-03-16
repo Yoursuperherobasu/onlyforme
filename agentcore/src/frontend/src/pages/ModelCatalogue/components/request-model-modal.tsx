@@ -58,7 +58,7 @@ export default function RequestModelModal({
   const [azureDeployment, setAzureDeployment] = useState("");
   const [azureApiVersion, setAzureApiVersion] = useState(DEFAULT_AZURE_API_VERSION);
   const [customHeaders, setCustomHeaders] = useState("");
-  const [environment, setEnvironment] = useState<"uat" | "prod">("uat");
+  const [environmentSelection, setEnvironmentSelection] = useState<"uat" | "prod" | "both">("uat");
   const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">("private");
   const [deptId, setDeptId] = useState("");
   const [publicDeptIds, setPublicDeptIds] = useState<string[]>([]);
@@ -73,6 +73,12 @@ export default function RequestModelModal({
   const [maxTokens, setMaxTokens] = useState<number | "">("");
   const [dimensions, setDimensions] = useState<number | "">("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    latency_ms?: number | null;
+  } | null>(null);
+  const [testPayloadKey, setTestPayloadKey] = useState<string | null>(null);
 
   const createMutation = usePostRegistryModel();
   const testMutation = useTestModelConnection();
@@ -112,6 +118,17 @@ export default function RequestModelModal({
     return Object.keys(config).length ? config : undefined;
   };
 
+  const buildTestPayload = () => ({
+    provider,
+    model_name: modelName,
+    base_url: baseUrl || null,
+    api_key: apiKey || null,
+    provider_config: buildProviderConfig() ?? null,
+    isEmbedding,
+  });
+
+  const buildTestKey = () => JSON.stringify(buildTestPayload());
+
   const resetForm = () => {
     setDisplayName("");
     setProvider("openai");
@@ -121,7 +138,7 @@ export default function RequestModelModal({
     setAzureDeployment("");
     setAzureApiVersion(DEFAULT_AZURE_API_VERSION);
     setCustomHeaders("");
-    setEnvironment("uat");
+    setEnvironmentSelection("uat");
     setVisibilityScope("private");
     setDeptId("");
     setPublicDeptIds([]);
@@ -131,11 +148,13 @@ export default function RequestModelModal({
     setTemperature(0.7);
     setMaxTokens("");
     setDimensions("");
+    setTestResult(null);
+    setTestPayloadKey(null);
   };
 
   useEffect(() => {
     if (!open) return;
-    api.get("api/mcp/registry/visibility-options").then((res) => {
+    api.get("api/models/registry/visibility-options").then((res) => {
       const options: VisibilityOptions = res.data || {
         organizations: [],
         departments: [],
@@ -157,6 +176,26 @@ export default function RequestModelModal({
     }
   }, [open, normalizedRole, visibilityOptions, deptId, publicDeptIds]);
 
+  useEffect(() => {
+    if (!open) return;
+    const key = buildTestKey();
+    if (testPayloadKey && key !== testPayloadKey) {
+      setTestResult(null);
+      setTestPayloadKey(null);
+    }
+  }, [
+    open,
+    provider,
+    modelName,
+    baseUrl,
+    apiKey,
+    azureDeployment,
+    azureApiVersion,
+    customHeaders,
+    isEmbedding,
+    testPayloadKey,
+  ]);
+
   const handleClose = () => {
     onOpenChange(false);
     resetForm();
@@ -165,19 +204,15 @@ export default function RequestModelModal({
   const handleTestConnection = async () => {
     if (!modelName.trim() || !apiKey.trim()) {
       setErrorData({
-        title: "Model Name and API Key are required for test connection.",
+        title: "Connection test failed",
+        list: ["Model name and API key are required."],
       });
       return;
     }
     try {
-      const result = await testMutation.mutateAsync({
-        provider,
-        model_name: modelName,
-        base_url: baseUrl || null,
-        api_key: apiKey || null,
-        provider_config: buildProviderConfig() ?? null,
-        isEmbedding,
-      });
+      const result = await testMutation.mutateAsync(buildTestPayload());
+      setTestResult(result);
+      setTestPayloadKey(buildTestKey());
       if (result.success) {
         setSuccessData({
           title: `Connection successful${result.latency_ms ? ` (${result.latency_ms}ms)` : ""}`,
@@ -186,8 +221,10 @@ export default function RequestModelModal({
         setErrorData({ title: "Connection failed", list: [result.message] });
       }
     } catch (err: any) {
+      setTestResult({ success: false, message: err?.message ?? String(err) });
+      setTestPayloadKey(buildTestKey());
       setErrorData({
-        title: "Test connection error",
+        title: "Connection test failed",
         list: [err?.message ?? String(err)],
       });
     }
@@ -196,19 +233,28 @@ export default function RequestModelModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!apiKey.trim()) {
-      setErrorData({ title: "API Key is required." });
+      setErrorData({ title: "Submission failed", list: ["API key is required."] });
       return;
     }
     if (!chargeCode.trim() || !projectName.trim() || !reason.trim()) {
-      setErrorData({ title: "Charge Code, Project Name, and Reason are required." });
+      setErrorData({
+        title: "Submission failed",
+        list: ["Charge code, project name, and reason are required."],
+      });
       return;
     }
     if (visibilityScope === "department" && !canMultiDept && !deptId) {
-      setErrorData({ title: "Department is required for department visibility." });
+      setErrorData({
+        title: "Submission failed",
+        list: ["Department is required for department visibility."],
+      });
       return;
     }
     if (visibilityScope === "department" && canMultiDept && publicDeptIds.length === 0) {
-      setErrorData({ title: "Select at least one department for department visibility." });
+      setErrorData({
+        title: "Submission failed",
+        list: ["Select at least one department for department visibility."],
+      });
       return;
     }
 
@@ -216,9 +262,28 @@ export default function RequestModelModal({
       visibilityOptions.departments.find((d) => d.id === (canMultiDept ? publicDeptIds[0] : deptId))?.org_id ||
       visibilityOptions.organizations[0]?.id ||
       null;
+    const desiredEnvs = environmentSelection === "both" ? ["uat", "prod"] : [environmentSelection];
+    const desiredEnvironment = desiredEnvs[0];
 
     setIsSubmitting(true);
     try {
+      const currentTestKey = buildTestKey();
+      let connectionResult =
+        testResult && testPayloadKey === currentTestKey ? testResult : null;
+      if (!connectionResult) {
+        connectionResult = await testMutation.mutateAsync(buildTestPayload());
+        setTestResult(connectionResult);
+        setTestPayloadKey(currentTestKey);
+      }
+      if (!connectionResult.success) {
+        const message = connectionResult.message || "Connection test failed.";
+        setErrorData({
+          title: "Connection test failed",
+          list: [message],
+        });
+        return;
+      }
+
       await createMutation.mutateAsync({
         display_name: displayName,
         description: reason,
@@ -227,7 +292,8 @@ export default function RequestModelModal({
         model_type: isEmbedding ? "embedding" : "llm",
         base_url: baseUrl || null,
         api_key: apiKey || null,
-        environment,
+        environment: desiredEnvironment,
+        environments: desiredEnvs,
         visibility_scope: visibilityScope,
         org_id: visibilityScope === "organization" ? effectiveOrgId : null,
         dept_id: visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null,
@@ -251,14 +317,15 @@ export default function RequestModelModal({
         is_active: true,
       });
       setSuccessData({
-        title: isDirectAddPath
-          ? "Model added successfully"
-          : "Model request submitted successfully",
+        title: isDirectAddPath ? "Model created" : "Model request submitted",
+        list: isDirectAddPath
+          ? ["If approval is required, you'll see it in Review & Approval."]
+          : ["Your request has been sent for approval."],
       });
       handleClose();
     } catch (err: any) {
       setErrorData({
-        title: "Failed to submit model action",
+        title: "Submission failed",
         list: [err?.message ?? String(err)],
       });
     } finally {
@@ -274,7 +341,9 @@ export default function RequestModelModal({
         <div className="flex-shrink-0 border-b p-6">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-xl font-semibold">Add / Request Model</h2>
+              <h2 className="text-xl font-semibold">
+                {isEmbedding ? "Request Embedding" : "Request Model"}
+              </h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 Configure the model and submit. Requests route based on environment and visibility.
               </p>
@@ -387,7 +456,7 @@ export default function RequestModelModal({
                 onChange={(e) => setApiKey(e.target.value)}
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Required for add/request. Test connection is recommended before submitting.
+                Required for request. A successful connection test is mandatory before submitting.
               </p>
             </div>
 
@@ -397,13 +466,14 @@ export default function RequestModelModal({
                 {[
                   { value: "uat", label: "UAT" },
                   { value: "prod", label: "PROD" },
+                  { value: "both", label: "UAT + PROD" },
                 ].map((env) => (
                   <button
                     key={env.value}
                     type="button"
-                    onClick={() => setEnvironment(env.value as "uat" | "prod")}
+                    onClick={() => setEnvironmentSelection(env.value as "uat" | "prod" | "both")}
                     className={`rounded-md border px-3 py-2 text-sm ${
-                      environment === env.value
+                      environmentSelection === env.value
                         ? "border-[var(--button-primary)] bg-[var(--button-primary)] text-[var(--button-primary-foreground)]"
                         : "border-input bg-background"
                     }`}
@@ -412,6 +482,9 @@ export default function RequestModelModal({
                   </button>
                 ))}
               </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.
+              </p>
             </div>
           </fieldset>
 
@@ -616,7 +689,7 @@ export default function RequestModelModal({
               disabled={isSubmitting || createMutation.isPending}
             >
               {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isDirectAddPath ? "Add Model" : "Submit Request"}
+              {isEmbedding ? "Submit Embedding Request" : "Submit Model Request"}
             </Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">

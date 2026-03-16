@@ -36,6 +36,7 @@ from agentcore.services.database.models.mcp_registry.model import (
     McpTestConnectionResponse,
     McpToolInfo,
 )
+from agentcore.services.mcp_registry_service import apply_mcp_secret_refs
 from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
 from agentcore.services.database.models.mcp_audit_log.model import McpAuditLog
 from agentcore.services.database.models.organization.model import Organization
@@ -69,13 +70,38 @@ def _normalize_public_scope(value: str | None) -> str | None:
     return normalized
 
 
-def _normalize_deployment_env(value: str | None) -> str:
-    normalized = (value or "DEV").strip().upper()
-    if normalized == "TEST":
-        normalized = "DEV"
-    if normalized not in {"DEV", "UAT", "PROD"}:
-        raise HTTPException(status_code=400, detail=f"Unsupported deployment_env '{value}'")
+def _normalize_environment(value: str | None) -> str:
+    normalized = (value or "UAT").strip().lower()
+    if normalized in {"test", "dev"}:
+        normalized = "uat"
+    if normalized not in {"uat", "prod"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported environment '{value}'")
     return normalized
+
+
+def _normalize_environment_list(values: list[str] | None, fallback: str | None = None) -> list[str]:
+    normalized = [_normalize_environment(v) for v in (values or []) if v is not None]
+    if not normalized and fallback is not None:
+        normalized = [_normalize_environment(fallback)]
+    ordered: list[str] = []
+    for env in ("uat", "prod"):
+        if env in normalized and env not in ordered:
+            ordered.append(env)
+    for env in normalized:
+        if env not in ordered:
+            ordered.append(env)
+    return ordered
+
+
+def _resolve_mcp_environments(row: McpRegistry) -> list[str]:
+    envs = [str(v).lower() for v in (getattr(row, "environments", None) or []) if v]
+    if envs:
+        return _normalize_environment_list(envs)
+    return [_normalize_environment(getattr(row, "deployment_env", None))]
+
+
+def _normalize_deployment_env(value: str | None) -> str:
+    return _normalize_environment(value).upper()
 
 
 def _string_ids(values: list[UUID] | None) -> list[str]:
@@ -84,6 +110,11 @@ def _string_ids(values: list[UUID] | None) -> list[str]:
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "root"
+
+
+def _is_super_admin_user(current_user: CurrentActiveUser) -> bool:
+    normalized = _normalize_role_variants(getattr(current_user, "role", ""))
+    return bool(normalized.intersection({"super_admin", "superadmin"}))
 
 
 def _normalize_role_variants(raw: str | None) -> set[str]:
@@ -105,13 +136,8 @@ def _can_self_approve(current_user: CurrentActiveUser) -> bool:
         normalized.intersection(
             {
                 "root",
-                "root_admin",
                 "super_admin",
-                "superadmin",
                 "department_admin",
-                "departmentadmin",
-                "dept_admin",
-                "deptadmin",
             }
         )
     )
@@ -179,6 +205,27 @@ async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set
     return org_ids, [(row[0], row[1]) for row in dept_rows]
 
 
+async def _resolve_user_primary_dept(
+    session: DbSession, user_id: UUID | None
+) -> tuple[UUID | None, UUID | None]:
+    if not user_id:
+        return None, None
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.org_id, UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    if not dept_rows:
+        return None, None
+    org_id, dept_id = sorted(
+        [(row[0], row[1]) for row in dept_rows], key=lambda x: (str(x[0]), str(x[1]))
+    )[0]
+    return org_id, dept_id
+
+
 async def _validate_scope_refs(session: DbSession, org_id: UUID | None, dept_id: UUID | None) -> None:
     if dept_id and not org_id:
         raise HTTPException(status_code=400, detail="dept_id requires org_id")
@@ -195,19 +242,6 @@ async def _validate_scope_refs(session: DbSession, org_id: UUID | None, dept_id:
         if not dept:
             raise HTTPException(status_code=400, detail="Invalid dept_id for org_id")
 
-
-async def _resolve_user_ids_by_emails(session: DbSession, emails: list[str]) -> list[str]:
-    if not emails:
-        return []
-    normalized = [e.strip().lower() for e in emails if e and e.strip()]
-    if not normalized:
-        return []
-    rows = (await session.exec(select(User.id, User.email).where(User.email.in_(normalized)))).all()
-    found = {str(r[1]).lower(): str(r[0]) for r in rows}
-    missing = [e for e in normalized if e not in found]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Invalid shared_user_emails: {', '.join(missing)}")
-    return [found[e] for e in normalized]
 
 
 async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, dept_ids: list[UUID]) -> None:
@@ -236,6 +270,44 @@ async def _ensure_mcp_name_available(
         raise HTTPException(status_code=409, detail="MCP server name already exists")
 
 
+async def _test_mcp_connection_or_400(body: McpRegistryCreate) -> McpTestConnectionResponse:
+    payload = {
+        "mode": body.mode,
+        "url": body.url,
+        "command": body.command,
+        "args": body.args,
+        "env_vars": body.env_vars,
+        "headers": body.headers,
+    }
+    result = await test_mcp_connection_via_service(payload)
+    if not result or not result.get("success"):
+        message = result.get("message") if isinstance(result, dict) else None
+        raise HTTPException(status_code=400, detail=message or "MCP test connection failed")
+    return McpTestConnectionResponse(**result)
+
+
+def _prepare_mcp_service_payload(payload: dict) -> dict:
+    """Align payload keys for MCP microservice compatibility."""
+    if payload.get("server_name") and not payload.get("name"):
+        payload["name"] = payload["server_name"]
+    return payload
+
+
+def _normalize_tools_snapshot(tools: list | None) -> list[dict] | None:
+    if not tools:
+        return None
+    normalized: list[dict] = []
+    for tool in tools:
+        if isinstance(tool, dict):
+            normalized.append(tool)
+        else:
+            name = getattr(tool, "name", None)
+            description = getattr(tool, "description", None)
+            if name is not None:
+                normalized.append({"name": name, "description": description or ""})
+    return normalized or None
+
+
 async def _enforce_creation_scope(
     session: DbSession,
     current_user: CurrentActiveUser,
@@ -254,41 +326,19 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if user_role == "department_admin":
-            if not dept_pairs:
-                raise HTTPException(status_code=403, detail="No active department scope found")
+        if payload.org_id and payload.dept_id:
+            if user_role in {"department_admin", "developer", "business_user"}:
+                if not any(payload.org_id == org_id and payload.dept_id == dept_id for org_id, dept_id in dept_pairs):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Private visibility must stay within your department scope",
+                    )
+        elif dept_pairs:
             current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
             payload.org_id = current_org_id
             payload.dept_id = current_dept_id
-            shared_user_ids = await _resolve_user_ids_by_emails(
-                session,
-                getattr(payload, "shared_user_emails", None) or [],
-            )
-            if shared_user_ids:
-                allowed_ids = set(
-                    str(v if isinstance(v, UUID) else v[0])
-                    for v in (
-                        await session.exec(
-                            select(UserDepartmentMembership.user_id).where(
-                                UserDepartmentMembership.department_id == current_dept_id,
-                                UserDepartmentMembership.status == "active",
-                            )
-                        )
-                    ).all()
-                )
-                if not set(shared_user_ids).issubset(allowed_ids):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="shared_user_emails must belong to your current department",
-                    )
-        else:
-            if user_role in {"developer", "business_user"} and dept_pairs:
-                current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
-                payload.org_id = current_org_id
-                payload.dept_id = current_dept_id
-            else:
-                payload.org_id = None
-                payload.dept_id = None
+        elif user_role in {"developer", "business_user", "department_admin"}:
+            raise HTTPException(status_code=403, detail="No active department scope found")
     else:
         if public_scope is None:
             raise HTTPException(status_code=400, detail="public_scope is required when visibility is public")
@@ -356,10 +406,11 @@ def _can_access_server(
     dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
 
     if visibility == "private":
+        if role == "department_admin":
+            return bool(row.dept_id and str(row.dept_id) in dept_id_set)
         return (
             str(row.created_by_id) == user_id
             or row.created_by == getattr(current_user, "username", None)
-            or user_id in set(row.shared_user_ids or [])
         )
     if getattr(row, "public_scope", None) == "organization":
         return bool(row.org_id and row.org_id in org_ids)
@@ -424,12 +475,98 @@ async def _resolve_super_admin_approver(
 
 
 def _requires_super_admin_mcp_approval(*, deployment_env: str, visibility: str, public_scope: str | None) -> bool:
-    normalized_env = _normalize_deployment_env(deployment_env)
     normalized_visibility = _normalize_visibility(visibility)
     normalized_public_scope = _normalize_public_scope(public_scope)
-    return normalized_env == "PROD" or (
-        normalized_visibility == "public" and normalized_public_scope == "organization"
-    )
+    return normalized_visibility == "public" and normalized_public_scope == "organization"
+
+
+def _is_department_scoped_mcp(row: McpRegistry, dept_pairs: list[tuple[UUID, UUID]]) -> bool:
+    user_dept_ids = {str(dept_id) for _, dept_id in dept_pairs}
+    mcp_dept_ids = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+    if row.dept_id:
+        mcp_dept_ids.add(str(row.dept_id))
+    return bool(mcp_dept_ids.intersection(user_dept_ids))
+
+
+def _is_multi_dept_mcp(row: McpRegistry) -> bool:
+    return len(list(getattr(row, "public_dept_ids", None) or [])) > 1
+
+
+def _can_edit_mcp(
+    row: McpRegistry,
+    current_user: CurrentActiveUser,
+    *,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user) or _is_super_admin_user(current_user):
+        return True
+    normalized_roles = _normalize_role_variants(getattr(current_user, "role", ""))
+    user_id = str(current_user.id)
+    visibility = _normalize_visibility(getattr(row, "visibility", None))
+    public_scope = _normalize_public_scope(getattr(row, "public_scope", None))
+    dept_ids = {str(d) for _, d in dept_pairs}
+    scoped_public_depts = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+
+    if normalized_roles.intersection({"department_admin"}):
+        if _is_multi_dept_mcp(row):
+            return False
+        if visibility == "public" and public_scope == "organization":
+            return False
+        if visibility == "public" and public_scope == "department":
+            if row.dept_id and str(row.dept_id) in dept_ids:
+                return True
+            if scoped_public_depts.intersection(dept_ids):
+                return True
+        if visibility == "private":
+            if row.dept_id and str(row.dept_id) in dept_ids:
+                return True
+        reviewed_by = str(getattr(row, "reviewed_by", "") or "")
+        if reviewed_by == user_id:
+            return True
+        if not reviewed_by:
+            return str(getattr(row, "created_by_id", "") or "") == user_id and (row.approval_status or "approved") == "approved"
+    return False
+
+
+def _can_delete_mcp(
+    row: McpRegistry,
+    current_user: CurrentActiveUser,
+    *,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return True
+    if not row.org_id:
+        return False
+
+    normalized_roles = _normalize_role_variants(getattr(current_user, "role", ""))
+    user_id = str(current_user.id)
+    if normalized_roles.intersection({"developer", "business_user"}):
+        return False
+    if normalized_roles.intersection({"super_admin", "superadmin"}):
+        return bool(row.org_id and row.org_id in org_ids)
+    if normalized_roles.intersection({"department_admin"}):
+        if _is_multi_dept_mcp(row):
+            return False
+        visibility = _normalize_visibility(getattr(row, "visibility", None))
+        public_scope = _normalize_public_scope(getattr(row, "public_scope", None))
+        dept_ids = {str(d) for _, d in dept_pairs}
+        scoped_public_depts = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+        if visibility == "public" and public_scope == "department":
+            if row.dept_id and str(row.dept_id) in dept_ids:
+                return True
+            if scoped_public_depts.intersection(dept_ids):
+                return True
+        if visibility == "private" and row.dept_id and str(row.dept_id) in dept_ids:
+            return True
+        reviewed_by = str(getattr(row, "reviewed_by", "") or "")
+        if reviewed_by == user_id:
+            return True
+        if not reviewed_by:
+            return str(getattr(row, "created_by_id", "") or "") == user_id and (row.approval_status or "approved") == "approved"
+    return False
 
 
 @router.get("/", response_model=list[McpRegistryRead])
@@ -442,12 +579,36 @@ async def list_mcp_servers(
     await _require_mcp_permission(current_user, "view_mcp_page")
 
     raw_rows = await fetch_mcp_servers_async(active_only=active_only)
+    ids = [UUID(r["id"]) for r in raw_rows if isinstance(r, dict) and r.get("id")]
+    tools_map: dict[str, dict] = {}
+    if ids:
+        rows = (
+            await session.exec(
+                select(
+                    McpRegistry.id,
+                    McpRegistry.tools_count,
+                    McpRegistry.tools_checked_at,
+                    McpRegistry.tools_snapshot,
+                ).where(
+                    McpRegistry.id.in_(ids)
+                )
+            )
+        ).all()
+        tools_map = {
+            str(r[0]): {"tools_count": r[1], "tools_checked_at": r[2], "tools_snapshot": r[3]} for r in rows
+        }
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     visible = []
     for r in raw_rows:
         try:
             server_obj = McpRegistry.model_validate(r)
             if _can_access_server(server_obj, current_user, org_ids, dept_pairs):
+                if isinstance(r, dict):
+                    extras = tools_map.get(str(r.get("id")), {})
+                    if extras:
+                        r["tools_count"] = extras.get("tools_count")
+                        r["tools_checked_at"] = extras.get("tools_checked_at")
+                        r["tools_snapshot"] = extras.get("tools_snapshot")
                 visible.append(r)
         except Exception:
             continue
@@ -493,26 +654,9 @@ async def get_mcp_visibility_options(
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
 
-    private_share_users = []
-    if role == "department_admin" and dept_ids:
-        primary_dept = sorted(dept_ids, key=str)[0]
-        user_rows = (
-            await session.exec(
-                select(User.id, User.email)
-                .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
-                .where(
-                    UserDepartmentMembership.department_id == primary_dept,
-                    UserDepartmentMembership.status == "active",
-                    User.email.is_not(None),
-                )
-            )
-        ).all()
-        private_share_users = [{"id": str(r[0]), "email": r[1]} for r in user_rows if r[1]]
-
     return {
         "organizations": organizations,
         "departments": departments,
-        "private_share_users": private_share_users,
         "role": role,
     }
 
@@ -525,12 +669,18 @@ async def create_mcp_server(
 ):
     """Register a new MCP server directly (admin flows)."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "add_new_mcp")
+    await _require_mcp_permission(current_user, "edit_mcp_registry")
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
     await _ensure_mcp_name_available(session, body.server_name)
-    body.deployment_env = _normalize_deployment_env(getattr(body, "deployment_env", None))
+    normalized_envs = _normalize_environment_list(
+        getattr(body, "environments", None),
+        getattr(body, "deployment_env", None),
+    )
+    body.environments = normalized_envs or ["uat"]
+    body.deployment_env = _normalize_deployment_env(body.environments[0])
     now = datetime.now(timezone.utc)
+    test_result = await _test_mcp_connection_or_400(body)
     user_role = normalize_role(str(current_user.role))
     body.visibility = visibility
     body.public_scope = public_scope
@@ -556,7 +706,24 @@ async def create_mcp_server(
         body.approval_status = "approved"
         body.is_active = True
         body.status = "connected"
-        created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
+        service_payload = _prepare_mcp_service_payload(body.model_dump(mode="json"))
+        service_payload.pop("environments", None)
+        created_dict = await create_mcp_server_via_service(service_payload)
+        created_row = await session.get(McpRegistry, UUID(created_dict["id"]))
+        if created_row and body.environments:
+            created_row.environments = body.environments
+            created_row.deployment_env = body.deployment_env
+        if created_row:
+            created_row.tools_count = test_result.tools_count
+            created_row.tools_checked_at = now
+            created_row.tools_snapshot = _normalize_tools_snapshot(test_result.tools)
+        if isinstance(created_dict, dict):
+            created_dict["tools_count"] = test_result.tools_count
+            created_dict["tools_checked_at"] = now
+            created_dict["tools_snapshot"] = _normalize_tools_snapshot(test_result.tools)
+        if created_row and (body.env_vars is not None or body.headers is not None):
+            apply_mcp_secret_refs(created_row, env_vars=body.env_vars, headers=body.headers)
+            session.add(created_row)
         await _append_mcp_audit(
             session,
             mcp_id=UUID(created_dict["id"]),
@@ -579,7 +746,24 @@ async def create_mcp_server(
     body.approval_status = "pending"
     body.is_active = False
     body.status = "pending_approval"
-    created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
+    service_payload = _prepare_mcp_service_payload(body.model_dump(mode="json"))
+    service_payload.pop("environments", None)
+    created_dict = await create_mcp_server_via_service(service_payload)
+    created_row = await session.get(McpRegistry, UUID(created_dict["id"]))
+    if created_row and body.environments:
+        created_row.environments = body.environments
+        created_row.deployment_env = body.deployment_env
+        if created_row:
+            created_row.tools_count = test_result.tools_count
+            created_row.tools_checked_at = now
+            created_row.tools_snapshot = _normalize_tools_snapshot(test_result.tools)
+        if isinstance(created_dict, dict):
+            created_dict["tools_count"] = test_result.tools_count
+            created_dict["tools_checked_at"] = now
+            created_dict["tools_snapshot"] = _normalize_tools_snapshot(test_result.tools)
+    if created_row and (body.env_vars is not None or body.headers is not None):
+        apply_mcp_secret_refs(created_row, env_vars=body.env_vars, headers=body.headers)
+        session.add(created_row)
     created_id = UUID(created_dict["id"])
 
     approval = McpApprovalRequest(
@@ -590,6 +774,7 @@ async def create_mcp_server(
         request_to=approver_id,
         requested_at=now,
         deployment_env=body.deployment_env,
+        requested_environments=body.environments,
     )
     session.add(approval)
     await _append_mcp_audit(
@@ -623,9 +808,15 @@ async def request_mcp_server(
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
     await _ensure_mcp_name_available(session, body.server_name)
-    deployment_env = _normalize_deployment_env(getattr(body, "deployment_env", None))
+    normalized_envs = _normalize_environment_list(
+        getattr(body, "environments", None),
+        getattr(body, "deployment_env", None),
+    )
+    deployment_env = _normalize_deployment_env((normalized_envs or ["uat"])[0])
     now = datetime.now(timezone.utc)
+    test_result = await _test_mcp_connection_or_400(body)
 
+    body.environments = normalized_envs or ["uat"]
     body.deployment_env = deployment_env
     body.visibility = visibility
     body.public_scope = public_scope
@@ -635,32 +826,6 @@ async def request_mcp_server(
     body.created_by_id = current_user.id
     body.requested_by = current_user.id
     body.requested_at = now
-
-    # Mirror model workflow:
-    # - DEV + private => auto-approved
-    # - otherwise request approval based on env/scope
-    if deployment_env == "DEV" and visibility == "private":
-        body.request_to = None
-        body.reviewed_at = now
-        body.reviewed_by = current_user.id
-        body.approval_status = "approved"
-        body.is_active = True
-        body.status = "connected"
-        created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
-        await _append_mcp_audit(
-            session,
-            mcp_id=UUID(created_dict["id"]),
-            actor_id=current_user.id,
-            action="mcp.request.auto_approved",
-            org_id=body.org_id,
-            dept_id=body.dept_id,
-            deployment_env=deployment_env,
-            visibility=visibility,
-            details={"auto_approved": True, "reason": "dev_private"},
-            message="MCP server request auto-approved (DEV + private)",
-        )
-        await session.commit()
-        return created_dict
 
     if _requires_super_admin_mcp_approval(
         deployment_env=deployment_env,
@@ -676,7 +841,24 @@ async def request_mcp_server(
     body.approval_status = "pending"
     body.is_active = False
     body.status = "pending_approval"
-    created_dict = await create_mcp_server_via_service(body.model_dump(mode="json"))
+    service_payload = _prepare_mcp_service_payload(body.model_dump(mode="json"))
+    service_payload.pop("environments", None)
+    created_dict = await create_mcp_server_via_service(service_payload)
+    created_row = await session.get(McpRegistry, UUID(created_dict["id"]))
+    if created_row and body.environments:
+        created_row.environments = body.environments
+        created_row.deployment_env = body.deployment_env
+    if created_row:
+        created_row.tools_count = test_result.tools_count
+        created_row.tools_checked_at = now
+        created_row.tools_snapshot = _normalize_tools_snapshot(test_result.tools)
+    if isinstance(created_dict, dict):
+        created_dict["tools_count"] = test_result.tools_count
+        created_dict["tools_checked_at"] = now
+        created_dict["tools_snapshot"] = _normalize_tools_snapshot(test_result.tools)
+    if created_row and (body.env_vars is not None or body.headers is not None):
+        apply_mcp_secret_refs(created_row, env_vars=body.env_vars, headers=body.headers)
+        session.add(created_row)
     created_id = UUID(created_dict["id"])
 
     approval = McpApprovalRequest(
@@ -687,6 +869,7 @@ async def request_mcp_server(
         request_to=approver_id,
         requested_at=now,
         deployment_env=deployment_env,
+        requested_environments=body.environments,
     )
     session.add(approval)
     await _append_mcp_audit(
@@ -723,6 +906,10 @@ async def get_mcp_server(
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_server(server, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="MCP server is outside your visibility scope")
+    if isinstance(server_dict, dict):
+        server_dict["tools_count"] = server.tools_count
+        server_dict["tools_checked_at"] = server.tools_checked_at
+        server_dict["tools_snapshot"] = server.tools_snapshot
     return server_dict
 
 
@@ -735,13 +922,15 @@ async def update_mcp_server(
 ):
     """Update an existing MCP server."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "add_new_mcp")
+    await _require_mcp_permission(current_user, "edit_mcp_registry")
     row = await session.get(McpRegistry, server_id)
     if row is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_server(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="MCP server is outside your visibility scope")
+    if not _can_edit_mcp(row, current_user, org_ids=org_ids, dept_pairs=dept_pairs):
+        raise HTTPException(status_code=403, detail="You do not have permission to edit this MCP server")
 
     if body.org_id is None:
         body.org_id = row.org_id
@@ -753,10 +942,36 @@ async def update_mcp_server(
         body.public_scope = row.public_scope
     if body.public_dept_ids is None:
         body.public_dept_ids = [UUID(v) for v in (row.public_dept_ids or [])]
+
+    current_envs = _resolve_mcp_environments(row)
+    if body.environments is not None:
+        desired_envs = _normalize_environment_list(body.environments)
+        if desired_envs != current_envs:
+            raise HTTPException(status_code=400, detail="Direct environment change is blocked. Use approval flow")
+        body.environments = desired_envs
+
     if body.deployment_env is None:
         body.deployment_env = row.deployment_env
     else:
-        body.deployment_env = _normalize_deployment_env(body.deployment_env)
+        normalized_env = _normalize_deployment_env(body.deployment_env)
+        if normalized_env.lower() not in current_envs:
+            raise HTTPException(status_code=400, detail="Direct environment change is blocked. Use approval flow")
+        body.deployment_env = normalized_env
+
+    if body.visibility == "private" and body.dept_id is None:
+        current_role = normalize_role(str(current_user.role))
+        if current_role in {"department_admin", "developer", "business_user"} and dept_pairs:
+            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+            if body.org_id is None:
+                body.org_id = current_org_id
+            body.dept_id = current_dept_id
+        else:
+            owner_id = row.created_by_id or row.requested_by
+            owner_org_id, owner_dept_id = await _resolve_user_primary_dept(session, owner_id)
+            if owner_org_id and body.org_id is None:
+                body.org_id = owner_org_id
+            if owner_dept_id:
+                body.dept_id = owner_dept_id
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
     if body.server_name:
@@ -769,9 +984,104 @@ async def update_mcp_server(
     body.requested_by = row.requested_by
     body.request_to = row.request_to
 
-    server_dict = await update_mcp_server_via_service(str(server_id), body.model_dump(mode="json", exclude_unset=True))
+    current_public_dept_ids = [str(v) for v in (row.public_dept_ids or [])]
+    desired_public_dept_ids = [str(v) for v in (body.public_dept_ids or [])]
+    visibility_changed = (
+        visibility != _normalize_visibility(row.visibility)
+        or public_scope != _normalize_public_scope(row.public_scope)
+        or (row.org_id or None) != (body.org_id or None)
+        or (row.dept_id or None) != (body.dept_id or None)
+        or sorted(current_public_dept_ids) != sorted(desired_public_dept_ids)
+    )
+
+    if visibility_changed:
+        if _is_root_user(current_user) or _is_super_admin_user(current_user):
+            approver_id = current_user.id
+        else:
+            approver_id = await _resolve_super_admin_approver(session, current_user, body.org_id) if _requires_super_admin_mcp_approval(
+                deployment_env=row.deployment_env,
+                visibility=visibility,
+                public_scope=public_scope,
+            ) else await _resolve_request_approver(session, current_user, body.org_id, body.dept_id)
+
+        if approver_id == current_user.id and _can_self_approve(current_user):
+            service_payload = _prepare_mcp_service_payload(
+                body.model_dump(mode="json", exclude_unset=True)
+            )
+            service_payload.pop("environments", None)
+            server_dict = await update_mcp_server_via_service(str(server_id), service_payload)
+            if server_dict is None:
+                raise HTTPException(status_code=404, detail="MCP server not found")
+            if body.env_vars is not None or body.headers is not None:
+                apply_mcp_secret_refs(row, env_vars=body.env_vars, headers=body.headers)
+                session.add(row)
+            await _append_mcp_audit(
+                session,
+                mcp_id=server_id,
+                actor_id=current_user.id,
+                action="mcp.updated.auto_approved",
+                org_id=body.org_id,
+                dept_id=body.dept_id,
+                deployment_env=body.deployment_env,
+                visibility=visibility,
+                details={"auto_approved": True},
+                message="MCP server updated and auto-approved",
+            )
+            await session.commit()
+            return server_dict
+
+        now = datetime.now(timezone.utc)
+        row.approval_status = "pending"
+        row.requested_by = current_user.id
+        row.request_to = approver_id
+        row.requested_at = now
+        row.reviewed_at = None
+        row.reviewed_by = None
+        row.status = "pending_approval"
+        row.updated_at = now
+        session.add(row)
+
+        approval = McpApprovalRequest(
+            mcp_id=server_id,
+            org_id=body.org_id,
+            dept_id=body.dept_id,
+            requested_by=current_user.id,
+            request_to=approver_id,
+            requested_at=now,
+            deployment_env=row.deployment_env,
+            requested_environments=_resolve_mcp_environments(row),
+            requested_visibility=visibility,
+            requested_public_scope=public_scope,
+            requested_org_id=body.org_id,
+            requested_dept_id=body.dept_id,
+            requested_public_dept_ids=desired_public_dept_ids or None,
+        )
+        session.add(approval)
+        await _append_mcp_audit(
+            session,
+            mcp_id=server_id,
+            actor_id=current_user.id,
+            action="mcp.visibility.requested",
+            org_id=body.org_id,
+            dept_id=body.dept_id,
+            deployment_env=row.deployment_env,
+            visibility=visibility,
+            details={"request_to": str(approver_id)},
+            message="MCP visibility change pending approval",
+        )
+        await session.commit()
+        return McpRegistryRead.from_orm_model(row)
+
+    service_payload = _prepare_mcp_service_payload(
+        body.model_dump(mode="json", exclude_unset=True)
+    )
+    service_payload.pop("environments", None)
+    server_dict = await update_mcp_server_via_service(str(server_id), service_payload)
     if server_dict is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
+    if body.env_vars is not None or body.headers is not None:
+        apply_mcp_secret_refs(row, env_vars=body.env_vars, headers=body.headers)
+        session.add(row)
     await _append_mcp_audit(
         session,
         mcp_id=server_id,
@@ -802,6 +1112,8 @@ async def delete_mcp_server(
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_server(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="MCP server is outside your visibility scope")
+    if not _can_delete_mcp(row, current_user, org_ids=org_ids, dept_pairs=dept_pairs):
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this MCP server")
     # Clean up any local approval requests before deleting via microservice
     approval_rows = (
         await session.exec(
@@ -875,6 +1187,14 @@ async def probe_mcp_server(
 
     try:
         result = await probe_mcp_server_via_service(str(server_id))
+        if isinstance(result, dict):
+            if result.get("success"):
+                row.tools_count = result.get("tools_count")
+                if result.get("tools") is not None:
+                    row.tools_snapshot = result.get("tools")
+            row.tools_checked_at = datetime.now(timezone.utc)
+            session.add(row)
+            await session.commit()
         return McpProbeResponse(**result)
     except HTTPException:
         raise

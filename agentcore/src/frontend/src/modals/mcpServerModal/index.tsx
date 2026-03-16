@@ -1,8 +1,15 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { ForwardedIconComponent } from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import InputListComponent from "@/components/core/parameterRenderComponent/components/inputListComponent";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -15,6 +22,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { MAX_MCP_SERVER_NAME_LENGTH } from "@/constants/constants";
 import { AuthContext } from "@/contexts/authContext";
+import useAlertStore from "@/stores/alertStore";
 import { api } from "@/controllers/API/api";
 import { useNameAvailability } from "@/controllers/API/queries/common/use-name-availability";
 import { useAddMCPServer } from "@/controllers/API/queries/mcp/use-add-mcp-server";
@@ -36,7 +44,6 @@ import { cn } from "@/utils/utils";
 type VisibilityOptions = {
   organizations: { id: string; name: string }[];
   departments: { id: string; name: string; org_id: string }[];
-  private_share_users: { id: string; email: string }[];
 };
 
 export default function AddMcpServerModal({
@@ -59,16 +66,18 @@ export default function AddMcpServerModal({
       ? [myOpen, mySetOpen]
       : useState(false);
   const { role } = useContext(AuthContext);
+  const normalizedRole = String(role || "").toLowerCase();
+  const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
   const isEditMode = !!initialData;
 
   const [type, setType] = useState(
     initialData ? (initialData.mode === "stdio" ? "STDIO" : "SSE") : "SSE",
   );
-  const [deploymentEnv, setDeploymentEnv] = useState<"dev" | "uat" | "prod">(
+  const [deploymentEnvSelection, setDeploymentEnvSelection] = useState<"uat" | "prod" | "both">(
     (() => {
       const normalized = String(initialData?.deployment_env || "DEV").toLowerCase();
-      if (normalized === "uat" || normalized === "prod" || normalized === "dev") return normalized;
-      return "dev";
+      if (normalized === "uat" || normalized === "prod") return normalized as "uat" | "prod";
+      return "uat";
     })(),
   );
   const [error, setError] = useState<string | null>(null);
@@ -76,11 +85,14 @@ export default function AddMcpServerModal({
   const patchMutation = usePatchMCPServer();
   const requestMutation = useRequestMCPServer();
   const testMutation = useTestMCPConnection();
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
 
   const isPending =
     addMutation.isPending || patchMutation.isPending || requestMutation.isPending;
   const [testResult, setTestResult] =
     useState<McpTestConnectionResponse | null>(null);
+  const [testPayloadKey, setTestPayloadKey] = useState<string | null>(null);
 
   const [stdioName, setStdioName] = useState(initialData?.server_name || "");
   const [stdioCommand, setStdioCommand] = useState(initialData?.command || "");
@@ -115,18 +127,27 @@ export default function AddMcpServerModal({
   const [publicDeptIds, setPublicDeptIds] = useState<string[]>(
     initialData?.public_dept_ids || [],
   );
-  const [sharedUserEmails, setSharedUserEmails] = useState<string[]>([]);
   const [visibilityOptions, setVisibilityOptions] = useState<VisibilityOptions>({
     organizations: [],
     departments: [],
-    private_share_users: [],
   });
+  const formScrollRef = useRef<HTMLDivElement | null>(null);
+  const tenancySectionRef = useRef<HTMLDivElement | null>(null);
 
   const departmentsForSelectedOrg = useMemo(
     () =>
       visibilityOptions.departments.filter((d) => !orgId || d.org_id === orgId),
     [visibilityOptions.departments, orgId],
   );
+  const selectedDeptLabel = useMemo(() => {
+    if (publicDeptIds.length === 0) return "Select departments";
+    const names = departmentsForSelectedOrg
+      .filter((dept) => publicDeptIds.includes(dept.id))
+      .map((dept) => dept.name);
+    if (names.length === 0) return "Select departments";
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  }, [departmentsForSelectedOrg, publicDeptIds]);
 
   function parseEnvList(envList: any): Record<string, string> {
     const env: Record<string, string> = {};
@@ -139,20 +160,42 @@ export default function AddMcpServerModal({
     return env;
   }
 
+  function buildTestPayload() {
+    if (type === "STDIO") {
+      return {
+        mode: "stdio",
+        command: stdioCommand,
+        args: stdioArgs.filter((a) => a.trim() !== ""),
+        env_vars: parseEnvList(stdioEnv),
+      };
+    }
+    if (type === "SSE") {
+      return {
+        mode: "sse",
+        url: sseUrl,
+        env_vars: parseEnvList(sseEnv),
+        headers: parseEnvList(sseHeaders),
+      };
+    }
+    return null;
+  }
+
+  function buildTestKey(payload: ReturnType<typeof buildTestPayload>) {
+    if (!payload) return null;
+    return JSON.stringify(payload);
+  }
+
   function buildTenancyPayload() {
     const isPublic = visibilityScope !== "private";
     return {
       visibility: isPublic ? "public" : "private",
       public_scope: isPublic ? visibilityScope : null,
       org_id: orgId || undefined,
-      dept_id: deptId || undefined,
+      dept_id:
+        visibilityScope === "department" ? (canMultiDept ? undefined : deptId || undefined) : undefined,
       public_dept_ids:
         visibilityScope === "department"
-          ? publicDeptIds
-          : [],
-      shared_user_emails:
-        role === "department_admin" && visibilityScope === "private"
-          ? sharedUserEmails
+          ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
           : [],
     };
   }
@@ -163,25 +206,22 @@ export default function AddMcpServerModal({
     try {
       if (type === "STDIO") {
         if (!stdioCommand.trim()) return setError("Command is required to test connection.");
-        const result = await testMutation.mutateAsync({
-          mode: "stdio",
-          command: stdioCommand,
-          args: stdioArgs.filter((a) => a.trim() !== ""),
-          env_vars: parseEnvList(stdioEnv),
-        });
+        const payload = buildTestPayload();
+        const result = await testMutation.mutateAsync(payload!);
         setTestResult(result);
+        setTestPayloadKey(buildTestKey(payload));
       } else if (type === "SSE") {
         if (!sseUrl.trim()) return setError("URL is required to test connection.");
-        const result = await testMutation.mutateAsync({
-          mode: "sse",
-          url: sseUrl,
-          env_vars: parseEnvList(sseEnv),
-          headers: parseEnvList(sseHeaders),
-        });
+        const payload = buildTestPayload();
+        const result = await testMutation.mutateAsync(payload!);
         setTestResult(result);
+        setTestPayloadKey(buildTestKey(payload));
       }
     } catch (err: any) {
-      setTestResult({ success: false, message: err?.message || "Connection failed." });
+      const message = err?.message || "Connection failed.";
+      setTestResult({ success: false, message });
+      setTestPayloadKey(buildTestKey(buildTestPayload()));
+      setErrorData({ title: "Connection test failed", list: [message] });
     }
   }
 
@@ -192,16 +232,37 @@ export default function AddMcpServerModal({
       return;
     }
     const tenancyPayload = buildTenancyPayload();
+    const desiredEnvs =
+      deploymentEnvSelection === "both" ? ["uat", "prod"] : [deploymentEnvSelection];
+    const primaryEnv = desiredEnvs[0] ?? "uat";
+    const requiresTest = !isEditMode && type !== "JSON";
 
     if (type === "STDIO") {
       if (!stdioName.trim() || !stdioCommand.trim()) return setError("Name and command are required.");
       const serverName = parseString(stdioName, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
       try {
+        if (requiresTest) {
+          const payload = buildTestPayload();
+          const key = buildTestKey(payload);
+          let result = testResult && testPayloadKey === key ? testResult : null;
+          if (!result) {
+            result = await testMutation.mutateAsync(payload!);
+            setTestResult(result);
+            setTestPayloadKey(key);
+          }
+          if (!result.success) {
+            const msg = result.message || "Connection test failed.";
+            setError(msg);
+            setErrorData({ title: "Connection test failed", list: [msg] });
+            return;
+          }
+        }
         const payload: McpRegistryCreateRequest = {
           server_name: serverName,
           description: stdioDescription || null,
           mode: "stdio",
-          deployment_env: deploymentEnv,
+          deployment_env: primaryEnv,
+          environments: desiredEnvs,
           command: stdioCommand,
           args: stdioArgs.filter((a) => a.trim() !== ""),
           env_vars: parseEnvList(stdioEnv),
@@ -214,11 +275,23 @@ export default function AddMcpServerModal({
         } else {
           await addMutation.mutateAsync(payload);
         }
+        setSuccessData({
+          title: isEditMode
+            ? "MCP server updated"
+            : requestMode
+              ? "MCP server request submitted"
+              : "MCP server registered",
+          list: requestMode
+            ? ["Your request has been sent for approval."]
+            : ["If approval is required, you'll see it in Review & Approval."],
+        });
         onSuccess?.(serverName);
         setOpen(false);
         resetForm();
       } catch (err: any) {
-        setError(err?.message || "Failed to save MCP server.");
+        const message = err?.message || "Failed to save MCP server.";
+        setError(message);
+        setErrorData({ title: "MCP server save failed", list: [message] });
       }
       return;
     }
@@ -227,11 +300,28 @@ export default function AddMcpServerModal({
       if (!sseName.trim() || !sseUrl.trim()) return setError("Name and URL are required.");
       const serverName = parseString(sseName, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
       try {
+        if (requiresTest) {
+          const payload = buildTestPayload();
+          const key = buildTestKey(payload);
+          let result = testResult && testPayloadKey === key ? testResult : null;
+          if (!result) {
+            result = await testMutation.mutateAsync(payload!);
+            setTestResult(result);
+            setTestPayloadKey(key);
+          }
+          if (!result.success) {
+            const msg = result.message || "Connection test failed.";
+            setError(msg);
+            setErrorData({ title: "Connection test failed", list: [msg] });
+            return;
+          }
+        }
         const payload: McpRegistryCreateRequest = {
           server_name: serverName,
           description: sseDescription || null,
           mode: "sse",
-          deployment_env: deploymentEnv,
+          deployment_env: primaryEnv,
+          environments: desiredEnvs,
           url: sseUrl,
           env_vars: parseEnvList(sseEnv),
           headers: parseEnvList(sseHeaders),
@@ -244,11 +334,23 @@ export default function AddMcpServerModal({
         } else {
           await addMutation.mutateAsync(payload);
         }
+        setSuccessData({
+          title: isEditMode
+            ? "MCP server updated"
+            : requestMode
+              ? "MCP server request submitted"
+              : "MCP server registered",
+          list: requestMode
+            ? ["Your request has been sent for approval."]
+            : ["If approval is required, you'll see it in Review & Approval."],
+        });
         onSuccess?.(serverName);
         setOpen(false);
         resetForm();
       } catch (err: any) {
-        setError(err?.message || "Failed to save MCP server.");
+        const message = err?.message || "Failed to save MCP server.";
+        setError(message);
+        setErrorData({ title: "MCP server save failed", list: [message] });
       }
       return;
     }
@@ -265,10 +367,32 @@ export default function AddMcpServerModal({
         for (const srv of servers) {
           const serverName = parseString(srv.name, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
           const mode: "sse" | "stdio" = srv.command ? "stdio" : "sse";
+          const testPayload =
+            mode === "stdio"
+              ? {
+                  mode,
+                  command: srv.command,
+                  args: srv.args?.filter((a) => a.trim() !== ""),
+                  env_vars: srv.env ?? undefined,
+                }
+              : {
+                  mode,
+                  url: srv.url,
+                  env_vars: srv.env ?? undefined,
+                  headers: srv.headers ?? undefined,
+                };
+          const testResult = await testMutation.mutateAsync(testPayload as any);
+          if (!testResult.success) {
+            const msg = testResult.message || "Connection test failed.";
+            setError(msg);
+            setErrorData({ title: "Connection test failed", list: [msg] });
+            return;
+          }
           const createReq: McpRegistryCreateRequest = {
             server_name: serverName,
             mode,
-            deployment_env: deploymentEnv,
+            deployment_env: primaryEnv,
+            environments: desiredEnvs,
             ...(mode === "stdio" && {
               command: srv.command,
               args: srv.args?.filter((a) => a.trim() !== ""),
@@ -286,11 +410,19 @@ export default function AddMcpServerModal({
             await addMutation.mutateAsync(createReq);
           }
         }
+        setSuccessData({
+          title: requestMode ? "MCP server request submitted" : "MCP server(s) registered",
+          list: requestMode
+            ? ["Your request has been sent for approval."]
+            : ["If approval is required, you'll see it in Review & Approval."],
+        });
         onSuccess?.(servers[0]?.name || "");
         setOpen(false);
         resetForm();
       } catch (err: any) {
-        setError(err?.message || "Failed to import MCP server(s).");
+        const message = err?.message || "Failed to import MCP server(s).";
+        setError(message);
+        setErrorData({ title: "MCP server import failed", list: [message] });
       }
     }
   }
@@ -307,14 +439,14 @@ export default function AddMcpServerModal({
     setSseHeaders([]);
     setSseDescription("");
     setJsonInput("");
-    setDeploymentEnv("dev");
+    setDeploymentEnvSelection("uat");
     setVisibilityScope("private");
     setOrgId("");
     setDeptId("");
     setPublicDeptIds([]);
-    setSharedUserEmails([]);
     setError(null);
     setTestResult(null);
+    setTestPayloadKey(null);
   }
 
   useEffect(() => {
@@ -332,8 +464,15 @@ export default function AddMcpServerModal({
     setSseHeaders([]);
     setSseDescription(initialData?.description || "");
     {
-      const normalized = String(initialData?.deployment_env || "DEV").toLowerCase();
-      setDeploymentEnv(normalized === "uat" || normalized === "prod" || normalized === "dev" ? (normalized as "dev" | "uat" | "prod") : "dev");
+      const envs = (initialData?.environments || []).map((env) => String(env).toLowerCase());
+      if (envs.includes("uat") && envs.includes("prod")) {
+        setDeploymentEnvSelection("both");
+      } else {
+        const normalized = String(initialData?.deployment_env || "UAT").toLowerCase();
+        setDeploymentEnvSelection(
+          normalized === "uat" || normalized === "prod" ? (normalized as "uat" | "prod") : "uat",
+        );
+      }
     }
     setVisibilityScope(
       initialData?.visibility === "public"
@@ -343,7 +482,6 @@ export default function AddMcpServerModal({
     setOrgId(initialData?.org_id || "");
     setDeptId(initialData?.dept_id || "");
     setPublicDeptIds(initialData?.public_dept_ids || []);
-    setSharedUserEmails([]);
   }, [open, initialData]);
 
   useEffect(() => {
@@ -352,7 +490,6 @@ export default function AddMcpServerModal({
       const options: VisibilityOptions = res.data || {
         organizations: [],
         departments: [],
-        private_share_users: [],
       };
       setVisibilityOptions(options);
       if (!orgId) setOrgId(options.organizations?.[0]?.id || "");
@@ -361,26 +498,63 @@ export default function AddMcpServerModal({
   }, [open]);
 
   useEffect(() => {
-    if (!open || visibilityScope === "private") return;
-    const canMultiDept = role === "super_admin" || role === "root";
-    if (visibilityScope === "organization") {
-      if ((role === "developer" || role === "department_admin") && !orgId && visibilityOptions.organizations.length > 0) {
-        setOrgId(visibilityOptions.organizations[0].id);
-      }
-      return;
-    }
-    if (!canMultiDept && !deptId && visibilityOptions.departments.length > 0) {
+    if (!open) return;
+    if ((normalizedRole === "developer" || normalizedRole === "department_admin") && visibilityOptions.departments.length > 0) {
       const firstDept = visibilityOptions.departments[0];
-      setDeptId(firstDept.id);
+      if (!deptId) setDeptId(firstDept.id);
       if (!orgId) setOrgId(firstDept.org_id);
+      if (publicDeptIds.length === 0) setPublicDeptIds([firstDept.id]);
     }
-  }, [open, visibilityScope, role, orgId, deptId, visibilityOptions]);
+  }, [open, normalizedRole, visibilityOptions, deptId, orgId, publicDeptIds]);
 
   const handleTypeChange = (val: string) => {
     setType(val);
     setError(null);
     setTestResult(null);
+    setTestPayloadKey(null);
   };
+
+  useEffect(() => {
+    if (!open || type === "JSON") return;
+    const key = buildTestKey(buildTestPayload());
+    if (testPayloadKey && key && key !== testPayloadKey) {
+      setTestResult(null);
+      setTestPayloadKey(null);
+    }
+  }, [
+    open,
+    type,
+    stdioCommand,
+    stdioArgs,
+    stdioEnv,
+    sseUrl,
+    sseEnv,
+    sseHeaders,
+    testPayloadKey,
+  ]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (visibilityScope === "private") return;
+
+    const scrollContainer = formScrollRef.current;
+    const tenancySection = tenancySectionRef.current;
+    if (!scrollContainer || !tenancySection) return;
+
+    requestAnimationFrame(() => {
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const sectionRect = tenancySection.getBoundingClientRect();
+      const nextTop =
+        tenancySection.offsetTop - scrollContainer.offsetTop - 12;
+
+      if (sectionRect.bottom > containerRect.bottom || sectionRect.top < containerRect.top) {
+        scrollContainer.scrollTo({
+          top: Math.max(nextTop, 0),
+          behavior: "smooth",
+        });
+      }
+    });
+  }, [open, visibilityScope, canMultiDept]);
 
   return (
     <BaseModal open={open} setOpen={setOpen} size="small-update" onSubmit={submitForm} className="!p-0">
@@ -408,19 +582,6 @@ export default function AddMcpServerModal({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-col gap-2">
-                <Label className="!text-mmd">Environment</Label>
-                <Select value={deploymentEnv} onValueChange={(value) => setDeploymentEnv(value as "dev" | "uat" | "prod")} disabled={isPending}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select environment..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dev">DEV</SelectItem>
-                    <SelectItem value="uat">UAT</SelectItem>
-                    <SelectItem value="prod">PROD</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
               {error && (
                 <ShadTooltip content={error}>
                   <div className={cn("truncate text-xs font-medium text-red-500")}>{error}</div>
@@ -431,7 +592,38 @@ export default function AddMcpServerModal({
                   {nameAvailability.reason ?? "Name is already taken."}
                 </div>
               )}
-              <div className="flex max-h-[380px] flex-col gap-4 overflow-y-auto" id="global-variable-modal-inputs">
+              <div
+                ref={formScrollRef}
+                className="flex max-h-[380px] flex-col gap-4 overflow-y-auto"
+                id="global-variable-modal-inputs"
+              >
+                <div className="flex flex-col gap-2">
+                  <Label className="!text-mmd">Environment</Label>
+                  <div className="flex gap-2">
+                    {[
+                      { value: "uat", label: "UAT" },
+                      { value: "prod", label: "PROD" },
+                      { value: "both", label: "UAT + PROD" },
+                    ].map((env) => (
+                      <button
+                        key={env.value}
+                        type="button"
+                        onClick={() => setDeploymentEnvSelection(env.value as "uat" | "prod" | "both")}
+                        className={`rounded-md border px-3 py-2 text-sm font-medium ${
+                          deploymentEnvSelection === env.value
+                            ? "border-[var(--button-primary)] bg-[var(--button-primary)] text-[var(--button-primary-foreground)]"
+                            : "border-input bg-background hover:bg-muted"
+                        }`}
+                        disabled={isPending}
+                      >
+                        {env.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.
+                  </p>
+                </div>
                 {type === "STDIO" && (
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">
@@ -480,7 +672,7 @@ export default function AddMcpServerModal({
                     </div>
                   </div>
                 )}
-                <div className="flex flex-col gap-4 rounded-md border p-3">
+                <div ref={tenancySectionRef} className="flex flex-col gap-4 rounded-md border p-3">
                   <Label className="!text-mmd">Tenancy</Label>
                   <div className="flex flex-col gap-2">
                     <Label className="!text-mmd">Visibility Scope</Label>
@@ -498,7 +690,12 @@ export default function AddMcpServerModal({
                   {visibilityScope === "organization" && (
                     <div className="flex flex-col gap-2">
                       <Label className="!text-mmd">Organization</Label>
-                      <select value={orgId} onChange={(event) => setOrgId(event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending || role === "developer" || role === "department_admin"}>
+                      <select
+                        value={orgId}
+                        onChange={(event) => setOrgId(event.target.value)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        disabled={isPending || normalizedRole === "developer" || normalizedRole === "department_admin"}
+                      >
                         <option value="">Select organization</option>
                         {visibilityOptions.organizations.map((org) => (
                           <option key={org.id} value={org.id}>{org.name}</option>
@@ -508,10 +705,18 @@ export default function AddMcpServerModal({
                   )}
                   {visibilityScope === "department" && (
                     <>
-                      {(role === "super_admin" || role === "root") && (
+                      {canMultiDept && (
                         <div className="flex flex-col gap-2">
                           <Label className="!text-mmd">Organization</Label>
-                          <select value={orgId} onChange={(event) => { setOrgId(event.target.value); setPublicDeptIds([]); }} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending}>
+                          <select
+                            value={orgId}
+                            onChange={(event) => {
+                              setOrgId(event.target.value);
+                              setPublicDeptIds([]);
+                            }}
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            disabled={isPending}
+                          >
                             <option value="">Select organization</option>
                             {visibilityOptions.organizations.map((org) => (
                               <option key={org.id} value={org.id}>{org.name}</option>
@@ -520,33 +725,53 @@ export default function AddMcpServerModal({
                         </div>
                       )}
                       <div className="flex flex-col gap-2">
-                        <Label className="!text-mmd">Department{role === "super_admin" || role === "root" ? "s" : ""}</Label>
-                        {role === "super_admin" || role === "root" ? (
-                          <select multiple value={publicDeptIds} onChange={(event) => setPublicDeptIds(Array.from(event.target.selectedOptions).map((o) => o.value))} className="min-h-[88px] rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending}>
-                            {departmentsForSelectedOrg.map((dept) => (
-                              <option key={dept.id} value={dept.id}>{dept.name}</option>
-                            ))}
-                          </select>
+                        <Label className="!text-mmd">Department{canMultiDept ? "s" : ""}</Label>
+                        {canMultiDept ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="w-full justify-between font-normal"
+                              >
+                                <span className="truncate text-left">{selectedDeptLabel}</span>
+                                <ChevronDown className="ml-2 h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="max-h-64 w-[340px] overflow-auto">
+                              {departmentsForSelectedOrg.map((dept) => (
+                                <DropdownMenuCheckboxItem
+                                  key={dept.id}
+                                  checked={publicDeptIds.includes(dept.id)}
+                                  onSelect={(event) => event.preventDefault()}
+                                  onCheckedChange={(checked) => {
+                                    setPublicDeptIds((prev) =>
+                                      checked
+                                        ? Array.from(new Set([...prev, dept.id]))
+                                        : prev.filter((id) => id !== dept.id),
+                                    );
+                                  }}
+                                >
+                                  {dept.name}
+                                </DropdownMenuCheckboxItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         ) : (
-                          <select value={deptId} onChange={(event) => setDeptId(event.target.value)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending || role === "developer" || role === "department_admin"}>
+                          <select
+                            value={deptId}
+                            onChange={(event) => setDeptId(event.target.value)}
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            disabled={isPending || normalizedRole === "developer" || normalizedRole === "department_admin"}
+                          >
                             <option value="">Select department</option>
-                            {visibilityOptions.departments.map((dept) => (
+                            {departmentsForSelectedOrg.map((dept) => (
                               <option key={dept.id} value={dept.id}>{dept.name}</option>
                             ))}
                           </select>
                         )}
                       </div>
                     </>
-                  )}
-                  {visibilityScope === "private" && role === "department_admin" && (
-                    <div className="flex flex-col gap-2">
-                      <Label className="!text-mmd">Additional Users (optional)</Label>
-                      <select multiple value={sharedUserEmails} onChange={(event) => setSharedUserEmails(Array.from(event.target.selectedOptions).map((o) => o.value))} className="min-h-[88px] rounded-md border border-input bg-background px-3 py-2 text-sm" disabled={isPending}>
-                        {visibilityOptions.private_share_users.map((u) => (
-                          <option key={u.id} value={u.email}>{u.email}</option>
-                        ))}
-                      </select>
-                    </div>
                   )}
                 </div>
                 {type === "JSON" && (

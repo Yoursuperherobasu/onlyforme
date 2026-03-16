@@ -73,18 +73,18 @@ def _excluded_higher_role_user_ids(role: str):
     """Return a subquery of user IDs whose projects should be hidden from the given role.
 
     Uses SQL-level normalization so all role name variants (e.g. "Root Admin",
-    "root_admin", "root") are matched correctly.
+    "root") are matched correctly.
     """
     normalized_db_role = func.lower(func.replace(User.role, " ", "_"))
 
     if role == "super_admin":
         # Super admin must NOT see root admin projects
-        return select(User.id).where(normalized_db_role.in_(["root", "root_admin"]))
+        return select(User.id).where(normalized_db_role.in_(["root"]))
 
     if role == "department_admin":
         # Dept admin must NOT see root admin or super admin projects
         return select(User.id).where(
-            normalized_db_role.in_(["root", "root_admin", "super_admin", "admin"])
+            normalized_db_role.in_(["root", "super_admin"])
         )
 
     return None

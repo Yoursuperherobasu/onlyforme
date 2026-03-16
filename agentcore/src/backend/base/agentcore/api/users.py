@@ -740,10 +740,22 @@ async def read_current_user(
         )
     ).first()
 
+    department_id = (
+        await db.exec(
+            select(UserDepartmentMembership.department_id)
+            .where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+            )
+            .order_by(UserDepartmentMembership.assigned_at.asc())
+        )
+    ).first()
+
     return {
         **cached_user,
         "permissions": user_permissions,
         "organization_name": organization_name,
+        "department_id": department_id,
     }
 
 

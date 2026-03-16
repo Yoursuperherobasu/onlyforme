@@ -105,7 +105,8 @@ export default function ApprovalPage() {
       searchQuery === "" ||
       agent.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       agent.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.project.toLowerCase().includes(searchQuery.toLowerCase());
+      (agent.project || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (agent.visibility || "").toLowerCase().includes(searchQuery.toLowerCase());
     return matchesTab && matchesFilter && matchesSearch;
   });
 
@@ -153,7 +154,7 @@ export default function ApprovalPage() {
       deployPackageRequestMutation.mutate(
         {
           requestId: agent.id,
-          deployment_notes: "Marked as deployed by root admin",
+          deployment_notes: "Marked as deployed by root",
         },
         {
           onSuccess: () => {

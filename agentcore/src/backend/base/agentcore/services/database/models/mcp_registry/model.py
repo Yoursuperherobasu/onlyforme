@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, computed_field
-from sqlalchemy import JSON, Column, DateTime, ForeignKeyConstraint, Index, String, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKeyConstraint, Index, Integer, String, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -24,9 +24,10 @@ class McpRegistry(SQLModel, table=True):
     description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     mode: str = Field(nullable=False)  # "sse" or "stdio"
     deployment_env: str = Field(
-        default="DEV",
-        sa_column=Column(String(10), nullable=False, default="DEV", index=True),
-    )  # DEV | UAT | PROD
+        default="UAT",
+        sa_column=Column(String(10), nullable=False, default="UAT", index=True),
+    )  # UAT | PROD
+    environments: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # SSE-specific
     url: str | None = Field(default=None)
@@ -65,6 +66,10 @@ class McpRegistry(SQLModel, table=True):
     review_comments: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     review_attachments: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
+    tools_count: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    tools_checked_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    tools_snapshot: list[dict] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+
     created_by: str | None = Field(default=None, nullable=True)
     created_by_id: UUID | None = Field(default=None, foreign_key="user.id", nullable=True, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -90,7 +95,8 @@ class McpRegistryCreate(BaseModel):
     server_name: str
     description: str | None = None
     mode: str  # "sse" or "stdio"
-    deployment_env: str = "DEV"
+    deployment_env: str = "UAT"
+    environments: list[str] | None = None
     url: str | None = None
     command: str | None = None
     args: list[str] | None = None
@@ -113,6 +119,9 @@ class McpRegistryCreate(BaseModel):
     reviewed_by: UUID | None = None
     review_comments: str | None = None
     review_attachments: dict | None = None
+    tools_count: int | None = None
+    tools_checked_at: datetime | None = None
+    tools_snapshot: list[dict] | None = None
     created_by: str | None = None
     created_by_id: UUID | None = None
 
@@ -124,6 +133,7 @@ class McpRegistryUpdate(BaseModel):
     description: str | None = None
     mode: str | None = None
     deployment_env: str | None = None
+    environments: list[str] | None = None
     url: str | None = None
     command: str | None = None
     args: list[str] | None = None
@@ -158,7 +168,8 @@ class McpRegistryRead(BaseModel):
     server_name: str
     description: str | None = None
     mode: str
-    deployment_env: str = "DEV"
+    deployment_env: str = "UAT"
+    environments: list[str] | None = None
     url: str | None = None
     command: str | None = None
     args: list[str] | None = None
@@ -178,6 +189,9 @@ class McpRegistryRead(BaseModel):
     reviewed_by: UUID | None = None
     review_comments: str | None = None
     review_attachments: dict | None = None
+    tools_count: int | None = None
+    tools_checked_at: datetime | None = None
+    tools_snapshot: list[dict] | None = None
     created_by: str | None = None
     created_by_id: UUID | None = None
     created_at: datetime
@@ -223,6 +237,7 @@ class McpTestConnectionResponse(BaseModel):
     success: bool
     message: str
     tools_count: int | None = None
+    tools: list[McpToolInfo] | None = None
 
 
 # ---------------------------------------------------------------------------

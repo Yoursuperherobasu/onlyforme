@@ -16,7 +16,8 @@ export interface ApprovalAgent {
     name: string;
     avatar?: string;
   };
-  project: string;
+  project?: string;
+  visibility?: string | null;
   submitted: string;
   version: string;
   recentChanges: string;
