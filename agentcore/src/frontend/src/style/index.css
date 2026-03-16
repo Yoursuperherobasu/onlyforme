@@ -208,6 +208,10 @@
     --button-primary-disabled: #f0a3a6;
 
     --tabs-label: #ffffff;
+    --login-sso-button-bg: #da2128;
+    --login-sso-button-hover: #b81b20;
+    --login-sso-button-disabled: #f0a3a6;
+    --login-sso-button-foreground: #ffffff;
 
 
   }
@@ -478,5 +482,9 @@
     --button-primary-disabled: #f0a3a6;
 
     --tabs-label: #000000;
+    --login-sso-button-bg: #da2128;
+    --login-sso-button-hover: #b81b20;
+    --login-sso-button-disabled: #f0a3a6;
+    --login-sso-button-foreground: #ffffff;
   }
 }

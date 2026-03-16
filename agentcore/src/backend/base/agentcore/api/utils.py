@@ -162,7 +162,7 @@ def _apply_session_to_graph(graph: LangGraphAdapter, kwargs: dict) -> None:
     session_id = kwargs.get("session_id") or str(graph.agent_id)
     for vid in graph.has_session_id_vertices:
         vertex = graph.get_vertex(vid)
-        if vertex and not vertex.raw_params.get("session_id"):
+        if vertex:
             vertex.update_raw_params({"session_id": session_id}, overwrite=True)
     graph.session_id = session_id
 
@@ -232,8 +232,7 @@ async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwar
         if vertex is None:
             msg = f"Vertex {vertex_id} not found"
             raise ValueError(msg)
-        if not vertex.raw_params.get("session_id"):
-            vertex.update_raw_params({"session_id": session_id}, overwrite=True)
+        vertex.update_raw_params({"session_id": session_id}, overwrite=True)
 
     graph.session_id = session_id
     await graph.initialize_run()
@@ -417,8 +416,12 @@ async def cascade_delete_agent(session: AsyncSession, agent_id: uuid.UUID) -> No
         await session.exec(delete(VertexBuildTable).where(VertexBuildTable.agent_id == agent_id))
         await session.exec(delete(Agent).where(Agent.id == agent_id))
     except Exception as e:
-        msg = f"Unable to cascade delete agent: {agent_id}"
-        raise RuntimeError(msg, e) from e
+        msg = (
+            f"Unable to delete agent {agent_id}. "
+            "It has related records (deployments, runs, or usage). "
+            "Disable/undeploy in Control Panel, then delete."
+        )
+        raise RuntimeError(msg) from e
 
 
 def custom_params(
@@ -428,5 +431,4 @@ def custom_params(
     if page is None and size is None:
         return None
     return Params(page=page or MIN_PAGE_SIZE, size=size or MAX_PAGE_SIZE)
-
 

@@ -47,6 +47,7 @@ from agentcore.services.database.models.agent_deployment_prod.model import (
 )
 from agentcore.services.database.models.agent_deployment_uat.model import (
     AgentDeploymentUAT,
+    DeploymentLifecycleEnum,
     DeploymentUATStatusEnum,
     DeploymentVisibilityEnum,
 )
@@ -176,6 +177,7 @@ class PublishRecordSummary(BaseModel):
     published_by: UUID
     published_at: datetime
     is_active: bool
+    is_enabled: bool
     status: str
     visibility: str
     error_message: str | None = None
@@ -269,6 +271,28 @@ class PublishNotifyResponse(BaseModel):
     environment: str
     version_number: str
     deployment_id: UUID
+
+
+class PublishNotifyVerifiedResponse(BaseModel):
+    """DB-verified response for publish notification events.
+
+    Returns full deployment details after verifying the record exists
+    in the database — used for downstream deployment orchestration.
+    """
+
+    agent_id: UUID
+    agent_name: str
+    agent_description: str | None = None
+    environment: str
+    version_number: str
+    deployment_id: UUID
+    status: str
+    is_active: bool
+    deployed_by: UUID
+    deployed_at: datetime | None = None
+    org_id: UUID
+    dept_id: UUID | None = None
+    verified: bool = True
 
 
 class ValidatePublishEmailResponse(BaseModel):
@@ -1006,6 +1030,9 @@ async def _extract_and_create_bundles(
     Extracts all 8 resource types:
         MODEL, MCP_SERVER, GUARDRAIL, KNOWLEDGE_BASE, VECTOR_DB,
         CONNECTOR, TOOL, CUSTOM_COMPONENT
+
+    For PROD deployments, guardrails are automatically promoted — a frozen
+    production copy is created (or reused) via the guardrails microservice.
     """
     bundles: list[AgentBundle] = []
     seen: set[tuple[str, str]] = set()  # (bundle_type, resource_name) dedup
@@ -1030,6 +1057,11 @@ async def _extract_and_create_bundles(
                 continue
             seen.add(dedup_key)
 
+            resource_config = _extract_resource_config(template, field_name, node_type)
+
+            # NOTE: Guardrail promotion is deferred until admin approval.
+            # See approvals.py approve_agent() for the actual promotion logic.
+
             bundles.append(AgentBundle(
                 agent_id=agent_id,
                 org_id=org_id,
@@ -1038,7 +1070,7 @@ async def _extract_and_create_bundles(
                 deployment_env=deployment_env,
                 bundle_type=bundle_type,
                 resource_name=resource_name,
-                resource_config=_extract_resource_config(template, field_name, node_type),
+                resource_config=resource_config,
                 created_by=created_by,
             ))
 
@@ -1168,6 +1200,7 @@ def _record_to_summary(record: AgentDeploymentUAT | AgentDeploymentProd, environ
         published_by=record.deployed_by,
         published_at=record.deployed_at,
         is_active=record.is_active,
+        is_enabled=record.is_enabled,
         status=record.status.value if hasattr(record.status, "value") else str(record.status),
         visibility=record.visibility.value if hasattr(record.visibility, "value") else str(record.visibility),
         error_message=record.error_message,
@@ -1228,22 +1261,77 @@ async def _notify_publish_event(
     except Exception as notify_err:
         logger.warning(f"[PUBLISH_NOTIFY] failed for publish_id={publish_id}: {notify_err}")
 
-@router.post("/notify", response_model=PublishNotifyResponse, status_code=200)
-async def publish_notification(*, body: PublishNotifyRequest):
-    """Internal endpoint triggered after a successful agent publish.
+@router.post("/notify", response_model=PublishNotifyVerifiedResponse, status_code=200)
+async def publish_notify_verify(
+    *,
+    body: PublishNotifyRequest,
+    session: DbSession,
+):
+    """DB-verified publish notification endpoint for PROD deployments.
 
-    Returns agent_id, environment, and version_number.
-    Can also be called externally to verify a publish event.
+    Triggered after agent approval in prod. Looks up the deployment
+    record in the agent_deployment_prod table, verifies that the
+    agent_id and version match, and returns the full deployment
+    details for downstream deployment orchestration.
+
+    Raises:
+        404: Deployment record not found in prod table.
+        409: Mismatch between request payload and DB record.
     """
+    # 1. Find the deployment record in PROD table only
+    record = (await session.exec(
+        select(AgentDeploymentProd).where(AgentDeploymentProd.id == body.deployment_id)
+    )).first()
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"PROD deployment record {body.deployment_id} not found",
+        )
+
+    # 2. Verify agent_id matches
+    if record.agent_id != body.agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Agent ID mismatch: request says '{body.agent_id}' "
+                f"but deployment record has '{record.agent_id}'"
+            ),
+        )
+
+    # 3. Verify version matches
+    payload_version = str(body.version_number).strip()
+    if payload_version.lower().startswith("v"):
+        payload_version = payload_version[1:]
+    if str(record.version_number) != payload_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Version mismatch: request says 'v{body.version_number}' "
+                f"but deployment record has 'v{record.version_number}'"
+            ),
+        )
+
     logger.info(
-        f"Publish notification: agent={body.agent_id} env={body.environment} "
-        f"version={body.version_number}"
+        f"[PUBLISH_NOTIFY] Verified: agent='{record.agent_name}' "
+        f"agent_id={record.agent_id} deployment_id={record.id} "
+        f"env=prod version=v{record.version_number} "
+        f"status={record.status} is_active={record.is_active}",
     )
-    return PublishNotifyResponse(
-        agent_id=body.agent_id,
-        environment=body.environment,
-        version_number=body.version_number,
-        deployment_id=body.deployment_id,
+
+    return PublishNotifyVerifiedResponse(
+        agent_id=record.agent_id,
+        agent_name=record.agent_name,
+        agent_description=record.agent_description,
+        environment="prod",
+        version_number=f"v{record.version_number}",
+        deployment_id=record.id,
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        is_active=record.is_active,
+        deployed_by=record.deployed_by,
+        deployed_at=record.deployed_at,
+        org_id=record.org_id,
+        dept_id=record.dept_id,
+        verified=True,
     )
 
 
@@ -1599,6 +1687,135 @@ async def prod_deploy_action(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# UAT/PROD DELETE (archive) ENDPOINTS
+
+
+@router.delete("/uat/{deploy_id}", response_model=PublishActionResponse, status_code=200)
+async def delete_uat_deployment(
+    *,
+    session: DbSession,
+    deploy_id: UUID,
+    current_user: CurrentActiveUser,
+):
+    """Archive (soft-delete) a UAT deployment version.
+
+    Requires the deployment to be disabled in Control Panel and stopped.
+    """
+    record = (
+        await session.exec(
+            select(AgentDeploymentUAT).where(AgentDeploymentUAT.id == deploy_id)
+        )
+    ).first()
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"UAT deployment record {deploy_id} not found",
+        )
+
+    dept_id = record.dept_id
+    if dept_id is None:
+        agent = await session.get(Agent, record.agent_id)
+        dept_id = agent.dept_id if agent else None
+    await _require_undeploy_permission(
+        session,
+        current_user=current_user,
+        department_id=dept_id,
+    )
+
+    status_val = record.status.value if hasattr(record.status, "value") else str(record.status)
+    if record.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Disable the agent in Control Panel before deleting this version. "
+                f"Current: status={status_val}, is_active={record.is_active}, is_enabled={record.is_enabled}."
+            ),
+        )
+    if record.lifecycle_step != DeploymentLifecycleEnum.ARCHIVED:
+        record.lifecycle_step = DeploymentLifecycleEnum.ARCHIVED
+    if record.status != DeploymentUATStatusEnum.UNPUBLISHED:
+        record.status = DeploymentUATStatusEnum.UNPUBLISHED
+    record.is_enabled = False
+    record.is_active = False
+    record.updated_at = datetime.now(timezone.utc)
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+
+    return PublishActionResponse(
+        success=True,
+        message=f"UAT v{record.version_number} archived",
+        publish_id=record.id,
+        environment="uat",
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        is_active=record.is_active,
+        version_number=f"v{record.version_number}",
+    )
+
+
+@router.delete("/prod/{deploy_id}", response_model=PublishActionResponse, status_code=200)
+async def delete_prod_deployment(
+    *,
+    session: DbSession,
+    deploy_id: UUID,
+    current_user: CurrentActiveUser,
+):
+    """Archive (soft-delete) a PROD deployment version.
+
+    Requires the deployment to be disabled in Control Panel and stopped.
+    """
+    record = (
+        await session.exec(
+            select(AgentDeploymentProd).where(AgentDeploymentProd.id == deploy_id)
+        )
+    ).first()
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"PROD deployment record {deploy_id} not found",
+        )
+
+    dept_id = record.dept_id
+    if dept_id is None:
+        agent = await session.get(Agent, record.agent_id)
+        dept_id = agent.dept_id if agent else None
+    await _require_undeploy_permission(
+        session,
+        current_user=current_user,
+        department_id=dept_id,
+    )
+
+    status_val = record.status.value if hasattr(record.status, "value") else str(record.status)
+    if record.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Disable the agent in Control Panel before deleting this version. "
+                f"Current: status={status_val}, is_active={record.is_active}, is_enabled={record.is_enabled}."
+            ),
+        )
+    if record.lifecycle_step != ProdDeploymentLifecycleEnum.ARCHIVED:
+        record.lifecycle_step = ProdDeploymentLifecycleEnum.ARCHIVED
+    if record.status != DeploymentPRODStatusEnum.UNPUBLISHED:
+        record.status = DeploymentPRODStatusEnum.UNPUBLISHED
+    record.is_enabled = False
+    record.is_active = False
+    record.updated_at = datetime.now(timezone.utc)
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+
+    return PublishActionResponse(
+        success=True,
+        message=f"PROD v{record.version_number} archived",
+        publish_id=record.id,
+        environment="prod",
+        status=record.status.value if hasattr(record.status, "value") else str(record.status),
+        is_active=record.is_active,
+        version_number=f"v{record.version_number}",
+    )
+
+
 # UNIFIED PUBLISH ENDPOINT
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1689,6 +1906,9 @@ async def publish_agent(
                 f"Promoting from UAT v{uat_record.version_number} ({promoted_from_uat_id}) "
                 f"to PROD for agent {agent_id}"
             )
+            uat_record.moved_to_prod = True
+            uat_record.updated_at = datetime.now(timezone.utc)
+            session.add(uat_record)
 
         # ── Derive agent input type from snapshot nodes ──────────
         _node_types = {n.get("data", {}).get("type") for n in snapshot.get("nodes", [])}
@@ -1914,6 +2134,31 @@ async def publish_agent(
                     published_at=new_record.deployed_at,
                 )
 
+                # ─── HTTP notify (for downstream deployment orchestration) ──
+                try:
+                    import httpx
+                    from agentcore.services.deps import get_settings_service
+                    settings = get_settings_service().settings
+                    base_url = f"http://{settings.host}:{settings.port}"
+                    payload = {
+                        "agent_id": str(agent_id),
+                        "environment": "prod",
+                        "version_number": str(next_version),
+                        "deployment_id": str(new_record.id),
+                    }
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+                        resp.raise_for_status()
+                        verified = resp.json()
+                    logger.info(
+                        f"[PROD_ADMIN_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+                        f"deployment_id={verified.get('deployment_id')} "
+                        f"version={verified.get('version_number')} "
+                        f"status={verified.get('status')} is_active={verified.get('is_active')}",
+                    )
+                except Exception as notify_err:
+                    logger.warning(f"Post-deploy notify API failed for PROD deploy of {agent_id}: {notify_err}")
+
                 return PublishActionResponse(
                     success=True,
                     message=f"Agent '{agent.name}' deployed to PROD as v{next_version}",
@@ -2047,6 +2292,8 @@ async def get_agent_publish_status(
             select(AgentDeploymentUAT).where(
                 AgentDeploymentUAT.agent_id == agent_id,
                 AgentDeploymentUAT.is_active == True,  # noqa: E712
+                AgentDeploymentUAT.is_enabled == True,  # noqa: E712
+                AgentDeploymentUAT.lifecycle_step != DeploymentLifecycleEnum.ARCHIVED,
             ).order_by(col(AgentDeploymentUAT.deployed_at).desc())
         )).first()
 
@@ -2055,6 +2302,8 @@ async def get_agent_publish_status(
             select(AgentDeploymentProd).where(
                 AgentDeploymentProd.agent_id == agent_id,
                 AgentDeploymentProd.is_active == True,  # noqa: E712
+                AgentDeploymentProd.is_enabled == True,  # noqa: E712
+                AgentDeploymentProd.lifecycle_step != ProdDeploymentLifecycleEnum.ARCHIVED,
             ).order_by(col(AgentDeploymentProd.deployed_at).desc())
         )).first()
 
@@ -2109,6 +2358,7 @@ async def get_version_history(
     session: DbSession,
     agent_id: UUID,
     env: str,
+    include_archived: bool = False,
     current_user: CurrentActiveUser,
 ):
     """Get version history for an agent in a specific environment.
@@ -2141,6 +2391,13 @@ async def get_version_history(
             .where(table_class.agent_id == agent_id)
             .order_by(col(table_class.deployed_at).desc())
         )
+        if not include_archived:
+            archived_status = (
+                DeploymentLifecycleEnum.ARCHIVED
+                if env == "uat"
+                else ProdDeploymentLifecycleEnum.ARCHIVED
+            )
+            stmt = stmt.where(table_class.lifecycle_step != archived_status)
         records = (await session.exec(stmt)).all()
 
         return [_record_to_summary(r, env) for r in records]

@@ -147,6 +147,74 @@ async def delete_model(session: AsyncSession, model_id: UUID) -> bool:
     return True
 
 
+def _is_fernet_token(value: str) -> bool:
+    """Heuristic: Fernet tokens are base64-encoded and start with 'gAAAAA'."""
+    return value.startswith("gAAAAA")
+
+
+_kv_store_cache: dict[str, object] = {}
+
+
+def _try_resolve_key_vault_secret(secret_name: str) -> str | None:
+    """Attempt to fetch a secret from Azure Key Vault.
+
+    Tries the model-service Key Vault config (MODEL_SERVICE_KEY_VAULT_URL) first,
+    then falls back to the backend core config (AGENTCORE_KEY_VAULT_URL).
+
+    Returns the secret value, or None if Key Vault is not configured or the
+    secret cannot be retrieved.
+    """
+    from agentcore.services.settings.key_vault import KeyVaultConfig, KeyVaultSecretStore
+
+    # Try model-service KV config first, then backend core KV config
+    configs = [
+        {
+            "vault_url": os.getenv("MODEL_SERVICE_KEY_VAULT_URL", ""),
+            "prefix": os.getenv("MODEL_SERVICE_KEY_VAULT_SECRET_PREFIX", "agentcore"),
+            "tenant_id": os.getenv("MODEL_SERVICE_KEY_VAULT_TENANT_ID", ""),
+            "client_id": os.getenv("MODEL_SERVICE_KEY_VAULT_CLIENT_ID", ""),
+            "client_secret": os.getenv("MODEL_SERVICE_KEY_VAULT_CLIENT_SECRET", ""),
+        },
+        {
+            "vault_url": os.getenv("AGENTCORE_KEY_VAULT_URL", ""),
+            "prefix": os.getenv("AGENTCORE_KEY_VAULT_SECRET_PREFIX", "agentcore"),
+            "tenant_id": os.getenv("AGENTCORE_KEY_VAULT_TENANT_ID", ""),
+            "client_id": os.getenv("AGENTCORE_KEY_VAULT_CLIENT_ID", ""),
+            "client_secret": os.getenv("AGENTCORE_KEY_VAULT_CLIENT_SECRET", ""),
+        },
+    ]
+
+    for cfg in configs:
+        vault_url = (cfg["vault_url"] or "").strip()
+        if not vault_url:
+            continue
+        cache_key = vault_url
+        if cache_key not in _kv_store_cache:
+            try:
+                store = KeyVaultSecretStore.from_config(KeyVaultConfig(
+                    vault_url=vault_url,
+                    secret_prefix=cfg["prefix"],
+                    tenant_id=cfg["tenant_id"] or None,
+                    client_id=cfg["client_id"] or None,
+                    client_secret=cfg["client_secret"] or None,
+                ))
+                _kv_store_cache[cache_key] = store
+            except Exception:
+                _kv_store_cache[cache_key] = None
+        store = _kv_store_cache[cache_key]
+        if store is None:
+            continue
+        try:
+            value = store.get_secret(secret_name)
+            if value:
+                return value
+        except Exception as e:
+            logger.debug("Key Vault lookup failed for '%s' at %s: %s", secret_name, vault_url, e)
+            continue
+
+    return None
+
+
 async def get_decrypted_config(
     session: AsyncSession,
     model_id: UUID,
@@ -167,9 +235,41 @@ async def get_decrypted_config(
         "default_params": row.default_params or {},
     }
 
-    if row.api_key_secret_ref and enc_key:
-        config["api_key"] = decrypt_api_key_with_fallback(row.api_key_secret_ref, enc_key)
+    secret_ref = row.api_key_secret_ref
+    if secret_ref:
+        if _is_fernet_token(secret_ref):
+            # Locally encrypted with Fernet
+            config["api_key"] = decrypt_api_key_with_fallback(secret_ref, enc_key)
+        else:
+            # Likely an Azure Key Vault secret name — try to resolve it
+            resolved = _try_resolve_key_vault_secret(secret_ref)
+            if resolved:
+                config["api_key"] = resolved
+            else:
+                # Fall back to the model-service API which has Key Vault credentials
+                svc_config = await _fetch_config_from_model_service(model_id)
+                if svc_config and svc_config.get("api_key"):
+                    config["api_key"] = svc_config["api_key"]
+                else:
+                    logger.warning(
+                        "Cannot resolve api_key_secret_ref for model %s: "
+                        "value '%s…' is neither a Fernet token nor resolvable via Key Vault or model-service. "
+                        "Returning empty api_key.",
+                        model_id,
+                        secret_ref[:30],
+                    )
+                    config["api_key"] = ""
     else:
         config["api_key"] = ""
 
     return config
+
+
+async def _fetch_config_from_model_service(model_id: UUID) -> dict | None:
+    """Try to fetch decrypted config from the model-service microservice."""
+    try:
+        from agentcore.services.model_service_client import fetch_decrypted_model_config
+        return await fetch_decrypted_model_config(str(model_id))
+    except Exception as e:
+        logger.debug("Model-service config fetch failed for %s: %s", model_id, e)
+        return None

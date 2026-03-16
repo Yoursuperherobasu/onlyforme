@@ -374,7 +374,11 @@ class FileTrigger(Node):
     # ── SharePoint ─────────────────────────────────────────────────────────
 
     async def _scan_sharepoint(self) -> list[Data]:
-        """Scan SharePoint document library — list files, optionally download to temp dir."""
+        """Scan SharePoint document library — list files, optionally download to temp dir.
+
+        Uses Microsoft Graph API (client-credentials) instead of Office365-REST-Python-Client
+        so that only Graph API permissions are needed (Sites.Read.All / Sites.ReadWrite.All).
+        """
 
         connector_id = _parse_connector_id(self.connector)
         if not connector_id:
@@ -389,6 +393,7 @@ class FileTrigger(Node):
         site_url = config.get("site_url", "")
         client_id = config.get("client_id", "")
         client_secret = config.get("client_secret", "")
+        tenant_id = config.get("tenant_id", "")
         library = config.get("library", "Shared Documents")
         folder = config.get("folder", "")
 
@@ -399,50 +404,102 @@ class FileTrigger(Node):
         download = self.download_files
 
         def _do_scan():
-            try:
-                from office365.runtime.auth.client_credential import ClientCredential
-                from office365.sharepoint.client_context import ClientContext
-            except ImportError:
-                raise ImportError(
-                    "Office365-REST-Python-Client is required. "
-                    "Install with: pip install Office365-REST-Python-Client"
-                )
+            import httpx
+            from urllib.parse import urlparse
 
+            GRAPH = "https://graph.microsoft.com/v1.0"
             types = self.file_types if self.file_types else TEXT_FILE_TYPES
             batch_size = self.batch_size
 
-            credentials = ClientCredential(client_id, client_secret)
-            ctx = ClientContext(site_url).with_credentials(credentials)
+            # Normalize types
+            norm_types = set()
+            for t in types:
+                t_clean = t.strip().lower().lstrip(".")
+                if t_clean:
+                    norm_types.add(t_clean)
 
-            folder_url = f"{library}/{folder}".rstrip("/")
-            target_folder = ctx.web.get_folder_by_server_relative_url(folder_url)
-            files = target_folder.files
-            ctx.load(files)
-            ctx.execute_query()
+            # 1. Acquire token via client credentials
+            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+            token_resp = httpx.post(token_url, data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "https://graph.microsoft.com/.default",
+            }, timeout=15)
+            if token_resp.status_code != 200:
+                logger.error(f"FileTrigger: failed to get Graph token: {token_resp.text[:300]}")
+                return []
+            access_token = token_resp.json()["access_token"]
+            headers = {"Authorization": f"Bearer {access_token}"}
 
-            filtered = [
-                f for f in files
-                if not types or (f.name.rsplit(".", 1)[-1] if "." in f.name else "") in types
-            ]
+            # 2. Resolve site ID
+            parsed = urlparse(site_url)
+            hostname = parsed.hostname or parsed.netloc
+            path = parsed.path.rstrip("/")
+            site_api = f"{GRAPH}/sites/{hostname}:{path}" if path else f"{GRAPH}/sites/{hostname}"
+            site_resp = httpx.get(site_api, headers=headers, timeout=15)
+            if site_resp.status_code != 200:
+                logger.error(f"FileTrigger: failed to resolve site: {site_resp.text[:300]}")
+                return []
+            site_id = site_resp.json()["id"]
+
+            # 3. Resolve drive ID
+            drives_resp = httpx.get(f"{GRAPH}/sites/{site_id}/drives", headers=headers, timeout=15)
+            if drives_resp.status_code != 200:
+                logger.error(f"FileTrigger: failed to list drives: {drives_resp.text[:300]}")
+                return []
+            drives = drives_resp.json().get("value", [])
+            drive_id = None
+            for d in drives:
+                if d.get("name", "").lower() == library.lower():
+                    drive_id = d["id"]
+                    break
+            if not drive_id and drives:
+                drive_id = drives[0]["id"]
+            if not drive_id:
+                logger.error("FileTrigger: no drives found on SharePoint site")
+                return []
+
+            # 4. List files (root or subfolder)
+            if folder:
+                items_url = f"{GRAPH}/drives/{drive_id}/root:/{folder}:/children?$top=200"
+            else:
+                items_url = f"{GRAPH}/drives/{drive_id}/root/children?$top=200"
+            items_resp = httpx.get(items_url, headers=headers, timeout=15)
+            if items_resp.status_code != 200:
+                logger.error(f"FileTrigger: failed to list items: {items_resp.text[:300]}")
+                return []
+            items = items_resp.json().get("value", [])
+
+            # Filter to files only (exclude folders), then by type
+            files = [i for i in items if "file" in i]
+            if norm_types:
+                files = [
+                    f for f in files
+                    if (f["name"].rsplit(".", 1)[-1].lower() if "." in f["name"] else "") in norm_types
+                ]
             if batch_size and batch_size > 0:
-                filtered = filtered[:batch_size]
+                files = files[:batch_size]
 
-            # Create temp dir for downloads
+            # 5. Build results, optionally download
             temp_dir = tempfile.mkdtemp(prefix="agentcore_fm_") if download else None
-
             data_list = []
-            for f in filtered:
+
+            for item in files:
                 try:
-                    file_name = f.name
+                    file_name = item["name"]
                     ext = file_name.rsplit(".", 1)[-1] if "." in file_name else ""
                     local_path = ""
+                    file_size = item.get("size", 0)
 
                     if download and temp_dir:
-                        content_bytes = bytearray()
-                        f.download(content_bytes).execute_query()
-                        local_path = os.path.join(temp_dir, file_name)
-                        with open(local_path, "wb") as out_f:
-                            out_f.write(bytes(content_bytes))
+                        dl_url = f"{GRAPH}/drives/{drive_id}/items/{item['id']}/content"
+                        dl_resp = httpx.get(dl_url, headers=headers, timeout=60, follow_redirects=True)
+                        if dl_resp.status_code == 200:
+                            local_path = os.path.join(temp_dir, file_name)
+                            with open(local_path, "wb") as out_f:
+                                out_f.write(dl_resp.content)
+                            file_size = len(dl_resp.content)
 
                     data_list.append(
                         Data(
@@ -451,22 +508,16 @@ class FileTrigger(Node):
                                 "file_name": file_name,
                                 "file_path": local_path,
                                 "file_type": ext,
-                                "source": f"sharepoint://{site_url}/{folder_url}/{file_name}",
-                                "size_bytes": (
-                                    len(content_bytes) if download and temp_dir else 0
-                                ),
-                                "last_modified": (
-                                    str(f.time_last_modified)
-                                    if hasattr(f, "time_last_modified")
-                                    else ""
-                                ),
+                                "source": f"sharepoint://{site_url}/{library}/{folder}/{file_name}".replace("//", "/").replace("sharepoint:/", "sharepoint://"),
+                                "size_bytes": file_size,
+                                "last_modified": item.get("lastModifiedDateTime", ""),
                                 "storage_type": "SharePoint",
                                 "connector_id": connector_id,
                             }
                         )
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to process SharePoint file {f.name}: {e}")
+                    logger.warning(f"Failed to process SharePoint file {item.get('name', '?')}: {e}")
 
             return data_list
 
@@ -518,18 +569,50 @@ class FileTrigger(Node):
                             with open(local_path, "wb") as f:
                                 f.write(raw_bytes)
                         elif storage_type == "SharePoint":
-                            from office365.runtime.auth.client_credential import ClientCredential
-                            from office365.sharepoint.client_context import ClientContext
-                            credentials = ClientCredential(
-                                config.get("client_id", ""), config.get("client_secret", ""),
+                            import httpx as _httpx
+                            from urllib.parse import urlparse as _urlparse
+
+                            _GRAPH = "https://graph.microsoft.com/v1.0"
+                            _tenant = config.get("tenant_id", "")
+                            _cid = config.get("client_id", "")
+                            _csec = config.get("client_secret", "")
+                            _site_url = config.get("site_url", "")
+
+                            # Get token
+                            _tok_resp = _httpx.post(
+                                f"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/token",
+                                data={"grant_type": "client_credentials", "client_id": _cid,
+                                      "client_secret": _csec, "scope": "https://graph.microsoft.com/.default"},
+                                timeout=15,
                             )
-                            ctx = ClientContext(config.get("site_url", "")).with_credentials(credentials)
-                            sp_file = ctx.web.get_file_by_server_relative_url(blob_path)
-                            content_bytes = bytearray()
-                            sp_file.download(content_bytes).execute_query()
-                            local_path = os.path.join(temp_dir, file_name)
-                            with open(local_path, "wb") as f:
-                                f.write(bytes(content_bytes))
+                            if _tok_resp.status_code == 200:
+                                _token = _tok_resp.json()["access_token"]
+                                _headers = {"Authorization": f"Bearer {_token}"}
+
+                                # Use item_id if available (from Graph-based trigger)
+                                item_id = meta.get("item_id", "")
+                                if item_id:
+                                    # Resolve drive_id from site
+                                    _parsed = _urlparse(_site_url)
+                                    _host = _parsed.hostname or _parsed.netloc
+                                    _path = _parsed.path.rstrip("/")
+                                    _site_api = f"{_GRAPH}/sites/{_host}:{_path}" if _path else f"{_GRAPH}/sites/{_host}"
+                                    _sr = _httpx.get(_site_api, headers=_headers, timeout=15)
+                                    if _sr.status_code == 200:
+                                        _sid = _sr.json()["id"]
+                                        _dr = _httpx.get(f"{_GRAPH}/sites/{_sid}/drives", headers=_headers, timeout=15)
+                                        if _dr.status_code == 200:
+                                            _drives = _dr.json().get("value", [])
+                                            _did = _drives[0]["id"] if _drives else ""
+                                            if _did:
+                                                _dl = _httpx.get(
+                                                    f"{_GRAPH}/drives/{_did}/items/{item_id}/content",
+                                                    headers=_headers, timeout=60, follow_redirects=True,
+                                                )
+                                                if _dl.status_code == 200:
+                                                    local_path = os.path.join(temp_dir, file_name)
+                                                    with open(local_path, "wb") as f:
+                                                        f.write(_dl.content)
                     except Exception as e:
                         logger.warning(f"FileTrigger: failed to download {file_name}: {e}")
 

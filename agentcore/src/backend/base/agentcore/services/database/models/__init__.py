@@ -35,9 +35,12 @@ from .guardrail_catalogue import GuardrailCatalogue
 from .help_support import HelpSupportQuestion
 from .package import Package
 from .product_release import ProductRelease
+from .release_detail import ReleaseDetail
 from .release_package_snapshot import ReleasePackageSnapshot
+from .package_request import PackageRequest
 from .teams_app import TeamsApp
 from .hitl_request import HITLRequest
+from .trigger_config import TriggerConfigTable, TriggerExecutionLogTable
 from .evaluator.model import Evaluator
 from .vertex_builds import VertexBuildTable
 from .langfuse_binding import LangfuseBinding
@@ -93,9 +96,13 @@ __all__ = [
     "OrchTransactionTable",
     "Package",
     "ProductRelease",
+    "ReleaseDetail",
     "ReleasePackageSnapshot",
+    "PackageRequest",
     "User",
     "HITLRequest",
+    "TriggerConfigTable",
+    "TriggerExecutionLogTable",
     "Evaluator",
     "VertexBuildTable",
     "LangfuseBinding",

@@ -43,6 +43,9 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
     folders.find((folder) => folder.id === folderId)?.name ??
     folders[0]?.name ??
     "";
+  const activeFolderId = folderId ?? myCollectionId;
+  const activeFolder = folders.find((folder) => folder.id === activeFolderId);
+  const allowCreateInProject = Boolean(activeFolder?.is_own_project);
 
   useEffect(() => {
     // Only check if we have a folderId and folders have loaded
@@ -256,9 +259,13 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
                 setSearch={onSearch}
                 isEmptyFolder={isEmptyFolder}
                 selectedAgents={selectedAgents}
+                allowCreateInProject={allowCreateInProject}
               />
               {isEmptyFolder ? (
-                <EmptyFolder setOpenModal={setNewProjectModal} />
+                <EmptyFolder
+                  setOpenModal={setNewProjectModal}
+                  allowCreateInProject={allowCreateInProject}
+                />
               ) : (
                 <div className="flex h-full flex-col">
                   {isLoading ? (

@@ -183,10 +183,22 @@ class NemoGuardrailComponent(Node):
             self._decision_evaluated = True
             return decision
 
+        # Detect production context — prod agents must use the frozen prod guardrail copy
+        environment: str | None = None
+        if self._vertex:
+            is_prod = bool(getattr(self._vertex.graph, "prod_deployment_id", None))
+            if is_prod:
+                environment = "prod"
+                logger.info(
+                    "NeMo guardrail node detected production context: "
+                    f"guardrail_id={guardrail_id}, prod_deployment_id={getattr(self._vertex.graph, 'prod_deployment_id', None)}"
+                )
+
         try:
             result = await apply_nemo_guardrail_via_service(
                 input_text=input_text,
                 guardrail_id=guardrail_id,
+                environment=environment,
             )
             self.trace_output_metadata = {
                 "agentcore_usage": {
@@ -242,16 +254,20 @@ class NemoGuardrailComponent(Node):
             return decision
 
         decision["blocked"] = False
-        # For input-guardrail topology, keep safe traffic unchanged to avoid prompt drift.
-        decision["safe_text"] = input_text
         decision["action"] = action
         decision["guardrail_id"] = result.get("guardrail_id", guardrail_id)
         decision["status"] = f"Guardrail action={action} (guardrail_id={result.get('guardrail_id')})"
-        if action == "rewritten":
-            logger.warning(
-                "NeMo guardrail returned rewritten text but node is forwarding original input as configured: "
-                f"guardrail_id={result.get('guardrail_id')}, rewritten_output_length={len(result.get('output_text', ''))}"
+
+        # For masked/rewritten content, use the guardrail's modified output.
+        # For passthrough, keep the original input to avoid prompt drift.
+        if action in ("masked", "rewritten"):
+            decision["safe_text"] = result.get("output_text", input_text)
+            logger.info(
+                f"NeMo guardrail returned {action} text, forwarding modified output: "
+                f"guardrail_id={result.get('guardrail_id')}, output_length={len(result.get('output_text', ''))}"
             )
+        else:
+            decision["safe_text"] = input_text
         logger.info(
             "NeMo guardrail node execution completed: "
             f"guardrail_id={result.get('guardrail_id')}, action={action}, "

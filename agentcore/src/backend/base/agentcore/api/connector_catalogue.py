@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -25,98 +26,152 @@ STORAGE_PROVIDERS = {"azure_blob", "sharepoint"}
 EMAIL_PROVIDERS = {"outlook"}
 
 
-# ---------- Encryption helpers ----------
+# ---------- Key Vault helpers ----------
 
-_FERNET_KEY = None
+_KV_STORE = None
 
+def _get_kv_store():
+    global _KV_STORE
+    if _KV_STORE is not None:
+        return _KV_STORE
+    from agentcore.services.settings.key_vault import KeyVaultConfig, KeyVaultSecretStore
 
-def _derive_encryption_key() -> str:
-    """Derive a deterministic Fernet key from WEBUI_SECRET_KEY.
+    vault_url = os.getenv("AGENTCORE_KEY_VAULT_URL", "").strip()
+    if not vault_url:
+        raise HTTPException(status_code=500, detail="Azure Key Vault is not configured")
 
-    This ensures the same key is used across server restarts, so
-    previously encrypted passwords remain decryptable.
-    Same approach as Model Registry (registry_model.py).
-    """
-    import base64
-    import hashlib
-    import os
-
-    # Allow explicit override via env var
-    explicit = os.getenv("CONNECTOR_ENCRYPTION_KEY", "")
-    if explicit:
-        return explicit
-
-    # Derive deterministically from the platform secret
-    raw = os.getenv("WEBUI_SECRET_KEY", "default-agentcore-connector-key")
-    derived = hashlib.sha256(raw.encode()).digest()
-    return base64.urlsafe_b64encode(derived).decode()
-
-
-def _get_fernet():
-    global _FERNET_KEY
-    if _FERNET_KEY is None:
-        from cryptography.fernet import Fernet
-
-        key = _derive_encryption_key()
-        _FERNET_KEY = Fernet(key.encode() if isinstance(key, str) else key)
-    return _FERNET_KEY
+    kv_store = KeyVaultSecretStore.from_config(
+        KeyVaultConfig(
+            vault_url=vault_url,
+            secret_prefix=os.getenv("AGENTCORE_KEY_VAULT_SECRET_PREFIX", "agentcore").strip() or "agentcore",
+            tenant_id=os.getenv("AGENTCORE_KEY_VAULT_TENANT_ID", "").strip() or None,
+            client_id=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_ID", "").strip() or None,
+            client_secret=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_SECRET", "").strip() or None,
+        )
+    )
+    if kv_store is None:
+        raise HTTPException(status_code=500, detail="Azure Key Vault client is not initialized")
+    _KV_STORE = kv_store
+    return kv_store
 
 
-def _encrypt_password(password: str) -> str:
-    return _get_fernet().encrypt(password.encode()).decode()
+def _secret_prefix() -> str:
+    prefix = os.getenv("AGENTCORE_KEY_VAULT_SECRET_PREFIX", "agentcore").strip()
+    return prefix or "agentcore"
 
 
-def _decrypt_password(encrypted: str) -> str:
-    return _get_fernet().decrypt(encrypted.encode()).decode()
+def _build_secret_name(prefix: str, connector_id: UUID, provider: str, key: str) -> str:
+    provider_tag = provider.replace("_", "-")
+    return f"{prefix}-connector-{provider_tag}-{connector_id}-{key}"
 
 
-def _encrypt_provider_config(provider: str, config: dict) -> dict:
-    """Encrypt sensitive fields in provider_config before saving."""
-    encrypted = dict(config)
-    if provider == "azure_blob" and "connection_string" in encrypted:
-        encrypted["connection_string"] = _encrypt_password(encrypted["connection_string"])
-    elif provider == "sharepoint" and "client_secret" in encrypted:
-        encrypted["client_secret"] = _encrypt_password(encrypted["client_secret"])
+def _store_secret_value(name: str, value: str) -> None:
+    if not value:
+        return
+    store = _get_kv_store()
+    store.set_secret(name, value)
+
+
+def _resolve_secret_value(name: str) -> str:
+    if not name:
+        return ""
+    store = _get_kv_store()
+    secret_value = store.get_secret(name) or ""
+    if not secret_value:
+        raise HTTPException(status_code=500, detail=f"Key Vault secret '{name}' not found")
+    return secret_value
+
+
+def _prepare_provider_config(
+    provider: str,
+    config: dict,
+    *,
+    connector_id: UUID,
+    existing_config: dict | None = None,
+    allow_secret_update: bool = True,
+) -> dict:
+    """Store secrets in Key Vault and persist secret references in provider_config."""
+    prepared = dict(config or {})
+    existing = dict(existing_config or {})
+    prefix = _secret_prefix()
+
+    if provider == "azure_blob":
+        secret_name_key = "connection_string_secret_name"
+        raw_value = prepared.get("connection_string")
+        if raw_value:
+            if allow_secret_update or not existing.get(secret_name_key):
+                secret_name = _build_secret_name(prefix, connector_id, provider, "connection-string")
+                _store_secret_value(secret_name, raw_value)
+                prepared[secret_name_key] = secret_name
+            else:
+                prepared[secret_name_key] = existing.get(secret_name_key) or prepared.get(secret_name_key)
+            prepared.pop("connection_string", None)
+        elif existing.get(secret_name_key):
+            prepared[secret_name_key] = existing[secret_name_key]
+
+    elif provider == "sharepoint":
+        secret_name_key = "client_secret_secret_name"
+        raw_value = prepared.get("client_secret")
+        if raw_value:
+            if allow_secret_update or not existing.get(secret_name_key):
+                secret_name = _build_secret_name(prefix, connector_id, provider, "client-secret")
+                _store_secret_value(secret_name, raw_value)
+                prepared[secret_name_key] = secret_name
+            else:
+                prepared[secret_name_key] = existing.get(secret_name_key) or prepared.get(secret_name_key)
+            prepared.pop("client_secret", None)
+        elif existing.get(secret_name_key):
+            prepared[secret_name_key] = existing[secret_name_key]
+
     elif provider in EMAIL_PROVIDERS:
-        for key in ("client_secret", "access_token", "refresh_token"):
-            if key in encrypted:
-                encrypted[key] = _encrypt_password(encrypted[key])
-        if "linked_accounts" in encrypted:
-            encrypted["linked_accounts"] = [dict(acct) for acct in encrypted["linked_accounts"]]
-            for acct in encrypted["linked_accounts"]:
-                for key in ("access_token", "refresh_token"):
-                    if key in acct:
-                        acct[key] = _encrypt_password(acct[key])
-    return encrypted
+        secret_name_key = "client_secret_secret_name"
+        raw_value = prepared.get("client_secret")
+        if raw_value:
+            if allow_secret_update or not existing.get(secret_name_key):
+                secret_name = _build_secret_name(prefix, connector_id, provider, "client-secret")
+                _store_secret_value(secret_name, raw_value)
+                prepared[secret_name_key] = secret_name
+            else:
+                prepared[secret_name_key] = existing.get(secret_name_key) or prepared.get(secret_name_key)
+            prepared.pop("client_secret", None)
+        elif existing.get(secret_name_key):
+            prepared[secret_name_key] = existing[secret_name_key]
+
+    return prepared
+
+
+def _ensure_provider_secret_present(provider: str, config: dict, existing_config: dict | None = None) -> None:
+    existing = dict(existing_config or {})
+    if provider == "azure_blob":
+        if not config.get("connection_string") and not config.get("connection_string_secret_name") and not existing.get("connection_string_secret_name"):
+            raise HTTPException(status_code=400, detail="connection_string is required for Azure Blob connector")
+    elif provider == "sharepoint":
+        if not config.get("client_secret") and not config.get("client_secret_secret_name") and not existing.get("client_secret_secret_name"):
+            raise HTTPException(status_code=400, detail="client_secret is required for SharePoint connector")
+    elif provider in EMAIL_PROVIDERS:
+        if not config.get("client_secret") and not config.get("client_secret_secret_name") and not existing.get("client_secret_secret_name"):
+            raise HTTPException(status_code=400, detail="client_secret is required for Outlook connector")
 
 
 def _decrypt_provider_config(provider: str, config: dict) -> dict:
-    """Decrypt sensitive fields in provider_config when reading."""
-    decrypted = dict(config)
-    try:
-        if provider == "azure_blob" and "connection_string" in decrypted:
-            decrypted["connection_string"] = _decrypt_password(decrypted["connection_string"])
-        elif provider == "sharepoint" and "client_secret" in decrypted:
-            decrypted["client_secret"] = _decrypt_password(decrypted["client_secret"])
-        elif provider in EMAIL_PROVIDERS:
-            for key in ("client_secret", "access_token", "refresh_token"):
-                if key in decrypted:
-                    try:
-                        decrypted[key] = _decrypt_password(decrypted[key])
-                    except Exception:
-                        pass
-            if "linked_accounts" in decrypted:
-                decrypted["linked_accounts"] = [dict(acct) for acct in decrypted["linked_accounts"]]
-                for acct in decrypted["linked_accounts"]:
-                    for key in ("access_token", "refresh_token"):
-                        if key in acct:
-                            try:
-                                acct[key] = _decrypt_password(acct[key])
-                            except Exception:
-                                pass
-    except Exception:
-        pass
-    return decrypted
+    """Resolve Key Vault secrets into provider_config for runtime use."""
+    resolved = dict(config or {})
+    if provider == "azure_blob":
+        if "connection_string" not in resolved:
+            secret_name = resolved.get("connection_string_secret_name", "")
+            if secret_name:
+                resolved["connection_string"] = _resolve_secret_value(secret_name)
+    elif provider == "sharepoint":
+        if "client_secret" not in resolved:
+            secret_name = resolved.get("client_secret_secret_name", "")
+            if secret_name:
+                resolved["client_secret"] = _resolve_secret_value(secret_name)
+    elif provider in EMAIL_PROVIDERS:
+        if "client_secret" not in resolved:
+            secret_name = resolved.get("client_secret_secret_name", "")
+            if secret_name:
+                resolved["client_secret"] = _resolve_secret_value(secret_name)
+    return resolved
 
 
 # ---------- Payloads ----------
@@ -278,10 +333,16 @@ def _serialize_connector(row: ConnectorCatalogue) -> dict:
     safe_config: dict | None = None
     if row.provider_config:
         safe_config = dict(row.provider_config)
-        if row.provider == "azure_blob" and "connection_string" in safe_config:
-            safe_config["connection_string"] = "********"
-        elif row.provider == "sharepoint" and "client_secret" in safe_config:
-            safe_config["client_secret"] = "********"
+        if row.provider == "azure_blob":
+            if "connection_string" in safe_config:
+                safe_config["connection_string"] = "********"
+            if "connection_string_secret_name" in safe_config:
+                safe_config["connection_string_secret_name"] = "********"
+        elif row.provider == "sharepoint":
+            if "client_secret" in safe_config:
+                safe_config["client_secret"] = "********"
+            if "client_secret_secret_name" in safe_config:
+                safe_config["client_secret_secret_name"] = "********"
         elif row.provider in EMAIL_PROVIDERS:
             for key in ("client_secret", "access_token", "refresh_token"):
                 if key in safe_config:
@@ -292,6 +353,8 @@ def _serialize_connector(row: ConnectorCatalogue) -> dict:
                     for key in ("access_token", "refresh_token"):
                         if key in acct:
                             acct[key] = "********"
+            if "client_secret_secret_name" in safe_config:
+                safe_config["client_secret_secret_name"] = "********"
 
     return {
         "id": str(row.id),
@@ -575,6 +638,81 @@ def _test_azure_blob_connection(config: dict) -> dict:
 def _test_sharepoint_connection(config: dict) -> dict:
     """Test a SharePoint connection."""
     start = time.time()
+
+    site_url = config.get("site_url", "")
+    client_id = config.get("client_id", "")
+    client_secret = config.get("client_secret", "")
+    tenant_id = config.get("tenant_id", "")
+
+    if not site_url or not client_id or not client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="site_url, client_id, and client_secret are required for SharePoint connector",
+        )
+
+    # Primary: test via Microsoft Graph API (same auth path the connector uses)
+    if tenant_id:
+        try:
+            import httpx
+            from urllib.parse import urlparse
+
+            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+            token_resp = httpx.post(token_url, data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "https://graph.microsoft.com/.default",
+            }, timeout=10)
+            if token_resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Azure AD token request failed ({token_resp.status_code}): {token_resp.text[:300]}",
+                )
+            access_token = token_resp.json()["access_token"]
+
+            parsed = urlparse(site_url)
+            hostname = parsed.hostname
+            site_path = parsed.path.rstrip("/")
+            if site_path and site_path != "/":
+                graph_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:{site_path}"
+            else:
+                graph_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:/"
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            site_resp = httpx.get(graph_url, headers=headers, timeout=10)
+            if site_resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SharePoint site resolution failed ({site_resp.status_code}): {site_resp.text[:300]}",
+                )
+            site_data = site_resp.json()
+            site_id = site_data["id"]
+            site_name = site_data.get("displayName", site_url)
+
+            drives_resp = httpx.get(
+                f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives",
+                headers=headers, timeout=10,
+            )
+            if drives_resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SharePoint drives listing failed ({drives_resp.status_code}): {drives_resp.text[:300]}",
+                )
+
+            latency_ms = round((time.time() - start) * 1000, 2)
+            drive_count = len(drives_resp.json().get("value", []))
+            return {
+                "success": True,
+                "message": f"Connected successfully to SharePoint site: {site_name} ({drive_count} document libraries found)",
+                "latency_ms": latency_ms,
+                "tables_metadata": None,
+            }
+        except HTTPException:
+            raise
+        except Exception as graph_err:
+            logger.warning(f"Graph API test failed, falling back to Office365 library: {graph_err}")
+
+    # Fallback: test via Office365-REST-Python-Client (legacy SharePoint REST API)
     try:
         from office365.runtime.auth.client_credential import ClientCredential
         from office365.sharepoint.client_context import ClientContext
@@ -582,16 +720,6 @@ def _test_sharepoint_connection(config: dict) -> dict:
         raise HTTPException(
             status_code=400,
             detail="Office365-REST-Python-Client not installed. Install with: pip install Office365-REST-Python-Client",
-        )
-
-    site_url = config.get("site_url", "")
-    client_id = config.get("client_id", "")
-    client_secret = config.get("client_secret", "")
-
-    if not site_url or not client_id or not client_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="site_url, client_id, and client_secret are required for SharePoint connector",
         )
 
     credentials = ClientCredential(client_id, client_secret)
@@ -788,11 +916,19 @@ async def create_connector(
     now = datetime.now(timezone.utc)
     provider = payload.provider.lower()
 
+    connector_id = uuid4()
+
     if provider in STORAGE_PROVIDERS | EMAIL_PROVIDERS:
         # Azure Blob / SharePoint / Outlook: credentials go into provider_config, not DB fields
         raw_config = payload.provider_config or {}
-        encrypted_config = _encrypt_provider_config(provider, raw_config)
+        _ensure_provider_secret_present(provider, raw_config)
+        prepared_config = _prepare_provider_config(
+            provider,
+            raw_config,
+            connector_id=connector_id,
+        )
         row = ConnectorCatalogue(
+            id=connector_id,
             name=payload.name,
             description=payload.description,
             provider=provider,
@@ -801,9 +937,9 @@ async def create_connector(
             database_name=None,
             schema_name=None,
             username=None,
-            password_encrypted=None,
+            password_secret_name=None,
             ssl_enabled=False,
-            provider_config=encrypted_config,
+            provider_config=prepared_config,
             status="disconnected",
             is_custom=payload.is_custom,
             org_id=payload.org_id,
@@ -819,7 +955,18 @@ async def create_connector(
         )
     else:
         # DB providers: use standard DB fields
+        if not payload.password:
+            raise HTTPException(status_code=400, detail="password is required for database connectors")
+        password_secret_name = _build_secret_name(
+            _secret_prefix(),
+            connector_id,
+            provider,
+            "password",
+        )
+        _store_secret_value(password_secret_name, payload.password)
+
         row = ConnectorCatalogue(
+            id=connector_id,
             name=payload.name,
             description=payload.description,
             provider=provider,
@@ -828,7 +975,7 @@ async def create_connector(
             database_name=payload.database_name,
             schema_name=payload.schema_name,
             username=payload.username,
-            password_encrypted=_encrypt_password(payload.password) if payload.password else None,
+            password_secret_name=password_secret_name,
             ssl_enabled=payload.ssl_enabled,
             provider_config=None,
             status="disconnected",
@@ -905,25 +1052,42 @@ async def update_connector(
         # Storage / Email provider: update provider_config, clear DB fields
         if payload.provider_config is not None:
             if effective_provider in EMAIL_PROVIDERS and row.provider_config:
-                # Preserve linked_accounts (and tokens) when editing Outlook connectors
-                existing = _decrypt_provider_config(effective_provider, row.provider_config)
+                # Preserve linked_accounts/tokens when editing Outlook connectors
+                existing = dict(row.provider_config or {})
                 merged = {**existing, **payload.provider_config}
                 # Don't let an empty client_secret overwrite the stored one
-                if not payload.provider_config.get("client_secret") and existing.get("client_secret"):
-                    merged["client_secret"] = existing["client_secret"]
-                # Preserve linked_accounts, tokens if incoming payload has them empty/null/missing
-                for guard_key in ("linked_accounts", "access_token", "refresh_token"):
+                if not payload.provider_config.get("client_secret") and existing.get("client_secret_secret_name"):
+                    merged["client_secret_secret_name"] = existing["client_secret_secret_name"]
+                for guard_key in ("linked_accounts", "access_token", "refresh_token", "token_expires_at"):
                     if not merged.get(guard_key) and existing.get(guard_key):
                         merged[guard_key] = existing[guard_key]
-                row.provider_config = _encrypt_provider_config(effective_provider, merged)
+                _ensure_provider_secret_present(effective_provider, merged, existing)
+                row.provider_config = _prepare_provider_config(
+                    effective_provider,
+                    merged,
+                    connector_id=row.id,
+                    existing_config=existing,
+                )
             else:
-                row.provider_config = _encrypt_provider_config(effective_provider, payload.provider_config)
+                _ensure_provider_secret_present(
+                    effective_provider,
+                    payload.provider_config,
+                    row.provider_config or {},
+                )
+                row.provider_config = _prepare_provider_config(
+                    effective_provider,
+                    payload.provider_config,
+                    connector_id=row.id,
+                    existing_config=row.provider_config or {},
+                )
+        elif not row.provider_config:
+            _ensure_provider_secret_present(effective_provider, {}, {})
         row.host = None
         row.port = None
         row.database_name = None
         row.schema_name = None
         row.username = None
-        row.password_encrypted = None
+        row.password_secret_name = None
         row.ssl_enabled = False
     else:
         # DB provider: update DB fields
@@ -938,7 +1102,16 @@ async def update_connector(
         if payload.username is not None:
             row.username = payload.username
         if payload.password is not None:
-            row.password_encrypted = _encrypt_password(payload.password)
+            secret_name = _build_secret_name(
+                _secret_prefix(),
+                row.id,
+                effective_provider,
+                "password",
+            )
+            _store_secret_value(secret_name, payload.password)
+            row.password_secret_name = secret_name
+        elif not row.password_secret_name:
+            raise HTTPException(status_code=400, detail="password is required for database connectors")
         if payload.ssl_enabled is not None:
             row.ssl_enabled = payload.ssl_enabled
         row.provider_config = None
@@ -1002,7 +1175,7 @@ async def test_connector_connection(
         if provider in STORAGE_PROVIDERS:
             # Use provider_config (override or stored, decrypted)
             if override and override.provider_config:
-                config = override.provider_config
+                config = _decrypt_provider_config(provider, override.provider_config)
             else:
                 config = _decrypt_provider_config(provider, row.provider_config or {})
 
@@ -1028,14 +1201,20 @@ async def test_connector_connection(
             username = override.username if override and override.username else row.username
             password = (
                 override.password if override and override.password
-                else (_decrypt_password(row.password_encrypted) if row.password_encrypted else "")
+                else (_resolve_secret_value(row.password_secret_name) if row.password_secret_name else "")
             )
             ssl_enabled = override.ssl_enabled if override and override.ssl_enabled is not None else row.ssl_enabled
             result = _test_db_connection(provider, host, port, database_name, schema_name, username, password, ssl_enabled)
 
         # If Outlook tokens were refreshed during the test, persist them
         if result.get("_tokens_refreshed") and provider in EMAIL_PROVIDERS:
-            row.provider_config = _encrypt_provider_config(provider, config)
+            row.provider_config = _prepare_provider_config(
+                provider,
+                config,
+                connector_id=row.id,
+                existing_config=row.provider_config or {},
+                allow_secret_update=False,
+            )
             result.pop("_tokens_refreshed", None)
 
         now = datetime.now(timezone.utc)

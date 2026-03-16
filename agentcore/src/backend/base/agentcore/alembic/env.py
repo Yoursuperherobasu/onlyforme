@@ -1,5 +1,6 @@
 # noqa: INP001
 import asyncio
+import sys
 import os
 from logging.config import fileConfig
 from dotenv import load_dotenv, find_dotenv
@@ -88,9 +89,9 @@ async def _run_async_migrations() -> None:
     # (which sanitizes the URL for async compatibility)
     # Only fallback to environment variables if config option is not set
     url = config.get_main_option("sqlalchemy.url") or os.getenv("DATABASE_URL") or os.getenv("AGENTCORE_DATABASE_URL")
-    # Validate that we have a real URL
-    if not url or url.startswith("driver://"):
-        url = os.getenv("DATABASE_URL")
+    # Validate that we have a real URL (skip placeholder values from alembic.ini)
+    if not url or url.startswith("driver://") or url.startswith("${"):
+        url = os.getenv("DATABASE_URL") or os.getenv("AGENTCORE_DATABASE_URL")
    
     connectable = create_async_engine(url, poolclass=pool.NullPool)
  
@@ -107,6 +108,8 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
  
     """
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(_run_async_migrations())
  
  

@@ -204,7 +204,6 @@ myenv/
 .DS_Store
 nohup.outagentcore/pii_masking_templates/
 agentcore/docs/
-agentcore/scripts/
 agentcore/src/backend/base/agentcore/components/graph_rag/COMPONENTS.md
 agentcore/src/backend/base/agentcore/components/vectorstores/COMPONENTS.md
 agentcore/src/services/graph-rag-service/.env.example
@@ -225,3 +224,5 @@ loguru/
 all.env
 \env
 \myenv
+scripts/keyvault_master.env
+scripts/compare_keyvault_secrets.py

@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.guardrail_catalogue import GuardrailCatalogue
 from app.models.model_registry import ModelRegistry
+from app.utils.crypto import decrypt_api_key
 from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore
 
 
@@ -70,23 +71,53 @@ def _to_uuid(value: str) -> UUID:
         raise ValueError(msg) from exc
 
 
-async def _get_guardrail(session: AsyncSession, guardrail_id: UUID) -> GuardrailCatalogue:
-    logger.info(f"NeMo guardrail lookup started: guardrail_id={guardrail_id}")
-    row = await session.get(GuardrailCatalogue, guardrail_id)
+async def _get_guardrail(
+    session: AsyncSession,
+    guardrail_id: UUID,
+    environment: str | None = None,
+) -> GuardrailCatalogue:
+    """Look up a guardrail by ID.
+
+    When *environment* is ``"prod"``, the *guardrail_id* is treated as a UAT
+    source ID and the corresponding frozen prod copy is resolved instead.
+    """
+    logger.info(
+        "NeMo guardrail lookup started: guardrail_id=%s, environment=%s",
+        guardrail_id, environment or "uat",
+    )
+
+    if environment == "prod":
+        # Resolve the prod copy via source_guardrail_id
+        stmt = select(GuardrailCatalogue).where(
+            GuardrailCatalogue.source_guardrail_id == guardrail_id,
+            GuardrailCatalogue.environment == "prod",
+        )
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        if not row:
+            msg = (
+                f"No production copy found for guardrail {guardrail_id}. "
+                "The guardrail may not have been promoted to prod yet."
+            )
+            logger.warning("NeMo guardrail lookup failed: %s", msg)
+            raise ValueError(msg)
+    else:
+        row = await session.get(GuardrailCatalogue, guardrail_id)
 
     if not row:
         msg = f"Guardrail {guardrail_id} was not found."
-        logger.warning(f"NeMo guardrail lookup failed: {msg}")
+        logger.warning("NeMo guardrail lookup failed: %s", msg)
         raise ValueError(msg)
 
     if (row.status or "").lower() != "active":
         msg = f"Guardrail {guardrail_id} is not active."
-        logger.warning(f"NeMo guardrail lookup failed: {msg}")
+        logger.warning("NeMo guardrail lookup failed: %s", msg)
         raise ValueError(msg)
 
     logger.info(
         "NeMo guardrail lookup succeeded: "
-        f"guardrail_id={guardrail_id}, name={row.name}, model_registry_id={row.model_registry_id}"
+        "guardrail_id=%s, resolved_id=%s, environment=%s, name=%s, model_registry_id=%s",
+        guardrail_id, row.id, row.environment, row.name, row.model_registry_id,
     )
     return row
 
@@ -145,18 +176,32 @@ async def _get_model_registry_config(
         "default_params": model_row.default_params or {},
     }
 
-    if model_row.api_key_secret_ref:
-        kv_store = _get_kv_store()
-        secret_value = kv_store.get_secret(model_row.api_key_secret_ref)
-        if not secret_value:
-            logger.warning(
-                "NeMo model registry secret ref not found in Key Vault: "
-                f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}, "
-                f"secret_ref={model_row.api_key_secret_ref}"
-            )
-            config["api_key"] = ""
+    secret_ref = model_row.api_key_secret_ref
+    if secret_ref:
+        if secret_ref.startswith("gAAAAA"):
+            # Fernet-encrypted token stored by the main backend
+            try:
+                settings = get_settings()
+                config["api_key"] = decrypt_api_key(secret_ref, settings.encryption_key)
+            except Exception:
+                logger.exception(
+                    "NeMo model registry Fernet decryption failed: "
+                    f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}"
+                )
+                config["api_key"] = ""
         else:
-            config["api_key"] = secret_value
+            # Azure Key Vault secret name
+            kv_store = _get_kv_store()
+            secret_value = kv_store.get_secret(secret_ref)
+            if not secret_value:
+                logger.warning(
+                    "NeMo model registry secret ref not found in Key Vault: "
+                    f"guardrail_id={guardrail.id}, model_registry_id={model_registry_id}, "
+                    f"secret_ref={secret_ref}"
+                )
+                config["api_key"] = ""
+            else:
+                config["api_key"] = secret_value
     else:
         config["api_key"] = ""
 
@@ -1044,7 +1089,61 @@ def _is_input_rail_blocked(activated_rails: list[dict[str, Any]]) -> tuple[bool,
     return bool(blocked_names), blocked_names
 
 
-def _classify_action(input_text: str, output_text: str, blocked_by_input_rail: bool) -> str:
+def _extract_pii_llm_prompt(runtime_config: dict[str, Any] | None) -> str | None:
+    """Extract the pii_llm_mask prompt from prompts_yml. Returns None if not found."""
+    if not runtime_config:
+        return None
+
+    prompts_yml = runtime_config.get("prompts_yml", "")
+    if not isinstance(prompts_yml, str) or not prompts_yml.strip():
+        return None
+
+    try:
+        parsed = yaml.safe_load(prompts_yml)
+        if not isinstance(parsed, dict):
+            return None
+        for prompt_entry in parsed.get("prompts", []):
+            if isinstance(prompt_entry, dict) and prompt_entry.get("task") == "pii_llm_mask":
+                content = prompt_entry.get("content", "").strip()
+                if content:
+                    return content
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to parse prompts_yml for pii_llm_mask task")
+
+    return None
+
+
+async def _llm_pii_mask(rails: Any, text: str, prompt_template: str) -> str:
+    """Use the guardrail's configured LLM to mask PII that presidio missed."""
+    try:
+        prompt = prompt_template.replace("{{ user_input }}", text)
+        response = await rails.llm.ainvoke(prompt)
+        masked = response.content if hasattr(response, "content") else str(response)
+        masked = masked.strip()
+        # Sanity check: if LLM returned empty or something wildly different in length, keep original
+        if not masked or len(masked) > len(text) * 3:
+            logger.warning("LLM PII mask returned suspicious output, keeping presidio result")
+            return text
+        return masked
+    except Exception:  # noqa: BLE001
+        logger.exception("LLM PII mask fallback failed, keeping presidio result")
+        return text
+
+
+def _is_masking_category(category: str | None) -> bool:
+    """Return True if the guardrail category indicates PII masking behavior."""
+    if not category:
+        return False
+    normalized = category.strip().lower().replace(" ", "-").replace("_", "-")
+    return any(token in normalized for token in ("pii", "mask", "redact", "anonymi"))
+
+
+def _classify_action(
+    input_text: str,
+    output_text: str,
+    blocked_by_input_rail: bool,
+    guardrail_category: str | None = None,
+) -> str:
     input_text_norm = (input_text or "").strip()
     output_text_norm = (output_text or "").strip()
 
@@ -1052,6 +1151,9 @@ def _classify_action(input_text: str, output_text: str, blocked_by_input_rail: b
         if not output_text_norm:
             return "blocked"
         if output_text_norm != input_text_norm:
+            # If the category is PII/masking, the rail modified the text rather than blocking it
+            if _is_masking_category(guardrail_category):
+                return "masked"
             return "blocked"
         logger.warning(
             "NeMo input rail marked as blocked but output matched input; treating as passthrough."
@@ -1062,6 +1164,8 @@ def _classify_action(input_text: str, output_text: str, blocked_by_input_rail: b
         return "passthrough"
     if output_text_norm == input_text_norm:
         return "passthrough"
+    if _is_masking_category(guardrail_category):
+        return "masked"
     return "rewritten"
 
 
@@ -1069,6 +1173,7 @@ async def apply_nemo_guardrail_text(
     input_text: str,
     guardrail_id: str,
     session: AsyncSession,
+    environment: str | None = None,
 ) -> GuardrailExecutionResult:
     """Apply NeMo guardrails to input_text using the guardrail identified by guardrail_id."""
     started_at = perf_counter()
@@ -1081,7 +1186,7 @@ async def apply_nemo_guardrail_text(
         guardrail_uuid = _to_uuid(guardrail_id)
 
         step = "lookup_guardrail"
-        guardrail = await _get_guardrail(session, guardrail_uuid)
+        guardrail = await _get_guardrail(session, guardrail_uuid, environment=environment)
 
         step = "lookup_model_registry"
         model_config = await _get_model_registry_config(session, guardrail)
@@ -1159,11 +1264,33 @@ async def apply_nemo_guardrail_text(
         step = "extract_output"
         output_text = _extract_generated_text(generated)
 
+        # Hybrid PII masking: if presidio didn't modify the text (passthrough)
+        # but the guardrail is a PII/masking type, run an LLM pass to catch
+        # informal addresses, regional formats, and other PII that regex missed.
+        if (
+            _is_masking_category(guardrail.category)
+            and (output_text or "").strip() == (input_text or "").strip()
+        ):
+            step = "llm_pii_fallback"
+            pii_prompt = _extract_pii_llm_prompt(runtime_config)
+            if pii_prompt:
+                logger.info(
+                    f"Presidio returned passthrough for PII guardrail, running LLM fallback: "
+                    f"guardrail_id={guardrail_id}"
+                )
+                output_text = await _llm_pii_mask(rails, input_text, pii_prompt)
+            else:
+                logger.info(
+                    f"Presidio returned passthrough for PII guardrail, no pii_llm_mask prompt configured, skipping LLM fallback: "
+                    f"guardrail_id={guardrail_id}"
+                )
+
         step = "classify_action"
         action = _classify_action(
             input_text=input_text,
             output_text=output_text,
             blocked_by_input_rail=blocked_by_input_rail,
+            guardrail_category=guardrail.category,
         )
         elapsed_ms = (perf_counter() - started_at) * 1000
         if action == "passthrough":

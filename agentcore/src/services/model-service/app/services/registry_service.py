@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,16 @@ from app.models.registry import (
 from app.utils.key_vault import KeyVaultConfig, KeyVaultSecretStore, model_api_key_secret_name
 
 logger = logging.getLogger(__name__)
+
+API_KEY_REQUIRED_PROVIDERS = {
+    "openai",
+    "azure",
+    "azure_openai",
+    "openai_compatible",
+    "groq",
+    "anthropic",
+    "google",
+}
 
 
 @lru_cache(maxsize=1)
@@ -58,6 +69,10 @@ async def create_model(
     """Insert a new model into the registry."""
     settings = get_settings()
     key_vault = _require_key_vault_store()
+    provider = (data.provider or "").strip().lower()
+
+    if provider in API_KEY_REQUIRED_PROVIDERS and not data.api_key:
+        raise HTTPException(status_code=400, detail="API key is required for this provider.")
 
     row = ModelRegistry(
         display_name=data.display_name,
@@ -162,6 +177,9 @@ async def update_model(
 
     # Handle API key separately
     plain_key = update_fields.pop("api_key", None)
+    if (row.provider or "").strip().lower() in API_KEY_REQUIRED_PROVIDERS:
+        if not plain_key and not row.api_key_secret_ref:
+            raise HTTPException(status_code=400, detail="API key is required for this provider.")
     if plain_key:
         provider_config = dict(row.provider_config or {})
         secret_name = row.api_key_secret_ref or model_api_key_secret_name(
@@ -183,7 +201,7 @@ async def update_model(
     for field, value in update_fields.items():
         setattr(row, field, value)
 
-    row.updated_at = datetime.now(timezone.utc)
+    row.updated_at = datetime.utcnow()
     session.add(row)
     await session.commit()
     await session.refresh(row)

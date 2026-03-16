@@ -270,7 +270,7 @@ export default function LoginPage(): JSX.Element {
                   <Button
                     type="button"
                     onClick={handleAzureSSO}
-                    className="h-11 sm:h-12 !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-white flex items-center justify-center gap-2 rounded-lg font-medium transition-all text-sm sm:text-base"
+                    className="h-11 sm:h-12 !bg-[var(--login-sso-button-bg)] hover:!bg-[var(--login-sso-button-hover)] disabled:!bg-[var(--login-sso-button-disabled)] text-[var(--login-sso-button-foreground)] flex items-center justify-center gap-2 rounded-lg font-medium transition-all text-sm sm:text-base"
                   >
                     <svg className="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 23 23">
                       <path fill="#f25022" d="M1 1h10v10H1z" />

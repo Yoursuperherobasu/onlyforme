@@ -1,5 +1,5 @@
-import { Edit2, MoreVertical, Plus, Search, Trash2, ArrowLeft } from "lucide-react";
-import { useContext, useEffect, useState } from "react";
+import { Edit2, Eye, Lock, MoreVertical, Plus, Search, Shield, Trash2, ArrowLeft } from "lucide-react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,6 +10,7 @@ import {
 import Loading from "@/components/ui/loading";
 import { AuthContext } from "@/contexts/authContext";
 import {
+  type GuardrailEnvironment,
   type GuardrailInfo,
   useDeleteGuardrailCatalogue,
   useGetGuardrailsCatalogue,
@@ -59,11 +60,18 @@ export default function GuardrailsView({
     useState<GuardrailInfo | null>(null);
   const [selectedFramework, setSelectedFramework] =
     useState<GuardrailFramework | null>(null);
+  const [selectedEnvironment, setSelectedEnvironment] =
+    useState<GuardrailEnvironment>("uat");
+
+  const handleEnvChange = useCallback((env: GuardrailEnvironment) => {
+    setSelectedEnvironment(env);
+  }, []);
 
   const { permissions } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
-  const canCreateOrEdit = can("add_guardrails");
-  const canDelete = can("retire_guardrails");
+  const isProdView = selectedEnvironment === "prod";
+  const canCreateOrEdit = can("add_guardrails") && !isProdView;
+  const canDelete = can("retire_guardrails") && !isProdView;
   const canManage = canCreateOrEdit || canDelete;
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -76,7 +84,7 @@ export default function GuardrailsView({
         ? "arize"
         : undefined;
   const { data: dbGuardrails, isLoading, error } = useGetGuardrailsCatalogue(
-    { framework: selectedFrameworkId },
+    { framework: selectedFrameworkId, environment: selectedEnvironment },
   );
   const deleteMutation = useDeleteGuardrailCatalogue();
 
@@ -184,11 +192,35 @@ export default function GuardrailsView({
                 <h1 className="text-2xl font-semibold">{selectedFramework.name} Policies</h1>
               </div>
               <p className="text-sm text-muted-foreground">
-                Manage and configure guardrail policies for {selectedFramework.name}
+                {isProdView
+                  ? `Frozen production guardrail policies for ${selectedFramework.name} (read-only)`
+                  : `Manage and configure guardrail policies for ${selectedFramework.name}`}
               </p>
             </div>
 
             <div className="flex items-center gap-3">
+              {/* Environment Toggle */}
+              <div className="flex items-center rounded-lg border border-border bg-muted/50 p-1">
+                {([
+                  { value: "uat" as const, label: "UAT" },
+                  { value: "prod" as const, label: "PROD" },
+                ] as const).map((env) => (
+                  <button
+                    key={env.value}
+                    onClick={() => {
+                      if (selectedEnvironment !== env.value) handleEnvChange(env.value);
+                    }}
+                    className={`rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
+                      selectedEnvironment === env.value
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {env.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -228,7 +260,7 @@ export default function GuardrailsView({
                           "Model",
                           "Category",
                           "Status",
-                          ...(canManage ? ["Actions"] : []),
+                          ...(canManage || isProdView ? ["Actions"] : []),
                         ].map((h) => (
                           <th
                             key={h}
@@ -244,7 +276,7 @@ export default function GuardrailsView({
                       {filteredGuardrails.length === 0 ? (
                         <tr>
                           <td
-                            colSpan={canManage ? 5 : 4}
+                            colSpan={canManage || isProdView ? 5 : 4}
                             className="px-6 py-12 text-center text-muted-foreground"
                           >
                             No guardrails found matching your criteria
@@ -266,6 +298,20 @@ export default function GuardrailsView({
                                     Custom
                                   </span>
                                 )}
+                                {/* UAT view: show badge if guardrail has active prod deployments */}
+                                {!isProdView && (guardrail.prodRefCount ?? 0) > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                    <Shield className="h-3 w-3" />
+                                    In Production
+                                  </span>
+                                )}
+                                {/* PROD view: show frozen/immutable indicator */}
+                                {isProdView && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                    <Lock className="h-3 w-3" />
+                                    Frozen
+                                  </span>
+                                )}
                               </div>
                               <div className="mt-1 text-xs text-muted-foreground">
                                 {guardrail.description}
@@ -281,6 +327,12 @@ export default function GuardrailsView({
                                     Runtime config incomplete
                                   </div>
                                 )}
+                              {/* PROD view: show promotion timestamp */}
+                              {isProdView && guardrail.promotedAt && (
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  Promoted {new Date(guardrail.promotedAt).toLocaleDateString()}
+                                </div>
+                              )}
                             </td>
 
                             <td className="px-6 py-4">
@@ -316,7 +368,18 @@ export default function GuardrailsView({
                               </div>
                             </td>
 
-                            {canManage && (
+                            {isProdView && (
+                              <td className="px-6 py-4">
+                                <button
+                                  onClick={() => handleEditGuardrail(guardrail)}
+                                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                  View Config
+                                </button>
+                              </td>
+                            )}
+                            {canManage && !isProdView && (
                               <td className="px-6 py-4">
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
@@ -370,6 +433,7 @@ export default function GuardrailsView({
             onOpenChange={setIsEditModalOpen}
             guardrail={selectedGuardrail}
             frameworkId={selectedFrameworkId}
+            readOnly={isProdView}
           />
         </div>
       )}

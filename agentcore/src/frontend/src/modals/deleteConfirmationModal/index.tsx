@@ -18,6 +18,8 @@ export default function DeleteConfirmationModal({
   open,
   setOpen,
   note = "",
+  errorMessage,
+  closeOnConfirm = true,
 }: {
   children?: JSX.Element;
   onConfirm: (e: React.MouseEvent<HTMLButtonElement, MouseEvent>) => void;
@@ -26,6 +28,8 @@ export default function DeleteConfirmationModal({
   open?: boolean;
   setOpen?: (open: boolean) => void;
   note?: string;
+  errorMessage?: string;
+  closeOnConfirm?: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -50,6 +54,11 @@ export default function DeleteConfirmationModal({
           <br />
           This can't be undone.
         </span>
+        {errorMessage ? (
+          <div className="rounded-md border border-status-red/30 bg-error-background/40 px-3 py-2 text-sm text-error-foreground">
+            {errorMessage}
+          </div>
+        ) : null}
         <DialogFooter>
           <DialogClose asChild>
             <Button
@@ -61,7 +70,20 @@ export default function DeleteConfirmationModal({
               Cancel
             </Button>
           </DialogClose>
-          <DialogClose asChild>
+          {closeOnConfirm ? (
+            <DialogClose asChild>
+              <Button
+                type="submit"
+                variant="destructive"
+                onClick={(e) => {
+                  onConfirm(e);
+                }}
+                data-testid="btn_delete_delete_confirmation_modal"
+              >
+                Delete
+              </Button>
+            </DialogClose>
+          ) : (
             <Button
               type="submit"
               variant="destructive"
@@ -72,7 +94,7 @@ export default function DeleteConfirmationModal({
             >
               Delete
             </Button>
-          </DialogClose>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -113,14 +113,13 @@ def _get_connector_config(connector_id: str) -> dict | None:
                 logger.warning(f"Connector {connector_id} not found in catalogue")
                 return None
 
-            # Use the SAME decrypt function as the API — guarantees same Fernet key
             password = ""
-            if row.password_encrypted:
+            if row.password_secret_name:
                 try:
-                    from agentcore.api.connector_catalogue import _decrypt_password
-                    password = _decrypt_password(row.password_encrypted)
+                    from agentcore.api.connector_catalogue import _resolve_secret_value
+                    password = _resolve_secret_value(row.password_secret_name)
                 except Exception as e:
-                    logger.error(f"Failed to decrypt connector password: {e}")
+                    logger.error(f"Failed to resolve connector password: {e}")
 
             return {
                 "provider": row.provider,

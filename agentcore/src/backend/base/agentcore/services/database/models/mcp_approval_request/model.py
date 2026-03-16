@@ -15,6 +15,7 @@ class McpApprovalRequestBase(SQLModel):
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
     requested_by: UUID = Field(foreign_key="user.id", nullable=False)
     request_to: UUID = Field(foreign_key="user.id", nullable=False)
+    reviewed_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     requested_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -68,6 +69,7 @@ class McpApprovalRequestRead(BaseModel):
     dept_id: UUID | None = None
     requested_by: UUID
     request_to: UUID
+    reviewed_by: UUID | None = None
     requested_at: datetime
     reviewed_at: datetime | None = None
     decision: ApprovalDecisionEnum | None = None

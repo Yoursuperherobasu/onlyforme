@@ -44,7 +44,7 @@ export default function UserManagementModal({
   const [organizationError, setOrganizationError] = useState("");
   const [usernameError, setUsernameError] = useState("");
   const { mutate: mutateGetAssignableRoles } = useGetAssignableRoles();
-  const { mutate: mutateGetDepartments } = useGetDepartments();
+  const { mutate: mutateGetDepartments } = useGetDepartments(undefined as any);
   const [inputState, setInputState] = useState<UserInputType>(CONTROL_NEW_USER);
   const { userData } = useContext(AuthContext);
 
@@ -154,6 +154,10 @@ export default function UserManagementModal({
   const isDepartmentAdminCreator = userData?.role === "department_admin";
   const isCreatingSuperAdmin = effectiveRole === "super_admin";
   const isCreatingDepartmentAdmin = effectiveRole === "department_admin";
+  const adminExcludedRoles = ["root", "root_admin", "super_admin", "department_admin", "admin"];
+  const isDepartmentAssignableRole = !adminExcludedRoles.includes(effectiveRole);
+  const enableBulkDepartmentAdd =
+    !data && (isDepartmentAdminCreator || isSuperAdmin) && isDepartmentAssignableRole;
   const requiresOrganizationBootstrap = isRootAdmin && isCreatingSuperAdmin;
   const requiresDepartmentAdminSelection =
     isSuperAdmin && !isCreatingDepartmentAdmin;
@@ -167,7 +171,12 @@ export default function UserManagementModal({
           ? availableRoles.filter((role) => !["root", "super_admin"].includes(role))
           : ["department_admin", "developer", "business_user"];
     } else if (isDepartmentAdminCreator) {
-      baseRoles = ["developer", "business_user"];
+      baseRoles =
+        availableRoles.length > 0
+          ? availableRoles.filter(
+              (role) => !["root", "super_admin", "department_admin"].includes(role),
+            )
+          : ["developer", "business_user"];
     } else if (availableRoles.length > 0) {
       baseRoles = availableRoles;
     } else {
@@ -209,6 +218,41 @@ export default function UserManagementModal({
     return true;
   }
 
+  function parseBulkUsernames(value: string): string[] {
+    return Array.from(
+      new Set(
+        value
+          .split(/[\n,;]+/)
+          .map((entry) => entry.trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  function validateUsernameInput(value: string, allowBulk: boolean): boolean {
+    if (!allowBulk) {
+      return validateUsernameEmail(value);
+    }
+
+    const parsed = parseBulkUsernames(value);
+    if (parsed.length === 0) {
+      setUsernameError("At least one username is required.");
+      return false;
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const invalid = parsed.filter((entry) => !emailPattern.test(entry));
+    if (invalid.length > 0) {
+      setUsernameError(
+        `Invalid email(s): ${invalid.slice(0, 3).join(", ")}${invalid.length > 3 ? "..." : ""}`,
+      );
+      return false;
+    }
+
+    setUsernameError("");
+    return true;
+  }
+
   return (
     <BaseModal size="medium-h-full" open={open} setOpen={setOpen}>
       <BaseModal.Trigger asChild={asChild}>{children}</BaseModal.Trigger>
@@ -223,7 +267,7 @@ export default function UserManagementModal({
       <BaseModal.Content>
         <Form.Root
           onSubmit={(event) => {
-            if (!validateUsernameEmail(username)) {
+            if (!validateUsernameInput(username, enableBulkDepartmentAdd)) {
               event.preventDefault();
               return;
             }
@@ -238,9 +282,13 @@ export default function UserManagementModal({
               event.preventDefault();
               return;
             }
+            const parsedBulkUsernames = enableBulkDepartmentAdd
+              ? parseBulkUsernames(username)
+              : [username.trim()];
             const submitData = {
               ...inputState,
-              username,
+              username: parsedBulkUsernames[0] ?? "",
+              ...(enableBulkDepartmentAdd ? { usernames: parsedBulkUsernames } : {}),
               is_active: isActive,
               role: effectiveRole,
             };
@@ -283,23 +331,51 @@ export default function UserManagementModal({
                 }}
               >
                 <Form.Label className="data-[invalid]:label-invalid">
-                  Username{" "}
+                  {!data &&
+                  enableBulkDepartmentAdd
+                    ? "Usernames"
+                    : "Username"}{" "}
                   <span className="font-medium text-destructive">*</span>
                 </Form.Label>
               </div>
               <Form.Control asChild>
-                <input
-                  onChange={({ target: { value } }) => {
-                    handleInput({ target: { name: "username", value } });
-                    setUserName(value);
-                    if (usernameError) validateUsernameEmail(value);
-                  }}
-                  value={username}
-                  className="primary-input"
-                  required
-                  placeholder="Username"
-                />
+                {!data &&
+                enableBulkDepartmentAdd ? (
+                  <textarea
+                    onChange={({ target: { value } }) => {
+                      handleInput({ target: { name: "username", value } });
+                      setUserName(value);
+                      if (usernameError) {
+                        validateUsernameInput(value, true);
+                      }
+                    }}
+                    value={username}
+                    className="textarea-primary min-h-[110px] w-full resize-y"
+                    required
+                    placeholder="Enter multiple emails separated by comma or new line"
+                  />
+                ) : (
+                  <input
+                    onChange={({ target: { value } }) => {
+                      handleInput({ target: { name: "username", value } });
+                      setUserName(value);
+                      if (usernameError) {
+                        validateUsernameInput(value, false);
+                      }
+                    }}
+                    value={username}
+                    className="primary-input"
+                    required
+                    placeholder="Username"
+                  />
+                )}
               </Form.Control>
+              {!data &&
+                enableBulkDepartmentAdd && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Add multiple user emails at once for this department role.
+                  </div>
+                )}
               {usernameError && (
                 <div className="mt-1 text-xs text-destructive">
                   {usernameError}

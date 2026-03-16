@@ -5,6 +5,8 @@ import PaginatorComponent from "@/components/common/paginatorComponent";
 import {
   useAddUser,
   useDeleteUsers,
+  useGetDepartments,
+  useGetOrganizations,
   useGetUsers,
   useUpdateUser,
 } from "@/controllers/API/queries/auth";
@@ -43,11 +45,25 @@ import UserManagementModal from "../../modals/userManagementModal";
 import useAlertStore from "../../stores/alertStore";
 import type { Users } from "../../types/api";
 import type { UserInputType } from "../../types/components";
+import type {
+  DepartmentListItem,
+  OrganizationListItem,
+} from "@/controllers/API/queries/auth";
 
 
 export default function AdminPage() {
   const { t } = useTranslation();
   const [inputValue, setInputValue] = useState("");
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState("");
+  const [sortBy, setSortBy] = useState("username");
+  const [sortOrder, setSortOrder] = useState("asc");
+  const [showFilters, setShowFilters] = useState(false);
+  const [activeFilterTab, setActiveFilterTab] = useState<
+    "organization" | "department" | "sort"
+  >("organization");
+  const [departments, setDepartments] = useState<DepartmentListItem[]>([]);
+  const [organizations, setOrganizations] = useState<OrganizationListItem[]>([]);
 
   const [size, setPageSize] = useState(PAGINATION_SIZE);
   const [index, setPageIndex] = useState(PAGINATION_PAGE);
@@ -59,6 +75,8 @@ export default function AdminPage() {
   const { mutate: mutateDeleteUser } = useDeleteUsers();
   const { mutate: mutateUpdateUser } = useUpdateUser();
   const { mutate: mutateAddUser } = useAddUser();
+  const { mutate: mutateGetDepartments } = useGetDepartments();
+  const { mutate: mutateGetOrganizations } = useGetOrganizations();
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
@@ -66,8 +84,17 @@ export default function AdminPage() {
 
   useEffect(() => {
     setTimeout(() => {
-      getUsers();
+      fetchUsers();
     }, 500);
+  }, []);
+
+  useEffect(() => {
+    mutateGetDepartments(undefined, {
+      onSuccess: (items) => setDepartments(Array.isArray(items) ? items : []),
+    });
+    mutateGetOrganizations(undefined, {
+      onSuccess: (items) => setOrganizations(Array.isArray(items) ? items : []),
+    });
   }, []);
 
   const [filterUserList, setFilterUserList] = useState(userList.current);
@@ -116,12 +143,32 @@ export default function AdminPage() {
     );
   }
 
-  function getUsers(query = inputValue) {
+  function fetchUsers({
+    pageIndex = index,
+    pageSize = size,
+    query = inputValue,
+    organizationId = selectedOrganizationId,
+    departmentId = selectedDepartmentId,
+    sortByValue = sortBy,
+    sortOrderValue = sortOrder,
+  }: {
+    pageIndex?: number;
+    pageSize?: number;
+    query?: string;
+    organizationId?: string;
+    departmentId?: string;
+    sortByValue?: string;
+    sortOrderValue?: string;
+  } = {}) {
     mutateGetUsers(
       {
-        skip: size * (index - 1),
-        limit: size,
+        skip: pageSize * (pageIndex - 1),
+        limit: pageSize,
         ...(query ? { q: query } : {}),
+        ...(organizationId ? { organization_id: organizationId } : {}),
+        ...(departmentId ? { department_id: departmentId } : {}),
+        ...(sortByValue ? { sort_by: sortByValue } : {}),
+        ...(sortOrderValue ? { sort_order: sortOrderValue } : {}),
       },
       {
         onSuccess: (users) => {
@@ -138,26 +185,13 @@ export default function AdminPage() {
     setPageSize(pageSize);
     setPageIndex(pageIndex);
 
-    mutateGetUsers(
-      {
-        skip: pageSize * (pageIndex - 1),
-        limit: pageSize,
-        ...(inputValue ? { q: inputValue } : {}),
-      },
-      {
-        onSuccess: (users) => {
-          setTotalRowsCount(users["total_count"]);
-          userList.current = users["users"];
-          setFilterUserList(users["users"]);
-        },
-      },
-    );
+    fetchUsers({ pageIndex, pageSize });
   }
 
   function resetFilter() {
     setPageIndex(PAGINATION_PAGE);
     setPageSize(PAGINATION_SIZE);
-    getUsers("");
+    fetchUsers({ pageIndex: PAGINATION_PAGE, pageSize: PAGINATION_SIZE, query: "" });
   }
 
   function handleFilterUsers(input: string) {
@@ -165,24 +199,35 @@ export default function AdminPage() {
 
     if (input === "") {
       setPageIndex(PAGINATION_PAGE);
-      getUsers("");
+      fetchUsers({ pageIndex: PAGINATION_PAGE, query: "" });
     } else {
       setPageIndex(PAGINATION_PAGE);
-      mutateGetUsers(
-        {
-          skip: 0,
-          limit: size,
-          q: input,
-        },
-        {
-          onSuccess: (users) => {
-            setTotalRowsCount(users["total_count"]);
-            userList.current = users["users"];
-            setFilterUserList(users["users"]);
-          },
-        },
-      );
+      fetchUsers({ pageIndex: PAGINATION_PAGE, query: input });
     }
+  }
+
+  function handleOrganizationFilterChange(value: string) {
+    setSelectedOrganizationId(value);
+    setPageIndex(PAGINATION_PAGE);
+    fetchUsers({ pageIndex: PAGINATION_PAGE, organizationId: value });
+  }
+
+  function handleDepartmentFilterChange(value: string) {
+    setSelectedDepartmentId(value);
+    setPageIndex(PAGINATION_PAGE);
+    fetchUsers({ pageIndex: PAGINATION_PAGE, departmentId: value });
+  }
+
+  function handleSortByChange(value: string) {
+    setSortBy(value);
+    setPageIndex(PAGINATION_PAGE);
+    fetchUsers({ pageIndex: PAGINATION_PAGE, sortByValue: value });
+  }
+
+  function handleSortOrderChange(value: string) {
+    setSortOrder(value);
+    setPageIndex(PAGINATION_PAGE);
+    fetchUsers({ pageIndex: PAGINATION_PAGE, sortOrderValue: value });
   }
 
   function handleDeleteUser(user) {
@@ -249,107 +294,143 @@ export default function AdminPage() {
   }
 
   function overwriteExistingUser(existingUserId: string, user: UserInputType) {
-    mutateUpdateUser(
-      {
-        user_id: existingUserId,
-        user: {
-          is_active: user.is_active,
-          role: user.role,
-          ...(user.organization_name
-            ? { organization_name: user.organization_name }
-            : {}),
-          ...(user.organization_description
-            ? { organization_description: user.organization_description }
-            : {}),
-          ...(user.department_name ? { department_name: user.department_name } : {}),
-          ...(user.department_id ? { department_id: user.department_id } : {}),
-          ...(user.department_admin_email
-            ? { department_admin_email: user.department_admin_email }
-            : {}),
-        } as any,
-      },
-      {
-        onSuccess: () => {
-          resetFilter();
-          setSuccessData({
-            title: USER_ADD_SUCCESS_ALERT,
-          });
+    return new Promise<void>((resolve, reject) => {
+      mutateUpdateUser(
+        {
+          user_id: existingUserId,
+          user: {
+            is_active: user.is_active,
+            role: user.role,
+            ...(user.organization_name
+              ? { organization_name: user.organization_name }
+              : {}),
+            ...(user.organization_description
+              ? { organization_description: user.organization_description }
+              : {}),
+            ...(user.department_name ? { department_name: user.department_name } : {}),
+            ...(user.department_id ? { department_id: user.department_id } : {}),
+            ...(user.department_admin_email
+              ? { department_admin_email: user.department_admin_email }
+              : {}),
+          } as any,
         },
-        onError: (updateError) => {
-          setErrorData({
-            title: USER_ADD_ERROR_ALERT,
-            list: normalizeErrorMessages(updateError),
-          });
+        {
+          onSuccess: () => {
+            resolve();
+          },
+          onError: (updateError) => {
+            reject(updateError);
+          },
         },
-      },
-    );
+      );
+    });
   }
 
-  function handleNewUser(user: UserInputType) {
-    mutateAddUser(user, {
-      onSuccess: () => {
-        resetFilter();
-        setSuccessData({
-          title: USER_ADD_SUCCESS_ALERT,
-        });
-      },
-      onError: (error) => {
-        // Upsert behavior: if username exists, overwrite role/active/org fields.
-        if (isAlreadyExistsError(error)) {
-          const existingUser = (userList.current as Users[]).find(
-            (u) =>
-              String(u.username || "").toLowerCase() ===
-              String(user.username || "").toLowerCase(),
-          );
-
-          if (existingUser?.id) {
-            overwriteExistingUser(existingUser.id, user);
-            return;
-          }
-
-          mutateGetUsers(
-            {
-              skip: 0,
-              limit: 200,
-              q: user.username,
-            },
-            {
-              onSuccess: (res: any) => {
-                const rows: Users[] = Array.isArray(res)
-                  ? res
-                  : Array.isArray(res?.users)
-                    ? res.users
-                    : [];
-                const matched = rows.find(
-                  (u) =>
-                    String(u.username || "").toLowerCase() ===
-                    String(user.username || "").toLowerCase(),
-                );
-                if (matched?.id) {
-                  overwriteExistingUser(matched.id, user);
-                  return;
-                }
-                setErrorData({
-                  title: USER_ADD_ERROR_ALERT,
-                  list: normalizeErrorMessages(error),
-                });
-              },
-              onError: () => {
-                setErrorData({
-                  title: USER_ADD_ERROR_ALERT,
-                  list: normalizeErrorMessages(error),
-                });
-              },
-            },
-          );
-          return;
-        }
-        setErrorData({
-          title: USER_ADD_ERROR_ALERT,
-          list: normalizeErrorMessages(error),
-        });
-      },
+  function addUserAsync(user: UserInputType) {
+    return new Promise<void>((resolve, reject) => {
+      mutateAddUser(user, {
+        onSuccess: () => resolve(),
+        onError: (error) => reject(error),
+      });
     });
+  }
+
+  function getUsersAsync(payload: { skip: number; limit: number; q?: string }) {
+    return new Promise<any>((resolve, reject) => {
+      mutateGetUsers(payload, {
+        onSuccess: (res) => resolve(res),
+        onError: (error) => reject(error),
+      });
+    });
+  }
+
+  async function createOrOverwriteUser(user: UserInputType): Promise<void> {
+    try {
+      await addUserAsync(user);
+      return;
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+
+      const existingUser = (userList.current as Users[]).find(
+        (u) =>
+          String(u.username || "").toLowerCase() ===
+          String(user.username || "").toLowerCase(),
+      );
+
+      if (existingUser?.id) {
+        await overwriteExistingUser(existingUser.id, user);
+        return;
+      }
+
+      const res = await getUsersAsync({
+        skip: 0,
+        limit: 200,
+        q: user.username,
+      });
+      const rows: Users[] = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.users)
+          ? res.users
+          : [];
+      const matched = rows.find(
+        (u) =>
+          String(u.username || "").toLowerCase() ===
+          String(user.username || "").toLowerCase(),
+      );
+
+      if (matched?.id) {
+        await overwriteExistingUser(matched.id, user);
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  async function handleNewUser(user: UserInputType) {
+    const candidates = (
+      Array.isArray(user.usernames) && user.usernames.length > 0
+        ? user.usernames
+        : [user.username]
+    )
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+
+    const usernames = Array.from(new Set(candidates));
+    const errors: string[] = [];
+    let successCount = 0;
+
+    for (const username of usernames) {
+      const payload: UserInputType = { ...user, username };
+      delete payload.usernames;
+      try {
+        await createOrOverwriteUser(payload);
+        successCount += 1;
+      } catch (error) {
+        const normalized = normalizeErrorMessages(error);
+        errors.push(`${username}: ${normalized.join(" | ")}`);
+      }
+    }
+
+    resetFilter();
+
+    if (successCount > 0) {
+      setSuccessData({
+        title:
+          usernames.length > 1
+            ? `${successCount} user(s) added/updated successfully.`
+            : USER_ADD_SUCCESS_ALERT,
+      });
+    }
+
+    if (errors.length > 0) {
+      setErrorData({
+        title: USER_ADD_ERROR_ALERT,
+        list: errors,
+      });
+    }
   }
 
   // Helper function to format role for display
@@ -371,34 +452,45 @@ export default function AdminPage() {
           <span className="admin-page-description-text">
             {t(ADMIN_HEADER_DESCRIPTION)}
           </span>
-          <div className="flex w-full justify-between px-4">
-            <div className="flex w-96 items-center gap-4">
-              <Input
-                placeholder={t("Search Username")}
-                value={inputValue}
-                onChange={(e) => handleFilterUsers(e.target.value)}
-              />
-              {inputValue.length > 0 ? (
-                <div
-                  className="cursor-pointer"
-                  onClick={() => {
-                    setInputValue("");
-                    resetFilter();
-                  }}
-                >
-                  <IconComponent name="X" className="w-6 text-foreground" />
-                </div>
-              ) : (
-                <div>
-                  <IconComponent
-                    name="Search"
-                    className="w-6 text-foreground"
-                  />
-                </div>
-              )}
+          <div className="flex w-full flex-wrap items-center justify-between gap-4 px-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex w-96 items-center gap-4">
+                <Input
+                  placeholder={t("Search Username")}
+                  value={inputValue}
+                  onChange={(e) => handleFilterUsers(e.target.value)}
+                />
+                {inputValue.length > 0 ? (
+                  <div
+                    className="cursor-pointer"
+                    onClick={() => {
+                      setInputValue("");
+                      resetFilter();
+                    }}
+                  >
+                    <IconComponent name="X" className="w-6 text-foreground" />
+                  </div>
+                ) : (
+                  <div>
+                    <IconComponent
+                      name="Search"
+                      className="w-6 text-foreground"
+                    />
+                  </div>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowFilters(true);
+                  setActiveFilterTab("organization");
+                }}
+              >
+                {t("Filters")}
+              </Button>
             </div>
             <div>
-                <UserManagementModal
+              <UserManagementModal
                 title={t("New User")}
                 titleHeader={t("Add a new user")}
                 cancelText={t("Cancel")}
@@ -413,6 +505,189 @@ export default function AdminPage() {
               </UserManagementModal>
             </div>
           </div>
+          {showFilters && (
+            <>
+              <div
+                className="fixed inset-0 z-[60] bg-black/40 transition-opacity"
+                onClick={() => setShowFilters(false)}
+              />
+              <div className="fixed inset-x-0 top-0 z-[70] flex h-full w-full items-start justify-center p-4">
+                <div className="flex h-full max-h-[720px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-background shadow-xl transition-transform">
+                  <div className="flex items-center justify-between border-b px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setShowFilters(false)}
+                        className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+                        aria-label="Close filters"
+                      >
+                        <IconComponent name="X" className="w-5" />
+                      </button>
+                      <h2 className="text-lg font-semibold">{t("Filters")}</h2>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedOrganizationId("");
+                        setSelectedDepartmentId("");
+                        setSortBy("username");
+                        setSortOrder("asc");
+                        setPageIndex(PAGINATION_PAGE);
+                        fetchUsers({
+                          pageIndex: PAGINATION_PAGE,
+                          query: inputValue,
+                          organizationId: "",
+                          departmentId: "",
+                          sortByValue: "username",
+                          sortOrderValue: "asc",
+                        });
+                      }}
+                      className="text-sm text-primary hover:underline"
+                    >
+                      {t("Clear Filters")}
+                    </button>
+                  </div>
+
+                  <div className="flex flex-1 overflow-hidden">
+                    <div className="w-40 border-r bg-muted/40 p-3 text-sm">
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => setActiveFilterTab("organization")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "organization"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Organization")}
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("department")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "department"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Department")}
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("sort")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "sort"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Sort")}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-auto p-5">
+                      {activeFilterTab === "organization" && (
+                        <div className="space-y-3">
+                          <h3 className="text-sm font-semibold">
+                            {t("Organization")}
+                          </h3>
+                          <select
+                            value={selectedOrganizationId}
+                            onChange={(event) =>
+                              handleOrganizationFilterChange(event.target.value)
+                            }
+                            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                          >
+                            <option value="">{t("All Organizations")}</option>
+                            {organizations.map((org) => (
+                              <option key={org.id} value={org.id}>
+                                {org.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {activeFilterTab === "department" && (
+                        <div className="space-y-3">
+                          <h3 className="text-sm font-semibold">
+                            {t("Department")}
+                          </h3>
+                          <select
+                            value={selectedDepartmentId}
+                            onChange={(event) =>
+                              handleDepartmentFilterChange(event.target.value)
+                            }
+                            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                          >
+                            <option value="">{t("All Departments")}</option>
+                            {departments.map((dept) => (
+                              <option key={dept.id} value={dept.id}>
+                                {dept.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {activeFilterTab === "sort" && (
+                        <div className="space-y-6">
+                          <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">
+                              {t("Sort By")}
+                            </h3>
+                            <select
+                              value={sortBy}
+                              onChange={(event) =>
+                                handleSortByChange(event.target.value)
+                              }
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                            >
+                              <option value="username">{t("Username")}</option>
+                              <option value="organization">
+                                {t("Organization")}
+                              </option>
+                              <option value="department">
+                                {t("Department")}
+                              </option>
+                              <option value="role">{t("Role")}</option>
+                              <option value="created_at">
+                                {t("Created At")}
+                              </option>
+                              <option value="updated_at">
+                                {t("Updated At")}
+                              </option>
+                            </select>
+                          </div>
+                          <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">
+                              {t("Order")}
+                            </h3>
+                            <select
+                              value={sortOrder}
+                              onChange={(event) =>
+                                handleSortOrderChange(event.target.value)
+                              }
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                            >
+                              <option value="asc">{t("Ascending")}</option>
+                              <option value="desc">{t("Descending")}</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t bg-background px-5 py-4">
+                    <span className="text-xs text-muted-foreground">
+                      {t("Results")}: {totalRowsCount}
+                    </span>
+                    <Button onClick={() => setShowFilters(false)}>
+                      {t("Apply")}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
           {isPending || isIdle ? (
             <div className="flex h-full w-full items-center justify-center">
               <CustomLoader remSize={12} />
@@ -453,7 +728,7 @@ export default function AdminPage() {
                   {!isPending && can("view_admin_page") && (
                     
                     <TableBody>
-                      {filterUserList.map((user: UserInputType, index) => (
+                      {filterUserList.map((user: Users, index) => (
                         
                         <TableRow key={index}>
                           

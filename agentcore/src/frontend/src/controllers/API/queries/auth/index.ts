@@ -9,6 +9,7 @@ export * from "./use-post-logout";
 export * from "./use-post-refresh-access";
 export * from "./use-get-roles";
 export * from "./use-get-departments";
+export * from "./use-get-organizations";
 export * from "./use-get-assignable-roles";
 export * from "./use-get-permissions";
 export * from "./use-post-role";

@@ -5,15 +5,21 @@ import { UseRequestProcessor } from "../../services/request-processor";
 
 export interface ApprovalAgent {
   id: string;
-  entityType?: "agent" | "model" | "mcp";
+  entityType?: "agent" | "model" | "mcp" | "package";
   title: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "deployed" | "cancelled";
   description: string;
   submittedBy: {
     name: string;
     avatar?: string;
     email?: string | null;
   };
+  approver?: {
+    id?: string | null;
+    name: string;
+    email?: string | null;
+    role?: string | null;
+  } | null;
   project: string;
   submitted: string;
   version: string;

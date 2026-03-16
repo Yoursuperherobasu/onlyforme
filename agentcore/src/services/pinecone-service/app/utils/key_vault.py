@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -57,11 +56,3 @@ class KeyVaultSecretStore:
             return self._client.get_secret(name).value
         except ResourceNotFoundError:
             return None
-
-
-def sanitize_secret_name(name: str) -> str:
-    """Normalize to Key Vault supported secret-name characters."""
-    normalized = re.sub(r"[^0-9a-zA-Z-]", "-", name).strip("-").lower()
-    if not normalized:
-        raise ValueError("Secret name is empty after sanitization")
-    return normalized[:127]

@@ -26,11 +26,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, U
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlmodel import select
-from sqlalchemy import or_
+from sqlalchemy import or_, true
 from agentcore.services.deps import session_scope
 # `agent` objects are stored as `Agent` in the DB; import AccessTypeEnum and
 # alias `Agent` to `agent` so the rest of the module can keep using `agent`.
 from agentcore.services.database.models.agent.model import AccessTypeEnum, Agent as agent
+from agentcore.services.database.models.agent_deployment_prod.model import (
+    AgentDeploymentProd,
+    DeploymentPRODStatusEnum,
+    ProdDeploymentVisibilityEnum,
+)
+from agentcore.services.database.models.agent_deployment_uat.model import (
+    AgentDeploymentUAT,
+    DeploymentUATStatusEnum,
+)
+from agentcore.services.database.models.agent_publish_recipient.model import (
+    AgentPublishRecipient,
+)
 
 from agentcore.services.auth.utils import get_current_active_user
 from agentcore.services.auth.permissions import normalize_role
@@ -79,14 +91,26 @@ from agentcore.services.database.models.evaluator.model import Evaluator  # noqa
 from agentcore.services.model_registry_service import get_decrypted_config as get_model_decrypted_config  # noqa: E402
 
 
-async def _resolve_model_from_registry(model_registry_id: str) -> tuple[str, str | None]:
+async def _resolve_model_from_registry(model_registry_id: str, session: Any = None) -> tuple[str, str | None]:
     """Resolve model_name and decrypted api_key from the model registry.
 
     Returns (model_name, api_key) or raises HTTPException if not found.
+    If *session* is provided it is reused; otherwise a fresh session_scope is opened.
     """
+    if not model_registry_id or not str(model_registry_id).strip():
+        raise HTTPException(status_code=400, detail="model_registry_id is required but was empty")
+
     try:
-        async with session_scope() as session:
-            config = await get_model_decrypted_config(session, UUID(model_registry_id))
+        model_uuid = UUID(str(model_registry_id).strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid model_registry_id: {model_registry_id}")
+
+    try:
+        if session is not None:
+            config = await get_model_decrypted_config(session, model_uuid)
+        else:
+            async with session_scope() as new_session:
+                config = await get_model_decrypted_config(new_session, model_uuid)
         if not config:
             raise HTTPException(status_code=404, detail=f"Model registry entry not found: {model_registry_id}")
         provider = config.get("provider", "")
@@ -102,7 +126,7 @@ async def _resolve_model_from_registry(model_registry_id: str) -> tuple[str, str
         raise
     except Exception as e:
         logger.opt(exception=True).error("Failed to resolve model from registry id={}: {}", model_registry_id, str(e))
-        raise HTTPException(status_code=400, detail=f"Failed to resolve model from registry: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to resolve model from registry: {type(e).__name__}: {str(e) or 'unknown error'}")
 
 
 # ---------------------------------------------------------------------------
@@ -3225,6 +3249,7 @@ async def _resolve_experiment_judge_config(
     judge_model: str | None,
     judge_model_api_key: str | None,
     judge_model_registry_id: str | None = None,
+    session: Any = None,
 ) -> dict[str, Any]:
     """Resolve dataset experiment judge settings from optional saved evaluator."""
     judge_name = (evaluator_name or "").strip() or "Dataset LLM Judge"
@@ -3235,7 +3260,7 @@ async def _resolve_experiment_judge_config(
 
     # Resolve judge model from registry if provided
     if judge_model_registry_id:
-        reg_model, reg_key = await _resolve_model_from_registry(judge_model_registry_id)
+        reg_model, reg_key = await _resolve_model_from_registry(judge_model_registry_id, session=session)
         if not resolved_model:
             resolved_model = reg_model
         if not resolved_api_key:
@@ -3247,16 +3272,21 @@ async def _resolve_experiment_judge_config(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid evaluator_config_id")
 
-        async with session_scope() as session:
+        if session is not None:
             evaluator = await session.get(Evaluator, config_uuid)
             if not evaluator or str(evaluator.user_id) != str(current_user.id):
                 raise HTTPException(status_code=404, detail="Evaluator config not found")
+        else:
+            async with session_scope() as new_session:
+                evaluator = await new_session.get(Evaluator, config_uuid)
+                if not evaluator or str(evaluator.user_id) != str(current_user.id):
+                    raise HTTPException(status_code=404, detail="Evaluator config not found")
 
         judge_name = evaluator.name or judge_name
         if not resolved_criteria:
             resolved_criteria = (evaluator.criteria or "").strip() or None
         if not resolved_model and evaluator.model_registry_id:
-            reg_model, reg_key = await _resolve_model_from_registry(evaluator.model_registry_id)
+            reg_model, reg_key = await _resolve_model_from_registry(evaluator.model_registry_id, session=session)
             resolved_model = reg_model
             if not resolved_api_key:
                 resolved_api_key = reg_key
@@ -3299,7 +3329,7 @@ async def _resolve_experiment_judge_config(
     }
 
 
-def _run_dataset_experiment_sync(
+async def _run_dataset_experiment_async(
     *,
     client: Any,
     dataset_name: str,
@@ -3315,36 +3345,37 @@ def _run_dataset_experiment_sync(
     judge_model: str | None,
     judge_model_api_key: str | None,
 ) -> dict[str, Any]:
-    """Run dataset experiment synchronously (executed in a worker thread)."""
-    dataset = client.get_dataset(dataset_name)
+    """Run dataset experiment asynchronously in the main event loop.
+
+    Uses client._run_experiment_async() directly to avoid creating a separate
+    event loop, which would break shared async resources (DB, Redis, etc.).
+    """
+    # get_dataset is sync (makes HTTP calls), so run in thread
+    dataset = await asyncio.to_thread(client.get_dataset, dataset_name)
     data_items = list(getattr(dataset, "items", []) or [])
     if not data_items:
         raise RuntimeError(f"Dataset '{dataset_name}' has no items")
 
     has_expected_outputs = any(get_attr(item, "expected_output", "expectedOutput", default=None) is not None for item in data_items)
 
-    def task(*, item, **kwargs):  # noqa: ARG001
+    async def task(*, item, **kwargs):  # noqa: ARG001
         item_input = get_attr(item, "input", default=None)
         item_id = str(get_attr(item, "id", default="") or "")
         if agent_payload:
             session_id = f"dataset:{dataset_name}:{item_id or int(time.time() * 1000)}"
-            return _run_async(
-                _run_dataset_item_with_agent(
-                    agent_payload=agent_payload,
-                    user_id=str(user_id),
-                    item_input=item_input,
-                    session_id=session_id,
-                )
+            return await _run_dataset_item_with_agent(
+                agent_payload=agent_payload,
+                user_id=str(user_id),
+                item_input=item_input,
+                session_id=session_id,
             )
         if not generation_model:
             raise RuntimeError("No generation model configured for dataset experiment.")
         try:
-            generated_output, _ = _run_async(
-                _dataset_generate_with_model(
-                    model=generation_model,
-                    model_api_key=generation_model_api_key,
-                    item_input=item_input,
-                )
+            generated_output, _ = await _dataset_generate_with_model(
+                model=generation_model,
+                model_api_key=generation_model_api_key,
+                item_input=item_input,
             )
             return generated_output
         except Exception as exc:  # noqa: BLE001
@@ -3379,17 +3410,15 @@ def _run_dataset_experiment_sync(
     if judge_criteria and judge_model and (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
         llm_metric_name = f"llm_judge:{judge_name or 'judge'}"
 
-        def llm_judge_evaluator(*, input, output, expected_output=None, **kwargs):  # noqa: ARG001
+        async def llm_judge_evaluator(*, input, output, expected_output=None, **kwargs):  # noqa: ARG001
             try:
-                value, reason, used_model = _run_async(
-                    _dataset_llm_evaluate(
-                        criteria=judge_criteria,
-                        model=judge_model,
-                        model_api_key=judge_model_api_key,
-                        item_input=input,
-                        output=output,
-                        expected_output=expected_output,
-                    )
+                value, reason, used_model = await _dataset_llm_evaluate(
+                    criteria=judge_criteria,
+                    model=judge_model,
+                    model_api_key=judge_model_api_key,
+                    item_input=input,
+                    output=output,
+                    expected_output=expected_output,
                 )
                 return _build_experiment_evaluation(
                     name=llm_metric_name,
@@ -3418,15 +3447,27 @@ def _run_dataset_experiment_sync(
         "user_id": str(user_id),
     }
 
-    result = client.run_experiment(
+    # Agent-based experiments must run sequentially (max_concurrency=1) because
+    # the graph cache returns a shared mutable LangGraphAdapter object.
+    # Concurrent agent runs cause race conditions on the shared graph state.
+    effective_concurrency = 1 if agent_payload else _get_dataset_experiment_concurrency()
+
+    # Call _run_experiment_async directly to stay in the main event loop.
+    # Using client.run_experiment() would call run_async_safely() which creates
+    # a separate event loop, breaking shared async resources (DB, Redis, etc.).
+    run_name = client._create_experiment_run_name(name=experiment_name)
+    result = await client._run_experiment_async(
         name=experiment_name,
+        run_name=run_name,
         description=description,
         data=data_items,
         task=task,
         evaluators=evaluators,
-        max_concurrency=_get_dataset_experiment_concurrency(),
+        composite_evaluator=None,
+        run_evaluators=[],
+        max_concurrency=effective_concurrency,
         metadata=experiment_metadata,
-        _dataset_version=getattr(dataset, "version", None),
+        dataset_version=getattr(dataset, "version", None),
     )
 
     metric_buckets: dict[str, list[float]] = defaultdict(list)
@@ -3484,8 +3525,7 @@ async def _run_dataset_experiment_job(
         started_at=datetime.now(timezone.utc),
     )
     try:
-        result_payload = await asyncio.to_thread(
-            _run_dataset_experiment_sync,
+        result_payload = await _run_dataset_experiment_async(
             client=client,
             dataset_name=dataset_name,
             experiment_name=experiment_name,
@@ -3575,6 +3615,7 @@ async def get_scores(
     name: Annotated[str | None, Query()] = None,
     org_id: Annotated[UUID | None, Query()] = None,
     dept_id: Annotated[UUID | None, Query()] = None,
+    environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
 ) -> Dict[str, Any]:
     """
     List evaluation scores visible to the current user (scope-aware).
@@ -3592,7 +3633,7 @@ async def get_scores(
         trace_id = str(trace_id).strip() if trace_id and str(trace_id).strip() else None
         name = str(name).strip() if name and str(name).strip() else None
         scope_key = f"{user_id}|{str(org_id) if org_id else ''}|{str(dept_id) if dept_id else ''}"
-        score_cache_key = f"{scope_key}|{page}|{limit}|{trace_id or ''}|{(name or '').lower()}"
+        score_cache_key = f"{scope_key}|{page}|{limit}|{trace_id or ''}|{(name or '').lower()}|{environment or ''}"
         now_mono = time.monotonic()
         cached_score_payload: dict[str, Any] | None = None
         cached_score_entry = _SCORE_LIST_CACHE.get(score_cache_key)
@@ -3629,6 +3670,7 @@ async def get_scores(
                             client,
                             user_id=uid,
                             limit=prefetch_limit,
+                            environment=environment,
                         )
                         for raw_trace in user_traces or []:
                             trace_dict = parse_trace_data(raw_trace)
@@ -4178,11 +4220,12 @@ async def get_scores(
 async def create_score(
     payload: CreateScoreRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
 ) -> Dict[str, str]:
     """
     Create a manual score (Annotation).
     """
-    client = get_langfuse_client()
+    _, client = await _get_scoped_langfuse_for_evaluation(session, current_user)
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -4234,6 +4277,7 @@ async def get_pending_reviews(
     limit: int = 20,
     org_id: Annotated[UUID | None, Query()] = None,
     dept_id: Annotated[UUID | None, Query()] = None,
+    environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
 ) -> List[TraceForReview]:
     """
     Get recent traces that might need review (Annotation Queue).
@@ -4253,7 +4297,7 @@ async def get_pending_reviews(
         # Filters bust the cache so only unfiltered requests are cached.
         _use_pending_cache = not any([trace_id, agent_name, session_id, user_id_filter, ts_from, ts_to])
         scope_key = f"{user_id}|{str(org_id) if org_id else ''}|{str(dept_id) if dept_id else ''}"
-        _pending_cache_key = f"{scope_key}|{limit}"
+        _pending_cache_key = f"{scope_key}|{limit}|{environment or ''}"
         _now_mono = time.monotonic()
         if _use_pending_cache:
             _pending_entry = _PENDING_REVIEWS_CACHE.get(_pending_cache_key)
@@ -4267,7 +4311,7 @@ async def get_pending_reviews(
         traces_data = []
         for uid in allowed_user_ids:
             try:
-                uid_traces = fetch_traces_from_langfuse(client, user_id=uid, limit=fetch_limit)
+                uid_traces = fetch_traces_from_langfuse(client, user_id=uid, limit=fetch_limit, environment=environment)
                 traces_data.extend(uid_traces or [])
             except Exception as e:
                 logger.warning("fetch_traces_from_langfuse failed for user_id={}: {}", uid, str(e))
@@ -4476,7 +4520,7 @@ async def create_dataset(
     session: DbSession,
 ) -> DatasetResponse:
     """Create a Langfuse dataset with optional visibility settings."""
-    client = get_langfuse_client()
+    _, client = await _get_scoped_langfuse_for_evaluation(session, current_user)
     if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
 
@@ -5114,7 +5158,7 @@ async def run_dataset_experiment(
     generation_model_api_key: str | None = None
     if payload.generation_model_registry_id:
         generation_model, generation_model_api_key = await _resolve_model_from_registry(
-            payload.generation_model_registry_id
+            payload.generation_model_registry_id, session=session
         )
 
     if not agent_payload and not generation_model:
@@ -5132,6 +5176,7 @@ async def run_dataset_experiment(
         judge_model=None,
         judge_model_api_key=None,
         judge_model_registry_id=payload.judge_model_registry_id,
+        session=session,
     )
     if judge_cfg["criteria"] and not judge_cfg["model"]:
         judge_cfg["model"] = "gpt-4o"
@@ -5424,67 +5469,208 @@ async def list_evaluation_presets(
 @router.get("/models")
 async def list_evaluation_models(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
 ) -> Dict[str, Any]:
     """Return agents accessible to the current user as a normalized model list.
 
-    This endpoint intentionally uses the application's standard auth (JWT/cookie)
-    so the frontend can fetch the Model Catalogue without requiring an API key.
+    When *environment* is provided, only agents deployed to that environment
+    (with the same RBAC rules as the orchestration chat) are returned.
+    Without an environment filter the legacy behaviour (all owned/public agents) is used.
     """
     try:
         async with session_scope() as session:
-            stmt = select(agent).where(
-                or_(
-                    agent.user_id == current_user.id,
-                    agent.access_type == AccessTypeEnum.PUBLIC,
-                )
-            )
-            is_component_col = getattr(agent, "is_component", None)
-            if is_component_col is not None:
-                stmt = stmt.where(
+            if environment and environment.lower() in ("uat", "production", "prod"):
+                env = environment.lower()
+                if env == "prod":
+                    env = "production"
+                agents_data = await _list_deployed_agents(session, current_user, env)
+            else:
+                # Legacy: all owned / public agents from the base Agent table
+                stmt = select(agent).where(
                     or_(
-                        is_component_col == False,  # noqa: E712
-                        is_component_col.is_(None),
+                        agent.user_id == current_user.id,
+                        agent.access_type == AccessTypeEnum.PUBLIC,
                     )
                 )
-            _res = await session.exec(stmt)
-            agents = _res.all()
+                is_component_col = getattr(agent, "is_component", None)
+                if is_component_col is not None:
+                    stmt = stmt.where(
+                        or_(
+                            is_component_col == False,  # noqa: E712
+                            is_component_col.is_(None),
+                        )
+                    )
+                _res = await session.exec(stmt)
+                raw_agents = _res.all()
+                agents_data = [
+                    _agent_to_payload(a, environment=None) for a in raw_agents
+                ]
 
-        def to_payload(agent_obj: agent) -> dict:
-            updated = agent_obj.updated_at
-            try:
-                updated_dt = datetime.fromisoformat(updated) if isinstance(updated, str) else updated
-            except Exception:
-                updated_dt = None
-            created_ts = int(updated_dt.timestamp()) if updated_dt else int(time.time())
-            endpoint_name = getattr(agent_obj, "endpoint_name", None)
-            model_id = endpoint_name or agent_obj.id
-            access = agent_obj.access_type.value if agent_obj.access_type else AccessTypeEnum.PRIVATE.value
-            return {
-                "id": f"lb:{model_id}",
-                "name": agent_obj.name,
-                "object": "model",
-                "created": created_ts,
-                "owned_by": str(agent_obj.user_id) if agent_obj.user_id else None,
-                "root": f"lb:{model_id}",
-                "parent": None,
-                "permission": [],
-                "metadata": {
-                    "display_name": agent_obj.name,
-                    "description": agent_obj.description,
-                    "endpoint_name": endpoint_name,
-                    # New canonical key used across the codebase
-                    "agent_id": str(agent_obj.id),
-                    # Legacy aliases expected by some frontend codepaths — keep for compatibility
-                    "agent_id": str(agent_obj.id),
-                    "agent_ids": [str(agent_obj.id)],
-                    "access": access,
-                },
-            }
-
-        return {"object": "list", "data": [to_payload(f) for f in agents]}
+        return {"object": "list", "data": agents_data}
     except Exception as e:
         logger.opt(exception=True).error("Error listing evaluation models: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _agent_to_payload(agent_obj, *, environment: str | None = None) -> dict:
+    """Convert an Agent (or deployment record) into the normalised model payload."""
+    updated = agent_obj.updated_at
+    try:
+        updated_dt = datetime.fromisoformat(updated) if isinstance(updated, str) else updated
+    except Exception:
+        updated_dt = None
+    created_ts = int(updated_dt.timestamp()) if updated_dt else int(time.time())
+    endpoint_name = getattr(agent_obj, "endpoint_name", None)
+    model_id = endpoint_name or agent_obj.id
+    access = (
+        agent_obj.access_type.value
+        if getattr(agent_obj, "access_type", None)
+        else AccessTypeEnum.PRIVATE.value
+    )
+    return {
+        "id": f"lb:{model_id}",
+        "name": agent_obj.name,
+        "object": "model",
+        "created": created_ts,
+        "owned_by": str(agent_obj.user_id) if getattr(agent_obj, "user_id", None) else None,
+        "root": f"lb:{model_id}",
+        "parent": None,
+        "permission": [],
+        "metadata": {
+            "display_name": agent_obj.name,
+            "description": getattr(agent_obj, "description", None),
+            "endpoint_name": endpoint_name,
+            "agent_id": str(agent_obj.id),
+            "agent_ids": [str(agent_obj.id)],
+            "access": access,
+            **({"environment": environment} if environment else {}),
+        },
+    }
+
+
+def _deploy_to_payload(deploy_rec, *, environment: str) -> dict:
+    """Convert a deployment record into the normalised model payload."""
+    created_ts = int(time.time())
+    if getattr(deploy_rec, "updated_at", None):
+        try:
+            dt = (
+                datetime.fromisoformat(deploy_rec.updated_at)
+                if isinstance(deploy_rec.updated_at, str)
+                else deploy_rec.updated_at
+            )
+            created_ts = int(dt.timestamp())
+        except Exception:
+            pass
+    agent_id = str(deploy_rec.agent_id)
+    return {
+        "id": f"lb:{agent_id}",
+        "name": deploy_rec.agent_name or agent_id,
+        "object": "model",
+        "created": created_ts,
+        "owned_by": str(deploy_rec.deployed_by) if getattr(deploy_rec, "deployed_by", None) else None,
+        "root": f"lb:{agent_id}",
+        "parent": None,
+        "permission": [],
+        "metadata": {
+            "display_name": deploy_rec.agent_name or agent_id,
+            "description": getattr(deploy_rec, "agent_description", None),
+            "endpoint_name": None,
+            "agent_id": agent_id,
+            "agent_ids": [agent_id],
+            "access": "public",
+            "environment": environment,
+        },
+    }
+
+
+async def _list_deployed_agents(session, current_user: User, env: str) -> list[dict]:
+    """Return deployed agents for the given environment using orchestrator RBAC logic."""
+    from agentcore.services.auth.permissions import normalize_role as _nr
+
+    current_role = str(getattr(current_user, "role", "")).lower()
+    is_admin = current_role in {"super_admin", "department_admin", "root"}
+
+    if env == "production":
+        # ---- Production RBAC (mirrors orchestrator.py) ----
+        prod_share_exists = (
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    AgentDeploymentProd.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id == AgentDeploymentProd.dept_id,
+                ),
+            )
+            .exists()
+        )
+        prod_dept_member_exists = (
+            select(UserDepartmentMembership.id)
+            .where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.department_id == AgentDeploymentProd.dept_id,
+                UserDepartmentMembership.status == "active",
+            )
+            .exists()
+        )
+        prod_private_access = (
+            (AgentDeploymentProd.deployed_by == current_user.id)
+            | prod_share_exists
+        )
+        prod_public_access = prod_private_access | prod_dept_member_exists
+        if is_admin:
+            prod_private_access = prod_private_access | true()
+            prod_public_access = prod_public_access | true()
+
+        stmt = (
+            select(AgentDeploymentProd)
+            .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
+            .where(AgentDeploymentProd.is_active == True)  # noqa: E712
+            .where(AgentDeploymentProd.is_enabled == True)  # noqa: E712
+            .where(
+                (
+                    (AgentDeploymentProd.visibility == ProdDeploymentVisibilityEnum.PUBLIC)
+                    & prod_public_access
+                )
+                | (
+                    (AgentDeploymentProd.visibility == ProdDeploymentVisibilityEnum.PRIVATE)
+                    & prod_private_access
+                )
+            )
+        )
+        records = list((await session.exec(stmt)).all())
+        return [_deploy_to_payload(r, environment="production") for r in records]
+
+    else:
+        # ---- UAT RBAC (mirrors orchestrator.py) ----
+        uat_share_exists = (
+            select(AgentPublishRecipient.id)
+            .where(
+                AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+                or_(
+                    AgentDeploymentUAT.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id == AgentDeploymentUAT.dept_id,
+                ),
+            )
+            .exists()
+        )
+        uat_access = (
+            (AgentDeploymentUAT.deployed_by == current_user.id)
+            | uat_share_exists
+        )
+        if is_admin:
+            uat_access = uat_access | true()
+
+        stmt = (
+            select(AgentDeploymentUAT)
+            .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+            .where(AgentDeploymentUAT.is_active == True)  # noqa: E712
+            .where(AgentDeploymentUAT.is_enabled == True)  # noqa: E712
+            .where(uat_access)
+        )
+        records = list((await session.exec(stmt)).all())
+        return [_deploy_to_payload(r, environment="uat") for r in records]
 
 
 async def _enqueue_existing_trace_evaluations(
@@ -5505,11 +5691,13 @@ async def _enqueue_existing_trace_evaluations(
     model_api_key: str | None = None,
     preset_id: str | None = None,
     ground_truth: str | None = None,
+    environment: str | None = None,
+    langfuse_client: Any = None,
 ) -> int:
     """Queue evaluator runs for all matching existing traces."""
     validate_ground_truth_requirement(preset_id, ground_truth)
 
-    client = get_langfuse_client()
+    client = langfuse_client or get_langfuse_client()
     if not client:
         return 0
 
@@ -5523,6 +5711,7 @@ async def _enqueue_existing_trace_evaluations(
             limit=1000,
             from_timestamp=ts_from,
             to_timestamp=ts_to,
+            environment=environment,
         )
     except Exception as exc:
         logger.warning("Failed to fetch traces for evaluator run: {}", str(exc))
@@ -5642,6 +5831,8 @@ async def create_evaluator_config(
     payload: EvaluatorCreateRequest,
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
 ) -> EvaluatorResponse:
     """Create a reusable evaluator configuration and optionally run on existing traces."""
     try:
@@ -5657,7 +5848,7 @@ async def create_evaluator_config(
         to_ts = _parse_iso_datetime_or_400(payload.ts_to, "ts_to")
 
         # Resolve model from registry
-        effective_model, effective_api_key = await _resolve_model_from_registry(payload.model_registry_id)
+        effective_model, effective_api_key = await _resolve_model_from_registry(payload.model_registry_id, session=session)
 
         async with session_scope() as session:
             # Enforce RBAC scope for creation
@@ -5700,6 +5891,7 @@ async def create_evaluator_config(
 
         # If target includes 'existing', fetch matching traces and enqueue judge tasks.
         if "existing" in normalized_target:
+            _, lf_client = await _get_scoped_langfuse_for_evaluation(session, current_user)
             enqueued = await _enqueue_existing_trace_evaluations(
                 background_tasks=background_tasks,
                 user_id=str(current_user.id),
@@ -5717,6 +5909,8 @@ async def create_evaluator_config(
                 model_api_key=effective_api_key,
                 preset_id=payload.preset_id,
                 ground_truth=payload.ground_truth,
+                environment=environment,
+                langfuse_client=lf_client,
             )
             logger.info(f"evaluation - Enqueued {enqueued} judge tasks for evaluator id={eid}")
 
@@ -5733,6 +5927,8 @@ async def run_evaluator_config(
     config_id: str,
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: DbSession,
+    environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
 ) -> Dict[str, Any]:
     """Run an existing saved evaluator against matching existing traces."""
     try:
@@ -5765,11 +5961,12 @@ async def run_evaluator_config(
 
         # Resolve model from registry at runtime
         if eval_obj.model_registry_id:
-            effective_model, effective_api_key = await _resolve_model_from_registry(eval_obj.model_registry_id)
+            effective_model, effective_api_key = await _resolve_model_from_registry(eval_obj.model_registry_id, session=session)
         else:
             effective_model = eval_obj.model or "gpt-4o"
             effective_api_key = None
 
+        _, lf_client = await _get_scoped_langfuse_for_evaluation(session, current_user)
         enqueued = await _enqueue_existing_trace_evaluations(
             background_tasks=background_tasks,
             user_id=str(current_user.id),
@@ -5787,6 +5984,8 @@ async def run_evaluator_config(
             model_api_key=effective_api_key,
             preset_id=eval_obj.preset_id,
             ground_truth=eval_obj.ground_truth,
+            environment=environment,
+            langfuse_client=lf_client,
         )
         logger.info(
             "evaluation - Enqueued {} judge tasks for existing evaluator id={} user={}",
@@ -5865,7 +6064,7 @@ async def update_evaluator_config(
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
             # Resolve model from registry
-            effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id)
+            effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
 
             # Re-validate scope if visibility fields are provided
             visibility, public_scope, public_dept_ids, shared_user_ids, resolved_org_id, resolved_dept_id = (

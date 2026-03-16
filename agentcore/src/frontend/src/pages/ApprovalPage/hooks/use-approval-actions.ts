@@ -3,11 +3,15 @@ import {
   useApproveAgent,
   useRejectAgent,
 } from "@/controllers/API/queries/approvals";
+import {
+  useApprovePackageRequest,
+  useRejectPackageRequest,
+} from "@/controllers/API/queries/packages";
 import useAlertStore from "@/stores/alertStore";
 import type { ApprovalAgent } from "@/controllers/API/queries/approvals";
 
 const entityLabel = (entityType?: string) =>
-  entityType === "model" ? "Model" : entityType === "mcp" ? "MCP request" : "Agent";
+  entityType === "model" ? "Model" : entityType === "mcp" ? "MCP request" : entityType === "package" ? "Package request" : "Agent";
 
 /**
  * Custom hook to handle approval and rejection actions
@@ -20,6 +24,8 @@ export const useApprovalActions = () => {
   // API mutation hooks
   const approveAgentMutation = useApproveAgent();
   const rejectAgentMutation = useRejectAgent();
+  const approvePackageMutation = useApprovePackageRequest();
+  const rejectPackageMutation = useRejectPackageRequest();
 
   /**
    * Handle agent approval
@@ -33,6 +39,29 @@ export const useApprovalActions = () => {
     ) => {
       try {
         await new Promise((resolve, reject) => {
+          if (agent.entityType === "package") {
+            approvePackageMutation.mutate(
+              {
+                requestId: agent.id,
+                comments,
+              },
+              {
+                onSuccess: () => {
+                  setSuccessData({
+                    title: `${entityLabel(agent.entityType)} "${agent.title}" approved successfully.`,
+                  });
+                  resolve(null);
+                },
+                onError: () => {
+                  setErrorData({
+                    title: `Failed to approve ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
+                  });
+                  reject(new Error("Approval failed"));
+                },
+              },
+            );
+            return;
+          }
           approveAgentMutation.mutate(
             {
               agentId: agent.id,
@@ -59,7 +88,7 @@ export const useApprovalActions = () => {
         console.error("Approval error:", error);
       }
     },
-    [approveAgentMutation, setSuccessData, setErrorData],
+    [approveAgentMutation, approvePackageMutation, setSuccessData, setErrorData],
   );
 
   /**
@@ -74,6 +103,29 @@ export const useApprovalActions = () => {
     ) => {
       try {
         await new Promise((resolve, reject) => {
+          if (agent.entityType === "package") {
+            rejectPackageMutation.mutate(
+              {
+                requestId: agent.id,
+                comments,
+              },
+              {
+                onSuccess: () => {
+                  setSuccessData({
+                    title: `${entityLabel(agent.entityType)} "${agent.title}" rejected.`,
+                  });
+                  resolve(null);
+                },
+                onError: () => {
+                  setErrorData({
+                    title: `Failed to reject ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
+                  });
+                  reject(new Error("Rejection failed"));
+                },
+              },
+            );
+            return;
+          }
           rejectAgentMutation.mutate(
             {
               agentId: agent.id,
@@ -100,7 +152,7 @@ export const useApprovalActions = () => {
         console.error("Rejection error:", error);
       }
     },
-    [rejectAgentMutation, setSuccessData, setErrorData],
+    [rejectAgentMutation, rejectPackageMutation, setSuccessData, setErrorData],
   );
 
   return {
@@ -108,6 +160,8 @@ export const useApprovalActions = () => {
     handleReject,
     isLoading:
       approveAgentMutation.isPending ||
-      rejectAgentMutation.isPending,
+      rejectAgentMutation.isPending ||
+      approvePackageMutation.isPending ||
+      rejectPackageMutation.isPending,
   };
 };

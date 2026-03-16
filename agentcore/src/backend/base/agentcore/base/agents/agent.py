@@ -137,6 +137,11 @@ class LCAgentNode(Node):
                 max_iterations=max_iterations,
             )
         if isinstance(self.input_value, Message):
+            # Ensure images are resolved (base64 fetched from storage) before
+            # converting to LangChain message.  In most cases ChatInput already
+            # resolved them, but if the Message was serialized (e.g. checkpointed
+            # state) the PrivateAttr _base64_cache is lost and must be re-fetched.
+            await self.input_value.resolve_images()
             lc_message = self.input_value.to_lc_message()
             input_raw = lc_message.content if hasattr(lc_message, "content") else str(lc_message)
         else:
@@ -152,17 +157,36 @@ class LCAgentNode(Node):
             if all(isinstance(m, Message) for m in self.chat_history):
                 input_dict["chat_history"] = data_to_messages([m.to_data() for m in self.chat_history])
         if isinstance(input_dict["input"], list):
-            # ! Because the input has to be a string, we must pass the images in the chat_history
+            # The ChatPromptTemplate uses ("human", "{input}") which stringifies the
+            # value.  For multimodal content (text + image_url dicts) we must:
+            #   1. Extract image dicts and move them into chat_history as a HumanMessage
+            #      so the LLM receives them as proper multimodal content.
+            #   2. Collapse the remaining text items back to a plain string for {input}.
 
-            image_dicts = [item for item in input_dict["input"] if isinstance(item, dict) and item.get("type") == "image"]
-            input_dict["input"] = [item for item in input_dict["input"] if not (isinstance(item, dict) and item.get("type") == "image")]
+            image_dicts = [
+                item for item in input_dict["input"]
+                if isinstance(item, dict) and item.get("type") in ("image", "image_url")
+            ]
+            text_parts = []
+            for item in input_dict["input"]:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+                elif isinstance(item, str):
+                    text_parts.append(item)
+                # skip image/image_url dicts – handled above
 
-            if "chat_history" not in input_dict:
-                input_dict["chat_history"] = []
-            if isinstance(input_dict["chat_history"], list):
-                input_dict["chat_history"].extend(HumanMessage(content=[image_dict]) for image_dict in image_dicts)
-            else:
-                input_dict["chat_history"] = [HumanMessage(content=[image_dict]) for image_dict in image_dicts]
+            # Flatten input back to a plain string so the template can format it
+            input_dict["input"] = " ".join(text_parts).strip() if text_parts else ""
+
+            if image_dicts:
+                if "chat_history" not in input_dict:
+                    input_dict["chat_history"] = []
+                # Add a single HumanMessage with all images so the model sees them
+                # right before the text input in the conversation.
+                if isinstance(input_dict["chat_history"], list):
+                    input_dict["chat_history"].append(HumanMessage(content=image_dicts))
+                else:
+                    input_dict["chat_history"] = [HumanMessage(content=image_dicts)]
 
         if hasattr(self, "graph"):
             session_id = self.graph.session_id

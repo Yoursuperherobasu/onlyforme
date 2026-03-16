@@ -1,0 +1,87 @@
+# -----------------------------------------------------------------------------
+# Package Inventory Sync Stage (Azure DevOps)
+# Usage:
+# 1) Include this stage before image build/deploy.
+# 2) Set PACKAGE_INVENTORY_API_URL and PACKAGE_INVENTORY_API_KEY as pipeline vars.
+# 3) Ensure backend endpoint /api/package-inventory/snapshots is reachable.
+# -----------------------------------------------------------------------------
+
+stages:
+- stage: PackageInventorySync
+  displayName: "Package Inventory Sync"
+  variables:
+    repo_root: "agentcore"
+  jobs:
+  - job: SyncServiceSnapshots
+    displayName: "Generate and Push Service Snapshots"
+    strategy:
+      matrix:
+        backend:
+          service_name: backend
+          project_subpath: src/backend
+        model_service:
+          service_name: model-service
+          project_subpath: src/services/model-service
+        mcp_service:
+          service_name: mcp-service
+          project_subpath: src/services/mcp-service
+        guardrails_service:
+          service_name: guardrails-service
+          project_subpath: src/services/guardrails-service
+        pinecone_service:
+          service_name: pinecone-service
+          project_subpath: src/services/pinecone-service
+        graph_rag_service:
+          service_name: graph-rag-service
+          project_subpath: src/services/graph-rag-service
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UsePythonVersion@0
+      displayName: "Use Python 3.12"
+      inputs:
+        versionSpec: "3.12"
+
+    - script: |
+        set -euo pipefail
+        python -m pip install --upgrade pip
+      displayName: "Prepare Python"
+
+    # Step 1: Validate snapshot generation inputs (fails job on invalid lock/project)
+    - script: |
+        set -euo pipefail
+        python "$(repo_root)/scripts/export_package_snapshot.py" \
+          --project "$(repo_root)/$(project_subpath)" \
+          --service-name "$(service_name)" \
+          --snapshot-id "$(Build.BuildId)-$(service_name)" \
+          --build-id "$(Build.BuildId)" \
+          --commit-sha "$(Build.SourceVersion)" \
+          --validate-only
+      displayName: "Validate lock/snapshot input"
+
+    # Step 2: Export snapshot JSON artifact for this service
+    - script: |
+        set -euo pipefail
+        mkdir -p package-snapshots
+        python "$(repo_root)/scripts/export_package_snapshot.py" \
+          --project "$(repo_root)/$(project_subpath)" \
+          --service-name "$(service_name)" \
+          --snapshot-id "$(Build.BuildId)-$(service_name)" \
+          --build-id "$(Build.BuildId)" \
+          --commit-sha "$(Build.SourceVersion)" \
+          --output "package-snapshots/$(service_name)-snapshot.json"
+      displayName: "Export snapshot JSON"
+
+    # Step 3: Push snapshot to backend package inventory API
+    - script: |
+        set -euo pipefail
+        curl --fail-with-body -sS -X POST \
+          -H "Content-Type: application/json" \
+          -H "x-api-key: $(PACKAGE_INVENTORY_API_KEY)" \
+          --data @package-snapshots/$(service_name)-snapshot.json \
+          "$(PACKAGE_INVENTORY_API_URL)/api/package-inventory/snapshots"
+      displayName: "Push snapshot to backend"
+
+    - publish: package-snapshots
+      artifact: package-snapshots-$(service_name)
+      displayName: "Publish snapshot artifact"

@@ -127,13 +127,13 @@ dependencies = [
     "fastparquet>=2024.11.0,<2025.0.0",
     "opencv-python>=4.11; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "toml>=0.10.2",
-    "sqlparse", 
+    "sqlparse",
     "matplotlib",
-    "cryptography", 
+    "cryptography",
     "psycopg2-binary",
     # nemoguardrails, annoy removed — guardrails execution delegated to guardrails-service microservice
     "apscheduler>=3.10",
-    "tabulate"
+    "tabulate",
 ]
 
 [tool.hatch.build.targets.wheel]

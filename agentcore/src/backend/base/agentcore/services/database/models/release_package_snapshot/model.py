@@ -14,6 +14,7 @@ class ReleasePackageSnapshot(SQLModel, table=True):  # type: ignore[call-arg]
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     release_id: UUID = Field(nullable=False, foreign_key="product_release.id", index=True)
+    service_name: str = Field(sa_column=Column(String(100), nullable=False, index=True, default="backend"))
     name: str = Field(sa_column=Column(String(255), nullable=False, index=True))
     version: str = Field(sa_column=Column(String(100), nullable=False))
     version_spec: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
@@ -28,8 +29,9 @@ class ReleasePackageSnapshot(SQLModel, table=True):  # type: ignore[call-arg]
     __table_args__ = (
         UniqueConstraint(
             "release_id",
+            "service_name",
             "name",
             "package_type",
-            name="uq_release_package_snapshot_release_name_type",
+            name="uq_release_package_snapshot_release_service_name_type",
         ),
     )

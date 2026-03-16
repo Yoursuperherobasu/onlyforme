@@ -124,7 +124,7 @@ export default function ApprovalPreviewPage(): JSX.Element {
                     <div className="font-medium uppercase">
                       {(() => {
                         const env = snapshot.final_target_environment || snapshot.target_environment || snapshot.environment;
-                        return env === "test" ? "DEV" : env?.toUpperCase();
+                        return env === "test" ? "UAT" : env?.toUpperCase();
                       })()}
                     </div>
                   </div>

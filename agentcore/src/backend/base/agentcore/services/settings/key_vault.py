@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from cachetools import TTLCache
 
 from pydantic import BaseModel
 
@@ -21,6 +23,7 @@ class KeyVaultSecretStore:
     """Thin wrapper around Azure Key Vault SecretClient."""
 
     _client: object
+    _cache: TTLCache = field(default_factory=lambda: TTLCache(maxsize=512, ttl=600))
 
     @classmethod
     def from_config(cls, config: KeyVaultConfig) -> "KeyVaultSecretStore | None":
@@ -53,9 +56,21 @@ class KeyVaultSecretStore:
         from azure.core.exceptions import ResourceNotFoundError
 
         try:
-            return self._client.get_secret(name).value
+            cached = self._cache.get(name)
+            if cached is not None:
+                return cached
+            value = self._client.get_secret(name).value
+            if value is not None:
+                self._cache[name] = value
+            return value
         except ResourceNotFoundError:
             return None
+
+    def set_secret(self, name: str, value: str) -> None:
+        if value is None:
+            return
+        self._client.set_secret(name=name, value=value)
+        self._cache[name] = value
 
 
 def resolve_backend_secrets_from_key_vault() -> None:

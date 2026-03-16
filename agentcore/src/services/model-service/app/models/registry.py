@@ -70,8 +70,8 @@ class ModelRegistry(SQLModel, table=True):
     requested_by: UUID | None = Field(default=None, nullable=True, index=True)
     request_to: UUID | None = Field(default=None, nullable=True, index=True)
 
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------

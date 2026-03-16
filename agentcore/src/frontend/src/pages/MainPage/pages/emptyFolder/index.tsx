@@ -4,9 +4,13 @@ import { useFolderStore } from "@/stores/foldersStore";
 
 type EmptyFolderProps = {
   setOpenModal: (open: boolean) => void;
+  allowCreateInProject: boolean;
 };
 
-export const EmptyFolder = ({ setOpenModal }: EmptyFolderProps) => {
+export const EmptyFolder = ({
+  setOpenModal,
+  allowCreateInProject,
+}: EmptyFolderProps) => {
   const folders = useFolderStore((state) => state.folders);
 
   return (
@@ -21,19 +25,21 @@ export const EmptyFolder = ({ setOpenModal }: EmptyFolderProps) => {
         <p className="pb-5 text-sm text-secondary-foreground">
           Begin with a template, or start from scratch.
         </p>
-        <Button
-          variant="default"
-          onClick={() => setOpenModal(true)}
-          id="new-project-btn"
-          data-testid="new_project_btn_empty_page"
-        >
-          <ForwardedIconComponent
-            name="plus"
-            aria-hidden="true"
-            className="h-4 w-4"
-          />
-          <span className="whitespace-nowrap font-semibold">New Agent</span>
-        </Button>
+        {allowCreateInProject && (
+          <Button
+            variant="default"
+            onClick={() => setOpenModal(true)}
+            id="new-project-btn"
+            data-testid="new_project_btn_empty_page"
+          >
+            <ForwardedIconComponent
+              name="plus"
+              aria-hidden="true"
+              className="h-4 w-4"
+            />
+            <span className="whitespace-nowrap font-semibold">New Agent</span>
+          </Button>
+        )}
       </div>
     </div>
   );

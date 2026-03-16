@@ -8,7 +8,7 @@ interface ActionModalProps {
   open: boolean;
   setOpen: (open: boolean) => void;
   action: "approve" | "reject";
-  entityType?: "agent" | "model" | "mcp";
+  entityType?: "agent" | "model" | "mcp" | "package";
   agentTitle: string;
   onSubmit: (data: { comments: string; attachments: File[] }) => Promise<void> | void;
   isLoading?: boolean;
@@ -243,7 +243,7 @@ export default function ActionModal({
 
   const isApprove = action === "approve";
   const entityLabel =
-    entityType === "model" ? "Model" : entityType === "mcp" ? "MCP" : "Agent";
+    entityType === "model" ? "Model" : entityType === "mcp" ? "MCP" : entityType === "package" ? "Package" : "Agent";
 
   return (
     <>

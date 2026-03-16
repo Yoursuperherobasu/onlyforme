@@ -24,24 +24,33 @@ import { useNameAvailability } from "@/controllers/API/queries/common/use-name-a
 import { useGetRegistryModels } from "@/controllers/API/queries/models";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
+import {
+  PREDEFINED_GUARDRAIL_TEMPLATES,
+} from "@/constants/predefined-guardrail-templates";
 
 interface EditGuardrailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   guardrail?: GuardrailInfo | null;
   frameworkId?: "nemo" | "arize";
+  readOnly?: boolean;
 }
 
 const CATEGORY_OPTIONS = [
   "content-safety",
   "jailbreak",
   "topic-control",
-  "pii-detection",
+  "pii-masking",
+  "fact-checking",
+  "sensitive-data-removal",
+  "output-filtering",
+  "dialog-control",
+  "retrieval-validation",
+  "execution-validation",
 ];
 
 const getConfigTemplate = (): string => {
-  return `# models section is auto-injected from Model Registry
-rails:
+  return `rails:
   input:
     flows:
       - self check input`;
@@ -79,6 +88,7 @@ export default function EditGuardrailModal({
   onOpenChange,
   guardrail,
   frameworkId = "nemo",
+  readOnly = false,
 }: EditGuardrailModalProps) {
   const isEditMode = !!guardrail;
   const { role } = useContext(AuthContext);
@@ -116,6 +126,40 @@ export default function EditGuardrailModal({
     private_share_users: { id: string; email: string }[];
   }>({ organizations: [], departments: [], private_share_users: [] });
 
+  const [customCategory, setCustomCategory] = useState("");
+
+  // -- Predefined template selection -----------------------------------------
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+
+  const handleTemplateSelect = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+
+    if (!templateId) {
+      // Reset to blank defaults when "Custom" is selected
+      setName("");
+      setDescription("");
+      setCategory("");
+      setCustomCategory("");
+      setConfigYml(getConfigTemplate());
+      setPromptsYml(getPromptsTemplate());
+      setRailsCo("");
+      return;
+    }
+
+    const template = PREDEFINED_GUARDRAIL_TEMPLATES.find(
+      (t) => t.id === templateId,
+    );
+    if (!template) return;
+
+    setName(template.name);
+    setDescription(template.description);
+    setCategory(template.category);
+    setConfigYml(template.configYml);
+    setPromptsYml(template.promptsYml);
+    setRailsCo(template.railsCo);
+  };
+  // --------------------------------------------------------------------------
+
   const selectedModel = useMemo(
     () => registryModels.find((model) => model.id === modelRegistryId) ?? null,
     [registryModels, modelRegistryId],
@@ -136,6 +180,7 @@ export default function EditGuardrailModal({
       setCategory(guardrail.category ?? "content-safety");
       setStatus((guardrail.status ?? "active") as "active" | "inactive");
       setIsCustom(Boolean(guardrail.isCustom));
+      setSelectedTemplateId("");
 
       const runtimeConfig = guardrail.runtimeConfig ?? undefined;
       setConfigYml(
@@ -181,6 +226,7 @@ export default function EditGuardrailModal({
       setPromptsYml(getPromptsTemplate());
       setRailsCo("");
       setPreservedFiles(undefined);
+      setSelectedTemplateId("");
     }
   }, [guardrail, open, registryModels, defaultModelId]);
 
@@ -406,22 +452,57 @@ export default function EditGuardrailModal({
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {isEditMode ? "Edit Guardrail" : "Add Guardrail"}
+            {readOnly ? "View Guardrail (Production — Read Only)" : isEditMode ? "Edit Guardrail" : "Add Guardrail"}
           </DialogTitle>
           <DialogDescription>
-            Configure guardrail metadata and NeMo runtime files. You only need
-            `config_yml` and optional `prompts_yml`. Model details and
-            credentials come from Model Registry.
+            {readOnly
+              ? "This is a frozen production copy. Configuration cannot be modified."
+              : "Configure guardrail metadata and NeMo runtime files. You only need `config_yml` and optional `prompts_yml`. Model details and credentials come from Model Registry."}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Predefined Guardrails dropdown -- only shown when adding */}
+          {!isEditMode && !readOnly && (
+            <div className="space-y-1.5 rounded-md border border-dashed border-primary/40 bg-primary/5 p-4">
+              <Label htmlFor="guardrail-template" className="text-sm font-semibold">
+                Predefined Guardrails
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Select a template to auto-populate the configuration, or choose
+                &quot;Custom&quot; to start from scratch.
+              </p>
+              <select
+                id="guardrail-template"
+                value={selectedTemplateId}
+                onChange={(event) => handleTemplateSelect(event.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="">Custom (blank template)</option>
+                {PREDEFINED_GUARDRAIL_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              {selectedTemplateId && (
+                <p className="text-xs text-muted-foreground italic">
+                  {PREDEFINED_GUARDRAIL_TEMPLATES.find(
+                    (t) => t.id === selectedTemplateId,
+                  )?.description}
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="guardrail-name">Name *</Label>
               <Input
                 id="guardrail-name"
                 required
+                readOnly={readOnly}
+                disabled={readOnly}
                 placeholder="NeMo Content Safety"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -442,7 +523,7 @@ export default function EditGuardrailModal({
                 required
                 value={modelRegistryId}
                 onChange={(event) => setModelRegistryId(event.target.value)}
-                disabled={isModelsLoading || registryModels.length === 0}
+                disabled={readOnly || isModelsLoading || registryModels.length === 0}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 {registryModels.length === 0 ? (
@@ -483,6 +564,8 @@ export default function EditGuardrailModal({
             <Textarea
               id="guardrail-description"
               rows={2}
+              readOnly={readOnly}
+              disabled={readOnly}
               placeholder="What this guardrail enforces"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
@@ -497,6 +580,7 @@ export default function EditGuardrailModal({
                 onChange={(event) =>
                   setVisibility(event.target.value as "private" | "public")
                 }
+                disabled={readOnly}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="private">private</option>
@@ -511,6 +595,7 @@ export default function EditGuardrailModal({
                   onChange={(event) =>
                     setPublicScope(event.target.value as "organization" | "department")
                   }
+                  disabled={readOnly}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
                   <option value="organization">organization</option>
@@ -603,9 +688,19 @@ export default function EditGuardrailModal({
               <Label htmlFor="guardrail-category">Category *</Label>
               <select
                 id="guardrail-category"
-                required
-                value={category}
-                onChange={(event) => setCategory(event.target.value)}
+                required={!customCategory}
+                value={CATEGORY_OPTIONS.includes(category) ? category : "__custom__"}
+                onChange={(event) => {
+                  const val = event.target.value;
+                  if (val === "__custom__") {
+                    setCustomCategory("");
+                    setCategory("");
+                  } else {
+                    setCustomCategory("");
+                    setCategory(val);
+                  }
+                }}
+                disabled={readOnly}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 {CATEGORY_OPTIONS.map((option) => (
@@ -613,7 +708,23 @@ export default function EditGuardrailModal({
                     {option}
                   </option>
                 ))}
+                <option value="__custom__">Other (custom)</option>
               </select>
+              {(!CATEGORY_OPTIONS.includes(category) || category === "") && (
+                <Input
+                  placeholder="Enter custom category (e.g. compliance-check)"
+                  required
+                  readOnly={readOnly}
+                  disabled={readOnly}
+                  value={customCategory || (!CATEGORY_OPTIONS.includes(category) ? category : "")}
+                  onChange={(event) => {
+                    const val = event.target.value;
+                    setCustomCategory(val);
+                    setCategory(val);
+                  }}
+                  className="mt-1.5"
+                />
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="guardrail-status">Status *</Label>
@@ -624,6 +735,7 @@ export default function EditGuardrailModal({
                 onChange={(event) =>
                   setStatus(event.target.value as "active" | "inactive")
                 }
+                disabled={readOnly}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="active">active</option>
@@ -638,6 +750,7 @@ export default function EditGuardrailModal({
               type="checkbox"
               checked={isCustom}
               onChange={(event) => setIsCustom(event.target.checked)}
+              disabled={readOnly}
               className="h-4 w-4 rounded border-input"
             />
             <Label htmlFor="guardrail-custom" className="text-sm">
@@ -658,7 +771,9 @@ export default function EditGuardrailModal({
               <Label htmlFor="guardrail-config-yml">config_yml</Label>
               <Textarea
                 id="guardrail-config-yml"
-                rows={8}
+                rows={readOnly ? 12 : 8}
+                readOnly={readOnly}
+                className={readOnly ? "max-h-[300px] overflow-y-auto font-mono text-xs cursor-default" : ""}
                 value={configYml}
                 onChange={(event) => setConfigYml(event.target.value)}
                 placeholder={getConfigTemplate()}
@@ -669,7 +784,9 @@ export default function EditGuardrailModal({
               <Label htmlFor="guardrail-rails-co">rails_co (Optional)</Label>
               <Textarea
                 id="guardrail-rails-co"
-                rows={8}
+                rows={readOnly ? 12 : 8}
+                readOnly={readOnly}
+                className={readOnly ? "max-h-[300px] overflow-y-auto font-mono text-xs cursor-default" : ""}
                 value={railsCo}
                 onChange={(event) => setRailsCo(event.target.value)}
                 placeholder='define bot refuse to respond
@@ -681,7 +798,9 @@ export default function EditGuardrailModal({
               <Label htmlFor="guardrail-prompts-yml">prompts_yml</Label>
               <Textarea
                 id="guardrail-prompts-yml"
-                rows={6}
+                rows={readOnly ? 12 : 6}
+                readOnly={readOnly}
+                className={readOnly ? "max-h-[300px] overflow-y-auto font-mono text-xs cursor-default" : ""}
                 value={promptsYml}
                 onChange={(event) => setPromptsYml(event.target.value)}
                 placeholder={getPromptsTemplate()}
@@ -690,26 +809,38 @@ export default function EditGuardrailModal({
           </div>
 
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={
-                isSaving ||
-                registryModels.length === 0 ||
-                isVisibilityInvalid ||
-                guardrailNameAvailability.isFetching ||
-                guardrailNameAvailability.isNameTaken
-              }
-            >
-              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isEditMode ? "Save Changes" : "Create Guardrail"}
-            </Button>
+            {readOnly ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+              >
+                Close
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={
+                    isSaving ||
+                    registryModels.length === 0 ||
+                    isVisibilityInvalid ||
+                    guardrailNameAvailability.isFetching ||
+                    guardrailNameAvailability.isNameTaken
+                  }
+                >
+                  {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isEditMode ? "Save Changes" : "Create Guardrail"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

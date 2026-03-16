@@ -26,6 +26,7 @@ import { AuthContext } from "@/contexts/authContext";
 import useDescriptionModal from "../../hooks/use-description-modal";
 import { timeElapsed } from "../../utils/time-elapse";
 import DropdownComponent from "../dropdown";
+import AgentTransferModal from "../AgentTransferModal";
 
 const ListComponent = ({
   agentData,
@@ -44,18 +45,24 @@ const ListComponent = ({
 }) => {
   const navigate = useCustomNavigate();
   const [openDelete, setOpenDelete] = useState(false);
-  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const { deleteAgent } = useDeleteAgent();
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { folderId } = useParams();
   const [openSettings, setOpenSettings] = useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
+  const [transferMode, setTransferMode] = useState<"move" | "copy" | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
   const { userData, role } = useContext(AuthContext);
   const currentUserId = String(userData?.id ?? "");
   const normalizedRole = String(role ?? "")
     .toLowerCase()
     .replace(/\s+/g, "_");
   const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
+    normalizedRole,
+  );
+  const isRestrictedDuplicateRole = ["super_admin", "department_admin"].includes(
     normalizedRole,
   );
   const isComponent = agentData.is_component ?? false;
@@ -70,6 +77,9 @@ const ListComponent = ({
   const requesterId = String(
     publishStatus?.pending_requested_by || publishStatus?.latest_prod_published_by || "",
   );
+  const hasDeployment = Boolean(
+    publishStatus?.uat?.is_enabled || publishStatus?.prod?.is_enabled,
+  );
   const showRequesterBadge = !isComponent && !!requesterId && requesterId === currentUserId;
   const badgeLabel = workflowLocked
     ? "Awaiting Approval"
@@ -83,9 +93,38 @@ const ListComponent = ({
   const readOnlyAgentLink = `/agent/${agentData.id}${folderId ? `/folder/${folderId}` : ""}?readonly=1`;
   const isAgentOwnedByCurrentUser = agentData.user_id
     ? String(agentData.user_id) === currentUserId
-     : true;
+    : false;
   const shouldForceReadOnly = folderId && isAdminRole && !isAgentOwnedByCurrentUser;
   const canModifyAgent = !shouldForceReadOnly;
+  const canDuplicateAgent = !isRestrictedDuplicateRole || isAgentOwnedByCurrentUser;
+  const canTransferAgent = Boolean(folderId) && isAgentOwnedByCurrentUser;
+  const canMoveAgent = canTransferAgent && !hasDeployment;
+  const canCopyAgent = canTransferAgent;
+
+  const getDeploymentEnvLabel = () => {
+    if (publishStatus?.prod?.is_enabled) return "PROD";
+    if (publishStatus?.uat?.is_enabled) return "UAT";
+    return null;
+  };
+
+  const handleOpenTransfer = (mode: "move" | "copy") => {
+    if (mode === "move" && hasDeployment) {
+      setErrorData({
+        title: "Move disabled for UAT/PROD agents",
+        list: ["This agent has a UAT/PROD version. Only copying is allowed."],
+      });
+      return;
+    }
+    setTransferMode(mode);
+    setTransferOpen(true);
+  };
+
+  const handleTransferOpenChange = (open: boolean) => {
+    setTransferOpen(open);
+    if (!open) {
+      setTransferMode(null);
+    }
+  };
 
   const handleClick = async () => {
     if (effectiveDisabled) return; // Prevent click when disabled
@@ -104,20 +143,31 @@ const ListComponent = ({
     }
   };
 
-  const handleDelete = () => {
-    deleteAgent({ id: [agentData.id] })
-      .then(() => {
-        setSuccessData({
-          title: "Selected items deleted successfully",
-        });
-      })
-      .catch(() => {
-        setErrorData({
-          title: "Error deleting items",
-          list: ["Please try again"],
-        });
+  const handleDelete = async () => {
+    setDeleteError(null);
+    const deploymentEnv = getDeploymentEnvLabel();
+    if (deploymentEnv) {
+      setDeleteError(`This agent is deployed in ${deploymentEnv}.`);
+      return;
+    }
+    try {
+      await deleteAgent({ id: [agentData.id] });
+      setSuccessData({
+        title: "Selected items deleted successfully",
       });
+      setOpenDelete(false);
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.detail || error?.message || "Please try again";
+      setDeleteError(detail);
+    }
   };
+
+  useEffect(() => {
+    if (openDelete) {
+      setDeleteError(null);
+    }
+  }, [openDelete]);
 
   const { onDragStart } = useDragStart(agentData);
 
@@ -275,6 +325,11 @@ const ListComponent = ({
                   setOpenSettings(true);
                 }}
                 canModifyAgent={canModifyAgent}
+                canDuplicateAgent={canDuplicateAgent}
+                canCopyAgent={canCopyAgent}
+                canMoveAgent={canMoveAgent}
+                onCopyToProject={() => handleOpenTransfer("copy")}
+                onMoveToProject={() => handleOpenTransfer("move")}
               />
             </DropdownMenuContent>
           </DropdownMenu>
@@ -287,6 +342,8 @@ const ListComponent = ({
           onConfirm={handleDelete}
           description={descriptionModal}
           note={!agentData.is_component ? "and its message history" : ""}
+          errorMessage={deleteError ?? undefined}
+          closeOnConfirm={false}
         />
       )}
       <ExportModal
@@ -299,6 +356,16 @@ const ListComponent = ({
         setOpen={setOpenSettings}
         agentData={agentData}
       />
+      {transferMode && (
+        <AgentTransferModal
+          open={transferOpen}
+          setOpen={handleTransferOpenChange}
+          mode={transferMode}
+          agent={agentData}
+          currentProjectId={folderId}
+          deploymentWarning={hasDeployment}
+        />
+      )}
     </>
   );
 };
