@@ -138,6 +138,7 @@ class GraphEntityExtractorComponent(Node):
             name="schema",
             display_name="Schema Config (Optional)",
             input_types=["Data"],
+            required=False,
             info="Schema from Graph Schema Config. If connected, entity types, "
                  "relationship types, and extraction hints are applied automatically.",
         ),
@@ -447,6 +448,7 @@ class GraphEntityExtractorComponent(Node):
             if not chunk_id:
                 chunk_id = hashlib.sha256(text[:500].encode()).hexdigest()[:16]
 
+            self.log(f"Extracting chunk {idx + 1}/{total_chunks} ({len(text)} chars)...")
             try:
                 result = self._call_llm(text, entity_types, relation_types, prompt_addendum)
             except Exception as e:
@@ -493,12 +495,12 @@ class GraphEntityExtractorComponent(Node):
                     rel["source_chunk_id"] = chunk_id
                     all_relationships.append(rel)
 
-            # Progress logging every 10 chunks or at the end
-            if processed % 10 == 0 or idx == total_chunks - 1:
-                self.log(
-                    f"Processed {processed}/{total_chunks} chunks "
-                    f"({len(all_entities)} entities, {len(all_relationships)} relationships)"
-                )
+            chunk_entities = len(result.get("entities", []))
+            chunk_rels = len(result.get("relationships", []))
+            self.log(
+                f"Chunk {idx + 1}/{total_chunks}: found {chunk_entities} entities, "
+                f"{chunk_rels} relationships (total: {len(all_entities)} entities)"
+            )
 
         # Build output Data items
         output_data: list[Data] = []

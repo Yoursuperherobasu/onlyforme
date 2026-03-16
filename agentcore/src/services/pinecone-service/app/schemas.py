@@ -88,3 +88,82 @@ class TestConnectionResponse(BaseModel):
     success: bool
     message: str
     indexes: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Copy namespace (UAT → PROD migration)
+# ---------------------------------------------------------------------------
+
+
+class CopyNamespaceRequest(BaseModel):
+    index_name: str = Field(..., min_length=1, max_length=128)
+    source_namespace: str = Field(..., max_length=256)
+    target_namespace: str = Field(..., max_length=256)
+    batch_size: int = Field(default=100, ge=1, le=1000)
+
+
+class CopyNamespaceResponse(BaseModel):
+    success: bool
+    copied_vectors: int
+    index_name: str
+    source_namespace: str
+    target_namespace: str
+    message: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Namespace stats (observability)
+# ---------------------------------------------------------------------------
+
+
+class NamespaceStatsRequest(BaseModel):
+    index_name: str = Field(..., min_length=1, max_length=128)
+    namespace: str = Field(default="", max_length=256)
+
+
+class NamespaceStatsResponse(BaseModel):
+    index_name: str
+    namespace: str
+    vector_count: int
+    dimension: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Index & namespace management
+# ---------------------------------------------------------------------------
+
+
+class IndexInfo(BaseModel):
+    name: str
+    dimension: int | None = None
+    metric: str = ""
+    host: str = ""
+    status: str = ""
+    vector_count: int = 0
+    namespaces: list[str] = Field(default_factory=list)
+
+
+class ListIndexesResponse(BaseModel):
+    indexes: list[IndexInfo]
+
+
+class DeleteIndexRequest(BaseModel):
+    index_name: str = Field(..., min_length=1, max_length=128)
+
+
+class DeleteIndexResponse(BaseModel):
+    success: bool
+    index_name: str
+    message: str = ""
+
+
+class DeleteNamespaceRequest(BaseModel):
+    index_name: str = Field(..., min_length=1, max_length=128)
+    namespace: str = Field(..., max_length=256)
+
+
+class DeleteNamespaceResponse(BaseModel):
+    success: bool
+    index_name: str
+    namespace: str
+    message: str = ""

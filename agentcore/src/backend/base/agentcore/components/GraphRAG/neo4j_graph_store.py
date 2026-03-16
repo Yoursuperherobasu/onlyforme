@@ -22,7 +22,6 @@ from agentcore.io import (
     HandleInput,
     IntInput,
     Output,
-    QueryInput,
     StrInput,
 )
 from agentcore.schema.data import Data
@@ -66,12 +65,13 @@ class Neo4jGraphStoreComponent(Node):
             is_list=True,
             info="Extracted entities from Graph Entity Extractor.",
         ),
-        QueryInput(
+        HandleInput(
             name="search_query",
             display_name="Search Query",
-            info="Natural language query for graph-aware vector search.",
-            input_types=["Message"],
-            tool_mode=True,
+            input_types=["Message", "Data"],
+            info="Natural language query for graph-aware vector search. "
+            "Connect a Chat Input or leave empty for ingest-only mode.",
+            required=False,
         ),
         HandleInput(
             name="embedding",
@@ -110,6 +110,7 @@ class Neo4jGraphStoreComponent(Node):
     ]
 
     outputs = [
+        Output(display_name="Ingest Results", name="ingest_results", method="ingest_and_embed"),
         Output(display_name="Search Results", name="search_results", method="search_graph"),
         Output(display_name="DataFrame", name="dataframe", method="as_dataframe"),
         Output(display_name="Graph Stats", name="graph_stats", method="get_stats"),
@@ -145,7 +146,7 @@ class Neo4jGraphStoreComponent(Node):
             ingest_data = [ingest_data]
 
         graph_kb_id = self.graph_kb_id or "default"
-        entities = []
+        seen_keys: dict[str, dict] = {}  # name::type -> entity dict (dedup)
 
         for item in ingest_data:
             if not isinstance(item, Data):
@@ -157,6 +158,9 @@ class Neo4jGraphStoreComponent(Node):
             entity_name = (data.get("name") or data.get("entity_name") or "").strip()
             if not entity_name:
                 continue
+
+            entity_type = (data.get("type") or data.get("entity_type") or "Entity").strip()
+            dedup_key = f"{entity_name.lower()}::{entity_type.lower()}"
 
             relationships = []
             for rel in (data.get("relationships") or []):
@@ -179,19 +183,35 @@ class Neo4jGraphStoreComponent(Node):
                     "weight": max(0.0, min(weight, 1.0)),
                 })
 
-            entities.append({
+            entity = {
                 "name": entity_name,
-                "type": (data.get("type") or data.get("entity_type") or "Entity").strip(),
+                "type": entity_type,
                 "description": (data.get("description") or data.get("text") or "").strip(),
                 "source_chunk_id": data.get("source_chunk_id"),
                 "id": data.get("id"),
                 "relationships": relationships,
-            })
+            }
 
+            if dedup_key in seen_keys:
+                # Merge: keep longer description, combine relationships
+                existing = seen_keys[dedup_key]
+                if len(entity["description"]) > len(existing["description"]):
+                    existing["description"] = entity["description"]
+                existing["relationships"].extend(relationships)
+            else:
+                seen_keys[dedup_key] = entity
+
+        entities = list(seen_keys.values())
         if not entities:
             return 0
 
-        result = ingest_via_service(entities=entities, graph_kb_id=graph_kb_id)
+        self.log(f"Ingesting {len(entities)} entities into graph '{graph_kb_id}'...")
+        try:
+            result = ingest_via_service(entities=entities, graph_kb_id=graph_kb_id)
+        except Exception as e:
+            self.log(f"Ingestion failed: {e}")
+            logger.error("[Neo4j Graph Store] Ingestion failed for graph '%s': %s", graph_kb_id, e)
+            raise
         count = result.get("entities_created", 0)
         rels = result.get("relationships_created", 0)
         self.log(f"Ingested {count} entities, {rels} relationships into graph '{graph_kb_id}'.")
@@ -209,8 +229,16 @@ class Neo4jGraphStoreComponent(Node):
         graph_kb_id = self.graph_kb_id or "default"
         total_embedded = 0
 
+        self.log(f"Starting entity embedding for graph '{graph_kb_id}'...")
+
         while True:
-            resp = fetch_unembedded_via_service(graph_kb_id=graph_kb_id, batch_size=_EMBED_BATCH_SIZE)
+            try:
+                resp = fetch_unembedded_via_service(graph_kb_id=graph_kb_id, batch_size=_EMBED_BATCH_SIZE)
+            except Exception as e:
+                self.log(f"Failed to fetch unembedded entities: {e}")
+                logger.error("[Neo4j Graph Store] Fetch unembedded failed for '%s': %s", graph_kb_id, e)
+                raise
+
             records = resp.get("entities", [])
             if not records:
                 break
@@ -219,14 +247,21 @@ class Neo4jGraphStoreComponent(Node):
             try:
                 embeddings = self.embedding.embed_documents(texts)
             except Exception as e:
-                logger.error(f"[Neo4j Graph Store] Embedding computation failed: {e}")
+                self.log(f"Embedding computation failed: {e}")
+                logger.error("[Neo4j Graph Store] Embedding computation failed: %s", e)
                 raise ValueError(f"Embedding model failed: {e}") from e
 
             pairs = [
                 {"element_id": records[i]["element_id"], "embedding": embeddings[i]}
                 for i in range(len(records))
             ]
-            store_embeddings_via_service(graph_kb_id=graph_kb_id, embeddings=pairs)
+            try:
+                store_embeddings_via_service(graph_kb_id=graph_kb_id, embeddings=pairs)
+            except Exception as e:
+                self.log(f"Failed to store embeddings: {e}")
+                logger.error("[Neo4j Graph Store] Store embeddings failed for '%s': %s", graph_kb_id, e)
+                raise
+
             total_embedded += len(pairs)
             self.log(f"Embedded {total_embedded} entities so far...")
 
@@ -239,15 +274,36 @@ class Neo4jGraphStoreComponent(Node):
         return total_embedded
 
     # ------------------------------------------------------------------
+    # Ingest + Embed (standalone output — no search_query needed)
+    # ------------------------------------------------------------------
+
+    def ingest_and_embed(self) -> Data:
+        """Ingest entities and compute embeddings. Does NOT require search_query."""
+        graph_kb_id = self.graph_kb_id or "default"
+
+        count = self._ingest_entities()
+        embedded = 0
+        if count > 0:
+            embedded = self._embed_entities()
+
+        self.status = (
+            f"Ingested {count} entities, embedded {embedded} "
+            f"into graph '{graph_kb_id}'"
+        )
+        return Data(
+            text=self.status,
+            data={
+                "graph_kb_id": graph_kb_id,
+                "entities_ingested": count,
+                "entities_embedded": embedded,
+            },
+        )
+
+    # ------------------------------------------------------------------
     # Search via microservice
     # ------------------------------------------------------------------
 
     def search_graph(self) -> list[Data]:
-        if self.ingest_data:
-            count = self._ingest_entities()
-            if count > 0:
-                self._embed_entities()
-
         query = self._resolve_search_query()
         if not query:
             self.status = "No search query provided."
@@ -271,15 +327,20 @@ class Neo4jGraphStoreComponent(Node):
         else:
             api_search_type = "vector_similarity"
 
-        resp = search_via_service(
-            query=query,
-            query_embedding=query_embedding,
-            graph_kb_id=self.graph_kb_id or "default",
-            search_type=api_search_type,
-            number_of_results=self.number_of_results,
-            expansion_hops=self.expansion_hops,
-            include_source_chunks=self.include_source_chunks,
-        )
+        try:
+            resp = search_via_service(
+                query=query,
+                query_embedding=query_embedding,
+                graph_kb_id=self.graph_kb_id or "default",
+                search_type=api_search_type,
+                number_of_results=self.number_of_results,
+                expansion_hops=self.expansion_hops,
+                include_source_chunks=self.include_source_chunks,
+            )
+        except Exception as e:
+            self.log(f"Search failed: {e}")
+            logger.error("[Neo4j Graph Store] Search failed: %s", e)
+            raise
 
         results = []
         for item in resp.get("results", []):
