@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_, true
 from sqlmodel import col, func, select
 
+from agentcore.api.approvals import _build_prod_promotion_handoff_payload, _promote_guardrails_for_deployment
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.approval_request.model import (
     ApprovalRequest,
@@ -1212,39 +1213,16 @@ async def promote_uat_to_prod(
         await session.commit()
         await session.refresh(new_record)
 
+        guardrail_promotions = []
         guardrails_ready = True
         if is_admin:
-            # Admin publish: no approval required — promote guardrails now.
+            # Admin publish: no approval required - promote guardrails now.
             try:
-                snapshot = uat_dep.agent_snapshot or {}
-                for node in snapshot.get("nodes", []):
-                    node_data = node.get("data", {})
-                    node_type = node_data.get("type", "")
-                    if node_type != "NemoGuardrails":
-                        continue
-                    template = node_data.get("node", {}).get("template", {})
-                    field = template.get("guardrail_id")
-                    if not field:
-                        continue
-                    value = field.get("value") if isinstance(field, dict) else field
-                    guardrail_id = None
-                    if isinstance(value, str) and "|" in value:
-                        parts = [p.strip() for p in value.split("|")]
-                        if len(parts) >= 2:
-                            guardrail_id = parts[1]
-                    elif isinstance(value, str) and value.strip():
-                        guardrail_id = value.strip()
-                    if guardrail_id:
-                        from agentcore.services.guardrail_service_client import promote_guardrail_via_service
-                        promo_result = await promote_guardrail_via_service(
-                            guardrail_id=guardrail_id,
-                            promoted_by=str(current_user.id),
-                        )
-                        logger.info(
-                            "[GUARDRAIL_PROMOTION] Guardrail promoted (admin direct publish): "
-                            f"uat_id={guardrail_id}, prod_id={promo_result.get('prod_guardrail_id')}, "
-                            f"agent_id={uat_dep.agent_id}, deploy_id={new_record.id}"
-                        )
+                guardrail_promotions = await _promote_guardrails_for_deployment(
+                    deployment=new_record,
+                    promoted_by=current_user.id,
+                )
+                guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
             except Exception as guardrail_err:
                 guardrails_ready = False
                 logger.warning(
@@ -1295,6 +1273,19 @@ async def promote_uat_to_prod(
             else:
                 logger.warning(
                     f"[PROMOTE_NOTIFY] Skipped — guardrail promotion failed for PROD deploy {new_record.id}"
+                )
+
+            # Trigger handoff payload for admin direct publish.
+            try:
+                handoff_payload = _build_prod_promotion_handoff_payload(
+                    new_record, guardrail_promotions=guardrail_promotions,
+                )
+                logger.info(
+                    f"[PROD_PROMOTION_HANDOFF_TRIGGER] {handoff_payload.model_dump()}",
+                )
+            except Exception as handoff_err:
+                logger.warning(
+                    f"Handoff payload trigger failed after admin publish {new_record.id}: {handoff_err}",
                 )
 
         return PromoteFromUATResponse(

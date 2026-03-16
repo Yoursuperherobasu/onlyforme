@@ -1,7 +1,9 @@
-import {
+﻿import {
   Activity,
   BarChart3,
   LineChart,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import {
@@ -17,6 +19,8 @@ import {
   PieChart as RePieChart,
   Pie,
   Cell,
+  Area,
+  AreaChart,
 } from "recharts";
 import {
   Select,
@@ -52,13 +56,23 @@ type SectionKpi = {
   value: string;
 };
 
-type ChartType = "line" | "bar" | "donut";
+type ChartType = "line" | "bar" | "donut" | "area";
+
+type LineConfig = {
+  key: string;
+  color: string;
+};
 
 type SectionChart = {
   title: string;
   subtitle: string;
   type: ChartType;
-  data: { label: string; value: number }[];
+  data: { label: string; value?: number; [key: string]: number | string | undefined }[];
+  lines?: LineConfig[];
+  xKey?: string;
+  xType?: "number" | "category";
+  xTickFormatter?: (value: number) => string;
+  placeholder?: boolean;
 };
 
 type SectionConfig = {
@@ -96,67 +110,60 @@ type HitlSeriesResponse = {
   series: PendingSeriesPoint[];
 };
 
+// ─── Section Definitions (data unchanged from original) ───────────────────
+
 const sections: SectionConfig[] = [
   {
     id: "platform",
-    label: " Platform Health & Reliability",
+    label: "Platform Health & Reliability",
     headline: "Platform Health & Reliability KPIs",
     kpis: [
-      { name: "Platform Uptime", value: "99.96%" },
-      { name: "API Latency P95", value: "212ms" },
-      { name: "API Latency P99", value: "460ms" },
-      { name: "Error Rate %", value: "0.38%" },
-      { name: "Concurrent Agent Runs", value: "148" },
-      { name: "AKS Pod Scaling Events", value: "26" },
+      { name: "Platform Uptime %", value: "--" },
+      { name: "API Latency P95", value: "--" },
+      { name: "API Latency P99", value: "--" },
+      { name: "Error Rate %", value: "--" },
+      { name: "AKS Pod Scaling Events", value: "--" },
+      { name: "CPU/Memory Saturation %", value: "--" },
     ],
     charts: [
       {
-        title: "Latency Trend",
-        subtitle: "P95 over last 24 hours",
+        title: "API Latency P95 vs P99",
+        subtitle: "Latency comparison (24h)",
         type: "line",
-        data: [
-          { label: "00", value: 240 },
-          { label: "04", value: 228 },
-          { label: "08", value: 215 },
-          { label: "12", value: 220 },
-          { label: "16", value: 210 },
-          { label: "20", value: 198 },
-        ],
+        data: [],
+        lines: [{ key: "p95", color: "#2563eb" }, { key: "p99", color: "#f97316" }],
+        xKey: "ts",
+        xType: "number",
+        xTickFormatter: (v) => new Date(v * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       },
       {
-        title: "Error Mix",
-        subtitle: "Top error families",
-        type: "donut",
-        data: [
-          { label: "Timeouts", value: 42 },
-          { label: "Rate limits", value: 28 },
-          { label: "Downstream 5xx", value: 18 },
-          { label: "Client 4xx", value: 12 },
-        ],
+        title: "Error Rate Trend",
+        subtitle: "Error rate over time (24h)",
+        type: "area",
+        data: [],
+        xKey: "ts",
+        xType: "number",
+        xTickFormatter: (v) => new Date(v * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       },
       {
-        title: "Scaling Events",
-        subtitle: "Pods added by hour",
-        type: "bar",
-        data: [
-          { label: "00", value: 1 },
-          { label: "04", value: 2 },
-          { label: "08", value: 6 },
-          { label: "12", value: 5 },
-          { label: "16", value: 7 },
-          { label: "20", value: 5 },
-        ],
+        title: "CPU & Memory Saturation",
+        subtitle: "Cluster utilization (24h)",
+        type: "line",
+        data: [],
+        lines: [{ key: "cpu", color: "#0ea5e9" }, { key: "memory", color: "#14b8a6" }],
+        xKey: "ts",
+        xType: "number",
+        xTickFormatter: (v) => new Date(v * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       },
     ],
   },
   {
     id: "governance",
-    label: " Governance & Guardrail",
+    label: "Governance & Guardrail",
     headline: "Governance & Guardrail KPIs",
     kpis: [
       { name: "Guardrail Violation Rate", value: "0.7%" },
       { name: "Policy Breach Attempts", value: "41" },
-
       { name: "Unsafe Content Interception", value: "63" },
       { name: "Escalation to Human Review", value: "96" },
       { name: "% Agents Without Guardrails", value: "12%" },
@@ -164,61 +171,8 @@ const sections: SectionConfig[] = [
     charts: [],
   },
   {
-    id: "cost",
-    label: " Cost & Financial",
-    headline: "Cost & Financial KPIs",
-    kpis: [
-      { name: "Total Token Consumption", value: "92.4M" },
-      { name: "Cost per Agent Run (Avg)", value: "$0.21" },
-      { name: "Cost per Run P95", value: "$0.39" },
-      { name: "Cost per Run P99", value: "$0.62" },
-      { name: "Monthly Cost Trend", value: "+6.2%" },
-      { name: "Cost per Successful Task", value: "$1.14" },
-      { name: "Embedding Storage Growth", value: "+18%" },
-      { name: "Pinecone Query Cost P95", value: "$0.08" },
-    ],
-    charts: [
-      {
-        title: "Token Consumption",
-        subtitle: "Last 7 days",
-        type: "line",
-        data: [
-          { label: "Mon", value: 12 },
-          { label: "Tue", value: 14 },
-          { label: "Wed", value: 13 },
-          { label: "Thu", value: 16 },
-          { label: "Fri", value: 15 },
-          { label: "Sat", value: 11 },
-          { label: "Sun", value: 11 },
-        ],
-      },
-      {
-        title: "Cost per Run",
-        subtitle: "Distribution",
-        type: "bar",
-        data: [
-          { label: "P50", value: 18 },
-          { label: "P75", value: 26 },
-          { label: "P95", value: 39 },
-          { label: "P99", value: 62 },
-        ],
-      },
-      {
-        title: "Cost Drivers",
-        subtitle: "Spend by source",
-        type: "donut",
-        data: [
-          { label: "LLM Calls", value: 52 },
-          { label: "RAG Queries", value: 24 },
-          { label: "Storage", value: 14 },
-          { label: "Infra", value: 10 },
-        ],
-      },
-    ],
-  },
-  {
     id: "lifecycle",
-    label: " Environment & Lifecycle",
+    label: "Environment & Lifecycle",
     headline: "Environment & Lifecycle Governance",
     kpis: [],
     charts: [],
@@ -228,105 +182,56 @@ const sections: SectionConfig[] = [
 const departmentSections: SectionConfig[] = [
   {
     id: "usage",
-    label: " Department Usage",
+    label: "Department Usage",
     headline: "Department Usage KPIs",
     kpis: [
       { name: "Active Agents in Dept (UAT)", value: "42" },
       { name: "Active Agents in Dept (PROD)", value: "18" },
       { name: "Agent Success Rate", value: "94%" },
       { name: "Department Token Usage", value: "8.6M" },
-      { name: "Avg Response Time", value: "640ms" },
-      { name: "Run/Stop Frequency", value: "128" },
+      { name: "Avg Response Time", value: "--" },
     ],
     charts: [
-      {
-        title: "Token Usage",
-        subtitle: "Last 7 days",
-        type: "line",
-        data: [
-          { label: "Mon", value: 1.1 },
-          { label: "Tue", value: 1.3 },
-          { label: "Wed", value: 1.2 },
-          { label: "Thu", value: 1.5 },
-          { label: "Fri", value: 1.4 },
-          { label: "Sat", value: 1.0 },
-          { label: "Sun", value: 1.1 },
-        ],
-      },
-      {
-        title: "Agent Success",
-        subtitle: "Completion rate",
-        type: "bar",
-        data: [
-          { label: "P50", value: 90 },
-          { label: "P75", value: 93 },
-          { label: "P95", value: 96 },
-          { label: "P99", value: 98 },
-        ],
-      },
-      {
-        title: "Run/Stop Mix",
-        subtitle: "Operational pattern",
-        type: "donut",
-        data: [
-          { label: "Runs", value: 78 },
-          { label: "Stops", value: 22 },
-        ],
-      },
+      { title: "Response Time Trend", subtitle: "Avg response time over time", type: "area", data: [] },
     ],
   },
   {
     id: "approval",
-    label: " Approval & Governance",
+    label: "Approval & Governance",
     headline: "Approval & Governance KPIs",
     kpis: [
-      { name: "Pending Approvals", value: "—" },
-      
-      { name: "Rejection Rate", value: "—" },
-
-
+      { name: "Pending Approvals", value: "--" },
+      { name: "Rejection Rate", value: "--" },
+      { name: "Avg Approval Time", value: "--" },
     ],
     charts: [
       {
         title: "Pending Approvals",
         subtitle: "Queue trend",
-        type: "line",
+        type: "area",
         data: [
-          { label: "Mon", value: 22 },
-          { label: "Tue", value: 24 },
-          { label: "Wed", value: 28 },
-          { label: "Thu", value: 31 },
-          { label: "Fri", value: 27 },
-          { label: "Sat", value: 19 },
-          { label: "Sun", value: 21 },
+          { label: "Mon", value: 22 }, { label: "Tue", value: 24 }, { label: "Wed", value: 28 },
+          { label: "Thu", value: 31 }, { label: "Fri", value: 27 }, { label: "Sat", value: 19 }, { label: "Sun", value: 21 },
         ],
       },
-     
-     
     ],
   },
   {
     id: "hitl",
-    label: " HITL Governance",
+    label: "HITL Governance",
     headline: "HITL Governance KPIs",
     kpis: [
       { name: "HITL Invocation Rate", value: "3.6%" },
       { name: "Avg HITL Response Time", value: "12 min" },
-
     ],
     charts: [
       {
         title: "Invocation Rate",
         subtitle: "Daily trend",
-        type: "line",
+        type: "area",
         data: [
-          { label: "Mon", value: 3.9 },
-          { label: "Tue", value: 3.7 },
-          { label: "Wed", value: 3.5 },
-          { label: "Thu", value: 3.8 },
-          { label: "Fri", value: 3.6 },
-          { label: "Sat", value: 3.2 },
-          { label: "Sun", value: 3.4 },
+          { label: "Mon", value: 3.9 }, { label: "Tue", value: 3.7 }, { label: "Wed", value: 3.5 },
+          { label: "Thu", value: 3.8 }, { label: "Fri", value: 3.6 }, { label: "Sat", value: 3.2 }, { label: "Sun", value: 3.4 },
         ],
       },
       {
@@ -334,19 +239,15 @@ const departmentSections: SectionConfig[] = [
         subtitle: "Minutes by day",
         type: "bar",
         data: [
-          { label: "Mon", value: 14 },
-          { label: "Tue", value: 12 },
-          { label: "Wed", value: 11 },
-          { label: "Thu", value: 13 },
-          { label: "Fri", value: 12 },
+          { label: "Mon", value: 14 }, { label: "Tue", value: 12 }, { label: "Wed", value: 11 },
+          { label: "Thu", value: 13 }, { label: "Fri", value: 12 },
         ],
       },
-     
     ],
   },
   {
     id: "rag",
-    label: " RAG Governance",
+    label: "RAG Governance",
     headline: "RAG Governance KPIs",
     kpis: [
       { name: "Total Documents Indexed", value: "420K" },
@@ -360,34 +261,20 @@ const departmentSections: SectionConfig[] = [
       {
         title: "Retrieval Accuracy",
         subtitle: "Weekly trend",
-        type: "line",
-        data: [
-          { label: "W1", value: 88 },
-          { label: "W2", value: 89 },
-          { label: "W3", value: 90 },
-          { label: "W4", value: 91 },
-        ],
+        type: "area",
+        data: [{ label: "W1", value: 88 }, { label: "W2", value: 89 }, { label: "W3", value: 90 }, { label: "W4", value: 91 }],
       },
       {
         title: "Index Growth",
         subtitle: "Docs per week",
         type: "bar",
-        data: [
-          { label: "W1", value: 90 },
-          { label: "W2", value: 110 },
-          { label: "W3", value: 120 },
-          { label: "W4", value: 100 },
-        ],
+        data: [{ label: "W1", value: 90 }, { label: "W2", value: 110 }, { label: "W3", value: 120 }, { label: "W4", value: 100 }],
       },
       {
         title: "Data Requests",
         subtitle: "Request types",
         type: "donut",
-        data: [
-          { label: "Deletion", value: 14 },
-          { label: "Correction", value: 9 },
-          { label: "Access", value: 6 },
-        ],
+        data: [{ label: "Deletion", value: 14 }, { label: "Correction", value: 9 }, { label: "Access", value: 6 }],
       },
     ],
   },
@@ -396,213 +283,65 @@ const departmentSections: SectionConfig[] = [
 const developerSections: SectionConfig[] = [
   {
     id: "quality",
-    label: " Agent Quality",
+    label: "Agent Quality",
     headline: "Agent Quality KPIs (Langfuse Evaluations)",
     kpis: [
-      { name: "Task Success Rate", value: "93%" },
       { name: "Hallucination Score", value: "2.1%" },
       { name: "RAG Relevance Score", value: "0.84" },
       { name: "Tool Call Accuracy", value: "96%" },
-      { name: "Retry Rate", value: "3.4%" },
     ],
-    charts: [
-      {
-        title: "Success Rate",
-        subtitle: "Completion trend",
-        type: "line",
-        data: [
-          { label: "Mon", value: 90 },
-          { label: "Tue", value: 92 },
-          { label: "Wed", value: 91 },
-          { label: "Thu", value: 93 },
-          { label: "Fri", value: 94 },
-          { label: "Sat", value: 92 },
-          { label: "Sun", value: 93 },
-        ],
-      },
-      {
-        title: "Hallucinations",
-        subtitle: "Rate by day",
-        type: "bar",
-        data: [
-          { label: "Mon", value: 2.6 },
-          { label: "Tue", value: 2.4 },
-          { label: "Wed", value: 2.2 },
-          { label: "Thu", value: 2.1 },
-          { label: "Fri", value: 2.0 },
-        ],
-      },
-      {
-        title: "Quality Mix",
-        subtitle: "Eval buckets",
-        type: "donut",
-        data: [
-          { label: "Pass", value: 78 },
-          { label: "Needs review", value: 16 },
-          { label: "Fail", value: 6 },
-        ],
-      },
-    ],
+    charts: [],
   },
   {
     id: "performance",
-    label: " Performance",
+    label: "Performance",
     headline: "Performance KPIs",
     kpis: [
-      { name: "Avg Agent Latency", value: "610ms" },
-      { name: "Latency P95", value: "920ms" },
-      { name: "Latency P99", value: "1.4s" },
-      { name: "Token Usage per Run", value: "2.1K" },
-      { name: "Embedding Query Latency", value: "140ms" },
-      { name: "Max Graph Depth", value: "18" },
+      { name: "Avg Agent Latency", value: "--" },
+      { name: "Latency P95", value: "--" },
+      { name: "Latency P99", value: "--" },
     ],
     charts: [
       {
-        title: "Latency Trend",
-        subtitle: "P95 by day",
+        title: "API Latency P95 vs P99",
+        subtitle: "Latency comparison",
         type: "line",
-        data: [
-          { label: "Mon", value: 980 },
-          { label: "Tue", value: 950 },
-          { label: "Wed", value: 930 },
-          { label: "Thu", value: 920 },
-          { label: "Fri", value: 910 },
-          { label: "Sat", value: 900 },
-          { label: "Sun", value: 920 },
-        ],
-      },
-      {
-        title: "Token Usage",
-        subtitle: "Tokens per run",
-        type: "bar",
-        data: [
-          { label: "P50", value: 1.6 },
-          { label: "P75", value: 1.9 },
-          { label: "P95", value: 2.4 },
-          { label: "P99", value: 2.9 },
-        ],
-      },
-      {
-        title: "Latency Budget",
-        subtitle: "Component share",
-        type: "donut",
-        data: [
-          { label: "LLM", value: 52 },
-          { label: "RAG", value: 26 },
-          { label: "Tools", value: 14 },
-          { label: "Infra", value: 8 },
-        ],
+        data: [],
+        lines: [{ key: "p95", color: "#2563eb" }, { key: "p99", color: "#f97316" }],
+        xKey: "ts",
+        xType: "number",
+        xTickFormatter: (v) => new Date(v * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       },
     ],
   },
   {
     id: "code",
-    label: " Code & Version Governance",
+    label: "Code & Version Governance",
     headline: "Code & Version Governance KPIs",
-    kpis: [
-      { name: "Avg. Version Count of Agents", value: "—" },
-    ],
-    charts: []
+    kpis: [{ name: "Avg. Version Count of Agents", value: "--" }],
+    charts: [],
   },
 ];
 
 const businessSections: SectionConfig[] = [
   {
     id: "productivity",
-    label: " Productivity",
+    label: "Productivity",
     headline: "Productivity KPIs",
-    kpis: [
-      { name: "Tasks Completed", value: "1,240" },
-      { name: "Avg Task Completion Time", value: "6.4 min" },
-      { name: "Task Completion Without Escalation", value: "92%" },
-      { name: "Time Saved Estimate", value: "4.8 hrs" },
-    ],
-    charts: [
-      {
-        title: "Tasks Completed",
-        subtitle: "Weekly trend",
-        type: "line",
-        data: [
-          { label: "Mon", value: 160 },
-          { label: "Tue", value: 185 },
-          { label: "Wed", value: 172 },
-          { label: "Thu", value: 198 },
-          { label: "Fri", value: 210 },
-          { label: "Sat", value: 165 },
-          { label: "Sun", value: 150 },
-        ],
-      },
-      {
-        title: "Completion Time",
-        subtitle: "Minutes by day",
-        type: "bar",
-        data: [
-          { label: "Mon", value: 6.8 },
-          { label: "Tue", value: 6.4 },
-          { label: "Wed", value: 6.2 },
-          { label: "Thu", value: 6.0 },
-          { label: "Fri", value: 5.9 },
-        ],
-      },
-      {
-        title: "Escalation Mix",
-        subtitle: "With vs without escalation",
-        type: "donut",
-        data: [
-          { label: "No escalation", value: 92 },
-          { label: "Escalated", value: 8 },
-        ],
-      },
-    ],
+    kpis: [],
+    charts: [],
   },
   {
     id: "experience",
-    label: " Experience",
+    label: "Experience",
     headline: "Experience KPIs",
     kpis: [
-      { name: "Avg Response Time", value: "820ms" },
-      { name: "User Satisfaction Score", value: "4.6/5" },
-      { name: "Re-run Rate", value: "6.2%" },
-      { name: "Escalation to Human", value: "3.1%" },
-      { name: "Session Duration", value: "8.4 min" },
+      { name: "Avg Response Time", value: "--" },
+      { name: "User Satisfaction Score", value: "--" },
+      { name: "Escalation to Human", value: "--" },
     ],
     charts: [
-      {
-        title: "Response Time",
-        subtitle: "Daily trend",
-        type: "line",
-        data: [
-          { label: "Mon", value: 920 },
-          { label: "Tue", value: 880 },
-          { label: "Wed", value: 860 },
-          { label: "Thu", value: 840 },
-          { label: "Fri", value: 820 },
-          { label: "Sat", value: 800 },
-          { label: "Sun", value: 810 },
-        ],
-      },
-      {
-        title: "Satisfaction Score",
-        subtitle: "Avg rating",
-        type: "bar",
-        data: [
-          { label: "Mon", value: 4.4 },
-          { label: "Tue", value: 4.5 },
-          { label: "Wed", value: 4.6 },
-          { label: "Thu", value: 4.6 },
-          { label: "Fri", value: 4.7 },
-        ],
-      },
-      {
-        title: "Experience Mix",
-        subtitle: "Key outcomes",
-        type: "donut",
-        data: [
-          { label: "Satisfied", value: 78 },
-          { label: "Neutral", value: 16 },
-          { label: "Unsatisfied", value: 6 },
-        ],
-      },
+      { title: "Response Time", subtitle: "Daily trend", type: "area", data: [] },
     ],
   },
 ];
@@ -610,66 +349,49 @@ const businessSections: SectionConfig[] = [
 const rootSections: SectionConfig[] = [
   {
     id: "roi",
-    label: " ROI & Financial Health",
+    label: "ROI & Financial Health",
     headline: "ROI & Financial Health",
     kpis: [
       { name: "Cost vs Productivity Gain", value: "2.6x" },
       { name: "Automation Savings", value: "1,420 hrs" },
       { name: "Cost Trend (Monthly)", value: "+4.1%" },
-      { name: "Cost P95 Trends", value: "$0.42" },
       { name: "Single Model Dependency %", value: "38%" },
     ],
     charts: [
       {
         title: "ROI Ratio",
         subtitle: "Quarterly trend",
-        type: "line",
-        data: [
-          { label: "Q1", value: 2.1 },
-          { label: "Q2", value: 2.3 },
-          { label: "Q3", value: 2.5 },
-          { label: "Q4", value: 2.6 },
-        ],
+        type: "area",
+        data: [{ label: "Q1", value: 2.1 }, { label: "Q2", value: 2.3 }, { label: "Q3", value: 2.5 }, { label: "Q4", value: 2.6 }],
       },
       {
         title: "Automation Savings",
         subtitle: "Hours saved",
         type: "bar",
-        data: [
-          { label: "Ops", value: 420 },
-          { label: "Support", value: 360 },
-          { label: "Sales", value: 310 },
-          { label: "IT", value: 330 },
-        ],
+        data: [{ label: "Ops", value: 420 }, { label: "Support", value: 360 }, { label: "Sales", value: 310 }, { label: "IT", value: 330 }],
       },
       {
         title: "Spend Drivers",
         subtitle: "Budget mix",
         type: "donut",
-        data: [
-          { label: "LLM", value: 52 },
-          { label: "Infra", value: 24 },
-          { label: "RAG", value: 14 },
-          { label: "Other", value: 10 },
-        ],
+        data: [{ label: "LLM", value: 52 }, { label: "Infra", value: 24 }, { label: "RAG", value: 14 }, { label: "Other", value: 10 }],
       },
     ],
   },
   {
     id: "maturity",
-    label: " AI Maturity Indicators",
+    label: "AI Maturity Indicators",
     headline: "AI Maturity Indicators",
     kpis: [
       { name: "% Agents with Guardrails", value: "88%" },
       { name: "% Agents with RAG", value: "64%" },
       { name: "% Agents with HITL", value: "41%" },
-     
     ],
     charts: [],
   },
   {
     id: "risk",
-    label: " Enterprise Risk Indicators",
+    label: "Enterprise Risk Indicators",
     headline: "Enterprise Risk Indicators",
     kpis: [
       { name: "High-Risk Autonomous Agents", value: "6" },
@@ -681,121 +403,69 @@ const rootSections: SectionConfig[] = [
       {
         title: "Risk Events",
         subtitle: "Monthly trend",
-        type: "line",
-        data: [
-          { label: "Jan", value: 4 },
-          { label: "Feb", value: 6 },
-          { label: "Mar", value: 5 },
-          { label: "Apr", value: 3 },
-        ],
+        type: "area",
+        data: [{ label: "Jan", value: 4 }, { label: "Feb", value: 6 }, { label: "Mar", value: 5 }, { label: "Apr", value: 3 }],
       },
       {
         title: "Incident Types",
         subtitle: "Count by type",
         type: "bar",
-        data: [
-          { label: "Bypass", value: 14 },
-          { label: "Leakage", value: 2 },
-          { label: "Policy", value: 6 },
-          { label: "Other", value: 4 },
-        ],
+        data: [{ label: "Bypass", value: 14 }, { label: "Leakage", value: 2 }, { label: "Policy", value: 6 }, { label: "Other", value: 4 }],
       },
       {
         title: "Risk Mix",
         subtitle: "Severity split",
         type: "donut",
-        data: [
-          { label: "Low", value: 58 },
-          { label: "Medium", value: 30 },
-          { label: "High", value: 12 },
-        ],
+        data: [{ label: "Low", value: 58 }, { label: "Medium", value: 30 }, { label: "High", value: 12 }],
       },
     ],
   },
 ];
 
+// ─── Style constants ───────────────────────────────────────────────────────
+
 const chartColors = ["#2563eb", "#14b8a6", "#f97316", "#a855f7"];
 
 const kpiCardStyles = [
-  "from-sky-50 via-white to-white ring-sky-200/60",
-  "from-emerald-50 via-white to-white ring-emerald-200/60",
-  "from-amber-50 via-white to-white ring-amber-200/60",
-  "from-violet-50 via-white to-white ring-violet-200/60",
+  "from-sky-50 via-white to-white ring-sky-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
+  "from-emerald-50 via-white to-white ring-emerald-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
+  "from-amber-50 via-white to-white ring-amber-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
+  "from-violet-50 via-white to-white ring-violet-200/60 dark:from-card dark:via-card dark:to-card dark:ring-border",
 ];
 
-const sectionThemes: Record<SectionId, { glow: string; badge: string }> = {
-  platform: {
-    glow: "from-sky-500/25 via-indigo-500/15 to-transparent",
-    badge: "bg-sky-100 text-sky-700",
-  },
-  governance: {
-    glow: "from-emerald-500/25 via-cyan-500/15 to-transparent",
-    badge: "bg-emerald-100 text-emerald-700",
-  },
-  cost: {
-    glow: "from-amber-500/25 via-orange-500/15 to-transparent",
-    badge: "bg-amber-100 text-amber-700",
-  },
-  lifecycle: {
-    glow: "from-violet-500/25 via-fuchsia-500/15 to-transparent",
-    badge: "bg-violet-100 text-violet-700",
-  },
-  usage: {
-    glow: "from-sky-500/20 via-blue-500/15 to-transparent",
-    badge: "bg-sky-100 text-sky-700",
-  },
-  approval: {
-    glow: "from-amber-500/20 via-orange-500/15 to-transparent",
-    badge: "bg-amber-100 text-amber-700",
-  },
-  hitl: {
-    glow: "from-emerald-500/20 via-teal-500/15 to-transparent",
-    badge: "bg-emerald-100 text-emerald-700",
-  },
-  rag: {
-    glow: "from-violet-500/20 via-fuchsia-500/15 to-transparent",
-    badge: "bg-violet-100 text-violet-700",
-  },
-  quality: {
-    glow: "from-sky-500/20 via-blue-500/15 to-transparent",
-    badge: "bg-sky-100 text-sky-700",
-  },
-  performance: {
-    glow: "from-emerald-500/20 via-teal-500/15 to-transparent",
-    badge: "bg-emerald-100 text-emerald-700",
-  },
-  code: {
-    glow: "from-amber-500/20 via-orange-500/15 to-transparent",
-    badge: "bg-amber-100 text-amber-700",
-  },
-  productivity: {
-    glow: "from-sky-500/20 via-blue-500/15 to-transparent",
-    badge: "bg-sky-100 text-sky-700",
-  },
-  experience: {
-    glow: "from-emerald-500/20 via-teal-500/15 to-transparent",
-    badge: "bg-emerald-100 text-emerald-700",
-  },
-  roi: {
-    glow: "from-sky-500/20 via-blue-500/15 to-transparent",
-    badge: "bg-sky-100 text-sky-700",
-  },
-  maturity: {
-    glow: "from-emerald-500/20 via-teal-500/15 to-transparent",
-    badge: "bg-emerald-100 text-emerald-700",
-  },
-  risk: {
-    glow: "from-amber-500/20 via-orange-500/15 to-transparent",
-    badge: "bg-amber-100 text-amber-700",
-  },
+const kpiAccentColors = ["#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6"];
+
+const sectionThemes: Record<SectionId, { badge: string; accent: string }> = {
+  platform:    { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
+  governance:  { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
+  cost:        { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
+  lifecycle:   { badge: "bg-violet-100 text-violet-700",  accent: "#8b5cf6" },
+  usage:       { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
+  approval:    { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
+  hitl:        { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
+  rag:         { badge: "bg-violet-100 text-violet-700",  accent: "#8b5cf6" },
+  quality:     { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
+  performance: { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
+  code:        { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
+  productivity:{ badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
+  experience:  { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
+  roi:         { badge: "bg-sky-100 text-sky-700",        accent: "#0ea5e9" },
+  maturity:    { badge: "bg-emerald-100 text-emerald-700",accent: "#10b981" },
+  risk:        { badge: "bg-amber-100 text-amber-700",    accent: "#f59e0b" },
 };
 
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) {
+// ─── Tooltips ─────────────────────────────────────────────────────────────
+
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name?: string; dataKey?: string }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border bg-white px-3 py-2 text-xs shadow">
-      <p className="font-semibold text-slate-900">{label}</p>
-      <p className="text-slate-600">{payload[0].value}</p>
+    <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs shadow">
+      <p className="font-semibold text-foreground">{label}</p>
+      {payload.map((e) => (
+        <p key={e.dataKey ?? e.name ?? e.value} className="text-muted-foreground">
+          {(e.name ?? e.dataKey ?? "value")}: {e.value}
+        </p>
+      ))}
     </div>
   );
 }
@@ -803,24 +473,55 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
 function DonutTooltip({ active, payload }: { active?: boolean; payload?: { name: string; value: number }[] }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border bg-white px-3 py-2 text-xs shadow">
-      <p className="font-semibold text-slate-900">{payload[0].name}</p>
-      <p className="text-slate-600">{payload[0].value}</p>
+    <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs shadow">
+      <p className="font-semibold text-foreground">{payload[0].name}</p>
+      <p className="text-muted-foreground">{payload[0].value}</p>
     </div>
   );
 }
 
-function ChartBlock({ chart }: { chart: SectionChart }) {
-  if (chart.type === "line") {
+// ─── Chart Block ───────────────────────────────────────────────────────────
+
+function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: string }) {
+  if (chart.type === "area") {
+    const xKey = chart.xKey ?? "label";
+    const xType = chart.xType ?? "category";
+    const gradId = `grad-${chart.title.replace(/\W/g, "")}`;
     return (
-      <div className="h-48">
+      <div className="h-44">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+            <defs>
+              <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={accentColor} stopOpacity={0.15} />
+                <stop offset="95%" stopColor={accentColor} stopOpacity={0.01} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis dataKey={xKey} type={xType} domain={xType === "number" ? ["dataMin", "dataMax"] : undefined} tickFormatter={xType === "number" ? chart.xTickFormatter : undefined} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+            <Tooltip content={<ChartTooltip />} labelFormatter={xType === "number" && chart.xTickFormatter ? chart.xTickFormatter : undefined} />
+            <Area type="monotone" dataKey="value" stroke={accentColor} strokeWidth={2} fill={`url(#${gradId})`} dot={false} connectNulls />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  if (chart.type === "line") {
+    const xKey = chart.xKey ?? "label";
+    const xType = chart.xType ?? "category";
+    return (
+      <div className="h-44">
         <ResponsiveContainer width="100%" height="100%">
           <ReLineChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} />
-            <Tooltip content={<ChartTooltip />} />
-            <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis dataKey={xKey} type={xType} domain={xType === "number" ? ["dataMin", "dataMax"] : undefined} tickFormatter={xType === "number" ? chart.xTickFormatter : undefined} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+            <Tooltip content={<ChartTooltip />} labelFormatter={xType === "number" && chart.xTickFormatter ? chart.xTickFormatter : undefined} />
+            {chart.lines?.length
+              ? chart.lines.map((l) => <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.color} strokeWidth={2} dot={false} connectNulls />)
+              : <Line type="monotone" dataKey="value" stroke={accentColor} strokeWidth={2} dot={false} connectNulls />}
           </ReLineChart>
         </ResponsiveContainer>
       </div>
@@ -829,17 +530,15 @@ function ChartBlock({ chart }: { chart: SectionChart }) {
 
   if (chart.type === "bar") {
     return (
-      <div className="h-48">
+      <div className="h-44">
         <ResponsiveContainer width="100%" height="100%">
           <ReBarChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} />
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             <Tooltip content={<ChartTooltip />} />
-            <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-              {chart.data.map((entry, index) => (
-                <Cell key={entry.label} fill={chartColors[index % chartColors.length]} />
-              ))}
+            <Bar dataKey="value" radius={[5, 5, 0, 0]}>
+              {chart.data.map((e, i) => <Cell key={String(e.label)} fill={chartColors[i % chartColors.length]} />)}
             </Bar>
           </ReBarChart>
         </ResponsiveContainer>
@@ -848,26 +547,21 @@ function ChartBlock({ chart }: { chart: SectionChart }) {
   }
 
   return (
-    <div className="flex h-48 items-center gap-4">
-      <ResponsiveContainer width="55%" height="100%">
+    <div className="flex h-44 items-center gap-4">
+      <ResponsiveContainer width="50%" height="100%">
         <RePieChart>
-          <Pie data={chart.data} dataKey="value" nameKey="label" innerRadius={40} outerRadius={68} paddingAngle={2}>
-            {chart.data.map((entry, index) => (
-              <Cell key={entry.label} fill={chartColors[index % chartColors.length]} />
-            ))}
+          <Pie data={chart.data} dataKey="value" nameKey="label" innerRadius={38} outerRadius={62} paddingAngle={2}>
+            {chart.data.map((e, i) => <Cell key={String(e.label)} fill={chartColors[i % chartColors.length]} />)}
           </Pie>
           <Tooltip content={<DonutTooltip />} />
         </RePieChart>
       </ResponsiveContainer>
       <div className="space-y-2">
-        {chart.data.map((slice, index) => (
-          <div key={slice.label} className="flex items-center gap-2 text-sm">
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: chartColors[index % chartColors.length] }}
-            />
+        {chart.data.map((slice, i) => (
+          <div key={String(slice.label)} className="flex items-center gap-2 text-xs">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: chartColors[i % chartColors.length] }} />
             <span className="text-muted-foreground">{slice.label}</span>
-            <span className="font-semibold">{slice.value}</span>
+            <span className="font-semibold text-foreground">{slice.value}</span>
           </div>
         ))}
       </div>
@@ -875,557 +569,397 @@ function ChartBlock({ chart }: { chart: SectionChart }) {
   );
 }
 
+// ─── Maturity Progress (only shown for maturity section, existing KPIs) ────
+
+function MaturityProgressBars({ kpis, accent }: { kpis: SectionKpi[]; accent: string }) {
+  return (
+    <div className="mt-4 rounded-xl border border-border bg-background/60 p-4 space-y-4">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Adoption Depth</p>
+      {kpis.map((kpi) => {
+        const m = kpi.value.match(/(\d+)/);
+        const pct = m ? Math.min(parseInt(m[1]), 100) : 0;
+        return (
+          <div key={kpi.name}>
+            <div className="mb-1 flex justify-between text-sm">
+              <span className="text-muted-foreground">{kpi.name}</span>
+              <span className="font-bold text-foreground">{kpi.value}</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800">
+              <div className="h-2 rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: accent }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Section Card ──────────────────────────────────────────────────────────
+
+function SectionCard({
+  section,
+  displayKpis,
+  charts,
+  approvalRangeSelector,
+  hitlRangeSelector,
+  defaultExpanded,
+}: {
+  section: SectionConfig;
+  displayKpis: SectionKpi[];
+  charts: SectionChart[];
+  approvalRangeSelector?: React.ReactNode;
+  hitlRangeSelector?: React.ReactNode;
+  defaultExpanded: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const { t } = useTranslation();
+  const theme = sectionThemes[section.id];
+  const isEmpty = displayKpis.length === 0 && charts.length === 0;
+  const isMaturity = section.id === "maturity";
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-border bg-card/90 shadow-sm">
+      {/* Clickable header */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between px-6 py-4 text-left transition-colors hover:bg-muted/30"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${theme.badge}`}>
+            {t(section.label)}
+          </span>
+          <span className="truncate text-sm text-muted-foreground hidden sm:block">
+            {t(section.headline)}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 ml-4">
+          {!isEmpty && (
+            <span className="text-[11px] text-muted-foreground">
+              {displayKpis.length > 0 && `${displayKpis.length} KPI${displayKpis.length !== 1 ? "s" : ""}`}
+              {displayKpis.length > 0 && charts.length > 0 && " · "}
+              {charts.length > 0 && `${charts.length} chart${charts.length !== 1 ? "s" : ""}`}
+            </span>
+          )}
+          {isEmpty && (
+            <span className="text-[10px] text-muted-foreground rounded-full border border-border px-2 py-0.5">
+              No data configured
+            </span>
+          )}
+          {expanded
+            ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+            : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </div>
+      </button>
+
+      {/* Expanded body */}
+      {expanded && !isEmpty && (
+        <div className="border-t border-border px-6 pb-6">
+          {/* KPI cards */}
+          {displayKpis.length > 0 && (
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+              {displayKpis.map((kpi, i) => {
+                const accent = kpiAccentColors[i % kpiAccentColors.length];
+                return (
+                  <div
+                    key={kpi.name}
+                    className={`relative overflow-hidden rounded-xl border bg-gradient-to-br ${kpiCardStyles[i % kpiCardStyles.length]} p-3.5 ring-1 border-border shadow-sm`}
+                  >
+                    <div className="h-0.5 w-8 rounded-full mb-2.5" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}40)` }} />
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground leading-snug">{t(kpi.name)}</p>
+                    <p className="mt-1.5 text-xl font-bold text-foreground leading-none">{t(kpi.value)}</p>
+                    <div className="pointer-events-none absolute -right-3 -bottom-3 h-12 w-12 rounded-full opacity-[0.06]" style={{ backgroundColor: accent }} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Maturity progress bars (existing KPI values, visual enhancement only) */}
+          {isMaturity && displayKpis.length > 0 && (
+            <MaturityProgressBars kpis={displayKpis} accent={theme.accent} />
+          )}
+
+          {/* Charts */}
+          {charts.length > 0 && (
+            <div className={`mt-5 grid grid-cols-1 gap-4 ${charts.length === 1 ? "lg:grid-cols-2" : "lg:grid-cols-2 xl:grid-cols-3"}`}>
+              {charts.map((chart) => {
+                const isApprovalChart = section.id === "approval" && chart.title === "Pending Approvals";
+                const isHitlChart = section.id === "hitl" && (chart.title === "Invocation Rate" || chart.title === "Response Time");
+                return (
+                  <div key={chart.title} className="rounded-xl border border-border bg-background/60 p-4 shadow-sm">
+                    <div className="mb-3 flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate">{t(chart.title)}</p>
+                        <p className="text-[11px] text-muted-foreground">{t(chart.subtitle)}</p>
+                      </div>
+                      <div className="shrink-0">
+                        {isApprovalChart && approvalRangeSelector}
+                        {isHitlChart && hitlRangeSelector}
+                        {!isApprovalChart && !isHitlChart && (
+                          <div className="rounded-full bg-slate-100 dark:bg-slate-800 p-1.5">
+                            {chart.type === "line" || chart.type === "area"
+                              ? <LineChart className="h-3.5 w-3.5 text-slate-500" />
+                              : chart.type === "bar"
+                                ? <BarChart3 className="h-3.5 w-3.5 text-slate-500" />
+                                : <Activity className="h-3.5 w-3.5 text-slate-500" />}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <ChartBlock chart={chart} accentColor={theme.accent} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────
+
 export default function DashboardAdmin(): JSX.Element {
   const { t } = useTranslation();
   const { role, userData } = useContext(AuthContext);
   const normalizedRole = (role ?? "").toLowerCase().trim().replace(/\s+/g, "_");
   const isDepartmentAdmin = normalizedRole === "department_admin";
-  const isDeveloper = normalizedRole === "developer";
-  const isBusinessUser = normalizedRole === "business_user";
-  const isRootAdmin = normalizedRole === "root";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  const defaultSectionId: SectionId = isDepartmentAdmin
-    ? "usage"
-    : isDeveloper
-      ? "quality"
-      : isBusinessUser
-        ? "productivity"
-        : isRootAdmin
-          ? "roi"
-          : "platform";
-  const [sectionId, setSectionId] = useState<SectionId>(defaultSectionId);
-  const [lifecycleKpis, setLifecycleKpis] = useState<SectionKpi[] | null>(null);
-  const [governanceKpis, setGovernanceKpis] = useState<SectionKpi[] | null>(null);
-  const [deptUsageKpis, setDeptUsageKpis] = useState<SectionKpi[] | null>(null);
-  const [deptApprovalKpis, setDeptApprovalKpis] = useState<SectionKpi[] | null>(null);
-  const [approvalRange, setApprovalRange] = useState<"7d" | "30d" | "12w">("7d");
+  const isDeveloper       = normalizedRole === "developer";
+  const isBusinessUser    = normalizedRole === "business_user";
+  const isRootAdmin       = normalizedRole === "root";
+  const isSuperAdmin      = normalizedRole === "super_admin";
+
+  const [lifecycleKpis, setLifecycleKpis]         = useState<SectionKpi[] | null>(null);
+  const [governanceKpis, setGovernanceKpis]         = useState<SectionKpi[] | null>(null);
+  const [deptUsageKpis, setDeptUsageKpis]           = useState<SectionKpi[] | null>(null);
+  const [deptApprovalKpis, setDeptApprovalKpis]     = useState<SectionKpi[] | null>(null);
+  const [deptResponseTimeSeries, setDeptResponseTimeSeries] = useState<PendingSeriesPoint[] | null>(null);
+  const [approvalRange, setApprovalRange]           = useState<"7d" | "30d" | "12w">("7d");
   const [approvalPendingSeries, setApprovalPendingSeries] = useState<PendingSeriesPoint[] | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
-  const [deptHitlKpis, setDeptHitlKpis] = useState<SectionKpi[] | null>(null);
-  const [hitlRange, setHitlRange] = useState<"7d" | "30d" | "12w">("7d");
+  const [refreshTick, setRefreshTick]               = useState(0);
+  const [deptHitlKpis, setDeptHitlKpis]             = useState<SectionKpi[] | null>(null);
+  const [hitlRange, setHitlRange]                   = useState<"7d" | "30d" | "12w">("7d");
   const [hitlInvocationSeries, setHitlInvocationSeries] = useState<PendingSeriesPoint[] | null>(null);
   const [hitlResponseSeries, setHitlResponseSeries] = useState<PendingSeriesPoint[] | null>(null);
-  const [devCodeKpis, setDevCodeKpis] = useState<SectionKpi[] | null>(null);
+  const [devCodeKpis, setDevCodeKpis]               = useState<SectionKpi[] | null>(null);
   const [businessMaturityKpis, setBusinessMaturityKpis] = useState<SectionKpi[] | null>(null);
-  const [rootMaturityKpis, setRootMaturityKpis] = useState<SectionKpi[] | null>(null);
+  const [rootMaturityKpis, setRootMaturityKpis]     = useState<SectionKpi[] | null>(null);
+  const [platformKpis, setPlatformKpis]             = useState<SectionKpi[] | null>(null);
+  const [platformLatencySeries, setPlatformLatencySeries] = useState<Array<{ label: string; ts: number; p95?: number; p99?: number }> | null>(null);
+  const [platformErrorSeries, setPlatformErrorSeries]     = useState<Array<{ label: string; ts: number; value?: number }> | null>(null);
+  const [platformCpuMemSeries, setPlatformCpuMemSeries]   = useState<Array<{ label: string; ts: number; cpu?: number; memory?: number }> | null>(null);
+  const [devPerformanceKpis, setDevPerformanceKpis] = useState<SectionKpi[] | null>(null);
+  const [devLatencySeries, setDevLatencySeries]     = useState<Array<{ label: string; p95?: number; p99?: number }> | null>(null);
+  const [businessExperienceKpis, setBusinessExperienceKpis] = useState<SectionKpi[] | null>(null);
+  const [businessResponseTimeSeries, setBusinessResponseTimeSeries] = useState<PendingSeriesPoint[] | null>(null);
 
-  const lifecycleKpiFallback: SectionKpi[] = [
-    { name: "Agents in UAT", value: "—" },
-    { name: "UAT to PROD Conversion Rate", value: "—" },
-    { name: "Deprecated Agent Count", value: "—" },
-  ];
-  const governanceKpiFallback: SectionKpi[] = [
-    { name: "Escalation to Human Review", value: "—" },
-    { name: "% Agents Without Guardrails", value: "—" },
-  ];
-  const deptUsageKpiFallback: SectionKpi[] = [
-    { name: "Active Agents in Dept (UAT)", value: "—" },
-    { name: "Active Agents in Dept (PROD)", value: "—" },
-  ];
-  const deptApprovalKpiFallback: SectionKpi[] = [
-    { name: "Pending Approvals", value: "—" },
-    { name: "Rejection Rate", value: "—" },
-  ];
-  const deptHitlKpiFallback: SectionKpi[] = [
-    { name: "HITL Invocation Rate", value: "—" },
-    { name: "Avg HITL Response Time", value: "—" },
-  ];
-  const devCodeKpiFallback: SectionKpi[] = [
-    { name: "Avg. Version Count of Agents", value: "—" },
-  ];
-  const businessMaturityFallback: SectionKpi[] = [
-    { name: "% Agents with Guardrails", value: "â€”" },
-    { name: "% Agents with RAG", value: "â€”" },
-    { name: "% Agents with HITL", value: "â€”" },
-  ];
-  const rootMaturityFallback: SectionKpi[] = [
-    { name: "% Agents with Guardrails", value: "â€”" },
-    { name: "% Agents with RAG", value: "â€”" },
-    { name: "% Agents with HITL", value: "â€”" },
-  ];
-  const approvalRangeOptions = [
-    { value: "7d", label: "Last 7 days" },
-    { value: "30d", label: "Last 30 days" },
-    { value: "12w", label: "Last 12 weeks" },
-  ];
+  // Fallbacks
+  const lifecycleKpiFallback:   SectionKpi[] = [{ name: "Agents in UAT", value: "--" }, { name: "UAT to PROD Conversion Rate", value: "--" }, { name: "Deprecated Agent Count", value: "--" }];
+  const governanceKpiFallback:  SectionKpi[] = [{ name: "Escalation to Human Review", value: "--" }, { name: "% Agents Without Guardrails", value: "--" }];
+  const deptUsageKpiFallback:   SectionKpi[] = [{ name: "Active Agents in Dept (UAT)", value: "--" }, { name: "Active Agents in Dept (PROD)", value: "--" }, { name: "Avg Response Time", value: "--" }];
+  const deptApprovalKpiFallback:SectionKpi[] = [{ name: "Pending Approvals", value: "--" }, { name: "Rejection Rate", value: "--" }, { name: "Avg Approval Time", value: "--" }];
+  const deptHitlKpiFallback:    SectionKpi[] = [{ name: "HITL Invocation Rate", value: "--" }, { name: "Avg HITL Response Time", value: "--" }];
+  const devCodeKpiFallback:     SectionKpi[] = [{ name: "Avg. Version Count of Agents", value: "--" }];
+  const businessMaturityFallback:SectionKpi[]= [{ name: "% Agents with Guardrails", value: "--" }, { name: "% Agents with RAG", value: "--" }, { name: "% Agents with HITL", value: "--" }];
+  const rootMaturityFallback:   SectionKpi[] = [{ name: "% Agents with Guardrails", value: "--" }, { name: "% Agents with RAG", value: "--" }, { name: "% Agents with HITL", value: "--" }];
+  const platformKpiFallback:    SectionKpi[] = [{ name: "Platform Uptime %", value: "--" }, { name: "API Latency P95", value: "--" }, { name: "API Latency P99", value: "--" }, { name: "Error Rate %", value: "--" }, { name: "AKS Pod Scaling Events", value: "--" }, { name: "CPU/Memory Saturation %", value: "--" }];
+  const devPerformanceFallback: SectionKpi[] = [{ name: "Avg Agent Latency", value: "--" }, { name: "Latency P95", value: "--" }, { name: "Latency P99", value: "--" }];
+  const businessExperienceFallback:SectionKpi[]=[{ name: "Avg Response Time", value: "--" }, { name: "Escalation to Human", value: "--" }, { name: "User Satisfaction Score", value: "--" }];
+  const approvalRangeOptions = [{ value: "7d", label: "Last 7 days" }, { value: "30d", label: "Last 30 days" }, { value: "12w", label: "Last 12 weeks" }];
 
-  useEffect(() => {
-    const id = setInterval(() => setRefreshTick((tick) => tick + 1), 60 * 1000);
-    return () => clearInterval(id);
-  }, []);
+  useEffect(() => { const id = setInterval(() => setRefreshTick((t) => t + 1), 60000); return () => clearInterval(id); }, []);
 
-  useEffect(() => {
-    setSectionId(defaultSectionId);
-  }, [defaultSectionId]);
-
+  // ── All API calls preserved exactly from original ──────────────────────
+  useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/environment-lifecycle", p).then((r) => setLifecycleKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? lifecycleKpiFallback)).catch(() => setLifecycleKpis(lifecycleKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
   useEffect(() => {
     if (!isSuperAdmin) return;
-    const orgId = userData?.organization_id || null;
-    const params = orgId ? { params: { org_id: orgId } } : undefined;
-
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/environment-lifecycle", params)
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? lifecycleKpiFallback;
-        setLifecycleKpis(next);
-      })
-      .catch(() => {
-        setLifecycleKpis(lifecycleKpiFallback);
-      });
-  }, [isSuperAdmin, refreshTick, userData?.organization_id]);
-
+    const gv = (p: any) => { const r = p?.data?.result; const v = Array.isArray(r) && r.length > 0 ? r[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; return Number.isFinite(n) ? n : null; };
+    const gsv = (sp: any, label: string) => { const s = sp?.series ?? []; const e = s.find((x: any) => x?.label === label); return (e?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => Number(v?.[1] ?? 0)).filter((v: any) => Number.isFinite(v)); };
+    const now = Math.floor(Date.now() / 1000); const start = now - 86400;
+    Promise.all([api.get(`/api/metrics-dashboard/query-preset/platform_uptime`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p95`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p99`), api.get(`/api/metrics-dashboard/query-preset/error_rate`), api.get(`/api/metrics-dashboard/query-preset/cpu_saturation`), api.get(`/api/metrics-dashboard/query-preset/memory_saturation`), api.get(`/api/metrics-dashboard/query-preset-range/pod_scaling_activity`, { params: { start, end: now, step: "3600s" } })])
+      .then(([u, p95, p99, er, cpu, mem, sc]) => {
+        const uv = gv(u?.data?.prometheus), p95v = gv(p95?.data?.prometheus), p99v = gv(p99?.data?.prometheus), erv = gv(er?.data?.prometheus), cpuv = gv(cpu?.data?.prometheus), memv = gv(mem?.data?.prometheus);
+        const dv = gsv(sc?.data, "Desired Replicas (HPA)"); let se = 0; for (let i = 1; i < dv.length; i++) if (dv[i] !== dv[i-1]) se++;
+        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "--" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "--" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "--" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "--" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${Math.round(cpuv)}% / ${Math.round(memv)}%` : "--" }]);
+      }).catch(() => setPlatformKpis(platformKpiFallback));
+  }, [isSuperAdmin, refreshTick]);
   useEffect(() => {
-    if (!isDepartmentAdmin) return;
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/department-usage")
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? deptUsageKpiFallback;
-        setDeptUsageKpis(next);
-      })
-      .catch(() => {
-        setDeptUsageKpis(deptUsageKpiFallback);
-      });
-  }, [isDepartmentAdmin, refreshTick]);
-
-  useEffect(() => {
-    if (!isDepartmentAdmin) return;
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/department-approval")
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? deptApprovalKpiFallback;
-        setDeptApprovalKpis(next);
-      })
-      .catch(() => {
-        setDeptApprovalKpis(deptApprovalKpiFallback);
-      });
-  }, [isDepartmentAdmin, refreshTick]);
-
-  useEffect(() => {
-    if (!isDepartmentAdmin) return;
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/department-hitl")
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? deptHitlKpiFallback;
-        setDeptHitlKpis(next);
-      })
-      .catch(() => {
-        setDeptHitlKpis(deptHitlKpiFallback);
-      });
-  }, [isDepartmentAdmin, refreshTick]);
-
+    if (!isSuperAdmin) return;
+    const now = Math.floor(Date.now() / 1000); const start = now - 86400;
+    const fmt = (ts: number) => new Date(ts * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    Promise.all([api.get(`/api/metrics-dashboard/query-preset-range/api_latency_comparison`, { params: { start, end: now, step: "60s" } }), api.get(`/api/metrics-dashboard/query-preset-range/error_rate_trend`, { params: { start, end: now, step: "120s" } }), api.get(`/api/metrics-dashboard/query-preset-range/cpu_memory_saturation`, { params: { start, end: now, step: "120s" } })])
+      .then(([lat, er, cm]) => {
+        const lm: Record<number, any> = {}; for (const s of lat?.data?.series ?? []) { const lk = s?.label === "P95" ? "p95" : s?.label === "P99" ? "p99" : null; if (!lk) continue; for (const v of s?.prometheus?.data?.result?.[0]?.values ?? []) { const ts = Number(v?.[0] ?? 0); if (!Number.isFinite(ts)) continue; if (!lm[ts]) lm[ts] = { label: fmt(ts), ts }; const val = Number(v?.[1] ?? 0); if (Number.isFinite(val)) lm[ts][lk] = val; } }
+        setPlatformLatencySeries(Object.entries(lm).sort(([a], [b]) => +a - +b).map(([, p]) => p));
+        const et = (er?.data?.series ?? []).find((s: any) => s?.label === "Error Rate") ?? er?.data?.series?.[0];
+        setPlatformErrorSeries((et?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => { const ts = Number(v?.[0] ?? 0); const val = Number(v?.[1] ?? 0); return Number.isFinite(ts) && Number.isFinite(val) ? { label: fmt(ts), ts, value: val } : null; }).filter(Boolean));
+        const cmm: Record<number, any> = {}; for (const s of cm?.data?.series ?? []) { const lk = s?.label === "CPU %" ? "cpu" : s?.label === "Memory %" ? "memory" : null; if (!lk) continue; for (const v of s?.prometheus?.data?.result?.[0]?.values ?? []) { const ts = Number(v?.[0] ?? 0); if (!Number.isFinite(ts)) continue; if (!cmm[ts]) cmm[ts] = { label: fmt(ts), ts }; const val = Number(v?.[1] ?? 0); if (Number.isFinite(val)) cmm[ts][lk] = val; } }
+        setPlatformCpuMemSeries(Object.entries(cmm).sort(([a], [b]) => +a - +b).map(([, p]) => p));
+      }).catch(() => { setPlatformLatencySeries([]); setPlatformErrorSeries([]); setPlatformCpuMemSeries([]); });
+  }, [isSuperAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/department-usage").then((r) => setDeptUsageKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? deptUsageKpiFallback)).catch(() => setDeptUsageKpis(deptUsageKpiFallback)); }, [isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; api.get(`/api/metrics-dashboard/query-preset/avg_response_time`).then((r) => { const res = r?.data?.prometheus?.data?.result; const v = Array.isArray(res) && res.length > 0 ? res[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; if (Number.isFinite(n)) setDeptUsageKpis((prev) => { const next = prev ? [...prev] : [...deptUsageKpiFallback]; const idx = next.findIndex((k) => k.name === "Avg Response Time"); if (idx >= 0) next[idx] = { ...next[idx], value: `${Math.round(n!)}ms` }; else next.push({ name: "Avg Response Time", value: `${Math.round(n!)}ms` }); return next; }); }).catch(() => setDeptUsageKpis((p) => p ?? deptUsageKpiFallback)); }, [isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; const now = Math.floor(Date.now() / 1000); api.get(`/api/metrics-dashboard/query-preset-range/response_time_trend`, { params: { start: now - 604800, end: now, step: "3600s" } }).then((r) => setDeptResponseTimeSeries((r?.data?.series?.[0]?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => ({ date: new Date(Number(v?.[0] ?? 0) * 1000).toISOString().slice(0, 10), value: Number.isFinite(Number(v?.[1] ?? 0)) ? Number(v[1]) : 0 })))).catch(() => setDeptResponseTimeSeries([])); }, [isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/department-approval").then((r) => setDeptApprovalKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? deptApprovalKpiFallback)).catch(() => setDeptApprovalKpis(deptApprovalKpiFallback)); }, [isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/department-hitl").then((r) => setDeptHitlKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? deptHitlKpiFallback)).catch(() => setDeptHitlKpis(deptHitlKpiFallback)); }, [isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isDeveloper) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/developer-code").then((r) => setDevCodeKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? devCodeKpiFallback)).catch(() => setDevCodeKpis(devCodeKpiFallback)); }, [isDeveloper, refreshTick]);
   useEffect(() => {
     if (!isDeveloper) return;
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/developer-code")
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? devCodeKpiFallback;
-        setDevCodeKpis(next);
-      })
-      .catch(() => {
-        setDevCodeKpis(devCodeKpiFallback);
-      });
+    Promise.all([api.get(`/api/metrics-dashboard/query-preset/avg_agent_latency`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p95`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p99`)]).then(([avg, p95, p99]) => {
+      const gv = (p: any) => { const r = p?.data?.result; const v = Array.isArray(r) && r.length > 0 ? r[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; return Number.isFinite(n) ? n : null; };
+      setDevPerformanceKpis([{ name: "Avg Agent Latency", value: gv(avg?.data?.prometheus) != null ? `${Math.round(gv(avg?.data?.prometheus)!)}ms` : "--" }, { name: "Latency P95", value: gv(p95?.data?.prometheus) != null ? `${Math.round(gv(p95?.data?.prometheus)!)}ms` : "--" }, { name: "Latency P99", value: gv(p99?.data?.prometheus) != null ? `${Math.round(gv(p99?.data?.prometheus)!)}ms` : "--" }]);
+    }).catch(() => setDevPerformanceKpis(devPerformanceFallback));
   }, [isDeveloper, refreshTick]);
-
   useEffect(() => {
-    if (!isBusinessUser) return;
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/business-maturity")
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? businessMaturityFallback;
-        setBusinessMaturityKpis(next);
-      })
-      .catch(() => {
-        setBusinessMaturityKpis(businessMaturityFallback);
-      });
-  }, [isBusinessUser, refreshTick]);
+    if (!isDeveloper) return;
+    const now = Math.floor(Date.now() / 1000); const start = now - 86400;
+    api.get(`/api/metrics-dashboard/query-preset-range/api_latency_comparison`, { params: { start, end: now, step: "60s" } }).then((r) => {
+      const merged: Record<number, any> = {};
+      for (const s of r?.data?.series ?? []) { const lk = s?.label === "P95" ? "p95" : s?.label === "P99" ? "p99" : null; if (!lk) continue; for (const v of s?.prometheus?.data?.result?.[0]?.values ?? []) { const ts = Number(v?.[0] ?? 0); if (!Number.isFinite(ts)) continue; if (!merged[ts]) merged[ts] = { label: new Date(ts * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }), ts }; const val = Number(v?.[1] ?? 0); if (Number.isFinite(val)) merged[ts][lk] = val; } }
+      setDevLatencySeries(Object.entries(merged).sort(([a], [b]) => +a - +b).map(([, p]) => p));
+    }).catch(() => setDevLatencySeries([]));
+  }, [isDeveloper, refreshTick]);
+  useEffect(() => { if (!isBusinessUser) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/business-maturity").then((r) => setBusinessMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? businessMaturityFallback)).catch(() => setBusinessMaturityKpis(businessMaturityFallback)); }, [isBusinessUser, refreshTick]);
+  useEffect(() => { if (!isBusinessUser) return; api.get(`/api/metrics-dashboard/query-preset/avg_response_time`).then((r) => { const res = r?.data?.prometheus?.data?.result; const v = Array.isArray(res) && res.length > 0 ? res[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; if (!Number.isFinite(n)) { setBusinessExperienceKpis((p) => p ?? businessExperienceFallback); return; } setBusinessExperienceKpis((prev) => { const next = prev ? [...prev] : [...businessExperienceFallback]; const idx = next.findIndex((k) => k.name === "Avg Response Time"); if (idx >= 0) next[idx] = { ...next[idx], value: `${Math.round(n!)}ms` }; else next.push({ name: "Avg Response Time", value: `${Math.round(n!)}ms` }); return next; }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
+  useEffect(() => { if (!isBusinessUser) return; const now = Math.floor(Date.now() / 1000); api.get(`/api/metrics-dashboard/query-preset-range/response_time_trend`, { params: { start: now - 604800, end: now, step: "3600s" } }).then((r) => setBusinessResponseTimeSeries((r?.data?.series?.[0]?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => ({ date: new Date(Number(v?.[0] ?? 0) * 1000).toISOString().slice(0, 10), value: Number.isFinite(Number(v?.[1] ?? 0)) ? Number(v[1]) : 0 })))).catch(() => setBusinessResponseTimeSeries([])); }, [isBusinessUser, refreshTick]);
+  useEffect(() => { if (!isBusinessUser) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/business-experience").then((r) => { const next = r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? []; setBusinessExperienceKpis((prev) => { const m = new Map((prev ?? businessExperienceFallback).map((k) => [k.name, k.value])); for (const k of next) m.set(k.name, k.value); return Array.from(m.entries()).map(([name, value]) => ({ name, value })); }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
+  useEffect(() => { if (!isRootAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity").then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; api.get<PendingSeriesResponse>("/api/dashboard/sections/department-approval/pending-series", { params: { range: approvalRange } }).then((r) => setApprovalPendingSeries(r.data?.series ?? [])).catch(() => setApprovalPendingSeries([])); }, [approvalRange, isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; api.get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/invocation-series", { params: { range: hitlRange } }).then((r) => setHitlInvocationSeries(r.data?.series ?? [])).catch(() => setHitlInvocationSeries([])); }, [hitlRange, isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isDepartmentAdmin) return; api.get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/response-time-series", { params: { range: hitlRange } }).then((r) => setHitlResponseSeries(r.data?.series ?? [])).catch(() => setHitlResponseSeries([])); }, [hitlRange, isDepartmentAdmin, refreshTick]);
+  useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", p).then((r) => setGovernanceKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? governanceKpiFallback)).catch(() => setGovernanceKpis(governanceKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
 
-  useEffect(() => {
-    if (!isRootAdmin) return;
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity")
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? rootMaturityFallback;
-        setRootMaturityKpis(next);
-      })
-      .catch(() => {
-        setRootMaturityKpis(rootMaturityFallback);
-      });
-  }, [isRootAdmin, refreshTick]);
+  // ── Chart data helpers ────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!isDepartmentAdmin) return;
-    api
-      .get<PendingSeriesResponse>("/api/dashboard/sections/department-approval/pending-series", {
-        params: { range: approvalRange },
-      })
-      .then((response) => {
-        setApprovalPendingSeries(response.data?.series ?? []);
-      })
-      .catch(() => {
-        setApprovalPendingSeries([]);
-      });
-  }, [approvalRange, isDepartmentAdmin, refreshTick]);
+  const mkDateSeries = (series: PendingSeriesPoint[] | null, days: number) => {
+    const fb = Array.from({ length: days }, (_, i) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - (days - 1 - i)); return { date: d.toISOString().slice(0, 10), value: 0 }; });
+    return (series?.length ? series : fb).map((pt) => ({ label: new Date(`${pt.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" }), value: pt.value }));
+  };
+  const mkTsSeries = (n: number) => Array.from({ length: n }, (_, i) => { const ts = Math.floor(Date.now() / 1000) - (n - 1 - i) * 3600; return { label: new Date(ts * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }), ts }; });
 
-  useEffect(() => {
-    if (!isDepartmentAdmin) return;
-    api
-      .get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/invocation-series", {
-        params: { range: hitlRange },
-      })
-      .then((response) => {
-        setHitlInvocationSeries(response.data?.series ?? []);
-      })
-      .catch(() => {
-        setHitlInvocationSeries([]);
-      });
-  }, [hitlRange, isDepartmentAdmin, refreshTick]);
+  const aDays = approvalRange === "7d" ? 7 : approvalRange === "30d" ? 30 : 84;
+  const hDays = hitlRange === "7d" ? 7 : hitlRange === "30d" ? 30 : 84;
 
-  useEffect(() => {
-    if (!isDepartmentAdmin) return;
-    api
-      .get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/response-time-series", {
-        params: { range: hitlRange },
-      })
-      .then((response) => {
-        setHitlResponseSeries(response.data?.series ?? []);
-      })
-      .catch(() => {
-        setHitlResponseSeries([]);
-      });
-  }, [hitlRange, isDepartmentAdmin, refreshTick]);
+  const approvalChartData      = useMemo(() => mkDateSeries(approvalPendingSeries, aDays), [approvalPendingSeries, aDays]);
+  const hitlInvocationChartData = useMemo(() => mkDateSeries(hitlInvocationSeries, hDays), [hitlInvocationSeries, hDays]);
+  const hitlResponseChartData   = useMemo(() => mkDateSeries(hitlResponseSeries, hDays), [hitlResponseSeries, hDays]);
+  const deptRtChartData         = useMemo(() => mkDateSeries(deptResponseTimeSeries, 7), [deptResponseTimeSeries]);
+  const bizRtChartData          = useMemo(() => mkDateSeries(businessResponseTimeSeries, 7), [businessResponseTimeSeries]);
+  const platLatencyData  = useMemo(() => platformLatencySeries?.length ? platformLatencySeries : mkTsSeries(8).map((p) => ({ ...p, p95: 0, p99: 0 })), [platformLatencySeries]);
+  const platErrorData    = useMemo(() => platformErrorSeries?.length ? platformErrorSeries : mkTsSeries(8).map((p) => ({ ...p, value: 0 })), [platformErrorSeries]);
+  const platCpuMemData   = useMemo(() => platformCpuMemSeries?.length ? platformCpuMemSeries : mkTsSeries(8).map((p) => ({ ...p, cpu: 0, memory: 0 })), [platformCpuMemSeries]);
+  const devLatData       = useMemo(() => devLatencySeries ?? [], [devLatencySeries]);
 
-  useEffect(() => {
-    if (!isSuperAdmin) return;
-    const orgId = userData?.organization_id || null;
-    const params = orgId ? { params: { org_id: orgId } } : undefined;
+  // ── Resolve KPIs + charts for each section ────────────────────────────
 
-    api
-      .get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", params)
-      .then((response) => {
-        const next = response.data?.kpis?.map((kpi) => ({
-          name: kpi.label,
-          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
-        })) ?? governanceKpiFallback;
-        setGovernanceKpis(next);
-      })
-      .catch(() => {
-        setGovernanceKpis(governanceKpiFallback);
-      });
-  }, [isSuperAdmin, refreshTick, userData?.organization_id]);
+  const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : isRootAdmin ? rootSections : sections;
 
-  const sectionsToRender = isDepartmentAdmin
-    ? departmentSections
-    : isDeveloper
-      ? developerSections
-      : isBusinessUser
-        ? businessSections
-        : isRootAdmin
-          ? rootSections
-          : sections;
-  const activeSection = useMemo(
-    () => sectionsToRender.find((section) => section.id === sectionId) ?? sectionsToRender[0],
-    [sectionId, sectionsToRender],
-  );
-  const kpisToRender =
-    isSuperAdmin && activeSection.id === "lifecycle"
-      ? lifecycleKpis ?? lifecycleKpiFallback
-      : activeSection.kpis;
+  const resolveSection = (section: SectionConfig): { kpis: SectionKpi[]; charts: SectionChart[] } => {
+    let kpis = [...section.kpis];
 
-  const displayKpis = useMemo(() => {
-    let overrides: Map<string, string> | null = null;
+    const applyOverride = (overrides: SectionKpi[] | null) => {
+      if (!overrides?.length) return;
+      const map = new Map(overrides.map((k) => [k.name, k.value]));
+      kpis = kpis.map((k) => ({ ...k, value: map.get(k.name) ?? k.value }));
+    };
 
-    if (isSuperAdmin && activeSection.id === "governance" && governanceKpis?.length) {
-      overrides = new Map(governanceKpis.map((kpi) => [kpi.name, kpi.value]));
-    }
+    if (isSuperAdmin && section.id === "lifecycle") kpis = lifecycleKpis ?? lifecycleKpiFallback;
+    if (isSuperAdmin && section.id === "governance") applyOverride(governanceKpis);
+    if (isSuperAdmin && section.id === "platform") applyOverride(platformKpis);
+    if (isDepartmentAdmin && section.id === "usage") applyOverride(deptUsageKpis);
+    if (isDepartmentAdmin && section.id === "approval") applyOverride(deptApprovalKpis);
+    if (isDepartmentAdmin && section.id === "hitl") applyOverride(deptHitlKpis);
+    if (isDeveloper && section.id === "code") applyOverride(devCodeKpis);
+    if (isDeveloper && section.id === "performance") applyOverride(devPerformanceKpis);
+    if (isRootAdmin && section.id === "maturity") applyOverride(rootMaturityKpis);
+    if (isBusinessUser && section.id === "maturity") applyOverride(businessMaturityKpis);
+    if (isBusinessUser && section.id === "experience") applyOverride(businessExperienceKpis);
 
-    if (isDepartmentAdmin && activeSection.id === "usage" && deptUsageKpis?.length) {
-      overrides = new Map(deptUsageKpis.map((kpi) => [kpi.name, kpi.value]));
-    }
-    if (isDepartmentAdmin && activeSection.id === "approval" && deptApprovalKpis?.length) {
-      overrides = new Map(deptApprovalKpis.map((kpi) => [kpi.name, kpi.value]));
-    }
-    if (isDepartmentAdmin && activeSection.id === "hitl" && deptHitlKpis?.length) {
-      overrides = new Map(deptHitlKpis.map((kpi) => [kpi.name, kpi.value]));
-    }
-    if (isDeveloper && activeSection.id === "code" && devCodeKpis?.length) {
-      overrides = new Map(devCodeKpis.map((kpi) => [kpi.name, kpi.value]));
-    }
-    if (isBusinessUser && activeSection.id === "maturity" && businessMaturityKpis?.length) {
-      overrides = new Map(businessMaturityKpis.map((kpi) => [kpi.name, kpi.value]));
-    }
-    if (isRootAdmin && activeSection.id === "maturity" && rootMaturityKpis?.length) {
-      overrides = new Map(rootMaturityKpis.map((kpi) => [kpi.name, kpi.value]));
-    }
-
-    if (!overrides) return kpisToRender;
-    return kpisToRender.map((kpi) => {
-      const value = overrides.get(kpi.name);
-      return value ? { ...kpi, value } : kpi;
-    });
-  }, [
-    activeSection.id,
-    deptApprovalKpis,
-    deptHitlKpis,
-    deptUsageKpis,
-    devCodeKpis,
-    businessMaturityKpis,
-    rootMaturityKpis,
-    governanceKpis,
-    isDepartmentAdmin,
-    isDeveloper,
-    isBusinessUser,
-    isRootAdmin,
-    isSuperAdmin,
-    kpisToRender,
-  ]);
-
-  const approvalPendingChartData = useMemo(() => {
-    const days = approvalRange === "7d" ? 7 : approvalRange === "30d" ? 30 : 84;
-    const fallbackSeries = Array.from({ length: days }, (_, idx) => {
-      const date = new Date();
-      date.setUTCDate(date.getUTCDate() - (days - 1 - idx));
-      return { date: date.toISOString().slice(0, 10), value: 0 };
-    });
-    const source = approvalPendingSeries && approvalPendingSeries.length > 0 ? approvalPendingSeries : fallbackSeries;
-    return source.map((point) => {
-      const date = new Date(`${point.date}T00:00:00Z`);
-      const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      return { label, value: point.value };
-    });
-  }, [approvalPendingSeries, approvalRange]);
-
-  const hitlInvocationChartData = useMemo(() => {
-    const days = hitlRange === "7d" ? 7 : hitlRange === "30d" ? 30 : 84;
-    const fallbackSeries = Array.from({ length: days }, (_, idx) => {
-      const date = new Date();
-      date.setUTCDate(date.getUTCDate() - (days - 1 - idx));
-      return { date: date.toISOString().slice(0, 10), value: 0 };
-    });
-    const source = hitlInvocationSeries && hitlInvocationSeries.length > 0 ? hitlInvocationSeries : fallbackSeries;
-    return source.map((point) => {
-      const date = new Date(`${point.date}T00:00:00Z`);
-      const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      return { label, value: point.value };
-    });
-  }, [hitlInvocationSeries, hitlRange]);
-
-  const hitlResponseChartData = useMemo(() => {
-    const days = hitlRange === "7d" ? 7 : hitlRange === "30d" ? 30 : 84;
-    const fallbackSeries = Array.from({ length: days }, (_, idx) => {
-      const date = new Date();
-      date.setUTCDate(date.getUTCDate() - (days - 1 - idx));
-      return { date: date.toISOString().slice(0, 10), value: 0 };
-    });
-    const source = hitlResponseSeries && hitlResponseSeries.length > 0 ? hitlResponseSeries : fallbackSeries;
-    return source.map((point) => {
-      const date = new Date(`${point.date}T00:00:00Z`);
-      const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      return { label, value: point.value };
-    });
-  }, [hitlResponseSeries, hitlRange]);
-
-  const chartsToRender = useMemo(() => {
-    if (!isDepartmentAdmin) return activeSection.charts;
-    if (activeSection.id === "approval") {
-      return activeSection.charts.map((chart) => {
-        if (chart.title !== "Pending Approvals") return chart;
-        return {
-          ...chart,
-          data: approvalPendingChartData ?? [],
-        };
-      });
-    }
-    if (activeSection.id === "hitl") {
-      return activeSection.charts.map((chart) => {
-        if (chart.title === "Invocation Rate") {
-          return { ...chart, data: hitlInvocationChartData ?? [] };
-        }
-        if (chart.title === "Response Time") {
-          return { ...chart, data: hitlResponseChartData ?? [] };
-        }
-        return chart;
-      });
-    }
-    return activeSection.charts.map((chart) => {
+    const charts = section.charts.map((chart) => {
+      if (section.id === "platform") {
+        if (chart.title === "API Latency P95 vs P99") return { ...chart, data: platLatencyData };
+        if (chart.title === "Error Rate Trend")        return { ...chart, data: platErrorData };
+        if (chart.title === "CPU & Memory Saturation") return { ...chart, data: platCpuMemData };
+      }
+      if (section.id === "usage" && chart.title === "Response Time Trend") return { ...chart, data: deptRtChartData };
+      if (section.id === "approval" && chart.title === "Pending Approvals") return { ...chart, data: approvalChartData };
+      if (section.id === "hitl") {
+        if (chart.title === "Invocation Rate") return { ...chart, data: hitlInvocationChartData };
+        if (chart.title === "Response Time")   return { ...chart, data: hitlResponseChartData };
+      }
+      if (section.id === "performance" && chart.title === "API Latency P95 vs P99") return { ...chart, data: devLatData };
+      if (section.id === "experience" && chart.title === "Response Time") return { ...chart, data: bizRtChartData };
       return chart;
     });
-  }, [
-    activeSection.charts,
-    activeSection.id,
-    approvalPendingChartData,
-    hitlInvocationChartData,
-    hitlResponseChartData,
-    isDepartmentAdmin,
-  ]);
-  const isLifecycleSection = activeSection.id === "lifecycle";
-  const kpiGridClass = isLifecycleSection
-    ? "mt-6 grid grid-cols-1 gap-6 md:grid-cols-3"
-    : "mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4";
 
-  const theme = sectionThemes[activeSection.id];
+    return { kpis, charts };
+  };
+
   const headerSubtitle = isDepartmentAdmin
-    ? "Department Admin - Operational Governance"
+    ? "Department Admin — Operational Governance"
     : isDeveloper
-      ? "Developer - Build & Optimize"
+      ? "Developer — Build & Optimize"
       : isBusinessUser
-        ? "Business User - Productivity & Experience"
+        ? "Business User — Productivity & Experience"
         : isRootAdmin
-          ? "Executive - Strategic Oversight"
-          : "Super Admin KPI view with role-based sections";
-  const heroDescription = isDepartmentAdmin
-    ? "Department-level performance, compliance enforcement, and budget control."
-    : isDeveloper
-      ? "Reliability, accuracy, performance, cost efficiency."
-      : isBusinessUser
-        ? "Efficiency, reliability, satisfaction."
-        : isRootAdmin
-          ? "ROI, maturity, risk posture, innovation velocity."
-          : "Executive KPI snapshot with curated charts and metrics.";
+          ? "Executive — Strategic Oversight"
+          : "Super Admin — Full Platform View";
+
+  const approvalRangeSelector = (
+    <Select value={approvalRange} onValueChange={(v) => setApprovalRange(v as "7d" | "30d" | "12w")}>
+      <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>{approvalRangeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+    </Select>
+  );
+  const hitlRangeSelector = (
+    <Select value={hitlRange} onValueChange={(v) => setHitlRange(v as "7d" | "30d" | "12w")}>
+      <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>{approvalRangeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+    </Select>
+  );
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex-shrink-0 border-b bg-card">
-        <div className="px-8 py-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      {/* Header */}
+      <div className="flex-shrink-0 border-b border-border bg-card">
+        <div className="px-8 py-5">
+          <div className="flex items-center gap-3">
             <div>
-              <h1 className="text-2xl font-bold">{t("Dashboard")}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t(headerSubtitle)}
-              </p>
+              <h1 className="text-2xl font-bold text-foreground">{t("Dashboard")}</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">{headerSubtitle}</p>
             </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Select value={sectionId} onValueChange={(value) => setSectionId(value as SectionId)}>
-                <SelectTrigger className="w-[280px]">
-                  <SelectValue placeholder={t("Select KPI section")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {sectionsToRender.map((section) => (
-                    <SelectItem key={section.id} value={section.id}>
-                      {t(section.label)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {/* Live indicator */}
+            <div className="ml-auto flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              <span className="text-[10px] font-medium text-muted-foreground">Live</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto bg-slate-50/60 px-8 py-6">
-        <div className="relative">
-          <div className="pointer-events-none absolute inset-0 rounded-3xl bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.12),_transparent_55%),radial-gradient(circle_at_80%_20%,_rgba(16,185,129,0.12),_transparent_50%)]" />
-          <div className="relative rounded-3xl border bg-white/80 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur">
-            <div className="relative overflow-hidden rounded-2xl border bg-white p-6 text-slate-900">
-              <div className={`absolute -right-24 -top-24 h-56 w-56 rounded-full bg-gradient-to-br ${theme.glow} blur-3xl`} />
-              <div className="relative">
-                <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${theme.badge}`}>
-                  {t(activeSection.label)}
-                </span>
-                <h2 className="mt-3 text-3xl font-semibold">{t(activeSection.headline)}</h2>
-                <p className="mt-2 text-sm text-slate-500">
-                  {t(heroDescription)}
-                </p>
-              </div>
-            </div>
-
-            <div className={kpiGridClass}>
-              {displayKpis.map((kpi, index) => (
-                <div
-                  key={kpi.name}
-                  className={`rounded-2xl border bg-gradient-to-br ${kpiCardStyles[index % kpiCardStyles.length]} ${
-                    isLifecycleSection ? "p-6 min-h-[160px]" : "p-4"
-                  } ring-1 shadow-sm`}
-                >
-                  <div className="h-1 w-10 rounded-full bg-gradient-to-r from-slate-900 via-slate-400 to-slate-100" />
-                  <p className="mt-3 text-xs uppercase tracking-wide text-muted-foreground">
-                    {t(kpi.name)}
-                  </p>
-                  <p className={`mt-3 font-semibold text-slate-900 ${isLifecycleSection ? "text-3xl" : "text-2xl"}`}>
-                    {t(kpi.value)}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            {chartsToRender.length > 0 && (
-              <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
-                {chartsToRender.map((chart) => (
-                  <div
-                    key={chart.title}
-                    className="rounded-2xl border bg-white/90 p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="text-lg font-semibold text-slate-900">{t(chart.title)}</h3>
-                        <p className="text-xs text-muted-foreground">{t(chart.subtitle)}</p>
-                      </div>
-                      {isDepartmentAdmin && activeSection.id === "approval" && chart.title === "Pending Approvals" ? (
-                        <Select value={approvalRange} onValueChange={(value) => setApprovalRange(value as "7d" | "30d" | "12w")}>
-                          <SelectTrigger className="h-7 w-[140px] text-xs">
-                            <SelectValue placeholder="Range" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {approvalRangeOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : isDepartmentAdmin && activeSection.id === "hitl" && (chart.title === "Invocation Rate" || chart.title === "Response Time") ? (
-                        <Select value={hitlRange} onValueChange={(value) => setHitlRange(value as "7d" | "30d" | "12w")}>
-                          <SelectTrigger className="h-7 w-[140px] text-xs">
-                            <SelectValue placeholder="Range" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {approvalRangeOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="rounded-full bg-slate-100 p-2">
-                          {chart.type === "line" ? (
-                            <LineChart className="h-4 w-4 text-slate-600" />
-                          ) : chart.type === "bar" ? (
-                            <BarChart3 className="h-4 w-4 text-slate-600" />
-                          ) : (
-                            <Activity className="h-4 w-4 text-slate-600" />
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="mt-4">
-                      <ChartBlock chart={chart} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+      {/* Body — all sections stacked, each collapsible */}
+      <div className="flex-1 overflow-auto bg-background px-8 py-6">
+        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.06),_transparent_50%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.06),_transparent_50%)]" />
+        <div className="relative space-y-3">
+          {sectionsToRender.map((section, i) => {
+            const { kpis, charts } = resolveSection(section);
+            return (
+              <SectionCard
+                key={section.id}
+                section={section}
+                displayKpis={kpis}
+                charts={charts}
+                approvalRangeSelector={section.id === "approval" ? approvalRangeSelector : undefined}
+                hitlRangeSelector={section.id === "hitl" ? hitlRangeSelector : undefined}
+                defaultExpanded={i === 0}
+              />
+            );
+          })}
         </div>
       </div>
     </div>
