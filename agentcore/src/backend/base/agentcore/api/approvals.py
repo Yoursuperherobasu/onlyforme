@@ -1544,9 +1544,11 @@ async def approve_agent(
                 f"Deployment {deployment.id} has been marked as ERROR and will not serve in PROD. "
                 f"Please retry the approval or contact support."
             ),
-    # ─── HTTP notify (only if guardrail promotion succeeded) ──
+        )
+    # ─── HTTP notify (only if guardrail promotion AND data migrations succeeded) ──
     guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
-    if guardrails_ready:
+    rag_ready = not pinecone_migration_failed and not neo4j_migration_failed
+    if guardrails_ready and rag_ready:
         try:
             import httpx
             from agentcore.services.deps import get_settings_service
@@ -1571,10 +1573,26 @@ async def approve_agent(
         except Exception as notify_err:
             logger.warning(f"Post-approval notify API failed for approval {req.id}: {notify_err}")
     else:
-        failed = [g.uat_guardrail_id for g in guardrail_promotions if not g.ready]
-        logger.warning(
-            f"[APPROVAL_NOTIFY] Skipped — guardrail promotion not ready for approval {req.id}. "
-            f"Failed guardrails: {failed}"
+        error_reasons = []
+        if not guardrails_ready:
+            failed = [g.uat_guardrail_id for g in guardrail_promotions if not g.ready]
+            error_reasons.append(f"Guardrail promotion not ready: {failed}")
+        if not rag_ready:
+            if pinecone_migration_failed:
+                error_reasons.append(f"Pinecone VDB migration failed: {pinecone_error_msg}")
+            if neo4j_migration_failed:
+                error_reasons.append(f"Neo4j graph migration failed: {neo4j_error_msg}")
+        logger.error(
+            f"[APPROVAL_NOTIFY] Failed for approval {req.id}. "
+            f"Reasons: {' | '.join(error_reasons)}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Agent approved but promotion checks failed. "
+                f"{' | '.join(error_reasons)}. "
+                f"Deployment {deployment.id} will not be notified for PROD."
+            ),
         )
 
     # Trigger handoff payload only for approved AGENT promotions (never on reject).

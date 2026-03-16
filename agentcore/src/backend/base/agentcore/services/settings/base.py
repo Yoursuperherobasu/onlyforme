@@ -263,6 +263,11 @@ class Settings(BaseSettings):
     graph_rag_service_api_key: str = ""
     """API key for authenticating with the Graph RAG microservice (sent as x-api-key header)."""
 
+    # Manifest
+    manifest_file_path: str = ""
+    """Absolute or relative path to the manifest.yaml file used by the publish/notify flow.
+    When empty, defaults to <project_root>/manifest.yaml."""
+
     # Public Agent Settings
     public_agent_cleanup_interval: int = Field(default=3600, gt=600)
     """The interval in seconds at which public temporary agents will be cleaned up.

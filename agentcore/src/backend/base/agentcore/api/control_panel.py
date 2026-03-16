@@ -818,20 +818,38 @@ async def toggle_agent_field(
                 is_listed = await _has_registry_row()
 
             if should_be_listed != is_listed:
-                raise RuntimeError(
+                logger.warning(
                     f"Registry state mismatch after toggle for deployment {dep.id}: "
                     f"should_be_listed={should_be_listed}, is_listed={is_listed}"
                 )
-
-            registry_synced = True
+            else:
+                registry_synced = True
         except Exception as sync_err:
-            await session.rollback()
+            try:
+                await session.rollback()
+            except Exception:
+                pass
             logger.warning(f"Registry sync after toggle failed: {sync_err}")
         logger.info(
             f"Control-panel toggle: deploy_id={deploy_id} "
             f"field={body.field.value} → {body.value} (env={body.env.value}, "
             f"user={current_user.username})"
         )
+
+        # ── Sync manifest.yaml on start / stop ─────────────────
+        if body.field == ToggleField.IS_ACTIVE:
+            from agentcore.services.manifest import add_manifest_entry, remove_manifest_entry
+
+            if body.value:
+                add_manifest_entry(
+                    agent_id=str(dep.agent_id),
+                    agent_name=dep.agent_name,
+                    version_number=f"v{dep.version_number}",
+                    environment=body.env.value,
+                    deployment_id=str(dep.id),
+                )
+            else:
+                remove_manifest_entry(deployment_id=str(dep.id))
 
         return ToggleResponse(
             deploy_id=dep.id,

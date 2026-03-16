@@ -1268,25 +1268,33 @@ async def publish_notify_verify(
     body: PublishNotifyRequest,
     session: DbSession,
 ):
-    """DB-verified publish notification endpoint for PROD deployments.
+    """DB-verified publish notification endpoint for UAT and PROD deployments.
 
-    Triggered after agent approval in prod. Looks up the deployment
-    record in the agent_deployment_prod table, verifies that the
-    agent_id and version match, and returns the full deployment
+    Triggered after agent publish (UAT) or approval (PROD). Looks up the
+    deployment record in the appropriate table, verifies that the agent_id
+    and version match, updates manifest.yaml, and returns the full deployment
     details for downstream deployment orchestration.
 
     Raises:
-        404: Deployment record not found in prod table.
+        404: Deployment record not found.
         409: Mismatch between request payload and DB record.
     """
-    # 1. Find the deployment record in PROD table only
-    record = (await session.exec(
-        select(AgentDeploymentProd).where(AgentDeploymentProd.id == body.deployment_id)
-    )).first()
+    env = (body.environment or "prod").lower()
+
+    # 1. Find the deployment record in the appropriate table
+    if env == "uat":
+        record = (await session.exec(
+            select(AgentDeploymentUAT).where(AgentDeploymentUAT.id == body.deployment_id)
+        )).first()
+    else:
+        record = (await session.exec(
+            select(AgentDeploymentProd).where(AgentDeploymentProd.id == body.deployment_id)
+        )).first()
+
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"PROD deployment record {body.deployment_id} not found",
+            detail=f"{env.upper()} deployment record {body.deployment_id} not found",
         )
 
     # 2. Verify agent_id matches
@@ -1315,57 +1323,27 @@ async def publish_notify_verify(
     logger.info(
         f"[PUBLISH_NOTIFY] Verified: agent='{record.agent_name}' "
         f"agent_id={record.agent_id} deployment_id={record.id} "
-        f"env=prod version=v{record.version_number} "
+        f"env={env} version=v{record.version_number} "
         f"status={record.status} is_active={record.is_active}",
     )
 
-    # Append core deployment details to manifest.yaml (outside agentcore folder).
-    # Each prod publish adds a new entry under the top-level `deployments` list.
+    # Append core deployment details to manifest.yaml.
     # Failure here is non-fatal — the API response is always returned regardless.
-    try:
-        import yaml
+    from agentcore.services.manifest import add_manifest_entry
 
-        _manifest_path = Path(__file__).parents[6] / "manifest.yaml"
-
-        # Load existing entries if the file already exists.
-        _existing: dict = {}
-        if _manifest_path.exists():
-            _existing = yaml.safe_load(_manifest_path.read_text(encoding="utf-8")) or {}
-
-        _deployments: list = _existing.get("deployments", [])
-
-        _deployments.append({
-            "agent_id": str(record.agent_id),
-            "agent_name": record.agent_name,
-            "version_number": f"v{record.version_number}",
-            "environment": "prod",
-            "deployment_id": str(record.id),
-            "status": record.status.value if hasattr(record.status, "value") else str(record.status),
-            "is_active": bool(record.is_active),
-            "published_at": datetime.now(timezone.utc).isoformat(),
-        })
-
-        _manifest_path.write_text(
-            yaml.dump(
-                {"deployments": _deployments},
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            ),
-            encoding="utf-8",
-        )
-        logger.info(
-            f"[PUBLISH_NOTIFY] manifest.yaml updated at {_manifest_path} "
-            f"(total deployments: {len(_deployments)})"
-        )
-    except Exception as _manifest_err:
-        logger.warning(f"[PUBLISH_NOTIFY] Failed to write manifest.yaml: {_manifest_err}")
+    add_manifest_entry(
+        agent_id=str(record.agent_id),
+        agent_name=record.agent_name,
+        version_number=f"v{record.version_number}",
+        environment=env,
+        deployment_id=str(record.id),
+    )
 
     return PublishNotifyVerifiedResponse(
         agent_id=record.agent_id,
         agent_name=record.agent_name,
         agent_description=record.agent_description,
-        environment="prod",
+        environment=env,
         version_number=f"v{record.version_number}",
         deployment_id=record.id,
         status=record.status.value if hasattr(record.status, "value") else str(record.status),
@@ -2063,6 +2041,31 @@ async def publish_agent(
                 published_by=current_user.id,
                 published_at=new_record.deployed_at,
             )
+
+            # ─── HTTP notify (for downstream deployment orchestration + manifest.yaml) ──
+            try:
+                import httpx
+                from agentcore.services.deps import get_settings_service
+                settings = get_settings_service().settings
+                base_url = f"http://{settings.host}:{settings.port}"
+                payload = {
+                    "agent_id": str(agent_id),
+                    "environment": "uat",
+                    "version_number": str(next_version),
+                    "deployment_id": str(new_record.id),
+                }
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+                    resp.raise_for_status()
+                    verified = resp.json()
+                logger.info(
+                    f"[UAT_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+                    f"deployment_id={verified.get('deployment_id')} "
+                    f"version={verified.get('version_number')} "
+                    f"status={verified.get('status')} is_active={verified.get('is_active')}",
+                )
+            except Exception as notify_err:
+                logger.warning(f"Post-deploy notify API failed for UAT deploy of {agent_id}: {notify_err}")
 
             return PublishActionResponse(
                 success=True,
