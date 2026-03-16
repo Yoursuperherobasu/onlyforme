@@ -53,8 +53,8 @@ async def health_check(
         await chat.set_cache("health_check", str(user_id))
         await chat.get_cache("health_check")
         response.chat = "ok"
-    except Exception:  # noqa: BLE001
-        logger.exception("Error checking chat service")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Error checking chat service: {type(e).__name__}: {e}")
 
     if response.has_error():
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=response.model_dump())

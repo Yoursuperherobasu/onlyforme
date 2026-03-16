@@ -257,18 +257,31 @@ class MemoryComponent(Node):
             logger.debug("[STM] Redis not available, skipping cache layer")
         return None, 300
 
+    def _detect_env(self) -> str:
+        """Detect the execution environment from graph flags.
+        Returns: 'orch', 'dev' (default).
+        """
+        if (
+            hasattr(self, "graph")
+            and getattr(self.graph, "skip_dev_logging", False)
+            and getattr(self.graph, "orch_deployment_id", None)
+        ):
+            return "orch"
+        return "dev"
+
     async def _get_stm_cache(self, session_id: str, n_messages: int) -> list[dict] | None:
         """Try to get cached STM history from Redis."""
         redis, _ = self._get_redis_client_and_ttl()
         if not redis:
             return None
         try:
-            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
+            env = self._detect_env()
+            cache_key = f"{STM_CACHE_PREFIX}{env}:{session_id}:{n_messages}"
             data = await redis.get(cache_key)
             if data:
-                logger.info(f"[STM] Cache HIT for session={session_id}, n={n_messages}")
+                logger.info(f"[STM] Cache HIT for session={session_id}, n={n_messages}, env={env}")
                 return json.loads(data)
-            logger.debug(f"[STM] Cache MISS for session={session_id}, n={n_messages}")
+            logger.debug(f"[STM] Cache MISS for session={session_id}, n={n_messages}, env={env}")
         except Exception as e:
             logger.warning(f"[STM] Redis cache read failed: {e}")
         return None
@@ -279,7 +292,8 @@ class MemoryComponent(Node):
         if not redis:
             return
         try:
-            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
+            env = self._detect_env()
+            cache_key = f"{STM_CACHE_PREFIX}{env}:{session_id}:{n_messages}"
             data = []
             for m in messages:
                 entry = {
@@ -299,13 +313,19 @@ class MemoryComponent(Node):
         except Exception as e:
             logger.warning(f"[STM] Redis cache write failed: {e}")
 
-    async def _invalidate_stm_cache(self, session_id: str) -> None:
-        """Invalidate all STM cache entries for a session (any n_messages value)."""
+    async def _invalidate_stm_cache(self, session_id: str, env: str | None = None) -> None:
+        """Invalidate all STM cache entries for a session (any n_messages value).
+        If env is None, invalidates across all environments for safety.
+        """
         redis, _ = self._get_redis_client_and_ttl()
         if not redis:
             return
         try:
-            pattern = f"{STM_CACHE_PREFIX}{session_id}:*"
+            if env:
+                pattern = f"{STM_CACHE_PREFIX}{env}:{session_id}:*"
+            else:
+                # Invalidate all envs for this session
+                pattern = f"{STM_CACHE_PREFIX}*:{session_id}:*"
             keys = []
             async for key in redis.scan_iter(match=pattern, count=100):
                 keys.append(key)
@@ -314,6 +334,78 @@ class MemoryComponent(Node):
                 logger.debug(f"[STM] Invalidated {len(keys)} cache entries for session={session_id}")
         except Exception as e:
             logger.warning(f"[STM] Redis cache invalidation failed: {e}")
+
+    async def _fetch_orch_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from orch_conversation table (for deployed agents via orchestrator)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(OrchConversationTable)
+                    .where(OrchConversationTable.session_id == str(session_id))
+                    .where(OrchConversationTable.error == False)  # noqa: E712
+                    .order_by(col(OrchConversationTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in orch_conversation for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] orch_conversation fetch failed: {e}")
+        return []
+
+    async def _fetch_prod_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from conversation_prod table (for PROD deployed agents)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.conversation_prod.model import ConversationProdTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationProdTable)
+                    .where(ConversationProdTable.session_id == str(session_id))
+                    .where(ConversationProdTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationProdTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in conversation_prod for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] conversation_prod fetch failed: {e}")
+        return []
+
+    async def _fetch_uat_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from conversation_uat table (for UAT deployed agents)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.conversation_uat.model import ConversationUATTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationUATTable)
+                    .where(ConversationUATTable.session_id == str(session_id))
+                    .where(ConversationUATTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationUATTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in conversation_uat for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] conversation_uat fetch failed: {e}")
+        return []
 
     def _effective_session_id(self) -> str | None:
         """Return the session_id to use: explicit input field → graph session → None."""
@@ -537,14 +629,41 @@ class MemoryComponent(Node):
                     history_source = "redis_cache"
                 else:
                     # Cache miss — fetch from DB
-                    history_messages = await aget_messages(
-                        session_id=session_id,
-                        order="DESC",
-                        limit=n_messages,
+                    # Detect orchestrator mode from graph flags
+                    is_orch = (
+                        hasattr(self, "graph")
+                        and getattr(self.graph, "skip_dev_logging", False)
+                        and getattr(self.graph, "orch_deployment_id", None)
                     )
+
+                    if is_orch:
+                        # Orchestrator mode — read from orch_conversation directly
+                        orch_dep_id = getattr(self.graph, "orch_deployment_id", "?")
+                        logger.info(f"[STM] Orchestrator mode detected (deployment_id={orch_dep_id}), reading from orch_conversation")
+                        history_messages = await self._fetch_orch_messages(session_id, n_messages)
+                        history_source = "orch_database"
+                    else:
+                        # Non-orchestrator: check PROD → UAT → Dev (priority order)
+                        # PROD first
+                        history_messages = await self._fetch_prod_messages(session_id, n_messages)
+                        if history_messages:
+                            history_source = "prod_database"
+                        else:
+                            # UAT second
+                            history_messages = await self._fetch_uat_messages(session_id, n_messages)
+                            if history_messages:
+                                history_source = "uat_database"
+                            else:
+                                # Dev/playground fallback
+                                history_messages = await aget_messages(
+                                    session_id=session_id,
+                                    order="DESC",
+                                    limit=n_messages,
+                                )
+                                history_source = "database"
+
                     # Reverse to chronological order (oldest first)
                     history_messages = list(reversed(history_messages))
-                    history_source = "database"
 
                     # Cache the fresh DB result in Redis for rapid re-fetches
                     if history_messages:
@@ -596,12 +715,15 @@ class MemoryComponent(Node):
                 neo4j_top_k = getattr(self, "ltm_neo4j_top_k", 10) or 10
                 max_context_chars = getattr(self, "ltm_max_context_chars", 2000) or 2000
                 from agentcore.services.ltm.retriever import retrieve
+                # Pass environment so retriever queries correct namespace
+                env = "Orchestrator" if self._detect_env() == "orch" else "Dev"
                 ltm_context = await retrieve(
                     query=current_text,
                     agent_id=agent_id,
                     mode=retrieval_mode,
                     pinecone_top_k=pinecone_top_k,
                     neo4j_top_k=neo4j_top_k,
+                    env=env,
                 )
                 # Truncate LTM context to max chars
                 if ltm_context and len(ltm_context) > max_context_chars:

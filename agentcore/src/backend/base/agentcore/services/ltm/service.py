@@ -189,7 +189,7 @@ class LTMService(Service):
 
         self._agents_in_progress.add(agent_id)
         try:
-            messages = await self._get_recent_messages(agent_id)
+            messages, env = await self._get_recent_messages(agent_id)
             if not messages:
                 logger.info(f"[LTM] No recent messages found for agent={agent_id}, resetting counter and last_processed")
                 # Reset so next time it fetches all messages
@@ -204,7 +204,7 @@ class LTMService(Service):
                     pass
                 return
 
-            logger.info(f"[LTM] Processing {len(messages)} messages for agent={agent_id}")
+            logger.info(f"[LTM] Processing {len(messages)} messages for agent={agent_id} (env={env})")
 
             # 2. Summarize (uses settings LLM if none passed)
             from agentcore.services.deps import get_settings_service
@@ -218,11 +218,11 @@ class LTMService(Service):
             from agentcore.services.ltm.fact_extractor import extract_facts
             facts = await extract_facts(summary, llm)
 
-            # 4. Store to Neo4j
-            await self._store_to_neo4j(agent_id, facts)
+            # 4. Store to Neo4j (namespaced by environment)
+            await self._store_to_neo4j(agent_id, facts, env=env)
 
-            # 5. Store summary to Pinecone
-            await self._store_to_pinecone(agent_id, summary)
+            # 5. Store summary to Pinecone (namespaced by environment)
+            await self._store_to_pinecone(agent_id, summary, env=env)
 
             # 6. Reset counter and update last_processed
             await self._reset_counter(agent_id)
@@ -233,10 +233,12 @@ class LTMService(Service):
         finally:
             self._agents_in_progress.discard(agent_id)
 
-    async def _get_recent_messages(self, agent_id: str) -> list:
-        """Fetch messages since the last LTM processing."""
-        from agentcore.memory import aget_messages
+    async def _get_recent_messages(self, agent_id: str) -> tuple[list, str]:
+        """Fetch messages since the last LTM processing.
 
+        Checks tables in priority order: PROD → UAT → Orchestrator → Dev.
+        Returns (messages, environment_name).
+        """
         # Get last processed timestamp
         last_ts = None
         try:
@@ -251,14 +253,10 @@ class LTMService(Service):
         except Exception:
             last_ts = self._last_processed.get(agent_id)
 
-        all_messages = await aget_messages(
-            agent_id=UUID(agent_id),
-            order="ASC",
-            limit=1000,
-        )
+        # Query messages with environment-aware priority
+        all_messages, env = await self._query_messages_by_priority(agent_id)
 
         if last_ts and all_messages:
-            # Handle timestamp comparison — message timestamps may be strings or datetimes
             def _parse_ts(ts):
                 if ts is None:
                     return None
@@ -279,7 +277,174 @@ class LTMService(Service):
                     if _parse_ts(m.timestamp) and _parse_ts(m.timestamp) > last_ts_naive
                 ]
 
-        return all_messages
+        return all_messages, env
+
+    async def _query_messages_by_priority(self, agent_id: str) -> tuple[list, str]:
+        """Query messages from orch_conversation first, then dev conversation.
+
+        For orch_conversation, resolves environment (PROD/UAT) by checking
+        the deployment_id against AgentDeploymentProd/AgentDeploymentUAT tables.
+
+        Priority:
+          1. orch_conversation (deployed agents — both UAT & PROD)
+          2. conversation (dev/playground — fallback)
+
+        Returns (messages, environment_name).
+        """
+        from sqlmodel import col, select
+        from agentcore.services.deps import session_scope
+        from agentcore.schema.message import Message
+
+        agent_uuid = UUID(agent_id)
+
+        # 1. Check orch_conversation first (all deployed agents)
+        try:
+            from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(OrchConversationTable)
+                    .where(OrchConversationTable.agent_id == agent_uuid)
+                    .where(OrchConversationTable.error == False)  # noqa: E712
+                    .order_by(col(OrchConversationTable.timestamp).asc())
+                    .limit(1000)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+
+                if rows:
+                    # Resolve environment from deployment_id
+                    env = await self._resolve_orch_environment(rows, session)
+                    logger.info(
+                        f"[LTM] Found {len(rows)} messages in orch_conversation "
+                        f"(env={env}) for agent={agent_id}"
+                    )
+                    return [
+                        await Message.create(**r.model_dump())
+                        for r in rows
+                    ], env
+        except Exception as e:
+            logger.debug(f"[LTM] Skipping orch_conversation: {e}")
+
+        # 2. Check conversation_prod table (PROD deployed agents)
+        try:
+            from agentcore.services.database.models.conversation_prod.model import ConversationProdTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationProdTable)
+                    .where(ConversationProdTable.agent_id == agent_uuid)
+                    .where(ConversationProdTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationProdTable.timestamp).asc())
+                    .limit(1000)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+
+                if rows:
+                    logger.info(
+                        f"[LTM] Found {len(rows)} messages in conversation_prod (PROD) "
+                        f"for agent={agent_id}"
+                    )
+                    return [
+                        await Message.create(**r.model_dump())
+                        for r in rows
+                    ], "PROD"
+        except Exception as e:
+            logger.debug(f"[LTM] Skipping conversation_prod: {e}")
+
+        # 3. Check conversation_uat table (UAT deployed agents)
+        try:
+            from agentcore.services.database.models.conversation_uat.model import ConversationUATTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationUATTable)
+                    .where(ConversationUATTable.agent_id == agent_uuid)
+                    .where(ConversationUATTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationUATTable.timestamp).asc())
+                    .limit(1000)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+
+                if rows:
+                    logger.info(
+                        f"[LTM] Found {len(rows)} messages in conversation_uat (UAT) "
+                        f"for agent={agent_id}"
+                    )
+                    return [
+                        await Message.create(**r.model_dump())
+                        for r in rows
+                    ], "UAT"
+        except Exception as e:
+            logger.debug(f"[LTM] Skipping conversation_uat: {e}")
+
+        # 4. Fallback to dev conversation table
+        try:
+            from agentcore.services.database.models.conversation.model import ConversationTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationTable)
+                    .where(ConversationTable.agent_id == agent_uuid)
+                    .where(ConversationTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationTable.timestamp).asc())
+                    .limit(1000)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+
+                if rows:
+                    logger.info(
+                        f"[LTM] Found {len(rows)} messages in conversation (Dev) "
+                        f"for agent={agent_id}"
+                    )
+                    return [
+                        await Message.create(**r.model_dump())
+                        for r in rows
+                    ], "Dev"
+        except Exception as e:
+            logger.debug(f"[LTM] Skipping conversation: {e}")
+
+        return [], "Dev"
+
+    async def _resolve_orch_environment(self, rows: list, session) -> str:
+        """Resolve PROD vs UAT from orch_conversation deployment_id.
+
+        Checks the first row's deployment_id against AgentDeploymentProd first,
+        then AgentDeploymentUAT. Falls back to 'Orchestrator'.
+        """
+        # Find the first row with a deployment_id
+        deployment_id = None
+        for row in rows:
+            did = getattr(row, "deployment_id", None)
+            if did:
+                deployment_id = did
+                break
+
+        if not deployment_id:
+            return "Orchestrator"
+
+        # Check PROD first
+        try:
+            from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
+            prod = await session.get(AgentDeploymentProd, deployment_id)
+            if prod:
+                return "PROD"
+        except Exception:
+            pass
+
+        # Check UAT
+        try:
+            from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
+            uat = await session.get(AgentDeploymentUAT, deployment_id)
+            if uat:
+                return "UAT"
+        except Exception:
+            pass
+
+        return "Orchestrator"
 
     async def _reset_counter(self, agent_id: str) -> None:
         """Reset message counter and update last_processed timestamp."""
@@ -299,8 +464,11 @@ class LTMService(Service):
             self._message_counts[agent_id] = 0
             self._last_processed[agent_id] = now
 
-    async def _store_to_neo4j(self, agent_id: str, facts: dict) -> None:
-        """Store extracted entities and relationships to Neo4j (direct connection)."""
+    async def _store_to_neo4j(self, agent_id: str, facts: dict, env: str = "Dev") -> None:
+        """Store extracted entities and relationships to Neo4j (direct connection).
+
+        Namespaces data by environment so PROD/UAT/Dev data stays separate.
+        """
         from agentcore.services.deps import get_settings_service
 
         settings = get_settings_service().settings
@@ -313,7 +481,9 @@ class LTMService(Service):
         if not entities:
             return
 
-        graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{agent_id}"
+        # Namespace by environment: ltm_{agent_id}_prod, ltm_{agent_id}_uat, ltm_{agent_id}
+        env_suffix = f"_{env.lower()}" if env != "Dev" else ""
+        graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{agent_id}{env_suffix}"
 
         try:
             from neo4j import GraphDatabase
@@ -359,8 +529,11 @@ class LTMService(Service):
         except Exception as e:
             logger.error(f"[LTM] Neo4j ingestion failed for agent={agent_id}: {e}")
 
-    async def _store_to_pinecone(self, agent_id: str, summary: str) -> None:
-        """Store conversation summary embedding to Pinecone (direct connection)."""
+    async def _store_to_pinecone(self, agent_id: str, summary: str, env: str = "Dev") -> None:
+        """Store conversation summary embedding to Pinecone (direct connection).
+
+        Namespaces data by environment so PROD/UAT/Dev data stays separate.
+        """
         from agentcore.services.deps import get_settings_service
 
         settings = get_settings_service().settings
@@ -397,6 +570,10 @@ class LTMService(Service):
             vec_id = hashlib.sha256(summary.encode()).hexdigest()[:16]
             timestamp = datetime.now(timezone.utc).isoformat()
 
+            # Namespace by environment: {agent_id}_prod, {agent_id}_uat, {agent_id}
+            env_suffix = f"_{env.lower()}" if env != "Dev" else ""
+            namespace = f"{agent_id}{env_suffix}"
+
             index.upsert(
                 vectors=[{
                     "id": vec_id,
@@ -404,13 +581,14 @@ class LTMService(Service):
                     "metadata": {
                         "summary": summary[:40000],
                         "agent_id": agent_id,
+                        "environment": env,
                         "timestamp": timestamp,
                     },
                 }],
-                namespace=agent_id,
+                namespace=namespace,
             )
             logger.info(f"[LTM] === PINECONE STORAGE ===")
-            logger.info(f"[LTM] Stored summary to Pinecone index={index_name}, namespace={agent_id}, vec_id={vec_id}")
+            logger.info(f"[LTM] Stored summary to Pinecone index={index_name}, namespace={namespace}, vec_id={vec_id}")
             logger.info(f"[LTM] Summary preview: {summary[:200]}...")
             logger.info(f"[LTM] Embedding dimension: {len(embedding)}")
             logger.info(f"[LTM] === END PINECONE ===")

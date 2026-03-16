@@ -15,7 +15,7 @@ async def _embed_query(query: str) -> list[float]:
     return await embed_single(query)
 
 
-async def retrieve_from_pinecone(query: str, agent_id: str, top_k: int = 5) -> list[str]:
+async def retrieve_from_pinecone(query: str, agent_id: str, top_k: int = 5, env: str = "Dev") -> list[str]:
     """Retrieve relevant conversation summaries from Pinecone."""
     from agentcore.services.deps import get_settings_service
 
@@ -40,21 +40,33 @@ async def retrieve_from_pinecone(query: str, agent_id: str, top_k: int = 5) -> l
         if not query_embedding:
             return []
 
+        # Namespace by environment — each agent+env combo is fully isolated
+        env_suffix = f"_{env.lower()}" if env != "Dev" else ""
+        namespace = f"{agent_id}{env_suffix}"
+
+        logger.info(f"[LTM] Pinecone query: namespace={namespace}, top_k={top_k}")
+
         results = index.query(
-            namespace=agent_id,
+            namespace=namespace,
             vector=query_embedding,
             top_k=top_k,
             include_metadata=True,
+            # Extra safety: filter by agent_id in metadata
+            filter={"agent_id": {"$eq": agent_id}},
         )
 
         summaries = []
         for match in results.get("matches", []):
-            text = match.get("metadata", {}).get("summary", "")
+            meta = match.get("metadata", {})
+            text = meta.get("summary", "")
+            score = match.get("score", 0)
+            stored_agent = meta.get("agent_id", "?")
             if text:
                 summaries.append(text)
+                logger.debug(f"[LTM] Pinecone match: score={score:.3f}, agent={stored_agent}")
 
         logger.info(f"[LTM] === PINECONE RETRIEVAL ===")
-        logger.info(f"[LTM] Pinecone retrieved {len(summaries)} summaries for agent={agent_id}")
+        logger.info(f"[LTM] Pinecone namespace={namespace}, retrieved {len(summaries)} summaries for agent={agent_id}")
         for i, s in enumerate(summaries):
             logger.info(f"[LTM]   Pinecone[{i}]: {s[:200]}...")
         logger.info(f"[LTM] === END PINECONE RETRIEVAL ===")
@@ -64,7 +76,7 @@ async def retrieve_from_pinecone(query: str, agent_id: str, top_k: int = 5) -> l
         return []
 
 
-async def retrieve_from_neo4j(query: str, agent_id: str, top_k: int = 5) -> list[str]:
+async def retrieve_from_neo4j(query: str, agent_id: str, top_k: int = 5, env: str = "Dev") -> list[str]:
     """Retrieve relevant facts/entities from Neo4j graph."""
     from agentcore.services.deps import get_settings_service
 
@@ -73,7 +85,9 @@ async def retrieve_from_neo4j(query: str, agent_id: str, top_k: int = 5) -> list
         logger.debug("[LTM] LTM_NEO4J_URI not configured, skipping Neo4j retrieval")
         return []
 
-    graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{agent_id}"
+    # Namespace by environment
+    env_suffix = f"_{env.lower()}" if env != "Dev" else ""
+    graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{agent_id}{env_suffix}"
 
     try:
         from neo4j import GraphDatabase
@@ -85,6 +99,8 @@ async def retrieve_from_neo4j(query: str, agent_id: str, top_k: int = 5) -> list
 
         keywords = [w.lower() for w in query.split() if len(w) > 3]
         facts = []
+
+        logger.info(f"[LTM] Neo4j query: graph_kb_id={graph_kb_id}, keywords={keywords[:5]}")
 
         with driver.session(database=settings.ltm_neo4j_database) as session:
             for keyword in keywords[:5]:
@@ -125,6 +141,55 @@ async def retrieve_from_neo4j(query: str, agent_id: str, top_k: int = 5) -> list
         return []
 
 
+async def _detect_environment(agent_id: str) -> str:
+    """Detect which environment has conversations for this agent.
+
+    Checks orch_conversation first (deployed agents), then dev.
+    For orch, resolves PROD vs UAT via deployment_id lookup.
+    """
+    from sqlmodel import select
+    from agentcore.services.deps import session_scope
+    from uuid import UUID
+
+    agent_uuid = UUID(agent_id)
+
+    # 1. Check orch_conversation (deployed agents — both UAT & PROD)
+    try:
+        from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+
+        async with session_scope() as session:
+            stmt = (
+                select(OrchConversationTable.deployment_id)
+                .where(OrchConversationTable.agent_id == agent_uuid)
+                .where(OrchConversationTable.deployment_id.isnot(None))
+                .limit(1)
+            )
+            result = await session.exec(stmt)
+            deployment_id = result.first()
+
+            if deployment_id:
+                # Resolve PROD vs UAT from deployment_id
+                try:
+                    from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
+                    prod = await session.get(AgentDeploymentProd, deployment_id)
+                    if prod:
+                        return "PROD"
+                except Exception:
+                    pass
+                try:
+                    from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
+                    uat = await session.get(AgentDeploymentUAT, deployment_id)
+                    if uat:
+                        return "UAT"
+                except Exception:
+                    pass
+                return "Orchestrator"
+    except Exception:
+        pass
+
+    return "Dev"
+
+
 async def retrieve(
     query: str,
     agent_id: str,
@@ -133,8 +198,12 @@ async def retrieve(
     neo4j_top_k: int = 10,
     # Legacy parameter for backward compatibility
     top_k: int | None = None,
+    env: str | None = None,
 ) -> str:
     """Main retrieval entry point.
+
+    Automatically detects environment (PROD/UAT/Orchestrator/Dev) and queries
+    the correct namespace.
 
     Args:
         query: Current user query.
@@ -143,6 +212,7 @@ async def retrieve(
         pinecone_top_k: Number of summaries to retrieve from Pinecone.
         neo4j_top_k: Number of entities/relationships from Neo4j.
         top_k: Legacy param — if set, used for both pinecone_top_k and neo4j_top_k.
+        env: Optional environment override. If None, auto-detected.
 
     Returns:
         Formatted LTM context string.
@@ -151,15 +221,20 @@ async def retrieve(
         pinecone_top_k = top_k
         neo4j_top_k = top_k
 
+    # Use provided env or detect from conversation tables
+    if not env:
+        env = await _detect_environment(agent_id)
+    logger.info(f"[LTM] Retrieval environment={env} for agent={agent_id}")
+
     parts = []
 
     if mode in ("Pinecone Only", "Both"):
-        summaries = await retrieve_from_pinecone(query, agent_id, pinecone_top_k)
+        summaries = await retrieve_from_pinecone(query, agent_id, pinecone_top_k, env=env)
         if summaries:
             parts.append("Relevant Past Conversations:\n" + "\n".join(f"- {s}" for s in summaries))
 
     if mode in ("Neo4j Only", "Both"):
-        facts = await retrieve_from_neo4j(query, agent_id, neo4j_top_k)
+        facts = await retrieve_from_neo4j(query, agent_id, neo4j_top_k, env=env)
         if facts:
             parts.append("Known Facts & Relationships:\n" + "\n".join(f"- {f}" for f in facts))
 

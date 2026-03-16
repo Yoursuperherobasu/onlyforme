@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /e/pwc_work/aimldevteam/agentcore -type f -name *memory*)",
+      "Bash(grep -r \"conversation\" /e/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore/api/*.py)",
+      "Bash(find /e/pwc_work/aimldevteam/agentcore/src/frontend/src -name *memory* -type f)",
+      "Bash(grep -r \"Short Term Memory\\\\|STM\" /e/pwc_work/aimldevteam/agentcore/src/frontend/src --include=*.ts --include=*.tsx)",
+      "Bash(find /e/pwc_work/aimldevteam/agentcore -maxdepth 1 -name *.md -o -name *.txt -o -name *.yaml -o -name *.yml)",
+      "Bash(find /e/pwc_work/aimldevteam -path */services/cache* -type f)",
+      "Bash(find /e/pwc_work/aimldevteam -name *redis* -type f)",
+      "Bash(find /e/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore/components/GraphRAG -type f -name *.py)",
+      "Bash(grep -r \"neo4j_uri\\\\|NEO4J_URI\\\\|GRAPH_RAG_SERVICE\" /e/pwc_work/aimldevteam/agentcore/src/services/graph-rag-service/app/*.py)",
+      "Bash(find /e/pwc_work/aimldevteam/agentcore/src/services/pinecone-service -name \"*.py\" -exec wc -l {} +)",
+      "Bash(xargs wc:*)",
+      "Bash(xargs grep:*)",
+      "Bash(python -m alembic heads)",
+      "Bash(alembic heads:*)",
+      "Bash(\"E:/pwc_work/aimldevteam/env/Scripts/alembic\" heads:*)",
+      "Bash(\"E:/pwc_work/aimldevteam/env/Scripts/alembic\" -c \"e:/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore/alembic.ini\" history -r \"z9y8x7w6v5u4:\")",
+      "Bash(\"E:/pwc_work/aimldevteam/env/Scripts/alembic\" -c \"e:/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore/alembic.ini\" heads)",
+      "Bash(\"E:/pwc_work/aimldevteam/env/Scripts/alembic\" stamp:*)",
+      "Bash(\"E:/pwc_work/aimldevteam/env/Scripts/pip\" install:*)",
+      "Bash(find /e/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore/components/models -name *.py -type f)",
+      "Bash(grep -r \"model_catalog\\\\|ModelCatalog\" /e/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore/components --include=*.py)",
+      "Bash(find e:/pwc_work/aimldevteam -type f -name *model_service_client*)",
+      "Bash(grep -r 'class MicroserviceChatModel' e:/pwc_work/aimldevteam --include=*.py)",
+      "Bash(ls -la e:/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore/field_typing*)",
+      "Bash(find e:/pwc_work/aimldevteam -type f -name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx)"
+    ]
+  }
+}
