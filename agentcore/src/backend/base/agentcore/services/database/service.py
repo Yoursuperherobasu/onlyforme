@@ -332,12 +332,6 @@ class DatabaseService(Service):
                         conn.execute(sa_text("DELETE FROM alembic_version WHERE version_num = :rev"), {"rev": rev})
                         conn.commit()
 
-                # Drop orphaned ltm_state table if it exists (no longer managed by alembic)
-                table_names = sa.inspect(conn).get_table_names()
-                if "ltm_state" in table_names:
-                    logger.warning("Dropping orphaned ltm_state table (now using in-memory/Redis)")
-                    conn.execute(sa_text("DROP TABLE ltm_state"))
-                    conn.commit()
             sync_engine.dispose()
         except Exception as e:
             logger.debug(f"Stale revision cleanup skipped: {e}")
