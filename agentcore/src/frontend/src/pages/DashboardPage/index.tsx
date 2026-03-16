@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { useTranslation } from "react-i18next";
 import { AuthContext } from "@/contexts/authContext";
+import { api } from "@/controllers/API/api";
 
 type SectionId =
   | "platform"
@@ -66,6 +67,33 @@ type SectionConfig = {
   headline: string;
   kpis: SectionKpi[];
   charts: SectionChart[];
+};
+
+type DashboardKpiApi = {
+  id: string;
+  label: string;
+  value: number;
+  unit?: string | null;
+};
+
+type DashboardSectionApiResponse = {
+  section: string;
+  kpis: DashboardKpiApi[];
+};
+
+type PendingSeriesPoint = {
+  date: string;
+  value: number;
+};
+
+type PendingSeriesResponse = {
+  range: string;
+  series: PendingSeriesPoint[];
+};
+
+type HitlSeriesResponse = {
+  range: string;
+  series: PendingSeriesPoint[];
 };
 
 const sections: SectionConfig[] = [
@@ -128,51 +156,12 @@ const sections: SectionConfig[] = [
     kpis: [
       { name: "Guardrail Violation Rate", value: "0.7%" },
       { name: "Policy Breach Attempts", value: "41" },
-      { name: "Data Leakage Prevention Count", value: "18" },
+
       { name: "Unsafe Content Interception", value: "63" },
       { name: "Escalation to Human Review", value: "96" },
       { name: "% Agents Without Guardrails", value: "12%" },
     ],
-    charts: [
-      {
-        title: "Violation Rate",
-        subtitle: "Weekly trend",
-        type: "line",
-        data: [
-          { label: "Mon", value: 0.6 },
-          { label: "Tue", value: 0.7 },
-          { label: "Wed", value: 0.5 },
-          { label: "Thu", value: 0.9 },
-          { label: "Fri", value: 0.7 },
-          { label: "Sat", value: 0.4 },
-          { label: "Sun", value: 0.5 },
-        ],
-      },
-      {
-        title: "Breach Attempts",
-        subtitle: "Daily counts",
-        type: "bar",
-        data: [
-          { label: "Mon", value: 6 },
-          { label: "Tue", value: 8 },
-          { label: "Wed", value: 5 },
-          { label: "Thu", value: 9 },
-          { label: "Fri", value: 7 },
-          { label: "Sat", value: 3 },
-          { label: "Sun", value: 3 },
-        ],
-      },
-      {
-        title: "Guardrail Coverage",
-        subtitle: "Agents by policy status",
-        type: "donut",
-        data: [
-          { label: "Full", value: 68 },
-          { label: "Partial", value: 20 },
-          { label: "Missing", value: 12 },
-        ],
-      },
-    ],
+    charts: [],
   },
   {
     id: "cost",
@@ -231,48 +220,8 @@ const sections: SectionConfig[] = [
     id: "lifecycle",
     label: " Environment & Lifecycle",
     headline: "Environment & Lifecycle Governance",
-    kpis: [
-      { name: "Agents in UAT", value: "18" },
-      { name: "UAT to Prod Conversion Rate", value: "72%" },
-      { name: "Avg UAT Duration", value: "5.6 days" },
-      { name: "Deprecated Agents Count", value: "9" },
-      { name: "Version Rollbacks", value: "3" },
-    ],
-    charts: [
-      {
-        title: "Environment Flow",
-        subtitle: "Agents by stage",
-        type: "bar",
-        data: [
-          { label: "Dev", value: 32 },
-          { label: "UAT", value: 18 },
-          { label: "Staging", value: 14 },
-          { label: "Prod", value: 62 },
-        ],
-      },
-      {
-        title: "UAT Duration",
-        subtitle: "Average days",
-        type: "line",
-        data: [
-          { label: "W1", value: 6.2 },
-          { label: "W2", value: 5.8 },
-          { label: "W3", value: 5.6 },
-          { label: "W4", value: 5.2 },
-        ],
-      },
-      {
-        title: "Rollback Reasons",
-        subtitle: "Top causes",
-        type: "donut",
-        data: [
-          { label: "Quality", value: 40 },
-          { label: "Policy", value: 22 },
-          { label: "Latency", value: 20 },
-          { label: "Infra", value: 18 },
-        ],
-      },
-    ],
+    kpis: [],
+    charts: [],
   },
 ];
 
@@ -282,7 +231,8 @@ const departmentSections: SectionConfig[] = [
     label: " Department Usage",
     headline: "Department Usage KPIs",
     kpis: [
-      { name: "Active Agents in Dept", value: "42" },
+      { name: "Active Agents in Dept (UAT)", value: "42" },
+      { name: "Active Agents in Dept (PROD)", value: "18" },
       { name: "Agent Success Rate", value: "94%" },
       { name: "Department Token Usage", value: "8.6M" },
       { name: "Avg Response Time", value: "640ms" },
@@ -330,11 +280,11 @@ const departmentSections: SectionConfig[] = [
     label: " Approval & Governance",
     headline: "Approval & Governance KPIs",
     kpis: [
-      { name: "Pending Approvals", value: "31" },
-      { name: "Avg Approval Time", value: "4.6 hrs" },
-      { name: "Rejection Rate", value: "7.4%" },
-      { name: "Rework Cycles", value: "2.1" },
-      { name: "Escalations to Super Admin", value: "6" },
+      { name: "Pending Approvals", value: "—" },
+      
+      { name: "Rejection Rate", value: "—" },
+
+
     ],
     charts: [
       {
@@ -351,27 +301,8 @@ const departmentSections: SectionConfig[] = [
           { label: "Sun", value: 21 },
         ],
       },
-      {
-        title: "Approval Time",
-        subtitle: "Hours by stage",
-        type: "bar",
-        data: [
-          { label: "Review", value: 2.1 },
-          { label: "QA", value: 1.4 },
-          { label: "Legal", value: 0.7 },
-          { label: "Sign-off", value: 0.4 },
-        ],
-      },
-      {
-        title: "Outcome Mix",
-        subtitle: "Approval outcomes",
-        type: "donut",
-        data: [
-          { label: "Approved", value: 78 },
-          { label: "Rejected", value: 12 },
-          { label: "Rework", value: 10 },
-        ],
-      },
+     
+     
     ],
   },
   {
@@ -381,7 +312,7 @@ const departmentSections: SectionConfig[] = [
     kpis: [
       { name: "HITL Invocation Rate", value: "3.6%" },
       { name: "Avg HITL Response Time", value: "12 min" },
-      { name: "HITL Override Rate", value: "1.1%" },
+
     ],
     charts: [
       {
@@ -410,16 +341,7 @@ const departmentSections: SectionConfig[] = [
           { label: "Fri", value: 12 },
         ],
       },
-      {
-        title: "Override Mix",
-        subtitle: "Override outcomes",
-        type: "donut",
-        data: [
-          { label: "Accepted", value: 68 },
-          { label: "Modified", value: 22 },
-          { label: "Rejected", value: 10 },
-        ],
-      },
+     
     ],
   },
   {
@@ -578,45 +500,9 @@ const developerSections: SectionConfig[] = [
     label: " Code & Version Governance",
     headline: "Code & Version Governance KPIs",
     kpis: [
-      { name: "Version Count per Agent", value: "7" },
-      { name: "Rollback Count", value: "2" },
-      { name: "Compilation Failure Rate", value: "1.8%" },
-      { name: "Custom Components Used", value: "5" },
+      { name: "Avg. Version Count of Agents", value: "—" },
     ],
-    charts: [
-      {
-        title: "Rollbacks",
-        subtitle: "Weekly count",
-        type: "line",
-        data: [
-          { label: "W1", value: 1 },
-          { label: "W2", value: 2 },
-          { label: "W3", value: 1 },
-          { label: "W4", value: 2 },
-        ],
-      },
-      {
-        title: "Failures",
-        subtitle: "Build failures",
-        type: "bar",
-        data: [
-          { label: "Lint", value: 6 },
-          { label: "Type", value: 4 },
-          { label: "Test", value: 3 },
-          { label: "Build", value: 2 },
-        ],
-      },
-      {
-        title: "Version Mix",
-        subtitle: "Change types",
-        type: "donut",
-        data: [
-          { label: "Patch", value: 56 },
-          { label: "Minor", value: 28 },
-          { label: "Major", value: 16 },
-        ],
-      },
-    ],
+    charts: []
   },
 ];
 
@@ -777,43 +663,9 @@ const rootSections: SectionConfig[] = [
       { name: "% Agents with Guardrails", value: "88%" },
       { name: "% Agents with RAG", value: "64%" },
       { name: "% Agents with HITL", value: "41%" },
-      { name: "Multi-Agent Adoption %", value: "36%" },
+     
     ],
-    charts: [
-      {
-        title: "Adoption Progress",
-        subtitle: "Maturity trend",
-        type: "line",
-        data: [
-          { label: "Q1", value: 22 },
-          { label: "Q2", value: 28 },
-          { label: "Q3", value: 33 },
-          { label: "Q4", value: 36 },
-        ],
-      },
-      {
-        title: "Coverage Mix",
-        subtitle: "Guardrails vs RAG",
-        type: "bar",
-        data: [
-          { label: "Guardrails", value: 88 },
-          { label: "RAG", value: 64 },
-          { label: "HITL", value: 41 },
-          { label: "Multi-agent", value: 36 },
-        ],
-      },
-      {
-        title: "Maturity Split",
-        subtitle: "By category",
-        type: "donut",
-        data: [
-          { label: "Compliance", value: 38 },
-          { label: "Knowledge", value: 24 },
-          { label: "Risk", value: 20 },
-          { label: "Innovation", value: 18 },
-        ],
-      },
-    ],
+    charts: [],
   },
   {
     id: "risk",
@@ -966,7 +818,7 @@ function ChartBlock({ chart }: { chart: SectionChart }) {
           <ReLineChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} />
-            <YAxis tick={{ fontSize: 12, fill: "#64748b" }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} />
             <Tooltip content={<ChartTooltip />} />
             <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={false} />
           </ReLineChart>
@@ -982,7 +834,7 @@ function ChartBlock({ chart }: { chart: SectionChart }) {
           <ReBarChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} />
-            <YAxis tick={{ fontSize: 12, fill: "#64748b" }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} />
             <Tooltip content={<ChartTooltip />} />
             <Bar dataKey="value" radius={[6, 6, 0, 0]}>
               {chart.data.map((entry, index) => (
@@ -1025,12 +877,13 @@ function ChartBlock({ chart }: { chart: SectionChart }) {
 
 export default function DashboardAdmin(): JSX.Element {
   const { t } = useTranslation();
-  const { role } = useContext(AuthContext);
+  const { role, userData } = useContext(AuthContext);
   const normalizedRole = (role ?? "").toLowerCase().trim().replace(/\s+/g, "_");
   const isDepartmentAdmin = normalizedRole === "department_admin";
   const isDeveloper = normalizedRole === "developer";
   const isBusinessUser = normalizedRole === "business_user";
   const isRootAdmin = normalizedRole === "root";
+  const isSuperAdmin = normalizedRole === "super_admin";
   const defaultSectionId: SectionId = isDepartmentAdmin
     ? "usage"
     : isDeveloper
@@ -1041,10 +894,245 @@ export default function DashboardAdmin(): JSX.Element {
           ? "roi"
           : "platform";
   const [sectionId, setSectionId] = useState<SectionId>(defaultSectionId);
+  const [lifecycleKpis, setLifecycleKpis] = useState<SectionKpi[] | null>(null);
+  const [governanceKpis, setGovernanceKpis] = useState<SectionKpi[] | null>(null);
+  const [deptUsageKpis, setDeptUsageKpis] = useState<SectionKpi[] | null>(null);
+  const [deptApprovalKpis, setDeptApprovalKpis] = useState<SectionKpi[] | null>(null);
+  const [approvalRange, setApprovalRange] = useState<"7d" | "30d" | "12w">("7d");
+  const [approvalPendingSeries, setApprovalPendingSeries] = useState<PendingSeriesPoint[] | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [deptHitlKpis, setDeptHitlKpis] = useState<SectionKpi[] | null>(null);
+  const [hitlRange, setHitlRange] = useState<"7d" | "30d" | "12w">("7d");
+  const [hitlInvocationSeries, setHitlInvocationSeries] = useState<PendingSeriesPoint[] | null>(null);
+  const [hitlResponseSeries, setHitlResponseSeries] = useState<PendingSeriesPoint[] | null>(null);
+  const [devCodeKpis, setDevCodeKpis] = useState<SectionKpi[] | null>(null);
+  const [businessMaturityKpis, setBusinessMaturityKpis] = useState<SectionKpi[] | null>(null);
+  const [rootMaturityKpis, setRootMaturityKpis] = useState<SectionKpi[] | null>(null);
+
+  const lifecycleKpiFallback: SectionKpi[] = [
+    { name: "Agents in UAT", value: "—" },
+    { name: "UAT to PROD Conversion Rate", value: "—" },
+    { name: "Deprecated Agent Count", value: "—" },
+  ];
+  const governanceKpiFallback: SectionKpi[] = [
+    { name: "Escalation to Human Review", value: "—" },
+    { name: "% Agents Without Guardrails", value: "—" },
+  ];
+  const deptUsageKpiFallback: SectionKpi[] = [
+    { name: "Active Agents in Dept (UAT)", value: "—" },
+    { name: "Active Agents in Dept (PROD)", value: "—" },
+  ];
+  const deptApprovalKpiFallback: SectionKpi[] = [
+    { name: "Pending Approvals", value: "—" },
+    { name: "Rejection Rate", value: "—" },
+  ];
+  const deptHitlKpiFallback: SectionKpi[] = [
+    { name: "HITL Invocation Rate", value: "—" },
+    { name: "Avg HITL Response Time", value: "—" },
+  ];
+  const devCodeKpiFallback: SectionKpi[] = [
+    { name: "Avg. Version Count of Agents", value: "—" },
+  ];
+  const businessMaturityFallback: SectionKpi[] = [
+    { name: "% Agents with Guardrails", value: "â€”" },
+    { name: "% Agents with RAG", value: "â€”" },
+    { name: "% Agents with HITL", value: "â€”" },
+  ];
+  const rootMaturityFallback: SectionKpi[] = [
+    { name: "% Agents with Guardrails", value: "â€”" },
+    { name: "% Agents with RAG", value: "â€”" },
+    { name: "% Agents with HITL", value: "â€”" },
+  ];
+  const approvalRangeOptions = [
+    { value: "7d", label: "Last 7 days" },
+    { value: "30d", label: "Last 30 days" },
+    { value: "12w", label: "Last 12 weeks" },
+  ];
+
+  useEffect(() => {
+    const id = setInterval(() => setRefreshTick((tick) => tick + 1), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     setSectionId(defaultSectionId);
   }, [defaultSectionId]);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    const orgId = userData?.organization_id || null;
+    const params = orgId ? { params: { org_id: orgId } } : undefined;
+
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/environment-lifecycle", params)
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? lifecycleKpiFallback;
+        setLifecycleKpis(next);
+      })
+      .catch(() => {
+        setLifecycleKpis(lifecycleKpiFallback);
+      });
+  }, [isSuperAdmin, refreshTick, userData?.organization_id]);
+
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/department-usage")
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? deptUsageKpiFallback;
+        setDeptUsageKpis(next);
+      })
+      .catch(() => {
+        setDeptUsageKpis(deptUsageKpiFallback);
+      });
+  }, [isDepartmentAdmin, refreshTick]);
+
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/department-approval")
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? deptApprovalKpiFallback;
+        setDeptApprovalKpis(next);
+      })
+      .catch(() => {
+        setDeptApprovalKpis(deptApprovalKpiFallback);
+      });
+  }, [isDepartmentAdmin, refreshTick]);
+
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/department-hitl")
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? deptHitlKpiFallback;
+        setDeptHitlKpis(next);
+      })
+      .catch(() => {
+        setDeptHitlKpis(deptHitlKpiFallback);
+      });
+  }, [isDepartmentAdmin, refreshTick]);
+
+  useEffect(() => {
+    if (!isDeveloper) return;
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/developer-code")
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? devCodeKpiFallback;
+        setDevCodeKpis(next);
+      })
+      .catch(() => {
+        setDevCodeKpis(devCodeKpiFallback);
+      });
+  }, [isDeveloper, refreshTick]);
+
+  useEffect(() => {
+    if (!isBusinessUser) return;
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/business-maturity")
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? businessMaturityFallback;
+        setBusinessMaturityKpis(next);
+      })
+      .catch(() => {
+        setBusinessMaturityKpis(businessMaturityFallback);
+      });
+  }, [isBusinessUser, refreshTick]);
+
+  useEffect(() => {
+    if (!isRootAdmin) return;
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity")
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? rootMaturityFallback;
+        setRootMaturityKpis(next);
+      })
+      .catch(() => {
+        setRootMaturityKpis(rootMaturityFallback);
+      });
+  }, [isRootAdmin, refreshTick]);
+
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<PendingSeriesResponse>("/api/dashboard/sections/department-approval/pending-series", {
+        params: { range: approvalRange },
+      })
+      .then((response) => {
+        setApprovalPendingSeries(response.data?.series ?? []);
+      })
+      .catch(() => {
+        setApprovalPendingSeries([]);
+      });
+  }, [approvalRange, isDepartmentAdmin, refreshTick]);
+
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/invocation-series", {
+        params: { range: hitlRange },
+      })
+      .then((response) => {
+        setHitlInvocationSeries(response.data?.series ?? []);
+      })
+      .catch(() => {
+        setHitlInvocationSeries([]);
+      });
+  }, [hitlRange, isDepartmentAdmin, refreshTick]);
+
+  useEffect(() => {
+    if (!isDepartmentAdmin) return;
+    api
+      .get<HitlSeriesResponse>("/api/dashboard/sections/department-hitl/response-time-series", {
+        params: { range: hitlRange },
+      })
+      .then((response) => {
+        setHitlResponseSeries(response.data?.series ?? []);
+      })
+      .catch(() => {
+        setHitlResponseSeries([]);
+      });
+  }, [hitlRange, isDepartmentAdmin, refreshTick]);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    const orgId = userData?.organization_id || null;
+    const params = orgId ? { params: { org_id: orgId } } : undefined;
+
+    api
+      .get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", params)
+      .then((response) => {
+        const next = response.data?.kpis?.map((kpi) => ({
+          name: kpi.label,
+          value: kpi.unit ? `${kpi.value}${kpi.unit}` : `${kpi.value}`,
+        })) ?? governanceKpiFallback;
+        setGovernanceKpis(next);
+      })
+      .catch(() => {
+        setGovernanceKpis(governanceKpiFallback);
+      });
+  }, [isSuperAdmin, refreshTick, userData?.organization_id]);
 
   const sectionsToRender = isDepartmentAdmin
     ? departmentSections
@@ -1059,6 +1147,141 @@ export default function DashboardAdmin(): JSX.Element {
     () => sectionsToRender.find((section) => section.id === sectionId) ?? sectionsToRender[0],
     [sectionId, sectionsToRender],
   );
+  const kpisToRender =
+    isSuperAdmin && activeSection.id === "lifecycle"
+      ? lifecycleKpis ?? lifecycleKpiFallback
+      : activeSection.kpis;
+
+  const displayKpis = useMemo(() => {
+    let overrides: Map<string, string> | null = null;
+
+    if (isSuperAdmin && activeSection.id === "governance" && governanceKpis?.length) {
+      overrides = new Map(governanceKpis.map((kpi) => [kpi.name, kpi.value]));
+    }
+
+    if (isDepartmentAdmin && activeSection.id === "usage" && deptUsageKpis?.length) {
+      overrides = new Map(deptUsageKpis.map((kpi) => [kpi.name, kpi.value]));
+    }
+    if (isDepartmentAdmin && activeSection.id === "approval" && deptApprovalKpis?.length) {
+      overrides = new Map(deptApprovalKpis.map((kpi) => [kpi.name, kpi.value]));
+    }
+    if (isDepartmentAdmin && activeSection.id === "hitl" && deptHitlKpis?.length) {
+      overrides = new Map(deptHitlKpis.map((kpi) => [kpi.name, kpi.value]));
+    }
+    if (isDeveloper && activeSection.id === "code" && devCodeKpis?.length) {
+      overrides = new Map(devCodeKpis.map((kpi) => [kpi.name, kpi.value]));
+    }
+    if (isBusinessUser && activeSection.id === "maturity" && businessMaturityKpis?.length) {
+      overrides = new Map(businessMaturityKpis.map((kpi) => [kpi.name, kpi.value]));
+    }
+    if (isRootAdmin && activeSection.id === "maturity" && rootMaturityKpis?.length) {
+      overrides = new Map(rootMaturityKpis.map((kpi) => [kpi.name, kpi.value]));
+    }
+
+    if (!overrides) return kpisToRender;
+    return kpisToRender.map((kpi) => {
+      const value = overrides.get(kpi.name);
+      return value ? { ...kpi, value } : kpi;
+    });
+  }, [
+    activeSection.id,
+    deptApprovalKpis,
+    deptHitlKpis,
+    deptUsageKpis,
+    devCodeKpis,
+    businessMaturityKpis,
+    rootMaturityKpis,
+    governanceKpis,
+    isDepartmentAdmin,
+    isDeveloper,
+    isBusinessUser,
+    isRootAdmin,
+    isSuperAdmin,
+    kpisToRender,
+  ]);
+
+  const approvalPendingChartData = useMemo(() => {
+    const days = approvalRange === "7d" ? 7 : approvalRange === "30d" ? 30 : 84;
+    const fallbackSeries = Array.from({ length: days }, (_, idx) => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - (days - 1 - idx));
+      return { date: date.toISOString().slice(0, 10), value: 0 };
+    });
+    const source = approvalPendingSeries && approvalPendingSeries.length > 0 ? approvalPendingSeries : fallbackSeries;
+    return source.map((point) => {
+      const date = new Date(`${point.date}T00:00:00Z`);
+      const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return { label, value: point.value };
+    });
+  }, [approvalPendingSeries, approvalRange]);
+
+  const hitlInvocationChartData = useMemo(() => {
+    const days = hitlRange === "7d" ? 7 : hitlRange === "30d" ? 30 : 84;
+    const fallbackSeries = Array.from({ length: days }, (_, idx) => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - (days - 1 - idx));
+      return { date: date.toISOString().slice(0, 10), value: 0 };
+    });
+    const source = hitlInvocationSeries && hitlInvocationSeries.length > 0 ? hitlInvocationSeries : fallbackSeries;
+    return source.map((point) => {
+      const date = new Date(`${point.date}T00:00:00Z`);
+      const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return { label, value: point.value };
+    });
+  }, [hitlInvocationSeries, hitlRange]);
+
+  const hitlResponseChartData = useMemo(() => {
+    const days = hitlRange === "7d" ? 7 : hitlRange === "30d" ? 30 : 84;
+    const fallbackSeries = Array.from({ length: days }, (_, idx) => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - (days - 1 - idx));
+      return { date: date.toISOString().slice(0, 10), value: 0 };
+    });
+    const source = hitlResponseSeries && hitlResponseSeries.length > 0 ? hitlResponseSeries : fallbackSeries;
+    return source.map((point) => {
+      const date = new Date(`${point.date}T00:00:00Z`);
+      const label = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return { label, value: point.value };
+    });
+  }, [hitlResponseSeries, hitlRange]);
+
+  const chartsToRender = useMemo(() => {
+    if (!isDepartmentAdmin) return activeSection.charts;
+    if (activeSection.id === "approval") {
+      return activeSection.charts.map((chart) => {
+        if (chart.title !== "Pending Approvals") return chart;
+        return {
+          ...chart,
+          data: approvalPendingChartData ?? [],
+        };
+      });
+    }
+    if (activeSection.id === "hitl") {
+      return activeSection.charts.map((chart) => {
+        if (chart.title === "Invocation Rate") {
+          return { ...chart, data: hitlInvocationChartData ?? [] };
+        }
+        if (chart.title === "Response Time") {
+          return { ...chart, data: hitlResponseChartData ?? [] };
+        }
+        return chart;
+      });
+    }
+    return activeSection.charts.map((chart) => {
+      return chart;
+    });
+  }, [
+    activeSection.charts,
+    activeSection.id,
+    approvalPendingChartData,
+    hitlInvocationChartData,
+    hitlResponseChartData,
+    isDepartmentAdmin,
+  ]);
+  const isLifecycleSection = activeSection.id === "lifecycle";
+  const kpiGridClass = isLifecycleSection
+    ? "mt-6 grid grid-cols-1 gap-6 md:grid-cols-3"
+    : "mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4";
 
   const theme = sectionThemes[activeSection.id];
   const headerSubtitle = isDepartmentAdmin
@@ -1126,48 +1349,82 @@ export default function DashboardAdmin(): JSX.Element {
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {activeSection.kpis.map((kpi, index) => (
+            <div className={kpiGridClass}>
+              {displayKpis.map((kpi, index) => (
                 <div
                   key={kpi.name}
-                  className={`rounded-2xl border bg-gradient-to-br ${kpiCardStyles[index % kpiCardStyles.length]} p-4 ring-1 shadow-sm`}
+                  className={`rounded-2xl border bg-gradient-to-br ${kpiCardStyles[index % kpiCardStyles.length]} ${
+                    isLifecycleSection ? "p-6 min-h-[160px]" : "p-4"
+                  } ring-1 shadow-sm`}
                 >
                   <div className="h-1 w-10 rounded-full bg-gradient-to-r from-slate-900 via-slate-400 to-slate-100" />
                   <p className="mt-3 text-xs uppercase tracking-wide text-muted-foreground">
                     {t(kpi.name)}
                   </p>
-                  <p className="mt-3 text-2xl font-semibold text-slate-900">{t(kpi.value)}</p>
+                  <p className={`mt-3 font-semibold text-slate-900 ${isLifecycleSection ? "text-3xl" : "text-2xl"}`}>
+                    {t(kpi.value)}
+                  </p>
                 </div>
               ))}
             </div>
 
-            <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
-              {activeSection.charts.map((chart) => (
-                <div
-                  key={chart.title}
-                  className="rounded-2xl border bg-white/90 p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-900">{t(chart.title)}</h3>
-                      <p className="text-xs text-muted-foreground">{t(chart.subtitle)}</p>
-                    </div>
-                    <div className="rounded-full bg-slate-100 p-2">
-                      {chart.type === "line" ? (
-                        <LineChart className="h-4 w-4 text-slate-600" />
-                      ) : chart.type === "bar" ? (
-                        <BarChart3 className="h-4 w-4 text-slate-600" />
+            {chartsToRender.length > 0 && (
+              <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
+                {chartsToRender.map((chart) => (
+                  <div
+                    key={chart.title}
+                    className="rounded-2xl border bg-white/90 p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">{t(chart.title)}</h3>
+                        <p className="text-xs text-muted-foreground">{t(chart.subtitle)}</p>
+                      </div>
+                      {isDepartmentAdmin && activeSection.id === "approval" && chart.title === "Pending Approvals" ? (
+                        <Select value={approvalRange} onValueChange={(value) => setApprovalRange(value as "7d" | "30d" | "12w")}>
+                          <SelectTrigger className="h-7 w-[140px] text-xs">
+                            <SelectValue placeholder="Range" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {approvalRangeOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : isDepartmentAdmin && activeSection.id === "hitl" && (chart.title === "Invocation Rate" || chart.title === "Response Time") ? (
+                        <Select value={hitlRange} onValueChange={(value) => setHitlRange(value as "7d" | "30d" | "12w")}>
+                          <SelectTrigger className="h-7 w-[140px] text-xs">
+                            <SelectValue placeholder="Range" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {approvalRangeOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       ) : (
-                        <Activity className="h-4 w-4 text-slate-600" />
+                        <div className="rounded-full bg-slate-100 p-2">
+                          {chart.type === "line" ? (
+                            <LineChart className="h-4 w-4 text-slate-600" />
+                          ) : chart.type === "bar" ? (
+                            <BarChart3 className="h-4 w-4 text-slate-600" />
+                          ) : (
+                            <Activity className="h-4 w-4 text-slate-600" />
+                          )}
+                        </div>
                       )}
                     </div>
+                    <div className="mt-4">
+                      <ChartBlock chart={chart} />
+                    </div>
                   </div>
-                  <div className="mt-4">
-                    <ChartBlock chart={chart} />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
