@@ -7,6 +7,7 @@ from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
 from agentcore.inputs.inputs import DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
 from agentcore.memory import aget_messages, astore_message
+from agentcore.schema.content_block import ContentBlock
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame
 from agentcore.schema.dotdict import dotdict
@@ -127,44 +128,61 @@ class MemoryComponent(Node):
     ]
 
     outputs = [
-        Output(display_name="Message", name="messages_text", method="retrieve_messages_as_text", dynamic=True),
-        Output(display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", dynamic=True),
-        Output(display_name="Enriched Message", name="enriched_message", method="short_term_memory", dynamic=True),
+        Output(display_name="Message", name="messages_text", method="retrieve_messages_as_text", types=["Message"], selected="Message", dynamic=True),
+        Output(display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", types=["DataFrame"], selected="DataFrame", dynamic=True),
+        Output(display_name="Enriched Message", name="enriched_message", method="short_term_memory", types=["Message"], selected="Message", dynamic=True),
     ]
 
     def update_outputs(self, frontend_node: dict, field_name: str, field_value: Any) -> dict:
-        """Dynamically show only the relevant output based on the selected output type."""
+        """Dynamically show only the relevant output based on the selected mode.
+
+        Always applies mode-based output filtering regardless of which field
+        triggered the update, so that backend refreshes (e.g. for n_messages)
+        don't reset the outputs to the class-level defaults.
+        """
+        # Determine the current mode value
         if field_name == "mode":
-            # Start with empty outputs
-            frontend_node["outputs"] = []
-            if field_value == "Store":
-                frontend_node["outputs"] = [
-                    Output(
-                        display_name="Stored Messages",
-                        name="stored_messages",
-                        method="store_message",
-                        hidden=True,
-                        dynamic=True,
-                    )
-                ]
-            if field_value == "Retrieve":
-                frontend_node["outputs"] = [
-                    Output(
-                        display_name="Messages", name="messages_text", method="retrieve_messages_as_text", dynamic=True
-                    ),
-                    Output(
-                        display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", dynamic=True
-                    ),
-                ]
-            if field_value == "Short Term Memory":
-                frontend_node["outputs"] = [
-                    Output(
-                        display_name="Enriched Message",
-                        name="enriched_message",
-                        method="short_term_memory",
-                        dynamic=True,
-                    ),
-                ]
+            mode = field_value
+        else:
+            # Read mode from the frontend_node template
+            mode_field = frontend_node.get("template", {}).get("mode", {})
+            mode = mode_field.get("value", "Retrieve") if isinstance(mode_field, dict) else "Retrieve"
+
+        frontend_node["outputs"] = []
+        if mode == "Store":
+            frontend_node["outputs"] = [
+                Output(
+                    display_name="Stored Messages",
+                    name="stored_messages",
+                    method="store_message",
+                    types=["Message"],
+                    selected="Message",
+                    hidden=True,
+                    dynamic=True,
+                )
+            ]
+        elif mode == "Retrieve":
+            frontend_node["outputs"] = [
+                Output(
+                    display_name="Messages", name="messages_text", method="retrieve_messages_as_text",
+                    types=["Message"], selected="Message", dynamic=True,
+                ),
+                Output(
+                    display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe",
+                    types=["DataFrame"], selected="DataFrame", dynamic=True,
+                ),
+            ]
+        elif mode == "Short Term Memory":
+            frontend_node["outputs"] = [
+                Output(
+                    display_name="Enriched Message",
+                    name="enriched_message",
+                    method="short_term_memory",
+                    types=["Message"],
+                    selected="Message",
+                    dynamic=True,
+                ),
+            ]
         return frontend_node
 
     def _get_redis_client_and_ttl(self):
@@ -204,7 +222,20 @@ class MemoryComponent(Node):
             return
         try:
             cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
-            data = [{"text": m.text or "", "sender": m.sender or "", "sender_name": m.sender_name or ""} for m in messages]
+            data = []
+            for m in messages:
+                entry = {
+                    "text": m.text or "",
+                    "sender": m.sender or "",
+                    "sender_name": m.sender_name or "",
+                    "files": [str(f.path) if hasattr(f, "path") else str(f) for f in (m.files or [])],
+                }
+                if m.content_blocks:
+                    entry["content_blocks"] = [
+                        cb.model_dump() if hasattr(cb, "model_dump") else cb
+                        for cb in m.content_blocks
+                    ]
+                data.append(entry)
             await redis.setex(cache_key, ttl, json.dumps(data))
             logger.debug(f"[STM] Cached {len(messages)} messages for session={session_id}, ttl={ttl}s")
         except Exception as e:
@@ -407,10 +438,19 @@ class MemoryComponent(Node):
                 # Try Redis cache first
                 cached = await self._get_stm_cache(session_id, n_messages)
                 if cached is not None:
-                    history_messages = [
-                        Message(text=m["text"], sender=m.get("sender", ""), sender_name=m.get("sender_name", ""))
-                        for m in cached
-                    ]
+                    history_messages = []
+                    for m in cached:
+                        msg = Message(
+                            text=m["text"],
+                            sender=m.get("sender", ""),
+                            sender_name=m.get("sender_name", ""),
+                            files=m.get("files") or [],
+                        )
+                        if m.get("content_blocks"):
+                            msg.content_blocks = [
+                                ContentBlock(**cb) for cb in m["content_blocks"]
+                            ]
+                        history_messages.append(msg)
                     # Check if the current user message is already in the cached history
                     # (ChatInput stored it in DB but cache may not have it yet)
                     if current_text and already_stored:
@@ -421,6 +461,7 @@ class MemoryComponent(Node):
                                 text=current_text,
                                 sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
                                 sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
+                                files=current_input.files if isinstance(current_input, Message) else [],
                             )
                             history_messages.append(user_msg)
                             # Trim to n_messages limit
@@ -445,6 +486,13 @@ class MemoryComponent(Node):
                     if history_messages:
                         await self._set_stm_cache(session_id, n_messages, history_messages)
 
+        # Log file info for each history message to trace image flow
+        for i, msg in enumerate(history_messages):
+            file_count = len(msg.files) if msg.files else 0
+            if file_count > 0:
+                file_paths = [str(f.path) if hasattr(f, "path") else str(f) for f in msg.files]
+                logger.info(f"[STM] History msg[{i}] has {file_count} files: {file_paths}")
+
         logger.info(
             f"[STM] Fetched {len(history_messages)} history messages | "
             f"source={history_source} | session_id={session_id} | n_messages={n_messages}"
@@ -466,15 +514,52 @@ class MemoryComponent(Node):
         else:
             enriched_text = current_text
 
+        # Collect all files from history messages and current input
+        # Ensure every image path is an Image object so resolve_images() can
+        # download it from Azure blob and cache the base64 data for the LLM.
+        from agentcore.schema.image import Image, is_image_file
+
+        all_files: list[str | Image] = []
+        for msg in history_messages:
+            if msg.files:
+                for f in msg.files:
+                    if isinstance(f, Image):
+                        all_files.append(f)
+                    elif isinstance(f, str) and is_image_file(f):
+                        all_files.append(Image(path=f))
+                    else:
+                        all_files.append(f)
+        current_files = []
+        if isinstance(current_input, Message) and current_input.files:
+            current_files = current_input.files
+        all_files.extend(current_files)
+
         # Create a new message with the enriched text, preserving original message properties
         enriched_message = Message(text=enriched_text)
         if isinstance(current_input, Message):
             enriched_message.sender = current_input.sender
             enriched_message.sender_name = current_input.sender_name
             enriched_message.session_id = current_input.session_id or session_id
-            enriched_message.files = current_input.files
         else:
             enriched_message.session_id = session_id
+        enriched_message.files = all_files if all_files else []
+
+        # Log current input files
+        if current_files:
+            logger.info(f"[STM] Current input has {len(current_files)} files: {[str(f.path) if hasattr(f, 'path') else str(f) for f in current_files]}")
+        logger.info(f"[STM] Enriched message total files: {len(all_files)}")
+
+        # Pre-fetch image data from Azure blob storage so downstream
+        # to_lc_message() can build multimodal content synchronously.
+        # Each Image.resolve() downloads from blob → base64 → _base64_cache.
+        for f in enriched_message.files or []:
+            if isinstance(f, Image):
+                try:
+                    await f.resolve()
+                    resolved = f._base64_cache is not None
+                    logger.info(f"[STM] Image resolve {'OK' if resolved else 'EMPTY'}: path={f.path}")
+                except Exception as e:
+                    logger.error(f"[STM] Image resolve FAILED: path={f.path}, error={e}")
 
         logger.info(
             f"[STM] session_id={session_id} | "
