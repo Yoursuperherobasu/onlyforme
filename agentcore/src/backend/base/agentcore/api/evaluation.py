@@ -197,22 +197,6 @@ async def _validate_eval_scope_refs(session, org_id: UUID | None, dept_id: UUID 
             raise HTTPException(status_code=400, detail="Invalid dept_id for org_id")
 
 
-async def _resolve_user_ids_by_emails(session, emails: list[str]) -> list[str]:
-    if not emails:
-        return []
-    normalized = [e.strip().lower() for e in emails if e and e.strip()]
-    if not normalized:
-        return []
-    rows = (
-        await session.exec(select(User.id, User.email).where(User.email.in_(normalized)))
-    ).all()
-    found = {str(r[1]).lower(): str(r[0]) for r in rows}
-    missing = [e for e in normalized if e not in found]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Invalid shared_user_emails: {', '.join(missing)}")
-    return [found[e] for e in normalized]
-
-
 async def _validate_departments_exist_for_org(session, org_id: UUID, dept_ids: list[UUID]) -> None:
     if not dept_ids:
         return
@@ -229,16 +213,15 @@ async def _enforce_evaluator_creation_scope(
     session,
     current_user,
     payload,
-) -> tuple[str, str | None, list[str], list[str], UUID | None, UUID | None]:
+) -> tuple[str, str | None, list[str], UUID | None, UUID | None]:
     """Validate and resolve visibility/scope fields for evaluator creation.
 
-    Returns (visibility, public_scope, public_dept_ids, shared_user_ids, org_id, dept_id).
+    Returns (visibility, public_scope, public_dept_ids, org_id, dept_id).
     """
     user_role = normalize_role(str(current_user.role))
     visibility = _normalize_visibility(getattr(payload, "visibility", None))
     public_scope = _normalize_public_scope(getattr(payload, "public_scope", None))
     public_dept_ids = _string_ids(getattr(payload, "public_dept_ids", None))
-    shared_user_ids: list[str] = []
     org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
 
     p_org_id: UUID | None = getattr(payload, "org_id", None)
@@ -247,22 +230,16 @@ async def _enforce_evaluator_creation_scope(
     if visibility == "private":
         public_scope = None
         public_dept_ids = []
-        if user_role == "department_admin":
+        if user_role in {"department_admin", "developer", "business_user"}:
             if not dept_pairs:
                 raise HTTPException(status_code=403, detail="No active department scope found")
             current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
             p_org_id = current_org_id
             p_dept_id = current_dept_id
-            shared_user_ids = await _resolve_user_ids_by_emails(
-                session, getattr(payload, "shared_user_emails", None) or []
-            )
-        elif user_role in {"developer", "business_user"} and dept_pairs:
-            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
-            p_org_id = current_org_id
-            p_dept_id = current_dept_id
         else:
-            # root / super_admin: keep explicit org_id/dept_id or leave null
-            pass
+            # root / super_admin private evaluators remain global to the creator
+            p_org_id = None
+            p_dept_id = None
     else:
         if public_scope is None:
             raise HTTPException(status_code=400, detail="public_scope is required when visibility is public")
@@ -293,10 +270,8 @@ async def _enforce_evaluator_creation_scope(
                 p_org_id = current_org_id
                 p_dept_id = current_dept_id
                 public_dept_ids = [str(current_dept_id)]
-        shared_user_ids = []
-
     await _validate_eval_scope_refs(session, p_org_id, p_dept_id)
-    return visibility, public_scope, public_dept_ids, shared_user_ids, p_org_id, p_dept_id
+    return visibility, public_scope, public_dept_ids, p_org_id, p_dept_id
 
 
 def _can_access_evaluator(
@@ -309,14 +284,11 @@ def _can_access_evaluator(
     row_org_id = evaluator.org_id
     row_dept_id = evaluator.dept_id
     row_user_id = str(evaluator.user_id) if evaluator.user_id else None
-    row_shared_user_ids = evaluator.shared_user_ids or []
     row_visibility = (evaluator.visibility or "private").strip().lower()
     row_public_scope = evaluator.public_scope
     row_public_dept_ids = evaluator.public_dept_ids or []
 
     if _is_root_user(current_user):
-        if row_visibility == "public":
-            return True
         return (
             row_user_id == str(current_user.id)
             and row_org_id is None
@@ -331,7 +303,12 @@ def _can_access_evaluator(
     dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
 
     if row_visibility == "private":
-        return row_user_id == user_id or user_id in set(row_shared_user_ids)
+        if role == "department_admin":
+            dept_candidates = set(row_public_dept_ids)
+            if row_dept_id:
+                dept_candidates.add(str(row_dept_id))
+            return bool(dept_candidates.intersection(dept_id_set))
+        return row_user_id == user_id
     if row_public_scope == "organization":
         return bool(row_org_id and row_org_id in org_ids)
     if row_public_scope == "department":
@@ -457,7 +434,6 @@ class EvaluatorCreateRequest(BaseModel):
     visibility: str = "private"  # private | public
     public_scope: Optional[str] = None  # organization | department
     public_dept_ids: Optional[List[UUID]] = None
-    shared_user_emails: Optional[List[str]] = None
 
 
 class EvaluatorResponse(BaseModel):
@@ -483,8 +459,9 @@ class EvaluatorResponse(BaseModel):
     created_at: Optional[str] = None
     visibility: str = "private"
     public_scope: Optional[str] = None
-    shared_user_ids: Optional[List[str]] = None
     public_dept_ids: Optional[List[str]] = None
+    created_by: Optional[str] = None
+    created_by_id: Optional[str] = None
 
 
 class TraceForReview(BaseModel):
@@ -512,6 +489,8 @@ class DatasetResponse(BaseModel):
     visibility: str = "private"
     public_scope: str | None = None
     owner_user_id: str | None = None
+    created_by: str | None = None
+    created_by_id: str | None = None
     org_id: str | None = None
     dept_id: str | None = None
     public_dept_ids: list[str] | None = None
@@ -857,6 +836,16 @@ def _dataset_accessible_by_users(
         or metadata.get("owner_user_id")
         or metadata.get("created_by_user_id")
     )
+    ds_org_id = metadata.get("org_id")
+    ds_dept_id = metadata.get("dept_id")
+
+    if current_user and _is_root_user(current_user):
+        return bool(
+            owner is not None
+            and str(owner) == str(current_user.id)
+            and ds_org_id is None
+            and ds_dept_id is None
+        )
 
     # Owner always has access
     if owner is not None and str(owner) in allowed_user_ids:
@@ -864,10 +853,17 @@ def _dataset_accessible_by_users(
 
     # Check visibility-based access
     visibility = metadata.get("visibility", "private")
+    role = normalize_role(str(getattr(current_user, "role", ""))) if current_user else ""
+    if visibility == "private":
+        if role == "super_admin" and ds_org_id and org_ids and UUID(ds_org_id) in org_ids:
+            return True
+        if role == "department_admin" and ds_dept_id and dept_pairs:
+            user_dept_ids = {str(d) for _, d in dept_pairs}
+            if str(ds_dept_id) in user_dept_ids:
+                return True
+
     if visibility == "public":
         public_scope = metadata.get("public_scope")
-        ds_org_id = metadata.get("org_id")
-        ds_dept_id = metadata.get("dept_id")
         ds_public_dept_ids = metadata.get("public_dept_ids") or []
 
         if current_user and _is_root_user(current_user):
@@ -878,11 +874,11 @@ def _dataset_accessible_by_users(
                 return True
         elif public_scope == "department":
             if dept_pairs and ds_public_dept_ids:
-                user_dept_ids = {str(d) for d, _ in dept_pairs}
+                user_dept_ids = {str(d) for _, d in dept_pairs}
                 if any(did in user_dept_ids for did in ds_public_dept_ids):
                     return True
             elif dept_pairs and ds_dept_id:
-                user_dept_ids = {str(d) for d, _ in dept_pairs}
+                user_dept_ids = {str(d) for _, d in dept_pairs}
                 if ds_dept_id in user_dept_ids:
                     return True
 
@@ -1105,10 +1101,16 @@ def _csv_row_to_dataset_item_request(row: dict[str, Any]) -> CreateDatasetItemRe
     )
 
 
-def _dataset_to_response(dataset_obj: Any, *, item_count: int | None = None) -> DatasetResponse:
+def _dataset_to_response(
+    dataset_obj: Any,
+    *,
+    item_count: int | None = None,
+    created_by_lookup: dict[str, str] | None = None,
+) -> DatasetResponse:
     """Serialize Langfuse dataset object to API response."""
     metadata = get_attr(dataset_obj, "metadata", default=None)
     meta_dict = metadata if isinstance(metadata, dict) else {}
+    owner_user_id = meta_dict.get("app_user_id") or meta_dict.get("created_by_user_id")
     return DatasetResponse(
         id=str(get_attr(dataset_obj, "id", default="") or ""),
         name=str(get_attr(dataset_obj, "name", default="") or ""),
@@ -1119,7 +1121,9 @@ def _dataset_to_response(dataset_obj: Any, *, item_count: int | None = None) -> 
         item_count=item_count,
         visibility=meta_dict.get("visibility", "private"),
         public_scope=meta_dict.get("public_scope"),
-        owner_user_id=meta_dict.get("app_user_id") or meta_dict.get("created_by_user_id"),
+        owner_user_id=owner_user_id,
+        created_by=created_by_lookup.get(str(owner_user_id)) if created_by_lookup and owner_user_id else None,
+        created_by_id=str(owner_user_id) if owner_user_id else None,
         org_id=meta_dict.get("org_id"),
         dept_id=meta_dict.get("dept_id"),
         public_dept_ids=meta_dict.get("public_dept_ids"),
@@ -4491,8 +4495,29 @@ async def list_datasets(
 
         # Build responses without per-dataset item count API calls (N+1 eliminated).
         # Item counts are loaded when a specific dataset is opened.
+        owner_user_ids = {
+            str(owner_user_id)
+            for owner_user_id in (
+                (
+                    metadata.get("app_user_id") or metadata.get("created_by_user_id")
+                )
+                for metadata in (
+                    get_attr(dataset, "metadata", default=None) if isinstance(get_attr(dataset, "metadata", default=None), dict) else {}
+                    for dataset in page_rows
+                )
+            )
+            if owner_user_id
+        }
+        created_by_lookup: dict[str, str] = {}
+        if owner_user_ids:
+            user_rows = (
+                await session.exec(select(User.id, User.email).where(User.id.in_([UUID(uid) for uid in owner_user_ids])))
+            ).all()
+            created_by_lookup = {str(row[0]): row[1] for row in user_rows if row[1]}
+
         items: list[DatasetResponse] = [
-            _dataset_to_response(dataset, item_count=None) for dataset in page_rows
+            _dataset_to_response(dataset, item_count=None, created_by_lookup=created_by_lookup)
+            for dataset in page_rows
         ]
 
         payload_out = {
@@ -4554,7 +4579,7 @@ async def create_dataset(
 
             if payload.public_dept_ids:
                 if not _is_root_user(current_user) and role != "super_admin":
-                    user_dept_ids = {d for d, _ in dept_pairs}
+                    user_dept_ids = {d for _, d in dept_pairs}
                     for did in payload.public_dept_ids:
                         if did not in user_dept_ids:
                             raise HTTPException(status_code=403, detail=f"Department {did} is not in your scope.")
@@ -4563,7 +4588,7 @@ async def create_dataset(
                 resolved_dept_id = str(payload.dept_id)
                 resolved_public_dept_ids = [str(payload.dept_id)]
             elif dept_pairs:
-                first_dept = sorted((d for d, _ in dept_pairs), key=str)[0]
+                first_dept = sorted((d for _, d in dept_pairs), key=str)[0]
                 resolved_dept_id = str(first_dept)
                 resolved_public_dept_ids = [str(first_dept)]
 
@@ -5768,7 +5793,7 @@ async def get_evaluation_visibility_options(
     current_user: Annotated[User, Depends(get_current_active_user)],
     session: DbSession,
 ) -> Dict[str, Any]:
-    """Return organisations, departments, and shareable users for visibility selectors."""
+    """Return organisations and departments for visibility selectors."""
     org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
     role = normalize_role(str(current_user.role))
 
@@ -5802,26 +5827,9 @@ async def get_evaluation_visibility_options(
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
 
-    private_share_users: list[dict] = []
-    if role == "department_admin" and dept_ids:
-        primary_dept = sorted(dept_ids, key=str)[0]
-        user_rows = (
-            await session.exec(
-                select(User.id, User.email)
-                .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
-                .where(
-                    UserDepartmentMembership.department_id == primary_dept,
-                    UserDepartmentMembership.status == "active",
-                    User.email.is_not(None),
-                )
-            )
-        ).all()
-        private_share_users = [{"id": str(r[0]), "email": r[1]} for r in user_rows if r[1]]
-
     return {
         "organizations": organizations,
         "departments": departments,
-        "private_share_users": private_share_users,
         "role": role,
     }
 
@@ -5852,7 +5860,7 @@ async def create_evaluator_config(
 
         async with session_scope() as session:
             # Enforce RBAC scope for creation
-            visibility, public_scope, public_dept_ids, shared_user_ids, resolved_org_id, resolved_dept_id = (
+            visibility, public_scope, public_dept_ids, resolved_org_id, resolved_dept_id = (
                 await _enforce_evaluator_creation_scope(session, current_user, payload)
             )
 
@@ -5878,7 +5886,6 @@ async def create_evaluator_config(
                 visibility=visibility,
                 public_scope=public_scope,
                 public_dept_ids=public_dept_ids or None,
-                shared_user_ids=shared_user_ids or None,
             )
             session.add(evaluator)
             await session.commit()
@@ -5914,7 +5921,10 @@ async def create_evaluator_config(
             )
             logger.info(f"evaluation - Enqueued {enqueued} judge tasks for evaluator id={eid}")
 
-        return EvaluatorResponse(**evaluator.to_response())
+        response_data = evaluator.to_response()
+        response_data["created_by"] = current_user.email
+        response_data["created_by_id"] = str(current_user.id)
+        return EvaluatorResponse(**response_data)
     except HTTPException:
         raise
     except Exception as e:
@@ -6017,11 +6027,25 @@ async def list_evaluator_configs(
             stmt = select(Evaluator)
             res = await session.exec(stmt)
             all_evaluators = res.all()
+            creator_ids = {e.user_id for e in all_evaluators if e.user_id}
+            created_by_lookup: dict[str, str] = {}
+            if creator_ids:
+                user_rows = (
+                    await session.exec(select(User.id, User.email).where(User.id.in_(list(creator_ids))))
+                ).all()
+                created_by_lookup = {str(row[0]): row[1] for row in user_rows if row[1]}
         accessible = [
             e for e in all_evaluators
             if _can_access_evaluator(e, current_user, org_ids, dept_pairs)
         ]
-        return [EvaluatorResponse(**e.to_response()) for e in accessible]
+        responses: list[EvaluatorResponse] = []
+        for evaluator in accessible:
+            response_data = evaluator.to_response()
+            if evaluator.user_id:
+                response_data["created_by"] = created_by_lookup.get(str(evaluator.user_id))
+                response_data["created_by_id"] = str(evaluator.user_id)
+            responses.append(EvaluatorResponse(**response_data))
+        return responses
     except Exception as e:
         logger.opt(exception=True).error("Error listing evaluator configs: {}", str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -6054,20 +6078,16 @@ async def update_evaluator_config(
             if not eval_obj:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
-            # Only owner or admin with org scope can update
+            # Connector-style: any in-scope user can manage accessible evaluators
             org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-            is_owner = str(current_user.id) == str(eval_obj.user_id)
-            role = normalize_role(str(current_user.role))
-            if not is_owner and role not in {"root", "super_admin"}:
-                raise HTTPException(status_code=403, detail="Only the owner can update this evaluator")
-            if not is_owner and not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
+            if not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
             # Resolve model from registry
             effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
 
             # Re-validate scope if visibility fields are provided
-            visibility, public_scope, public_dept_ids, shared_user_ids, resolved_org_id, resolved_dept_id = (
+            visibility, public_scope, public_dept_ids, resolved_org_id, resolved_dept_id = (
                 await _enforce_evaluator_creation_scope(session, current_user, payload)
             )
 
@@ -6091,13 +6111,19 @@ async def update_evaluator_config(
             eval_obj.visibility = visibility
             eval_obj.public_scope = public_scope
             eval_obj.public_dept_ids = public_dept_ids or None
-            eval_obj.shared_user_ids = shared_user_ids or None
 
             session.add(eval_obj)
             await session.commit()
             await session.refresh(eval_obj)
+            creator_email = None
+            if eval_obj.user_id:
+                creator = await session.get(User, eval_obj.user_id)
+                creator_email = creator.email if creator else None
 
-        return EvaluatorResponse(**eval_obj.to_response())
+        response_data = eval_obj.to_response()
+        response_data["created_by"] = creator_email
+        response_data["created_by_id"] = str(eval_obj.user_id) if eval_obj.user_id else None
+        return EvaluatorResponse(**response_data)
     except HTTPException:
         raise
     except Exception as e:
@@ -6120,13 +6146,9 @@ async def delete_evaluator_config(
             if not eval_obj:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
-            # Only owner or admin with org scope can delete
+            # Connector-style: any in-scope user can delete accessible evaluators
             org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-            is_owner = str(current_user.id) == str(eval_obj.user_id)
-            role = normalize_role(str(current_user.role))
-            if not is_owner and role not in {"root", "super_admin"}:
-                raise HTTPException(status_code=403, detail="Only the owner can delete this evaluator")
-            if not is_owner and not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
+            if not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
             await session.delete(eval_obj)

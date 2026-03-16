@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +9,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -106,17 +112,44 @@ export default function EditGuardrailModal({
   const [promptsYml, setPromptsYml] = useState("");
   const [railsCo, setRailsCo] = useState("");
   const [preservedFiles, setPreservedFiles] = useState<Record<string, string>>();
-  const [visibility, setVisibility] = useState<"private" | "public">("private");
-  const [publicScope, setPublicScope] = useState<"organization" | "department">("department");
+  const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">("private");
   const [orgId, setOrgId] = useState("");
   const [deptId, setDeptId] = useState("");
   const [publicDeptIds, setPublicDeptIds] = useState<string[]>([]);
-  const [sharedUserEmails, setSharedUserEmails] = useState<string[]>([]);
   const [visibilityOptions, setVisibilityOptions] = useState<{
     organizations: { id: string; name: string }[];
     departments: { id: string; name: string; org_id: string }[];
-    private_share_users: { id: string; email: string }[];
-  }>({ organizations: [], departments: [], private_share_users: [] });
+  }>({ organizations: [], departments: [] });
+  const canMultiDept = role === "super_admin" || role === "root";
+  const departmentsForSelectedOrg = useMemo(
+    () =>
+      visibilityOptions.departments.filter((d) => !orgId || d.org_id === orgId),
+    [visibilityOptions.departments, orgId],
+  );
+  const selectedDeptLabel = useMemo(() => {
+    const selectedIds = canMultiDept ? publicDeptIds : deptId ? [deptId] : [];
+    if (selectedIds.length === 0) return "Select departments";
+    const names = departmentsForSelectedOrg
+      .filter((dept) => selectedIds.includes(dept.id))
+      .map((dept) => dept.name);
+    if (names.length === 0) return "Select departments";
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  }, [canMultiDept, departmentsForSelectedOrg, deptId, publicDeptIds]);
+  const handleVisibilityScopeChange = (
+    scope: "private" | "department" | "organization",
+  ) => {
+    setVisibilityScope(scope);
+    if (scope !== "department") {
+      setPublicDeptIds([]);
+      if (scope === "organization") {
+        setDeptId("");
+      }
+    }
+    if (scope === "private") {
+      setPublicDeptIds([]);
+    }
+  };
 
   const selectedModel = useMemo(
     () => registryModels.find((model) => model.id === modelRegistryId) ?? null,
@@ -192,7 +225,6 @@ export default function EditGuardrailModal({
       const options = res.data || {
         organizations: [],
         departments: [],
-        private_share_users: [],
       };
       setVisibilityOptions(options);
       if (!isEditMode) {
@@ -207,25 +239,26 @@ export default function EditGuardrailModal({
   useEffect(() => {
     if (!open) return;
     if (guardrail) {
-      setVisibility((guardrail.visibility as "private" | "public") || "private");
-      setPublicScope((guardrail.public_scope as "organization" | "department") || "department");
+      setVisibilityScope(
+        guardrail.visibility === "public"
+          ? guardrail.public_scope === "organization"
+            ? "organization"
+            : "department"
+          : "private",
+      );
       setOrgId(guardrail.org_id || "");
       setDeptId(guardrail.dept_id || "");
       setPublicDeptIds(guardrail.public_dept_ids || []);
-      setSharedUserEmails([]);
     } else {
-      setVisibility("private");
-      setPublicScope("department");
+      setVisibilityScope("private");
       setPublicDeptIds([]);
-      setSharedUserEmails([]);
     }
   }, [guardrail, open]);
 
   useEffect(() => {
-    if (!open || visibility !== "public") return;
-    const canMultiDept = role === "super_admin" || role === "root";
+    if (!open || visibilityScope === "private") return;
 
-    if (publicScope === "organization") {
+    if (visibilityScope === "organization") {
       if ((role === "developer" || role === "department_admin") && !orgId && visibilityOptions.organizations.length > 0) {
         setOrgId(visibilityOptions.organizations[0].id);
       }
@@ -239,8 +272,7 @@ export default function EditGuardrailModal({
     }
   }, [
     open,
-    visibility,
-    publicScope,
+    visibilityScope,
     role,
     orgId,
     deptId,
@@ -252,12 +284,11 @@ export default function EditGuardrailModal({
   const effectiveNameScope = useMemo(() => {
     let effectiveOrgId: string | null = orgId || null;
     let effectiveDeptId: string | null = deptId || null;
-    const canMultiDept = role === "super_admin" || role === "root";
 
-    if (visibility === "public") {
-      if (publicScope === "organization") {
+    if (visibilityScope !== "private") {
+      if (visibilityScope === "organization") {
         effectiveDeptId = null;
-      } else if (publicScope === "department") {
+      } else if (visibilityScope === "department") {
         if (canMultiDept) {
           effectiveDeptId = publicDeptIds.length === 1 ? publicDeptIds[0] : null;
         }
@@ -278,8 +309,7 @@ export default function EditGuardrailModal({
 
     return { org_id: effectiveOrgId, dept_id: effectiveDeptId };
   }, [
-    visibility,
-    publicScope,
+    visibilityScope,
     publicDeptIds,
     orgId,
     deptId,
@@ -295,10 +325,10 @@ export default function EditGuardrailModal({
     enabled: open && name.trim().length > 0,
   });
   const isVisibilityInvalid =
-    visibility === "public" &&
+    visibilityScope !== "private" &&
     (
-      (publicScope === "organization" && !orgId) ||
-      (publicScope === "department" &&
+      (visibilityScope === "organization" && !orgId) ||
+      (visibilityScope === "department" &&
         ((role === "super_admin" || role === "root")
           ? publicDeptIds.length === 0
           : !deptId))
@@ -377,11 +407,9 @@ export default function EditGuardrailModal({
       runtimeConfig,
       org_id: orgId || null,
       dept_id: deptId || null,
-      visibility,
-      public_scope: visibility === "public" ? publicScope : null,
-      public_dept_ids: visibility === "public" && publicScope === "department" ? publicDeptIds : [],
-      shared_user_emails:
-        role === "department_admin" && visibility === "private" ? sharedUserEmails : [],
+      visibility: visibilityScope === "private" ? "private" : "public",
+      public_scope: visibilityScope === "private" ? null : visibilityScope,
+      public_dept_ids: visibilityScope === "department" ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : []) : [],
     };
 
     try {
@@ -495,116 +523,129 @@ export default function EditGuardrailModal({
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Visibility</Label>
-              <select
-                value={visibility}
-                onChange={(event) =>
-                  setVisibility(event.target.value as "private" | "public")
-                }
-                disabled={readOnly}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="private">private</option>
-                <option value="public">public</option>
-              </select>
+          <div className="rounded-lg border border-border p-4">
+            <div className="mb-4">
+              <Label className="mb-1.5 block">Tenancy</Label>
+              <p className="text-xs text-muted-foreground">
+                Guardrails use direct tenancy only. No approval flow applies here.
+              </p>
             </div>
-            {visibility === "public" && (
+
+            <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label>Public Scope</Label>
+                <Label>Visibility Scope</Label>
                 <select
-                  value={publicScope}
+                  value={visibilityScope}
                   onChange={(event) =>
-                    setPublicScope(event.target.value as "organization" | "department")
+                    handleVisibilityScopeChange(
+                      event.target.value as "private" | "department" | "organization",
+                    )
                   }
                   disabled={readOnly}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="organization">organization</option>
-                  <option value="department">department</option>
+                  <option value="private">Private</option>
+                  <option value="department">Department</option>
+                  <option value="organization">Organization</option>
                 </select>
               </div>
-            )}
-          </div>
 
-          {visibility === "public" && publicScope === "organization" && (
-            <div className="space-y-1.5">
-              <Label>Organization</Label>
-              <select
-                value={orgId}
-                onChange={(event) => setOrgId(event.target.value)}
-                disabled={role === "developer" || role === "department_admin"}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
-              >
-                {visibilityOptions.organizations.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {visibility === "public" && publicScope === "department" && (
-            <div className="space-y-1.5">
-              <Label>Department{role === "super_admin" || role === "root" ? "s" : ""}</Label>
-              {role === "super_admin" || role === "root" ? (
-                <select
-                  multiple
-                  value={publicDeptIds}
-                  onChange={(event) =>
-                    setPublicDeptIds(
-                      Array.from(event.target.selectedOptions).map((o) => o.value),
-                    )
-                  }
-                  className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  {visibilityOptions.departments
-                    .filter((d) => !orgId || d.org_id === orgId)
-                    .map((dept) => (
-                      <option key={dept.id} value={dept.id}>
-                        {dept.name}
+              {visibilityScope === "organization" && (
+                <div className="space-y-1.5">
+                  <Label>Organization</Label>
+                  <select
+                    value={orgId}
+                    onChange={(event) => setOrgId(event.target.value)}
+                    disabled={readOnly || role === "developer" || role === "department_admin"}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                  >
+                    <option value="">Select organization</option>
+                    {visibilityOptions.organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
                       </option>
                     ))}
-                </select>
-              ) : (
-                <select
-                  value={deptId}
-                  disabled
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
-                >
-                  {visibilityOptions.departments.map((dept) => (
-                    <option key={dept.id} value={dept.id}>
-                      {dept.name}
-                    </option>
-                  ))}
-                </select>
+                  </select>
+                </div>
+              )}
+
+              {visibilityScope === "department" && (
+                <>
+                  {canMultiDept && (
+                    <div className="space-y-1.5">
+                      <Label>Organization</Label>
+                      <select
+                        value={orgId}
+                        onChange={(event) => {
+                          setOrgId(event.target.value);
+                          setPublicDeptIds([]);
+                        }}
+                        disabled={readOnly}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Select organization</option>
+                        {visibilityOptions.organizations.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <Label>Department{canMultiDept ? "s" : ""}</Label>
+                    {canMultiDept ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={readOnly}
+                            className="w-full justify-between font-normal"
+                          >
+                            <span className="truncate text-left">{selectedDeptLabel}</span>
+                            <ChevronDown className="ml-2 h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="max-h-64 w-[340px] overflow-auto">
+                          {departmentsForSelectedOrg.map((dept) => (
+                            <DropdownMenuCheckboxItem
+                              key={dept.id}
+                              checked={publicDeptIds.includes(dept.id)}
+                              onSelect={(event) => event.preventDefault()}
+                              onCheckedChange={(checked) => {
+                                setPublicDeptIds((prev) =>
+                                  checked
+                                    ? Array.from(new Set([...prev, dept.id]))
+                                    : prev.filter((id) => id !== dept.id),
+                                );
+                              }}
+                            >
+                              {dept.name}
+                            </DropdownMenuCheckboxItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      <select
+                        value={deptId}
+                        disabled
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                      >
+                        <option value="">Select department</option>
+                        {visibilityOptions.departments.map((dept) => (
+                          <option key={dept.id} value={dept.id}>
+                            {dept.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </>
               )}
             </div>
-          )}
-
-          {visibility === "private" && role === "department_admin" && (
-            <div className="space-y-1.5">
-              <Label>Additional Users (optional)</Label>
-              <select
-                multiple
-                value={sharedUserEmails}
-                onChange={(event) =>
-                  setSharedUserEmails(
-                    Array.from(event.target.selectedOptions).map((o) => o.value),
-                  )
-                }
-                className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                {visibilityOptions.private_share_users.map((u) => (
-                  <option key={u.id} value={u.email}>
-                    {u.email}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-1.5 md:col-span-2">

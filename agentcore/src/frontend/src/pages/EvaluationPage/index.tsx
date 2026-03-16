@@ -1,4 +1,4 @@
-import { Play, Plus } from "lucide-react";
+import { ChevronDown, Play, Plus } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import type { LangfuseEnvironment } from "../ObservabilityPage/types";
@@ -20,6 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useTranslation } from "react-i18next";
 import useAlertStore from "@/stores/alertStore";
 import { useGetRegistryModels } from "@/controllers/API/queries/models/use-get-models";
@@ -97,7 +103,6 @@ const ensureDatasetPromptTemplate = (criteria?: string | null): string => {
 type VisibilityOptions = {
   organizations: { id: string; name: string }[];
   departments: { id: string; name: string; org_id: string }[];
-  private_share_users: { id: string; email: string }[];
   role?: string;
 };
 
@@ -105,10 +110,16 @@ export default function EvaluationPage() {
   const { t } = useTranslation();
   const { userData } = useContext(AuthContext);
   const userRole = (userData?.role || "").toLowerCase();
+  const isDepartmentAdmin = userRole === "department_admin";
+  const isSuperAdmin = userRole === "super_admin";
+  const canMultiDept = userRole === "super_admin" || userRole === "root";
+  const isMembershipLockedRole =
+    userRole === "developer" ||
+    userRole === "business_user" ||
+    userRole === "department_admin";
   const [visibilityOptions, setVisibilityOptions] = useState<VisibilityOptions>({
     organizations: [],
     departments: [],
-    private_share_users: [],
   });
   const [activeTab, setActiveTab] = useState("judges");
   const [selectedEnvironment, setSelectedEnvironment] = useState<LangfuseEnvironment>("uat");
@@ -207,6 +218,108 @@ export default function EvaluationPage() {
     dept_id: "" as string,
     public_dept_ids: [] as string[],
   });
+  const toVisibilityScope = useCallback(
+    (visibility?: "private" | "public", publicScope?: string) => {
+      if (visibility !== "public") return "private" as const;
+      return publicScope === "organization" ? ("organization" as const) : ("department" as const);
+    },
+    [],
+  );
+  const getSelectedDeptLabel = useCallback(
+    (selectedIds: string[], orgId: string) => {
+      if (selectedIds.length === 0) return "Select departments";
+      const names = visibilityOptions.departments
+        .filter((dept) => (!orgId || dept.org_id === orgId) && selectedIds.includes(dept.id))
+        .map((dept) => dept.name);
+      if (names.length === 0) return "Select departments";
+      if (names.length <= 2) return names.join(", ");
+      return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+    },
+    [visibilityOptions.departments],
+  );
+  const getVisibilityLabel = useCallback((item: {
+    visibility?: "private" | "public";
+    public_scope?: "organization" | "department" | null;
+  }) => {
+    if (item.visibility === "private") return "Private";
+    if (item.public_scope === "organization") return "Organization";
+    return "Department";
+  }, []);
+  const getVisibilityBadgeClass = useCallback((item: {
+    visibility?: "private" | "public";
+    public_scope?: "organization" | "department" | null;
+  }) => {
+    if (item.visibility === "private") {
+      return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+    }
+    if (item.public_scope === "organization") {
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+    }
+    return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+  }, []);
+  const getDepartmentScopeLabel = useCallback((item: {
+    visibility?: "private" | "public";
+    public_scope?: "organization" | "department" | null;
+    dept_id?: string | null;
+    public_dept_ids?: string[] | null;
+  }) => {
+    if (item.visibility === "public" && item.public_scope === "organization") {
+      return "All departments";
+    }
+    const deptNameById = new Map(
+      visibilityOptions.departments.map((dept) => [dept.id, dept.name]),
+    );
+    const deptIds =
+      item.visibility === "public" && item.public_scope === "department"
+        ? item.public_dept_ids?.length
+          ? item.public_dept_ids
+          : item.dept_id
+            ? [item.dept_id]
+            : []
+        : item.dept_id
+          ? [item.dept_id]
+          : [];
+    if (deptIds.length === 0) return "-";
+    const names = deptIds.map((id) => deptNameById.get(id) || id);
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  }, [visibilityOptions.departments]);
+  const datasetVisibilityScope = toVisibilityScope(datasetForm.visibility, datasetForm.public_scope);
+  const judgeVisibilityScope = toVisibilityScope(judgeForm.visibility, judgeForm.public_scope);
+  const datasetDepartmentsForSelectedOrg = useMemo(
+    () => visibilityOptions.departments.filter((dept) => !datasetForm.org_id || dept.org_id === datasetForm.org_id),
+    [visibilityOptions.departments, datasetForm.org_id],
+  );
+  const judgeDepartmentsForSelectedOrg = useMemo(
+    () => visibilityOptions.departments.filter((dept) => !judgeForm.org_id || dept.org_id === judgeForm.org_id),
+    [visibilityOptions.departments, judgeForm.org_id],
+  );
+  const selectedDatasetDeptLabel = useMemo(
+    () => getSelectedDeptLabel(canMultiDept ? datasetForm.public_dept_ids : datasetForm.dept_id ? [datasetForm.dept_id] : [], datasetForm.org_id),
+    [canMultiDept, datasetForm.dept_id, datasetForm.org_id, datasetForm.public_dept_ids, getSelectedDeptLabel],
+  );
+  const selectedJudgeDeptLabel = useMemo(
+    () => getSelectedDeptLabel(canMultiDept ? judgeForm.public_dept_ids : judgeForm.dept_id ? [judgeForm.dept_id] : [], judgeForm.org_id),
+    [canMultiDept, getSelectedDeptLabel, judgeForm.dept_id, judgeForm.org_id, judgeForm.public_dept_ids],
+  );
+  const setDatasetVisibilityScope = useCallback((scope: "private" | "department" | "organization") => {
+    setDatasetForm((prev) => ({
+      ...prev,
+      visibility: scope === "private" ? "private" : "public",
+      public_scope: scope === "private" ? "" : scope,
+      dept_id: scope === "department" ? prev.dept_id : "",
+      public_dept_ids: scope === "department" ? prev.public_dept_ids : [],
+    }));
+  }, []);
+  const setJudgeVisibilityScope = useCallback((scope: "private" | "department" | "organization") => {
+    setJudgeForm((prev) => ({
+      ...prev,
+      visibility: scope === "private" ? "private" : "public",
+      public_scope: scope === "private" ? "" : scope,
+      dept_id: scope === "department" ? prev.dept_id : "",
+      public_dept_ids: scope === "department" ? prev.public_dept_ids : [],
+    }));
+  }, []);
   const [groundTruth, setGroundTruth] = useState("");
   const [scoreForm, setScoreForm] = useState({
     trace_id: "",
@@ -456,18 +569,46 @@ export default function EvaluationPage() {
     api
       .get("/api/evaluation/visibility-options")
       .then((res) => {
-        const opts = res.data || { organizations: [], departments: [], private_share_users: [] };
+        const opts = res.data || { organizations: [], departments: [] };
         setVisibilityOptions(opts);
-        // Auto-select first org/dept for non-root roles
-        if (!judgeForm.org_id && opts.organizations?.length) {
-          setJudgeForm((prev) => ({ ...prev, org_id: opts.organizations[0].id }));
+        if (opts.organizations?.length) {
+          setJudgeForm((prev) => ({ ...prev, org_id: prev.org_id || opts.organizations[0].id }));
+          setDatasetForm((prev) => ({ ...prev, org_id: prev.org_id || opts.organizations[0].id }));
         }
-        if (!judgeForm.dept_id && opts.departments?.length) {
-          setJudgeForm((prev) => ({ ...prev, dept_id: opts.departments[0].id }));
+        if (opts.departments?.length) {
+          const firstDept = opts.departments[0];
+          setJudgeForm((prev) => ({
+            ...prev,
+            dept_id: prev.dept_id || firstDept.id,
+            org_id: prev.org_id || firstDept.org_id,
+          }));
+          setDatasetForm((prev) => ({
+            ...prev,
+            dept_id: prev.dept_id || firstDept.id,
+            org_id: prev.org_id || firstDept.org_id,
+          }));
         }
       })
       .catch(() => {});
   }, [isJudgeDialogOpen, activeTab]);
+
+  useEffect(() => {
+    if (!isMembershipLockedRole) return;
+    const firstDept = visibilityOptions.departments[0];
+    if (!firstDept) return;
+    setJudgeForm((prev) => ({
+      ...prev,
+      org_id: firstDept.org_id,
+      dept_id: prev.visibility === "public" && prev.public_scope === "organization" ? prev.dept_id : firstDept.id,
+      public_dept_ids: prev.visibility === "public" && prev.public_scope === "department" ? [firstDept.id] : prev.public_dept_ids,
+    }));
+    setDatasetForm((prev) => ({
+      ...prev,
+      org_id: firstDept.org_id,
+      dept_id: prev.visibility === "public" && prev.public_scope === "organization" ? prev.dept_id : firstDept.id,
+      public_dept_ids: prev.visibility === "public" && prev.public_scope === "department" ? [firstDept.id] : prev.public_dept_ids,
+    }));
+  }, [isMembershipLockedRole, visibilityOptions.departments]);
 
   // Lazy-load scores data only when the Scores tab becomes active or environment changes
   useEffect(() => {
@@ -1385,40 +1526,22 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Visibility</label>
+              <label className="text-sm font-medium">Visibility Scope</label>
               <select
-                value={datasetForm.visibility}
+                value={datasetVisibilityScope}
                 onChange={(e) =>
-                  setDatasetForm({
-                    ...datasetForm,
-                    visibility: e.target.value as "private" | "public",
-                    public_scope: e.target.value === "private" ? "" : datasetForm.public_scope,
-                  })
+                  setDatasetVisibilityScope(
+                    e.target.value as "private" | "department" | "organization",
+                  )
                 }
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="private">Private</option>
-                <option value="public">Public</option>
+                <option value="department">Department</option>
+                <option value="organization">Organization</option>
               </select>
             </div>
-            {datasetForm.visibility === "public" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Public Scope</label>
-                <select
-                  value={datasetForm.public_scope}
-                  onChange={(e) =>
-                    setDatasetForm({ ...datasetForm, public_scope: e.target.value })
-                  }
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">Select scope...</option>
-                  <option value="organization">Organization</option>
-                  <option value="department">Department</option>
-                </select>
-              </div>
-            )}
-            {datasetForm.visibility === "public" &&
-              datasetForm.public_scope === "organization" && (
+            {datasetVisibilityScope === "organization" && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Organization</label>
                   <select
@@ -1426,7 +1549,7 @@ export default function EvaluationPage() {
                     onChange={(e) =>
                       setDatasetForm({ ...datasetForm, org_id: e.target.value })
                     }
-                    disabled={userRole === "developer" || userRole === "department_admin"}
+                    disabled={isMembershipLockedRole}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
                   >
                     <option value="">Select organization...</option>
@@ -1436,10 +1559,9 @@ export default function EvaluationPage() {
                   </select>
                 </div>
               )}
-            {datasetForm.visibility === "public" &&
-              datasetForm.public_scope === "department" && (
+            {datasetVisibilityScope === "department" && (
                 <>
-                  {(userRole === "super_admin" || userRole === "root") && (
+                  {canMultiDept && (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Organization</label>
                       <select
@@ -1457,27 +1579,37 @@ export default function EvaluationPage() {
                     </div>
                   )}
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Department{userRole === "super_admin" || userRole === "root" ? "s" : ""}
-                    </label>
-                    {userRole === "super_admin" || userRole === "root" ? (
-                      <select
-                        multiple
-                        value={datasetForm.public_dept_ids}
-                        onChange={(e) =>
-                          setDatasetForm({
-                            ...datasetForm,
-                            public_dept_ids: Array.from(e.target.selectedOptions).map((o) => o.value),
-                          })
-                        }
-                        className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      >
-                        {visibilityOptions.departments
-                          .filter((d) => !datasetForm.org_id || d.org_id === datasetForm.org_id)
-                          .map((dept) => (
-                            <option key={dept.id} value={dept.id}>{dept.name}</option>
+                    <label className="text-sm font-medium">Department{canMultiDept ? "s" : ""}</label>
+                    {canMultiDept ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          >
+                            <span className="truncate text-left">{selectedDatasetDeptLabel}</span>
+                            <ChevronDown className="h-4 w-4 opacity-70" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-64 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
+                          {datasetDepartmentsForSelectedOrg.map((dept) => (
+                            <DropdownMenuCheckboxItem
+                              key={dept.id}
+                              checked={datasetForm.public_dept_ids.includes(dept.id)}
+                              onCheckedChange={(checked) =>
+                                setDatasetForm((prev) => ({
+                                  ...prev,
+                                  public_dept_ids: checked
+                                    ? Array.from(new Set([...prev.public_dept_ids, dept.id]))
+                                    : prev.public_dept_ids.filter((id) => id !== dept.id),
+                                }))
+                              }
+                            >
+                              {dept.name}
+                            </DropdownMenuCheckboxItem>
                           ))}
-                      </select>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     ) : (
                       <select
                         value={datasetForm.dept_id}
@@ -1514,6 +1646,8 @@ export default function EvaluationPage() {
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Description</th>
                   <th className="px-4 py-3">Visibility</th>
+                  {isDepartmentAdmin && <th className="px-4 py-3">Created By</th>}
+                  {isSuperAdmin && <th className="px-4 py-3">Department Scope</th>}
                   <th className="px-4 py-3">Items</th>
                   <th className="px-4 py-3">Updated</th>
                 </tr>
@@ -1552,17 +1686,19 @@ export default function EvaluationPage() {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                            dataset.visibility === "public"
-                              ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                              : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300"
-                          }`}
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(dataset)}`}
                         >
-                          {dataset.visibility === "public"
-                            ? `Public (${dataset.public_scope || "org"})`
-                            : "Private"}
+                          {getVisibilityLabel(dataset)}
                         </span>
                       </td>
+                      {isDepartmentAdmin && (
+                        <td className="px-4 py-3 max-w-[220px] truncate" title={dataset.created_by || "-"}>
+                          {dataset.created_by || "-"}
+                        </td>
+                      )}
+                      {isSuperAdmin && (
+                        <td className="px-4 py-3">{getDepartmentScopeLabel(dataset)}</td>
+                      )}
                       <td className="px-4 py-3">{dataset.item_count ?? "-"}</td>
                       <td className="px-4 py-3">
                         {dataset.updated_at
@@ -1575,7 +1711,7 @@ export default function EvaluationPage() {
                 {datasets.length === 0 && (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={5 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0)}
                       className="px-4 py-6 text-center text-gray-500"
                     >
                       No datasets found.
@@ -2102,6 +2238,9 @@ export default function EvaluationPage() {
                               <tr>
                                 <th className="px-4 py-2">Name</th>
                                 <th className="px-4 py-2">Model</th>
+                                <th className="px-4 py-2">Visibility</th>
+                                {isDepartmentAdmin && <th className="px-4 py-2">Created By</th>}
+                                {isSuperAdmin && <th className="px-4 py-2">Department Scope</th>}
                                 <th className="px-4 py-2">Criteria</th>
                                 <th className="px-4 py-2">Action</th>
                               </tr>
@@ -2116,6 +2255,21 @@ export default function EvaluationPage() {
                                     {ev.name}
                                   </td>
                                   <td className="px-4 py-3">{ev.model}</td>
+                                  <td className="px-4 py-3">
+                                    <span
+                                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(ev)}`}
+                                    >
+                                      {getVisibilityLabel(ev)}
+                                    </span>
+                                  </td>
+                                  {isDepartmentAdmin && (
+                                    <td className="px-4 py-3 max-w-[220px] truncate" title={ev.created_by || "-"}>
+                                      {ev.created_by || "-"}
+                                    </td>
+                                  )}
+                                  {isSuperAdmin && (
+                                    <td className="px-4 py-3">{getDepartmentScopeLabel(ev)}</td>
+                                  )}
                                   <td
                                     className="px-4 py-3 truncate max-w-xl"
                                     title={ev.criteria}
@@ -2431,45 +2585,22 @@ export default function EvaluationPage() {
 
             {/* Visibility Controls */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">Visibility</label>
+              <label className="text-sm font-medium">Visibility Scope</label>
               <select
-                value={judgeForm.visibility}
+                value={judgeVisibilityScope}
                 onChange={(e) =>
-                  setJudgeForm({
-                    ...judgeForm,
-                    visibility: e.target.value as "private" | "public",
-                    public_scope: e.target.value === "private" ? "" : judgeForm.public_scope,
-                  })
+                  setJudgeVisibilityScope(
+                    e.target.value as "private" | "department" | "organization",
+                  )
                 }
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="private">Private</option>
-                <option value="public">Public</option>
+                <option value="department">Department</option>
+                <option value="organization">Organization</option>
               </select>
             </div>
-
-            {judgeForm.visibility === "public" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Public Scope</label>
-                <select
-                  value={judgeForm.public_scope}
-                  onChange={(e) =>
-                    setJudgeForm({
-                      ...judgeForm,
-                      public_scope: e.target.value,
-                    })
-                  }
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">Select scope...</option>
-                  <option value="organization">Organization</option>
-                  <option value="department">Department</option>
-                </select>
-              </div>
-            )}
-
-            {judgeForm.visibility === "public" &&
-              judgeForm.public_scope === "organization" && (
+            {judgeVisibilityScope === "organization" && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Organization</label>
                   <select
@@ -2477,9 +2608,7 @@ export default function EvaluationPage() {
                     onChange={(e) =>
                       setJudgeForm({ ...judgeForm, org_id: e.target.value })
                     }
-                    disabled={
-                      userRole === "developer" || userRole === "department_admin"
-                    }
+                    disabled={isMembershipLockedRole}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
                   >
                     {visibilityOptions.organizations.map((org) => (
@@ -2491,10 +2620,9 @@ export default function EvaluationPage() {
                 </div>
               )}
 
-            {judgeForm.visibility === "public" &&
-              judgeForm.public_scope === "department" && (
+            {judgeVisibilityScope === "department" && (
                 <>
-                  {(userRole === "super_admin" || userRole === "root") && (
+                  {canMultiDept && (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Organization</label>
                       <select
@@ -2517,33 +2645,37 @@ export default function EvaluationPage() {
                     </div>
                   )}
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
-                      Department{userRole === "super_admin" || userRole === "root" ? "s" : ""}
-                    </label>
-                    {userRole === "super_admin" || userRole === "root" ? (
-                      <select
-                        multiple
-                        value={judgeForm.public_dept_ids}
-                        onChange={(e) =>
-                          setJudgeForm({
-                            ...judgeForm,
-                            public_dept_ids: Array.from(
-                              e.target.selectedOptions,
-                            ).map((o) => o.value),
-                          })
-                        }
-                        className="min-h-[84px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      >
-                        {visibilityOptions.departments
-                          .filter(
-                            (d) => !judgeForm.org_id || d.org_id === judgeForm.org_id,
-                          )
-                          .map((dept) => (
-                            <option key={dept.id} value={dept.id}>
+                    <label className="text-sm font-medium">Department{canMultiDept ? "s" : ""}</label>
+                    {canMultiDept ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          >
+                            <span className="truncate text-left">{selectedJudgeDeptLabel}</span>
+                            <ChevronDown className="h-4 w-4 opacity-70" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-64 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
+                          {judgeDepartmentsForSelectedOrg.map((dept) => (
+                            <DropdownMenuCheckboxItem
+                              key={dept.id}
+                              checked={judgeForm.public_dept_ids.includes(dept.id)}
+                              onCheckedChange={(checked) =>
+                                setJudgeForm((prev) => ({
+                                  ...prev,
+                                  public_dept_ids: checked
+                                    ? Array.from(new Set([...prev.public_dept_ids, dept.id]))
+                                    : prev.public_dept_ids.filter((id) => id !== dept.id),
+                                }))
+                              }
+                            >
                               {dept.name}
-                            </option>
+                            </DropdownMenuCheckboxItem>
                           ))}
-                      </select>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     ) : (
                       <select
                         value={judgeForm.dept_id}
