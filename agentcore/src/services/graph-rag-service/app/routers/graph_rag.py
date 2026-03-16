@@ -12,6 +12,8 @@ from app.auth import verify_api_key
 from app.schemas import (
     CommunityDetectRequest,
     CommunityDetectResponse,
+    CopyGraphKbRequest,
+    CopyGraphKbResponse,
     EmbedEntitiesRequest,
     EmbedEntitiesResponse,
     EnsureVectorIndexRequest,
@@ -30,6 +32,7 @@ from app.schemas import (
     TestConnectionResponse,
 )
 from app.services.neo4j_service import (
+    copy_graph_kb,
     detect_communities,
     ensure_vector_index,
     fetch_unembedded,
@@ -133,3 +136,15 @@ async def store_communities_endpoint(req: StoreCommunityRequest):
 @router.post("/test-connection", response_model=TestConnectionResponse)
 async def test_connection_endpoint(req: TestConnectionRequest):
     return await _run_sync(test_connection, req)
+
+
+@router.post("/copy-graph-kb", response_model=CopyGraphKbResponse)
+async def copy_graph_kb_endpoint(req: CopyGraphKbRequest):
+    try:
+        return await _run_sync(copy_graph_kb, req)
+    except ValueError as e:
+        logger.error("copy_graph_kb failed: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("copy_graph_kb failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal error during graph_kb copy")

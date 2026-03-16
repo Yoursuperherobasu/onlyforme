@@ -16,6 +16,16 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     logger = logging.getLogger(__name__)
     logger.info("Graph RAG Service starting on %s:%s", settings.host, settings.port)
+    logger.info(
+        "Config: neo4j_uri=%s, neo4j_user=%s, neo4j_db=%s, neo4j_pass=%s, "
+        "key_vault=%s, database_url=%s",
+        settings.neo4j_uri or "(not set)",
+        settings.neo4j_username,
+        settings.neo4j_database,
+        "****" if settings.neo4j_password else "(EMPTY - will fail!)",
+        settings.key_vault_url or "(not configured)",
+        "****" if settings.database_url else "(not set)",
+    )
 
     if settings.database_url:
         from app.database import init_db

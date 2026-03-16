@@ -1089,7 +1089,61 @@ def _is_input_rail_blocked(activated_rails: list[dict[str, Any]]) -> tuple[bool,
     return bool(blocked_names), blocked_names
 
 
-def _classify_action(input_text: str, output_text: str, blocked_by_input_rail: bool) -> str:
+def _extract_pii_llm_prompt(runtime_config: dict[str, Any] | None) -> str | None:
+    """Extract the pii_llm_mask prompt from prompts_yml. Returns None if not found."""
+    if not runtime_config:
+        return None
+
+    prompts_yml = runtime_config.get("prompts_yml", "")
+    if not isinstance(prompts_yml, str) or not prompts_yml.strip():
+        return None
+
+    try:
+        parsed = yaml.safe_load(prompts_yml)
+        if not isinstance(parsed, dict):
+            return None
+        for prompt_entry in parsed.get("prompts", []):
+            if isinstance(prompt_entry, dict) and prompt_entry.get("task") == "pii_llm_mask":
+                content = prompt_entry.get("content", "").strip()
+                if content:
+                    return content
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to parse prompts_yml for pii_llm_mask task")
+
+    return None
+
+
+async def _llm_pii_mask(rails: Any, text: str, prompt_template: str) -> str:
+    """Use the guardrail's configured LLM to mask PII that presidio missed."""
+    try:
+        prompt = prompt_template.replace("{{ user_input }}", text)
+        response = await rails.llm.ainvoke(prompt)
+        masked = response.content if hasattr(response, "content") else str(response)
+        masked = masked.strip()
+        # Sanity check: if LLM returned empty or something wildly different in length, keep original
+        if not masked or len(masked) > len(text) * 3:
+            logger.warning("LLM PII mask returned suspicious output, keeping presidio result")
+            return text
+        return masked
+    except Exception:  # noqa: BLE001
+        logger.exception("LLM PII mask fallback failed, keeping presidio result")
+        return text
+
+
+def _is_masking_category(category: str | None) -> bool:
+    """Return True if the guardrail category indicates PII masking behavior."""
+    if not category:
+        return False
+    normalized = category.strip().lower().replace(" ", "-").replace("_", "-")
+    return any(token in normalized for token in ("pii", "mask", "redact", "anonymi"))
+
+
+def _classify_action(
+    input_text: str,
+    output_text: str,
+    blocked_by_input_rail: bool,
+    guardrail_category: str | None = None,
+) -> str:
     input_text_norm = (input_text or "").strip()
     output_text_norm = (output_text or "").strip()
 
@@ -1097,6 +1151,9 @@ def _classify_action(input_text: str, output_text: str, blocked_by_input_rail: b
         if not output_text_norm:
             return "blocked"
         if output_text_norm != input_text_norm:
+            # If the category is PII/masking, the rail modified the text rather than blocking it
+            if _is_masking_category(guardrail_category):
+                return "masked"
             return "blocked"
         logger.warning(
             "NeMo input rail marked as blocked but output matched input; treating as passthrough."
@@ -1107,6 +1164,8 @@ def _classify_action(input_text: str, output_text: str, blocked_by_input_rail: b
         return "passthrough"
     if output_text_norm == input_text_norm:
         return "passthrough"
+    if _is_masking_category(guardrail_category):
+        return "masked"
     return "rewritten"
 
 
@@ -1205,11 +1264,33 @@ async def apply_nemo_guardrail_text(
         step = "extract_output"
         output_text = _extract_generated_text(generated)
 
+        # Hybrid PII masking: if presidio didn't modify the text (passthrough)
+        # but the guardrail is a PII/masking type, run an LLM pass to catch
+        # informal addresses, regional formats, and other PII that regex missed.
+        if (
+            _is_masking_category(guardrail.category)
+            and (output_text or "").strip() == (input_text or "").strip()
+        ):
+            step = "llm_pii_fallback"
+            pii_prompt = _extract_pii_llm_prompt(runtime_config)
+            if pii_prompt:
+                logger.info(
+                    f"Presidio returned passthrough for PII guardrail, running LLM fallback: "
+                    f"guardrail_id={guardrail_id}"
+                )
+                output_text = await _llm_pii_mask(rails, input_text, pii_prompt)
+            else:
+                logger.info(
+                    f"Presidio returned passthrough for PII guardrail, no pii_llm_mask prompt configured, skipping LLM fallback: "
+                    f"guardrail_id={guardrail_id}"
+                )
+
         step = "classify_action"
         action = _classify_action(
             input_text=input_text,
             output_text=output_text,
             blocked_by_input_rail=blocked_by_input_rail,
+            guardrail_category=guardrail.category,
         )
         elapsed_ms = (perf_counter() - started_at) * 1000
         if action == "passthrough":

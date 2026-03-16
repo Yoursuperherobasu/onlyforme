@@ -222,5 +222,7 @@ agentcore/src/backend/src/backend/knowledge_base_storage/
 # Loguru runtime logs
 loguru/
 all.env
+\env
+\myenv
 scripts/keyvault_master.env
 scripts/compare_keyvault_secrets.py
