@@ -24,6 +24,9 @@ import { useNameAvailability } from "@/controllers/API/queries/common/use-name-a
 import { useGetRegistryModels } from "@/controllers/API/queries/models";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
+import {
+  PREDEFINED_GUARDRAIL_TEMPLATES,
+} from "@/constants/predefined-guardrail-templates";
 
 interface EditGuardrailModalProps {
   open: boolean;
@@ -37,12 +40,17 @@ const CATEGORY_OPTIONS = [
   "content-safety",
   "jailbreak",
   "topic-control",
-  "pii-detection",
+  "pii-masking",
+  "fact-checking",
+  "sensitive-data-removal",
+  "output-filtering",
+  "dialog-control",
+  "retrieval-validation",
+  "execution-validation",
 ];
 
 const getConfigTemplate = (): string => {
-  return `# models section is auto-injected from Model Registry
-rails:
+  return `rails:
   input:
     flows:
       - self check input`;
@@ -118,6 +126,40 @@ export default function EditGuardrailModal({
     private_share_users: { id: string; email: string }[];
   }>({ organizations: [], departments: [], private_share_users: [] });
 
+  const [customCategory, setCustomCategory] = useState("");
+
+  // -- Predefined template selection -----------------------------------------
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+
+  const handleTemplateSelect = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+
+    if (!templateId) {
+      // Reset to blank defaults when "Custom" is selected
+      setName("");
+      setDescription("");
+      setCategory("");
+      setCustomCategory("");
+      setConfigYml(getConfigTemplate());
+      setPromptsYml(getPromptsTemplate());
+      setRailsCo("");
+      return;
+    }
+
+    const template = PREDEFINED_GUARDRAIL_TEMPLATES.find(
+      (t) => t.id === templateId,
+    );
+    if (!template) return;
+
+    setName(template.name);
+    setDescription(template.description);
+    setCategory(template.category);
+    setConfigYml(template.configYml);
+    setPromptsYml(template.promptsYml);
+    setRailsCo(template.railsCo);
+  };
+  // --------------------------------------------------------------------------
+
   const selectedModel = useMemo(
     () => registryModels.find((model) => model.id === modelRegistryId) ?? null,
     [registryModels, modelRegistryId],
@@ -138,6 +180,7 @@ export default function EditGuardrailModal({
       setCategory(guardrail.category ?? "content-safety");
       setStatus((guardrail.status ?? "active") as "active" | "inactive");
       setIsCustom(Boolean(guardrail.isCustom));
+      setSelectedTemplateId("");
 
       const runtimeConfig = guardrail.runtimeConfig ?? undefined;
       setConfigYml(
@@ -183,6 +226,7 @@ export default function EditGuardrailModal({
       setPromptsYml(getPromptsTemplate());
       setRailsCo("");
       setPreservedFiles(undefined);
+      setSelectedTemplateId("");
     }
   }, [guardrail, open, registryModels, defaultModelId]);
 
@@ -418,6 +462,39 @@ export default function EditGuardrailModal({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Predefined Guardrails dropdown -- only shown when adding */}
+          {!isEditMode && !readOnly && (
+            <div className="space-y-1.5 rounded-md border border-dashed border-primary/40 bg-primary/5 p-4">
+              <Label htmlFor="guardrail-template" className="text-sm font-semibold">
+                Predefined Guardrails
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Select a template to auto-populate the configuration, or choose
+                &quot;Custom&quot; to start from scratch.
+              </p>
+              <select
+                id="guardrail-template"
+                value={selectedTemplateId}
+                onChange={(event) => handleTemplateSelect(event.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="">Custom (blank template)</option>
+                {PREDEFINED_GUARDRAIL_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              {selectedTemplateId && (
+                <p className="text-xs text-muted-foreground italic">
+                  {PREDEFINED_GUARDRAIL_TEMPLATES.find(
+                    (t) => t.id === selectedTemplateId,
+                  )?.description}
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="guardrail-name">Name *</Label>
@@ -611,9 +688,18 @@ export default function EditGuardrailModal({
               <Label htmlFor="guardrail-category">Category *</Label>
               <select
                 id="guardrail-category"
-                required
-                value={category}
-                onChange={(event) => setCategory(event.target.value)}
+                required={!customCategory}
+                value={CATEGORY_OPTIONS.includes(category) ? category : "__custom__"}
+                onChange={(event) => {
+                  const val = event.target.value;
+                  if (val === "__custom__") {
+                    setCustomCategory("");
+                    setCategory("");
+                  } else {
+                    setCustomCategory("");
+                    setCategory(val);
+                  }
+                }}
                 disabled={readOnly}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
@@ -622,7 +708,23 @@ export default function EditGuardrailModal({
                     {option}
                   </option>
                 ))}
+                <option value="__custom__">Other (custom)</option>
               </select>
+              {(!CATEGORY_OPTIONS.includes(category) || category === "") && (
+                <Input
+                  placeholder="Enter custom category (e.g. compliance-check)"
+                  required
+                  readOnly={readOnly}
+                  disabled={readOnly}
+                  value={customCategory || (!CATEGORY_OPTIONS.includes(category) ? category : "")}
+                  onChange={(event) => {
+                    const val = event.target.value;
+                    setCustomCategory(val);
+                    setCategory(val);
+                  }}
+                  className="mt-1.5"
+                />
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="guardrail-status">Status *</Label>
