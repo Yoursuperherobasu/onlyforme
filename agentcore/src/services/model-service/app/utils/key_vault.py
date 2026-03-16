@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
+from cachetools import TTLCache
 from pydantic import BaseModel
 
 
@@ -23,6 +24,7 @@ class KeyVaultSecretStore:
 
     _client: object
     secret_prefix: str
+    _cache: TTLCache = field(default_factory=lambda: TTLCache(maxsize=512, ttl=600))
 
     @classmethod
     def from_config(cls, config: KeyVaultConfig) -> "KeyVaultSecretStore | None":
@@ -53,12 +55,19 @@ class KeyVaultSecretStore:
 
     def set_secret(self, name: str, value: str, *, tags: dict[str, str] | None = None) -> None:
         self._client.set_secret(name=name, value=value, tags=tags)
+        self._cache[name] = value
 
     def get_secret(self, name: str) -> str | None:
         from azure.core.exceptions import ResourceNotFoundError
 
         try:
-            return self._client.get_secret(name).value
+            cached = self._cache.get(name)
+            if cached is not None:
+                return cached
+            value = self._client.get_secret(name).value
+            if value is not None:
+                self._cache[name] = value
+            return value
         except ResourceNotFoundError:
             return None
 

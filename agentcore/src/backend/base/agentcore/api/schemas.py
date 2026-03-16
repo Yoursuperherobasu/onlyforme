@@ -210,6 +210,7 @@ class UsersResponse(BaseModel):
 class UserReadWithPermissions(UserRead):
     permissions: list[str] = []
     organization_name: str | None = None
+    organization_id: UUID | None = None
 
 
 class PermissionReadResponse(BaseModel):
@@ -459,5 +460,4 @@ class CancelagentResponse(BaseModel):
 
     success: bool
     message: str
-
 

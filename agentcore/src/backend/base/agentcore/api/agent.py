@@ -24,7 +24,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agentcore.api.utils import (
     CurrentActiveUser,
     DbSession,
-    cascade_delete_agent,
     remove_api_keys,
     strip_sensitive_values_from_agent_data,
 )
@@ -39,6 +38,15 @@ from agentcore.services.database.models.agent.model import (
     AgentHeader,
     AgentRead,
     AgentUpdate,
+    LifecycleStatusEnum,
+)
+from agentcore.services.database.models.agent_deployment_prod.model import (
+    AgentDeploymentProd,
+    DeploymentPRODStatusEnum,
+)
+from agentcore.services.database.models.agent_deployment_uat.model import (
+    AgentDeploymentUAT,
+    DeploymentUATStatusEnum,
 )
 from agentcore.services.database.models.agent_edit_lock.model import AgentEditLock
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
@@ -168,6 +176,34 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
         return select(Agent).where(own_condition)
 
     return select(Agent).where(own_condition)
+
+
+async def _agent_has_deployed_versions(session: AsyncSession, agent_id: UUID) -> tuple[bool, list[str]]:
+    prod_enabled = (
+        await session.exec(
+            select(AgentDeploymentProd.id)
+            .where(AgentDeploymentProd.agent_id == agent_id)
+            .where(AgentDeploymentProd.is_enabled.is_(True))
+            .limit(1)
+        )
+    ).first()
+    if prod_enabled:
+        return True, ["PROD"]
+
+    uat_enabled = (
+        await session.exec(
+            select(AgentDeploymentUAT.id)
+            .where(AgentDeploymentUAT.agent_id == agent_id)
+            .where(AgentDeploymentUAT.is_enabled.is_(True))
+            .where(AgentDeploymentUAT.moved_to_prod.is_(False))
+            .limit(1)
+        )
+    ).first()
+
+    if uat_enabled:
+        return True, ["UAT"]
+
+    return False, []
 
 
 async def _can_access_agent(session: AsyncSession, current_user: CurrentActiveUser, agent: Agent) -> bool:
@@ -595,7 +631,20 @@ async def delete_agent(
     )
     if not agent:
         raise HTTPException(status_code=404, detail="agent not found")
-    await cascade_delete_agent(session, agent.id)
+    is_blocked, envs = await _agent_has_deployed_versions(session, agent.id)
+    if is_blocked:
+        env_label = " and ".join(envs)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This agent is deployed in {env_label}. "
+                "Disable/undeploy it first."
+            ),
+        )
+    if agent.deleted_at is None:
+        agent.deleted_at = datetime.now(timezone.utc)
+        agent.lifecycle_status = LifecycleStatusEnum.ARCHIVED
+        session.add(agent)
     await session.commit()
     return {"message": "agent deleted successfully"}
 
@@ -697,11 +746,40 @@ async def delete_multiple_agent(
         agents_to_delete = (
             await db.exec(select(Agent).where(col(Agent.id).in_(agent_ids)).where(Agent.user_id == user.id))
         ).all()
+        blocked: dict[str, list[str]] = {}
         for agent in agents_to_delete:
-            await cascade_delete_agent(db, agent.id)
+            is_blocked, envs = await _agent_has_deployed_versions(db, agent.id)
+            if is_blocked:
+                blocked[str(agent.id)] = envs
+        if blocked:
+            if len(blocked) == 1 and len(agent_ids) == 1:
+                only_id, only_envs = next(iter(blocked.items()))
+                env_label = only_envs[0] if only_envs else "UAT"
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"This agent is deployed in {env_label}.",
+                )
+            blocked_items = [
+                f"{agent_id}: {(envs[0] if envs else 'UAT')}" for agent_id, envs in blocked.items()
+            ]
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Some agents are deployed and cannot be deleted. "
+                    f"Blocked: {', '.join(blocked_items)}"
+                ),
+            )
+
+        for agent in agents_to_delete:
+            if agent.deleted_at is None:
+                agent.deleted_at = datetime.now(timezone.utc)
+                agent.lifecycle_status = LifecycleStatusEnum.ARCHIVED
+                db.add(agent)
 
         await db.commit()
         return {"deleted": len(agents_to_delete)}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

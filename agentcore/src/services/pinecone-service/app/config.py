@@ -74,6 +74,16 @@ class Settings(BaseSettings):
     ingest_batch_size: int = 50
     sparse_batch_size: int = 96
 
+    # Azure Key Vault integration
+    key_vault_url: str | None = None
+    key_vault_secret_prefix: str = "agentcore-pinecone"
+    key_vault_tenant_id: str | None = None
+    key_vault_client_id: str | None = None
+    key_vault_client_secret: str | None = None
+    key_vault_api_key_secret_name: str | None = None
+    key_vault_pinecone_api_key_secret_name: str | None = None
+    key_vault_database_url_secret_name: str | None = None
+
     model_config = SettingsConfigDict(
         env_prefix="PINECONE_SERVICE_",
         env_file=".env",

@@ -190,3 +190,132 @@ def test_connection_via_service(pinecone_api_key: str | None = None) -> dict:
         )
         _raise_with_detail(resp)
         return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Copy namespace (UAT → PROD migration)
+# ---------------------------------------------------------------------------
+
+
+def copy_namespace_via_service(
+    index_name: str,
+    source_namespace: str,
+    target_namespace: str,
+    batch_size: int = 100,
+) -> dict:
+    """Copy all vectors from source to target namespace via pinecone-service (sync)."""
+    url, api_key = _get_pinecone_service_settings()
+    with httpx.Client(timeout=600.0) as client:
+        resp = client.post(
+            f"{url}/v1/pinecone/copy-namespace",
+            headers=_headers(api_key),
+            json={
+                "index_name": index_name,
+                "source_namespace": source_namespace,
+                "target_namespace": target_namespace,
+                "batch_size": batch_size,
+            },
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+async def async_copy_namespace_via_service(
+    index_name: str,
+    source_namespace: str,
+    target_namespace: str,
+    batch_size: int = 100,
+) -> dict:
+    """Copy all vectors from source to target namespace via pinecone-service (async).
+
+    Uses httpx.AsyncClient so it does NOT block the event loop — safe to call
+    from async FastAPI endpoints such as the approval hook.
+    """
+    url, api_key = _get_pinecone_service_settings()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+        resp = await client.post(
+            f"{url}/v1/pinecone/copy-namespace",
+            headers=_headers(api_key),
+            json={
+                "index_name": index_name,
+                "source_namespace": source_namespace,
+                "target_namespace": target_namespace,
+                "batch_size": batch_size,
+            },
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Namespace stats (observability)
+# ---------------------------------------------------------------------------
+
+
+def namespace_stats_via_service(
+    index_name: str,
+    namespace: str = "",
+) -> dict:
+    """Get vector count and dimension for a namespace via pinecone-service."""
+    url, api_key = _get_pinecone_service_settings()
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            f"{url}/v1/pinecone/namespace-stats",
+            headers=_headers(api_key),
+            json={"index_name": index_name, "namespace": namespace},
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# List indexes
+# ---------------------------------------------------------------------------
+
+
+def list_indexes_via_service() -> dict:
+    """List all Pinecone indexes with namespaces and stats."""
+    url, api_key = _get_pinecone_service_settings()
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.get(
+            f"{url}/v1/pinecone/indexes",
+            headers=_headers(api_key),
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Delete index
+# ---------------------------------------------------------------------------
+
+
+def delete_index_via_service(index_name: str) -> dict:
+    """Delete a Pinecone index entirely via pinecone-service."""
+    url, api_key = _get_pinecone_service_settings()
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{url}/v1/pinecone/delete-index",
+            headers=_headers(api_key),
+            json={"index_name": index_name},
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Delete namespace
+# ---------------------------------------------------------------------------
+
+
+def delete_namespace_via_service(index_name: str, namespace: str) -> dict:
+    """Delete all vectors in a namespace via pinecone-service."""
+    url, api_key = _get_pinecone_service_settings()
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{url}/v1/pinecone/delete-namespace",
+            headers=_headers(api_key),
+            json={"index_name": index_name, "namespace": namespace},
+        )
+        _raise_with_detail(resp)
+        return resp.json()

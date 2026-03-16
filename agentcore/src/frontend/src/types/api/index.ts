@@ -192,6 +192,7 @@ export type Users = {
   department_admin?: string | null;
   department_name?: string | null;
   department_id?: string | null;
+  organization_id?: string | null;
   organization_name?: string | null;
   created_by_username?: string | null;
   optins?: {

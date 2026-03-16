@@ -41,7 +41,6 @@ const PROVIDERS = [
 const DEFAULT_AZURE_API_VERSION = "2025-10-01-preview";
 
 const ENVIRONMENTS: { value: ModelEnvironment; label: string }[] = [
-  { value: "test", label: "DEV" },
   { value: "uat", label: "UAT" },
   { value: "prod", label: "PROD" },
 ];
@@ -86,7 +85,7 @@ export default function EditModelModal({
   const [description, setDescription] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [environment, setEnvironment] = useState<ModelEnvironment>("test");
+  const [environment, setEnvironment] = useState<ModelEnvironment>("uat");
   const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">("private");
   const [orgId, setOrgId] = useState("");
   const [deptId, setDeptId] = useState("");
@@ -135,7 +134,7 @@ export default function EditModelModal({
       setDescription(model.description ?? "");
       setApiKey(""); // never pre-fill
       setBaseUrl(model.base_url ?? "");
-      setEnvironment(model.environment ?? "test");
+      setEnvironment(model.environment ?? "uat");
       setVisibilityScope(model.visibility_scope ?? "private");
       setOrgId(model.org_id ?? "");
       setDeptId(model.dept_id ?? "");
@@ -165,7 +164,7 @@ export default function EditModelModal({
       setDescription("");
       setApiKey("");
       setBaseUrl("");
-      setEnvironment("test");
+      setEnvironment("uat");
       setVisibilityScope("private");
       setOrgId("");
       setDeptId("");
@@ -242,7 +241,7 @@ export default function EditModelModal({
 
     try {
       if (isEditMode && model) {
-        const originalEnvironment = model.environment ?? "test";
+        const originalEnvironment = model.environment ?? "uat";
         const originalVisibility = model.visibility_scope ?? "private";
 
         const payload: ModelUpdateRequest = {
@@ -252,12 +251,6 @@ export default function EditModelModal({
           model_name: modelName,
           model_type: isEmbedding ? "embedding" : "llm",
           base_url: baseUrl || null,
-          org_id: visibilityScope === "private" ? null : orgId || null,
-          dept_id: visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null,
-          public_dept_ids:
-            visibilityScope === "department"
-              ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
-              : [],
           provider_config: buildProviderConfig() ?? null,
           default_params: buildDefaultParams() ?? null,
           is_active: isActive,
@@ -277,6 +270,12 @@ export default function EditModelModal({
           await visibilityMutation.mutateAsync({
             id: model.id,
             visibility_scope: visibilityScope,
+            org_id: visibilityScope === "organization" ? orgId || null : orgId || null,
+            dept_id: visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null,
+            public_dept_ids:
+              visibilityScope === "department"
+                ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
+                : [],
           });
         }
 
@@ -541,7 +540,7 @@ export default function EditModelModal({
             <p className="text-[11px] text-muted-foreground">
               {isEditMode
                 ? "Changing environment here will submit a promotion request when applicable."
-                : <>Models default to <strong>DEV</strong>. Promote to UAT or <strong>PROD</strong> when ready.</>}
+                : <>Models default to <strong>UAT</strong>. Promote to <strong>PROD</strong> when ready.</>}
             </p>
 
             <div className="grid grid-cols-2 gap-4">

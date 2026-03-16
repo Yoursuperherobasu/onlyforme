@@ -14,6 +14,7 @@ export interface IPublishVersionRecord {
   published_by: string;
   published_at: string;
   is_active: boolean;
+  is_enabled: boolean;
   status: string;
   visibility: "PUBLIC" | "PRIVATE";
   error_message: string | null;

@@ -218,7 +218,7 @@ def _persist_updated_config(config: dict) -> None:
         from datetime import datetime, timezone
 
         from sqlalchemy.orm import Session
-        from agentcore.api.connector_catalogue import _encrypt_provider_config
+        from agentcore.api.connector_catalogue import _prepare_provider_config
         from agentcore.services.database.models.connector_catalogue.model import (
             ConnectorCatalogue,
         )
@@ -230,7 +230,13 @@ def _persist_updated_config(config: dict) -> None:
         with Session(engine) as session:
             row = session.get(ConnectorCatalogue, UUID(connector_id))
             if row:
-                row.provider_config = _encrypt_provider_config(row.provider, persist_config)
+                row.provider_config = _prepare_provider_config(
+                    row.provider,
+                    persist_config,
+                    connector_id=row.id,
+                    existing_config=row.provider_config or {},
+                    allow_secret_update=False,
+                )
                 row.updated_at = datetime.now(timezone.utc)
                 session.commit()
                 logger.info(f"Persisted refreshed tokens for connector {connector_id}")
