@@ -33,6 +33,8 @@ export interface ModelType {
   dept_id?: string | null;
   public_dept_ids?: string[] | null;
   approval_status?: "pending" | "approved" | "rejected";
+  created_by_id?: string | null;
+  reviewed_by?: string | null;
   has_api_key: boolean;
   provider_config?: Record<string, any> | null;
   capabilities?: ModelCapabilities | null;

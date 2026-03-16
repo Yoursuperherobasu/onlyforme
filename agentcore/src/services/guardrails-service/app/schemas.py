@@ -25,7 +25,7 @@ class ApplyGuardrailResponse(BaseModel):
     """Result of applying a NeMo guardrail."""
 
     output_text: str
-    action: str  # "passthrough" | "blocked" | "rewritten"
+    action: str  # "passthrough" | "blocked" | "rewritten" | "masked"
     guardrail_id: str
     input_tokens: int = 0
     output_tokens: int = 0

@@ -8,11 +8,21 @@ import time
 
 from app.config import get_settings
 from app.schemas import (
+    CopyNamespaceRequest,
+    CopyNamespaceResponse,
+    DeleteIndexRequest,
+    DeleteIndexResponse,
+    DeleteNamespaceRequest,
+    DeleteNamespaceResponse,
     DocumentItem,
     EnsureIndexRequest,
     EnsureIndexResponse,
+    IndexInfo,
     IngestRequest,
     IngestResponse,
+    ListIndexesResponse,
+    NamespaceStatsRequest,
+    NamespaceStatsResponse,
     SearchRequest,
     SearchResponse,
     SearchResultItem,
@@ -308,3 +318,245 @@ def test_connection(req: TestConnectionRequest) -> TestConnectionResponse:
     except Exception as e:
         logger.warning("Pinecone test-connection failed: %s", e)
         return TestConnectionResponse(success=False, message=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Copy namespace (UAT → PROD migration)
+# ---------------------------------------------------------------------------
+
+
+def _delete_namespace_vectors(index, namespace: str) -> None:
+    """Best-effort cleanup: delete all vectors in a namespace for rollback."""
+    try:
+        index.delete(delete_all=True, namespace=namespace)
+        logger.info("[COPY_NS_ROLLBACK] Deleted all vectors in namespace '%s'", namespace)
+    except Exception as cleanup_err:
+        logger.error("[COPY_NS_ROLLBACK] Failed to clean up namespace '%s': %s", namespace, cleanup_err)
+
+
+def copy_namespace(req: CopyNamespaceRequest) -> CopyNamespaceResponse:
+    """Copy all vectors from source_namespace to target_namespace within the same index.
+
+    Uses Pinecone's list → fetch → upsert pattern to migrate data between
+    namespaces (e.g. UAT → PROD).
+
+    Safety features:
+    - Validates source namespace is not empty before starting
+    - Checks target namespace is empty to prevent duplicate data
+    - Retries each batch up to 3 times on transient failures
+    - Rolls back (deletes target namespace) on unrecoverable failure
+    """
+    if req.source_namespace == req.target_namespace:
+        raise ValueError("source_namespace and target_namespace must be different")
+
+    pc = _get_pinecone_client()
+    index = pc.Index(req.index_name)
+
+    # Validate source namespace has vectors
+    stats = index.describe_index_stats()
+    ns_map = stats.get("namespaces", {})
+    source_info = ns_map.get(req.source_namespace, {})
+    source_count = source_info.get("vector_count", 0)
+    if source_count == 0:
+        raise ValueError(
+            f"Source namespace '{req.source_namespace}' is empty or does not exist in index '{req.index_name}'"
+        )
+
+    # Check target namespace is empty to prevent accidental duplicate data
+    target_info = ns_map.get(req.target_namespace, {})
+    target_count = target_info.get("vector_count", 0)
+    if target_count > 0:
+        raise ValueError(
+            f"Target namespace '{req.target_namespace}' already has {target_count} vectors. "
+            f"Delete it first or choose a different target namespace."
+        )
+
+    total_copied = 0
+    max_retries = 3
+
+    logger.info(
+        "[COPY_NS_START] index=%s src=%s dst=%s batch=%d source_vectors=%d",
+        req.index_name, req.source_namespace, req.target_namespace, req.batch_size, source_count,
+    )
+
+    try:
+        # Pinecone SDK v8: index.list() is a generator that yields lists of
+        # string IDs per page, handling pagination automatically.
+        for vector_ids in index.list(
+            namespace=req.source_namespace,
+            limit=req.batch_size,
+        ):
+            if not vector_ids:
+                continue
+
+            fetch_response = index.fetch(ids=vector_ids, namespace=req.source_namespace)
+
+            vectors_to_upsert = []
+            for vid, vdata in fetch_response.vectors.items():
+                vec: dict = {"id": vid, "values": vdata.values, "metadata": vdata.metadata or {}}
+                if getattr(vdata, "sparse_values", None):
+                    vec["sparse_values"] = {
+                        "indices": list(vdata.sparse_values.indices),
+                        "values": list(vdata.sparse_values.values),
+                    }
+                vectors_to_upsert.append(vec)
+
+            if vectors_to_upsert:
+                # Retry upsert up to max_retries times on transient failures
+                last_err = None
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        index.upsert(vectors=vectors_to_upsert, namespace=req.target_namespace)
+                        last_err = None
+                        break
+                    except Exception as upsert_err:
+                        last_err = upsert_err
+                        logger.warning(
+                            "[COPY_NS_RETRY] Upsert attempt %d/%d failed: %s",
+                            attempt, max_retries, upsert_err,
+                        )
+                        if attempt < max_retries:
+                            time.sleep(2 ** attempt)  # exponential backoff: 2s, 4s
+
+                if last_err is not None:
+                    raise RuntimeError(
+                        f"Upsert failed after {max_retries} attempts at batch offset {total_copied}: {last_err}"
+                    ) from last_err
+
+                total_copied += len(vectors_to_upsert)
+                logger.info("[COPY_NS_BATCH] copied=%d total=%d", len(vectors_to_upsert), total_copied)
+
+    except Exception as copy_err:
+        logger.error(
+            "[COPY_NS_FAILED] index=%s dst=%s total_copied_before_fail=%d error=%s",
+            req.index_name, req.target_namespace, total_copied, copy_err,
+        )
+        # Rollback: delete partially copied vectors from target namespace
+        _delete_namespace_vectors(index, req.target_namespace)
+        raise
+
+    logger.info(
+        "[COPY_NS_DONE] index=%s src=%s dst=%s total_copied=%d",
+        req.index_name, req.source_namespace, req.target_namespace, total_copied,
+    )
+    return CopyNamespaceResponse(
+        success=True,
+        copied_vectors=total_copied,
+        index_name=req.index_name,
+        source_namespace=req.source_namespace,
+        target_namespace=req.target_namespace,
+        message=f"Copied {total_copied} vectors from '{req.source_namespace}' to '{req.target_namespace}'",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Namespace stats (observability)
+# ---------------------------------------------------------------------------
+
+
+def get_namespace_stats(req: NamespaceStatsRequest) -> NamespaceStatsResponse:
+    """Return vector count and dimension for a specific namespace in an index."""
+    pc = _get_pinecone_client()
+    index = pc.Index(req.index_name)
+    stats = index.describe_index_stats()
+
+    ns_map = stats.get("namespaces", {})
+    ns_info = ns_map.get(req.namespace, {})
+
+    return NamespaceStatsResponse(
+        index_name=req.index_name,
+        namespace=req.namespace,
+        vector_count=ns_info.get("vector_count", 0),
+        dimension=stats.get("dimension"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# List indexes (with namespace + vector counts)
+# ---------------------------------------------------------------------------
+
+
+def list_indexes() -> ListIndexesResponse:
+    """List all Pinecone indexes with their namespaces and stats."""
+    pc = _get_pinecone_client()
+    existing = pc.list_indexes()
+    indexes: list[IndexInfo] = []
+
+    for idx in existing:
+        name = idx.name if hasattr(idx, "name") else str(idx)
+        info = IndexInfo(name=name)
+
+        try:
+            desc = pc.describe_index(name)
+            info.dimension = getattr(desc, "dimension", None)
+            info.metric = getattr(desc, "metric", "")
+            info.host = getattr(desc, "host", "")
+            status = getattr(desc, "status", None)
+            if status:
+                info.status = status.get("ready", False) and "ready" or "not_ready"
+        except Exception as e:
+            logger.warning("Failed to describe index '%s': %s", name, e)
+
+        try:
+            index = pc.Index(name)
+            stats = index.describe_index_stats()
+            info.vector_count = stats.get("total_vector_count", 0)
+            ns_map = stats.get("namespaces", {})
+            info.namespaces = list(ns_map.keys())
+        except Exception as e:
+            logger.warning("Failed to get stats for index '%s': %s", name, e)
+
+        indexes.append(info)
+
+    return ListIndexesResponse(indexes=indexes)
+
+
+# ---------------------------------------------------------------------------
+# Delete index
+# ---------------------------------------------------------------------------
+
+
+def delete_index(req: DeleteIndexRequest) -> DeleteIndexResponse:
+    """Delete a Pinecone index entirely."""
+    pc = _get_pinecone_client()
+    try:
+        pc.delete_index(req.index_name)
+        logger.info("[DELETE_INDEX] Deleted index '%s'", req.index_name)
+        return DeleteIndexResponse(
+            success=True,
+            index_name=req.index_name,
+            message=f"Index '{req.index_name}' deleted successfully",
+        )
+    except Exception as e:
+        logger.error("[DELETE_INDEX] Failed to delete index '%s': %s", req.index_name, e)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Delete namespace (all vectors in a namespace)
+# ---------------------------------------------------------------------------
+
+
+def delete_namespace(req: DeleteNamespaceRequest) -> DeleteNamespaceResponse:
+    """Delete all vectors in a namespace."""
+    pc = _get_pinecone_client()
+    index = pc.Index(req.index_name)
+
+    # Verify namespace exists
+    stats = index.describe_index_stats()
+    ns_map = stats.get("namespaces", {})
+    if req.namespace not in ns_map:
+        raise ValueError(f"Namespace '{req.namespace}' not found in index '{req.index_name}'")
+
+    vector_count = ns_map[req.namespace].get("vector_count", 0)
+    index.delete(delete_all=True, namespace=req.namespace)
+    logger.info(
+        "[DELETE_NS] Deleted namespace '%s' (%d vectors) from index '%s'",
+        req.namespace, vector_count, req.index_name,
+    )
+    return DeleteNamespaceResponse(
+        success=True,
+        index_name=req.index_name,
+        namespace=req.namespace,
+        message=f"Deleted {vector_count} vectors from namespace '{req.namespace}'",
+    )

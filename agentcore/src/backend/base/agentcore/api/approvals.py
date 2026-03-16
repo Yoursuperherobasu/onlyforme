@@ -1,4 +1,4 @@
-"""Approval API router backed by database tables.
+﻿"""Approval API router backed by database tables.
 
 This exposes approval requests for approvers (department admins) and lets them
 approve/reject pending PROD publish requests.
@@ -11,6 +11,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -192,6 +193,333 @@ def _build_prod_promotion_handoff_payload(
     )
 
 
+async def _migrate_pinecone_for_prod(
+    deployment: AgentDeploymentProd,
+    session: DbSession,
+) -> None:
+    """Copy Pinecone namespaces from UAT to PROD for all Pinecone nodes in the agent snapshot.
+
+    For each Pinecone vectorstore node found in the snapshot:
+      1. Read the UAT index_name and namespace
+      2. Derive a PROD namespace: {original}_prod_v{version}
+      3. Call pinecone-service to copy vectors from UAT → PROD namespace
+      4. Update the snapshot with the new PROD namespace
+
+    Safety guarantees:
+      - Uses async HTTP client so the event loop is never blocked.
+      - Collects all namespace updates first, only applies to snapshot if ALL succeed (atomic).
+      - On any copy failure, raises so the caller can block the broken deployment.
+      - Catalogue tracking failure is logged but does not block the migration.
+    """
+    from agentcore.services.pinecone_service_client import (
+        async_copy_namespace_via_service,
+        is_service_configured,
+    )
+
+    if not is_service_configured():
+        logger.warning("[PINECONE_MIGRATION] Pinecone service not configured, skipping migration")
+        return
+
+    snapshot = deployment.agent_snapshot
+    nodes = snapshot.get("nodes", [])
+
+    # Phase 1: Collect all Pinecone nodes that need migration
+    migration_plan: list[dict] = []
+
+    for node in nodes:
+        node_data = node.get("data", {})
+        node_type = node_data.get("type", "")
+
+        if node_type != "Pinecone":
+            continue
+
+        template = node_data.get("node", {}).get("template", {})
+        index_name_field = template.get("index_name", {})
+        namespace_field = template.get("namespace", {})
+
+        index_name = index_name_field.get("value", "") if isinstance(index_name_field, dict) else str(index_name_field)
+        uat_namespace = namespace_field.get("value", "") if isinstance(namespace_field, dict) else str(namespace_field)
+
+        if not index_name:
+            logger.warning("[PINECONE_MIGRATION] Pinecone node found but index_name is empty, skipping")
+            continue
+
+        prod_namespace = f"{uat_namespace}_prod_v{deployment.version_number}" if uat_namespace else f"prod_v{deployment.version_number}"
+
+        migration_plan.append({
+            "template": template,
+            "namespace_field": namespace_field,
+            "index_name": index_name,
+            "uat_namespace": uat_namespace,
+            "prod_namespace": prod_namespace,
+        })
+
+    if not migration_plan:
+        logger.info("[PINECONE_MIGRATION] No Pinecone nodes found in snapshot, nothing to migrate")
+        return
+
+    # Phase 2: Execute all copies — if ANY fails, the entire migration fails (atomic)
+    copy_results: list[dict] = []
+
+    for plan in migration_plan:
+        index_name = plan["index_name"]
+        uat_namespace = plan["uat_namespace"]
+        prod_namespace = plan["prod_namespace"]
+
+        logger.info(
+            f"[PINECONE_MIGRATION] Copying index={index_name} "
+            f"src_ns='{uat_namespace}' → dst_ns='{prod_namespace}'"
+        )
+
+        try:
+            result = await async_copy_namespace_via_service(
+                index_name=index_name,
+                source_namespace=uat_namespace,
+                target_namespace=prod_namespace,
+            )
+            copied = result.get("copied_vectors", 0)
+            logger.info(
+                f"[PINECONE_MIGRATION] Done: {copied} vectors copied to '{prod_namespace}'"
+            )
+            copy_results.append({"plan": plan, "copied": copied})
+        except Exception as copy_err:
+            logger.error(f"[PINECONE_MIGRATION] Failed to copy namespace: {copy_err}")
+            # Do NOT update snapshot — raise so caller knows migration failed.
+            # Rollback of partially-copied data is handled by copy_namespace() in pinecone_service.
+            raise
+
+    # Phase 3: ALL copies succeeded — now update the snapshot atomically
+    for entry in copy_results:
+        plan = entry["plan"]
+        namespace_field = plan["namespace_field"]
+        template = plan["template"]
+        prod_namespace = plan["prod_namespace"]
+
+        if isinstance(namespace_field, dict):
+            namespace_field["value"] = prod_namespace
+        else:
+            template["namespace"] = {"value": prod_namespace}
+
+    deployment.agent_snapshot = snapshot
+    flag_modified(deployment, "agent_snapshot")
+    session.add(deployment)
+    await session.flush()
+    logger.info(f"[PINECONE_MIGRATION] Snapshot updated for deployment {deployment.id}")
+
+    # Phase 4: Track in vector_db_catalogue (non-blocking, failure is logged only)
+    for entry in copy_results:
+        plan = entry["plan"]
+        try:
+            await _track_pinecone_migration(
+                session=session,
+                deployment=deployment,
+                index_name=plan["index_name"],
+                source_namespace=plan["uat_namespace"],
+                target_namespace=plan["prod_namespace"],
+                vectors_copied=entry["copied"],
+            )
+        except Exception as track_err:
+            logger.warning(f"[PINECONE_MIGRATION] Catalogue tracking failed: {track_err}")
+
+
+async def _track_pinecone_migration(
+    session: DbSession,
+    deployment: AgentDeploymentProd,
+    index_name: str,
+    source_namespace: str,
+    target_namespace: str,
+    vectors_copied: int,
+) -> None:
+    """Create a PROD entry in vector_db_catalogue to track the migration."""
+    from datetime import datetime, timezone
+
+    from agentcore.services.database.models.vector_db_catalogue.model import VectorDBCatalogue
+
+    now = datetime.now(timezone.utc)
+
+    # Try to find the matching UAT entry
+    from sqlmodel import select
+
+    uat_entry = (
+        await session.exec(
+            select(VectorDBCatalogue).where(
+                VectorDBCatalogue.index_name == index_name,
+                VectorDBCatalogue.namespace == source_namespace,
+                VectorDBCatalogue.environment == "uat",
+            ).limit(1)
+        )
+    ).first()
+
+    agent_name = getattr(deployment, "agent_name", "") or ""
+
+    prod_row = VectorDBCatalogue(
+        name=f"{index_name}/{target_namespace}",
+        description=f"PROD copy from UAT namespace '{source_namespace}'",
+        provider="Pinecone",
+        deployment=uat_entry.deployment if uat_entry else "SaaS",
+        dimensions=uat_entry.dimensions if uat_entry else "",
+        index_type=uat_entry.index_type if uat_entry else "serverless",
+        status="connected",
+        vector_count=str(vectors_copied),
+        is_custom=False,
+        environment="prod",
+        index_name=index_name,
+        namespace=target_namespace,
+        agent_id=deployment.agent_id,
+        agent_name=agent_name,
+        source_entry_id=uat_entry.id if uat_entry else None,
+        migration_status="completed",
+        migrated_at=now,
+        vectors_copied=vectors_copied,
+        org_id=uat_entry.org_id if uat_entry else None,
+        dept_id=uat_entry.dept_id if uat_entry else None,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(prod_row)
+    await session.flush()
+    logger.info(
+        f"[PINECONE_MIGRATION] Tracked PROD entry: index={index_name} ns={target_namespace} vectors={vectors_copied}"
+    )
+
+
+async def _track_pinecone_migration_failure(
+    deployment: AgentDeploymentProd,
+    session: DbSession,
+    error_msg: str,
+) -> None:
+    """Create a FAILED entry in vector_db_catalogue so the UI can show migration status."""
+    from datetime import datetime, timezone
+
+    from agentcore.services.database.models.vector_db_catalogue.model import VectorDBCatalogue
+
+    now = datetime.now(timezone.utc)
+    snapshot = deployment.agent_snapshot or {}
+    nodes = snapshot.get("nodes", [])
+
+    for node in nodes:
+        node_data = node.get("data", {})
+        if node_data.get("type", "") != "Pinecone":
+            continue
+
+        template = node_data.get("node", {}).get("template", {})
+        index_name_field = template.get("index_name", {})
+        namespace_field = template.get("namespace", {})
+
+        index_name = index_name_field.get("value", "") if isinstance(index_name_field, dict) else str(index_name_field)
+        uat_namespace = namespace_field.get("value", "") if isinstance(namespace_field, dict) else str(namespace_field)
+
+        if not index_name:
+            continue
+
+        prod_namespace = f"{uat_namespace}_prod_v{deployment.version_number}" if uat_namespace else f"prod_v{deployment.version_number}"
+        agent_name = getattr(deployment, "agent_name", "") or ""
+
+        fail_row = VectorDBCatalogue(
+            name=f"{index_name}/{prod_namespace} (FAILED)",
+            description=f"Migration FAILED: {error_msg[:500]}",
+            provider="Pinecone",
+            deployment="SaaS",
+            dimensions="",
+            index_type="serverless",
+            status="error",
+            vector_count="0",
+            is_custom=False,
+            environment="prod",
+            index_name=index_name,
+            namespace=prod_namespace,
+            agent_id=deployment.agent_id,
+            agent_name=agent_name,
+            migration_status="failed",
+            migrated_at=now,
+            vectors_copied=0,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(fail_row)
+
+    await session.flush()
+    logger.info(f"[PINECONE_MIGRATION] Tracked FAILED migration for deployment {deployment.id}")
+
+
+async def _migrate_neo4j_for_prod(
+    deployment: AgentDeploymentProd,
+    session: DbSession,
+) -> None:
+    """Copy Neo4j graph data from UAT graph_kb_id to PROD graph_kb_id.
+
+    For each Neo4jGraphStore node found in the snapshot:
+      1. Read the UAT graph_kb_id
+      2. Derive a PROD graph_kb_id: {original}_prod_v{version}
+      3. Call graph-rag-service to copy entities, relationships, communities
+      4. Update the snapshot with the new PROD graph_kb_id
+    """
+    from agentcore.services.graph_rag_service_client import (
+        copy_graph_kb_via_service,
+        is_service_configured,
+    )
+
+    if not is_service_configured():
+        logger.warning("[NEO4J_MIGRATION] Graph RAG service not configured, skipping migration")
+        return
+
+    snapshot = deployment.agent_snapshot
+    nodes = snapshot.get("nodes", [])
+    updated = False
+
+    for node in nodes:
+        node_data = node.get("data", {})
+        node_type = node_data.get("type", "")
+
+        if node_type != "Neo4jGraphStore":
+            continue
+
+        template = node_data.get("node", {}).get("template", {})
+        graph_kb_id_field = template.get("graph_kb_id", {})
+
+        uat_graph_kb_id = (
+            graph_kb_id_field.get("value", "default")
+            if isinstance(graph_kb_id_field, dict)
+            else str(graph_kb_id_field or "default")
+        )
+
+        prod_graph_kb_id = f"{uat_graph_kb_id}_prod_v{deployment.version_number}"
+
+        logger.info(
+            f"[NEO4J_MIGRATION] Copying graph_kb_id='{uat_graph_kb_id}' → '{prod_graph_kb_id}'"
+        )
+
+        try:
+            result = copy_graph_kb_via_service(
+                source_graph_kb_id=uat_graph_kb_id,
+                target_graph_kb_id=prod_graph_kb_id,
+            )
+            entities = result.get("entities_copied", 0)
+            rels = result.get("relationships_copied", 0)
+            comms = result.get("communities_copied", 0)
+            logger.info(
+                f"[NEO4J_MIGRATION] Done: {entities} entities, {rels} rels, "
+                f"{comms} communities copied to '{prod_graph_kb_id}'"
+            )
+        except Exception as copy_err:
+            logger.error(f"[NEO4J_MIGRATION] Failed to copy graph_kb: {copy_err}")
+            raise
+
+        # Update snapshot with PROD graph_kb_id
+        if isinstance(graph_kb_id_field, dict):
+            graph_kb_id_field["value"] = prod_graph_kb_id
+        else:
+            template["graph_kb_id"] = {"value": prod_graph_kb_id}
+        updated = True
+
+    if updated:
+        deployment.agent_snapshot = snapshot
+        flag_modified(deployment, "agent_snapshot")
+        session.add(deployment)
+        await session.flush()
+        logger.info(f"[NEO4J_MIGRATION] Snapshot updated for deployment {deployment.id}")
+
+
 def _normalize_mcp_mode(value: str) -> str:
     normalized = str(value).strip().lower()
     if normalized not in {"sse", "stdio"}:
@@ -345,10 +673,6 @@ async def _get_approval_for_view(
     if req:
         if req.request_to == current_user.id or req.requested_by == current_user.id:
             return req
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            if req.org_id and req.org_id in org_ids:
-                return req
         raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
     # Fallback by agent id: latest request visible to user.
@@ -430,10 +754,6 @@ async def _get_mcp_approval_for_view(
         raise HTTPException(status_code=404, detail="MCP approval request not found")
     if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
-    if _is_org_scoped_super_admin(current_user):
-        org_ids = await _designated_super_admin_org_ids(session, current_user)
-        if req.org_id and req.org_id in org_ids:
-            return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
 
@@ -458,16 +778,12 @@ async def _get_model_approval_for_action(
             .where(ModelApprovalRequest.model_id == target_uuid, ModelApprovalRequest.decision == None)  # noqa: E711
             .order_by(ModelApprovalRequest.requested_at.desc())
         )
-        # Model approvals are strictly routed — only assigned approver can act
+        # Model approvals are strictly routed â€” only assigned approver can act
         stmt = stmt.where(ModelApprovalRequest.request_to == current_user.id)
         req = (await session.exec(stmt)).first()
     if not req:
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to != current_user.id:
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            if req.org_id and req.org_id in org_ids:
-                return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
     if req.requested_by == current_user.id:
         raise HTTPException(status_code=400, detail="No user can approve their own request")
@@ -502,17 +818,11 @@ async def _get_model_approval_for_view(
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to == current_user.id or req.requested_by == current_user.id:
         return req
-    if _is_org_scoped_super_admin(current_user):
-        org_ids = await _designated_super_admin_org_ids(session, current_user)
-        if req.org_id and req.org_id in org_ids:
-            return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
 
 def _next_model_environment(env: str) -> str | None:
     normalized = str(env or "").strip().lower()
-    if normalized == ModelEnvironment.TEST.value:
-        return ModelEnvironment.UAT.value
     if normalized == ModelEnvironment.UAT.value:
         return ModelEnvironment.PROD.value
     return None
@@ -738,12 +1048,8 @@ async def get_approvals(
                 )
             )
         model_stmt = select(ModelApprovalRequest).order_by(ModelApprovalRequest.requested_at.desc())
-        # Always filter by request_to — each approver only sees their own model requests
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            model_stmt = model_stmt.where(ModelApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
-        else:
-            model_stmt = model_stmt.where(ModelApprovalRequest.request_to == current_user.id)
+        # Model approvals are strictly routed — only assigned approver sees them.
+        model_stmt = model_stmt.where(ModelApprovalRequest.request_to == current_user.id)
         model_rows = (await session.exec(model_stmt)).all()
         for req in model_rows:
             row = await session.get(ModelRegistry, req.model_id)
@@ -919,7 +1225,7 @@ async def approve_agent(
         model_req.reviewed_at = now
         model_req.updated_at = now
 
-        current_env = str(model_row.environment or ModelEnvironment.TEST.value).lower()
+        current_env = str(model_row.environment or ModelEnvironment.UAT.value).lower()
         current_visibility = str(model_row.visibility_scope or ModelVisibilityScope.PRIVATE.value).lower()
         model_row.review_comments = model_req.justification
         model_row.review_attachments = model_req.file_path
@@ -932,10 +1238,8 @@ async def approve_agent(
             if not expected_next or str(model_req.target_environment).lower() != expected_next:
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid promotion path. Backend enforces DEV->UAT->PROD only.",
+                    detail="Invalid promotion path. Backend enforces UAT->PROD only.",
                 )
-            if current_env == ModelEnvironment.TEST.value and str(model_req.target_environment).lower() == ModelEnvironment.PROD.value:
-                raise HTTPException(status_code=400, detail="Direct DEV->PROD promotion is blocked")
             model_row.environment = str(model_req.target_environment).lower()
             model_row.approval_status = ModelApprovalStatus.APPROVED.value
             model_row.is_active = True
@@ -993,8 +1297,25 @@ async def approve_agent(
                     org_id=model_row.org_id,
                     dept_id=model_row.dept_id,
                 )
-        elif model_req.request_type == ModelApprovalRequestType.VISIBILITY:
-            model_row.visibility_scope = str(model_req.visibility_requested).lower()
+            elif model_req.request_type == ModelApprovalRequestType.VISIBILITY:
+                model_row.visibility_scope = str(model_req.visibility_requested).lower()
+                if model_req.visibility_requested == ModelVisibilityScope.DEPARTMENT.value:
+                    if model_req.org_id:
+                        model_row.org_id = model_req.org_id
+                    if model_req.dept_id:
+                        model_row.dept_id = model_req.dept_id
+                    if getattr(model_req, "public_dept_ids", None):
+                        model_row.public_dept_ids = list(model_req.public_dept_ids or [])
+                elif model_req.visibility_requested == ModelVisibilityScope.ORGANIZATION.value:
+                    if model_req.org_id:
+                        model_row.org_id = model_req.org_id
+                    model_row.dept_id = None
+                    model_row.public_dept_ids = None
+                else:
+                    if model_req.org_id:
+                        model_row.org_id = model_req.org_id
+                    model_row.dept_id = None
+                    model_row.public_dept_ids = None
             model_row.approval_status = ModelApprovalStatus.APPROVED.value
             model_row.is_active = True
             model_row.request_to = None
@@ -1108,7 +1429,7 @@ async def approve_agent(
     except Exception as reg_err:
         logger.warning(f"Registry sync failed after approval {req.id}: {reg_err}")
 
-    # Sync FileTrigger nodes → auto-create trigger_config entries
+    # Sync FileTrigger nodes â†’ auto-create trigger_config entries
     if deployment.agent_snapshot:
         try:
             from agentcore.services.deps import get_trigger_service
@@ -1125,7 +1446,7 @@ async def approve_agent(
         except Exception as fm_err:
             logger.warning(f"FileTrigger sync failed after approval {req.id}: {fm_err}")
 
-    # ── Promote guardrails used by this agent to PROD ──
+    # â”€â”€ Promote guardrails used by this agent to PROD â”€â”€
     guardrail_promotions: list[GuardrailPromotionResult] = []
     if deployment.agent_snapshot:
         try:
@@ -1140,7 +1461,7 @@ async def approve_agent(
                 exc_info=True,
             )
 
-    # ─── Publish notification (DB-verified) ──
+    # â”€â”€â”€ Publish notification (DB-verified) â”€â”€
     try:
         from agentcore.api.publish import _notify_publish_event
         await _notify_publish_event(
@@ -1156,30 +1477,106 @@ async def approve_agent(
     except Exception as notify_err:
         logger.warning(f"Publish notification failed after approval {req.id}: {notify_err}")
 
-    # ─── HTTP notify (for downstream deployment) ──
-    try:
-        import httpx
-        from agentcore.services.deps import get_settings_service
-        settings = get_settings_service().settings
-        base_url = f"http://{settings.host}:{settings.port}"
-        payload = {
-            "agent_id": str(deployment.agent_id),
-            "environment": "prod",
-            "version_number": str(deployment.version_number),
-            "deployment_id": str(deployment.id),
-        }
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
-            resp.raise_for_status()
-            verified = resp.json()
-        logger.info(
-            f"[APPROVAL_NOTIFY] API triggered: agent={verified.get('agent_name')} "
-            f"deployment_id={verified.get('deployment_id')} "
-            f"version={verified.get('version_number')} "
-            f"status={verified.get('status')} is_active={verified.get('is_active')}",
+    # ─── Data migration (Pinecone + Neo4j, UAT → PROD) ──
+    # Separate flags so the user knows exactly which migration failed.
+    pinecone_migration_failed = False
+    pinecone_error_msg = ""
+    neo4j_migration_failed = False
+    neo4j_error_msg = ""
+
+    logger.info(
+        f"[DATA_MIGRATION] deployment={deployment.id} "
+        f"has_snapshot={bool(deployment.agent_snapshot)} "
+        f"promoted_from_uat_id={deployment.promoted_from_uat_id}"
+    )
+
+    if deployment.agent_snapshot:
+        # --- Pinecone migration ---
+        try:
+            await _migrate_pinecone_for_prod(deployment=deployment, session=session)
+        except Exception as pc_err:
+            logger.error(f"[DATA_MIGRATION] Pinecone migration failed: {pc_err}")
+            pinecone_migration_failed = True
+            pinecone_error_msg = str(pc_err)
+            # Track the failure in VDB catalogue
+            try:
+                await _track_pinecone_migration_failure(
+                    deployment=deployment, session=session, error_msg=pinecone_error_msg,
+                )
+            except Exception as track_err:
+                logger.warning(f"[DATA_MIGRATION] Failed to track Pinecone failure: {track_err}")
+
+        # --- Neo4j migration ---
+        try:
+            await _migrate_neo4j_for_prod(deployment=deployment, session=session)
+        except Exception as neo_err:
+            logger.error(f"[DATA_MIGRATION] Neo4j migration failed: {neo_err}")
+            neo4j_migration_failed = True
+            neo4j_error_msg = str(neo_err)
+
+        # Commit or rollback based on results
+        if pinecone_migration_failed or neo4j_migration_failed:
+            await session.rollback()
+            deployment.status = DeploymentPRODStatusEnum.ERROR
+            deployment.updated_at = datetime.now(timezone.utc)
+            session.add(deployment)
+            await session.commit()
+            logger.error(
+                f"[DATA_MIGRATION] Deployment {deployment.id} marked as ERROR "
+                f"due to migration failure. Agent will NOT be active in PROD."
+            )
+        else:
+            await session.commit()
+
+    # Build detailed error message showing which migrations failed
+    migration_errors = []
+    if pinecone_migration_failed:
+        migration_errors.append(f"Pinecone VDB migration failed: {pinecone_error_msg}")
+    if neo4j_migration_failed:
+        migration_errors.append(f"Neo4j graph migration failed: {neo4j_error_msg}")
+
+    if migration_errors:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Agent approved but data migration failed. "
+                f"{' | '.join(migration_errors)}. "
+                f"Deployment {deployment.id} has been marked as ERROR and will not serve in PROD. "
+                f"Please retry the approval or contact support."
+            ),
         )
-    except Exception as notify_err:
-        logger.warning(f"Post-approval notify API failed for approval {req.id}: {notify_err}")
+    # ─── HTTP notify (only if guardrail promotion succeeded) ──
+    guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
+    if guardrails_ready:
+        try:
+            import httpx
+            from agentcore.services.deps import get_settings_service
+            settings = get_settings_service().settings
+            base_url = f"http://{settings.host}:{settings.port}"
+            payload = {
+                "agent_id": str(deployment.agent_id),
+                "environment": "prod",
+                "version_number": str(deployment.version_number),
+                "deployment_id": str(deployment.id),
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+                resp.raise_for_status()
+                verified = resp.json()
+            logger.info(
+                f"[APPROVAL_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+                f"deployment_id={verified.get('deployment_id')} "
+                f"version={verified.get('version_number')} "
+                f"status={verified.get('status')} is_active={verified.get('is_active')}",
+            )
+        except Exception as notify_err:
+            logger.warning(f"Post-approval notify API failed for approval {req.id}: {notify_err}")
+    else:
+        failed = [g.uat_guardrail_id for g in guardrail_promotions if not g.ready]
+        logger.warning(
+            f"[APPROVAL_NOTIFY] Skipped — guardrail promotion not ready for approval {req.id}. "
+            f"Failed guardrails: {failed}"
+        )
 
     # Trigger handoff payload only for approved AGENT promotions (never on reject).
     try:
@@ -1981,3 +2378,8 @@ async def reset_agent_status(
         "agentId": str(req.agent_id),
         "newStatus": "pending",
     }
+
+
+
+
+

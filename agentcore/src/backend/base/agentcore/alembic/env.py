@@ -1,5 +1,6 @@
 # noqa: INP001
 import asyncio
+import sys
 import os
 from logging.config import fileConfig
 from dotenv import load_dotenv, find_dotenv
@@ -107,6 +108,8 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
  
     """
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(_run_async_migrations())
  
  

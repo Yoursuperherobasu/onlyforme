@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import useDragStart from "@/components/core/cardComponent/hooks/use-on-drag-start";
@@ -45,8 +45,9 @@ const ListComponent = ({
 }) => {
   const navigate = useCustomNavigate();
   const [openDelete, setOpenDelete] = useState(false);
-  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const { deleteAgent } = useDeleteAgent();
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { folderId } = useParams();
   const [openSettings, setOpenSettings] = useState(false);
@@ -76,7 +77,9 @@ const ListComponent = ({
   const requesterId = String(
     publishStatus?.pending_requested_by || publishStatus?.latest_prod_published_by || "",
   );
-  const hasDeployment = Boolean(publishStatus?.uat || publishStatus?.prod);
+  const hasDeployment = Boolean(
+    publishStatus?.uat?.is_enabled || publishStatus?.prod?.is_enabled,
+  );
   const showRequesterBadge = !isComponent && !!requesterId && requesterId === currentUserId;
   const badgeLabel = workflowLocked
     ? "Awaiting Approval"
@@ -97,6 +100,12 @@ const ListComponent = ({
   const canTransferAgent = Boolean(folderId) && isAgentOwnedByCurrentUser;
   const canMoveAgent = canTransferAgent && !hasDeployment;
   const canCopyAgent = canTransferAgent;
+
+  const getDeploymentEnvLabel = () => {
+    if (publishStatus?.prod?.is_enabled) return "PROD";
+    if (publishStatus?.uat?.is_enabled) return "UAT";
+    return null;
+  };
 
   const handleOpenTransfer = (mode: "move" | "copy") => {
     if (mode === "move" && hasDeployment) {
@@ -134,20 +143,31 @@ const ListComponent = ({
     }
   };
 
-  const handleDelete = () => {
-    deleteAgent({ id: [agentData.id] })
-      .then(() => {
-        setSuccessData({
-          title: "Selected items deleted successfully",
-        });
-      })
-      .catch(() => {
-        setErrorData({
-          title: "Error deleting items",
-          list: ["Please try again"],
-        });
+  const handleDelete = async () => {
+    setDeleteError(null);
+    const deploymentEnv = getDeploymentEnvLabel();
+    if (deploymentEnv) {
+      setDeleteError(`This agent is deployed in ${deploymentEnv}.`);
+      return;
+    }
+    try {
+      await deleteAgent({ id: [agentData.id] });
+      setSuccessData({
+        title: "Selected items deleted successfully",
       });
+      setOpenDelete(false);
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.detail || error?.message || "Please try again";
+      setDeleteError(detail);
+    }
   };
+
+  useEffect(() => {
+    if (openDelete) {
+      setDeleteError(null);
+    }
+  }, [openDelete]);
 
   const { onDragStart } = useDragStart(agentData);
 
@@ -322,6 +342,8 @@ const ListComponent = ({
           onConfirm={handleDelete}
           description={descriptionModal}
           note={!agentData.is_component ? "and its message history" : ""}
+          errorMessage={deleteError ?? undefined}
+          closeOnConfirm={false}
         />
       )}
       <ExportModal

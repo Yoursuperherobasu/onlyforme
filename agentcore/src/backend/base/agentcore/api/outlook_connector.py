@@ -25,7 +25,7 @@ from agentcore.api.connector_catalogue import (
     EMAIL_PROVIDERS,
     _can_access_connector,
     _decrypt_provider_config,
-    _encrypt_provider_config,
+    _prepare_provider_config,
     _get_scope_memberships,
     _require_connector_permission,
 )
@@ -201,7 +201,13 @@ async def _save_updated_config(
     current_user_id: UUID,
 ) -> None:
     """Encrypt and save updated provider_config back to the connector row."""
-    row.provider_config = _encrypt_provider_config(row.provider, config)
+    row.provider_config = _prepare_provider_config(
+        row.provider,
+        config,
+        connector_id=row.id,
+        existing_config=row.provider_config or {},
+        allow_secret_update=False,
+    )
     row.updated_at = datetime.now(timezone.utc)
     row.updated_by = current_user_id
     try:
@@ -403,7 +409,13 @@ async def oauth_callback(
     config["linked_accounts"] = linked_accounts
 
     # Encrypt and save
-    row.provider_config = _encrypt_provider_config(row.provider, config)
+    row.provider_config = _prepare_provider_config(
+        row.provider,
+        config,
+        connector_id=row.id,
+        existing_config=row.provider_config or {},
+        allow_secret_update=False,
+    )
     row.updated_at = datetime.now(timezone.utc)
     row.updated_by = user_id
     try:

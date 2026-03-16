@@ -1089,14 +1089,20 @@ class TriggerService(Service):
         try:
             from agentcore.services.deps import get_db_service
             from agentcore.services.database.models.connector_catalogue.model import ConnectorCatalogue
-            from agentcore.api.connector_catalogue import _encrypt_provider_config
+            from agentcore.api.connector_catalogue import _prepare_provider_config
 
             persist_config = {k: v for k, v in config.items() if k != "provider"}
             db_service = get_db_service()
             async with db_service.with_session() as session:
                 row = await session.get(ConnectorCatalogue, UUID(str(connector_id)))
                 if row:
-                    row.provider_config = _encrypt_provider_config(row.provider, persist_config)
+                    row.provider_config = _prepare_provider_config(
+                        row.provider,
+                        persist_config,
+                        connector_id=row.id,
+                        existing_config=row.provider_config or {},
+                        allow_secret_update=False,
+                    )
                     session.add(row)
                     await session.commit()
         except Exception as e:

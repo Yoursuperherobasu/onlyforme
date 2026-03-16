@@ -177,6 +177,13 @@ class RunChildAgentComponent(Node):
 
         return str(input_val)
 
+    def _get_input_files(self) -> list:
+        """Extract files (images, documents) from the input value."""
+        input_val = self.input_value
+        if isinstance(input_val, Message) and input_val.files:
+            return input_val.files
+        return []
+
     def _build_parent_context(self) -> ParentAgentContext:
         """Build the parent context for the child agent call."""
         parent_agent_id = ""
@@ -212,8 +219,9 @@ class RunChildAgentComponent(Node):
                 error="No child agent selected",
             )
 
-        # Get input text
+        # Get input text and files
         input_text = self._get_input_text()
+        input_files = self._get_input_files()
 
         # Build parent context
         parent_context = self._build_parent_context()
@@ -238,6 +246,7 @@ class RunChildAgentComponent(Node):
                 input_value=input_text,
                 parent_context=parent_context,
                 session_id=self.session_id if self.session_id else None,
+                files=input_files or None,
             )
 
             # Log if enabled

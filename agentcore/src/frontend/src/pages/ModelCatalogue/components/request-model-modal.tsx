@@ -49,8 +49,6 @@ export default function RequestModelModal({
   const { role } = useContext(AuthContext);
   const normalizedRole = String(role || "").toLowerCase();
   const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
-  const isDevBusinessUser =
-    normalizedRole === "developer" || normalizedRole === "business_user";
 
   const [displayName, setDisplayName] = useState("");
   const [provider, setProvider] = useState("openai");
@@ -60,7 +58,7 @@ export default function RequestModelModal({
   const [azureDeployment, setAzureDeployment] = useState("");
   const [azureApiVersion, setAzureApiVersion] = useState(DEFAULT_AZURE_API_VERSION);
   const [customHeaders, setCustomHeaders] = useState("");
-  const [environment, setEnvironment] = useState<"test" | "uat" | "prod">("test");
+  const [environment, setEnvironment] = useState<"uat" | "prod">("uat");
   const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">("private");
   const [deptId, setDeptId] = useState("");
   const [publicDeptIds, setPublicDeptIds] = useState<string[]>([]);
@@ -81,10 +79,7 @@ export default function RequestModelModal({
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
-  const isDirectAddPath =
-    isDevBusinessUser &&
-    environment === "test" &&
-    visibilityScope === "private";
+  const isDirectAddPath = false;
   const isEmbedding = modelType === "embedding";
 
   const departmentsForSelectedOrg = useMemo(
@@ -126,7 +121,7 @@ export default function RequestModelModal({
     setAzureDeployment("");
     setAzureApiVersion(DEFAULT_AZURE_API_VERSION);
     setCustomHeaders("");
-    setEnvironment("test");
+    setEnvironment("uat");
     setVisibilityScope("private");
     setDeptId("");
     setPublicDeptIds([]);
@@ -281,7 +276,7 @@ export default function RequestModelModal({
             <div>
               <h2 className="text-xl font-semibold">Add / Request Model</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Configure the model and submit. DEV + PRIVATE for Developer/Business User is auto-approved.
+                Configure the model and submit. Requests route based on environment and visibility.
               </p>
             </div>
           </div>
@@ -400,14 +395,13 @@ export default function RequestModelModal({
               <Label>Environment *</Label>
               <div className="mt-2 flex gap-2">
                 {[
-                  { value: "test", label: "DEV" },
                   { value: "uat", label: "UAT" },
                   { value: "prod", label: "PROD" },
                 ].map((env) => (
                   <button
                     key={env.value}
                     type="button"
-                    onClick={() => setEnvironment(env.value as "test" | "uat" | "prod")}
+                    onClick={() => setEnvironment(env.value as "uat" | "prod")}
                     className={`rounded-md border px-3 py-2 text-sm ${
                       environment === env.value
                         ? "border-[var(--button-primary)] bg-[var(--button-primary)] text-[var(--button-primary-foreground)]"
@@ -627,7 +621,7 @@ export default function RequestModelModal({
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {isDirectAddPath
-              ? "This will be auto-approved as DEV + PRIVATE."
+              ? "This will be auto-approved."
               : "This will create an approval request based on environment and visibility."}
           </p>
         </div>

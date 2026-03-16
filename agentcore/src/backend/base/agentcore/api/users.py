@@ -739,11 +739,26 @@ async def read_current_user(
             .order_by(Organization.created_at.asc())
         )
     ).first()
+    organization_id = (
+        await db.exec(
+            select(Organization.id)
+            .join(
+                UserOrganizationMembership,
+                UserOrganizationMembership.org_id == Organization.id,
+            )
+            .where(
+                UserOrganizationMembership.user_id == current_user.id,
+                UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+            )
+            .order_by(Organization.created_at.asc())
+        )
+    ).first()
 
     return {
         **cached_user,
         "permissions": user_permissions,
         "organization_name": organization_name,
+        "organization_id": organization_id,
     }
 
 
