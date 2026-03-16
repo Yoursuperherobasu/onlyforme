@@ -245,16 +245,21 @@ export default function AddMcpServerModal({
           const payload = buildTestPayload();
           const key = buildTestKey(payload);
           let result = testResult && testPayloadKey === key ? testResult : null;
+          let autoTestRan = false;
           if (!result) {
             result = await testMutation.mutateAsync(payload!);
             setTestResult(result);
             setTestPayloadKey(key);
+            autoTestRan = true;
           }
           if (!result.success) {
             const msg = result.message || "Connection test failed.";
             setError(msg);
             setErrorData({ title: "Connection test failed", list: [msg] });
             return;
+          }
+          if (autoTestRan) {
+            setSuccessData({ title: result.message || "Connection successful" });
           }
         }
         const payload: McpRegistryCreateRequest = {
@@ -304,16 +309,21 @@ export default function AddMcpServerModal({
           const payload = buildTestPayload();
           const key = buildTestKey(payload);
           let result = testResult && testPayloadKey === key ? testResult : null;
+          let autoTestRan = false;
           if (!result) {
             result = await testMutation.mutateAsync(payload!);
             setTestResult(result);
             setTestPayloadKey(key);
+            autoTestRan = true;
           }
           if (!result.success) {
             const msg = result.message || "Connection test failed.";
             setError(msg);
             setErrorData({ title: "Connection test failed", list: [msg] });
             return;
+          }
+          if (autoTestRan) {
+            setSuccessData({ title: result.message || "Connection successful" });
           }
         }
         const payload: McpRegistryCreateRequest = {

@@ -196,7 +196,6 @@ class ConnectorPayload(BaseModel):
     visibility: str = "private"  # private | public
     public_scope: str | None = None  # organization | department (required when visibility=public)
     public_dept_ids: list[UUID] | None = None  # super_admin can select multiple departments
-    shared_user_emails: list[str] | None = None  # optional for department_admin when private
 
 
 class ConnectorUpdatePayload(BaseModel):
@@ -217,7 +216,6 @@ class ConnectorUpdatePayload(BaseModel):
     visibility: str | None = None
     public_scope: str | None = None
     public_dept_ids: list[UUID] | None = None
-    shared_user_emails: list[str] | None = None
 
 
 class TestConnectionPayload(BaseModel):
@@ -328,7 +326,7 @@ async def _ensure_connector_name_available(
 
 # ---------- Serialization ----------
 
-def _serialize_connector(row: ConnectorCatalogue) -> dict:
+def _serialize_connector(row: ConnectorCatalogue, created_by_lookup: dict[str, str] | None = None) -> dict:
     # Return provider_config with secrets masked (not decrypted) for display
     safe_config: dict | None = None
     if row.provider_config:
@@ -378,23 +376,9 @@ def _serialize_connector(row: ConnectorCatalogue) -> dict:
         "public_scope": row.public_scope,
         "public_dept_ids": row.public_dept_ids or [],
         "shared_user_ids": row.shared_user_ids or [],
+        "created_by": (created_by_lookup or {}).get(str(row.created_by)) if row.created_by else None,
+        "created_by_id": str(row.created_by) if row.created_by else None,
     }
-
-
-async def _resolve_user_ids_by_emails(session: DbSession, emails: list[str]) -> list[str]:
-    if not emails:
-        return []
-    normalized = [e.strip().lower() for e in emails if e and e.strip()]
-    if not normalized:
-        return []
-    rows = (
-        await session.exec(select(User.id, User.email).where(User.email.in_(normalized)))
-    ).all()
-    found = {str(r[1]).lower(): str(r[0]) for r in rows}
-    missing = [e for e in normalized if e not in found]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Invalid shared_user_emails: {', '.join(missing)}")
-    return [found[e] for e in normalized]
 
 
 async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, dept_ids: list[UUID]) -> None:
@@ -428,36 +412,16 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if user_role == "department_admin":
+        if user_role in {"department_admin", "developer", "business_user"}:
             if not dept_pairs:
                 raise HTTPException(status_code=403, detail="No active department scope found")
-            # private for department admin is scoped to current department
             current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
             payload.org_id = current_org_id
             payload.dept_id = current_dept_id
-            shared_user_ids = await _resolve_user_ids_by_emails(session, getattr(payload, "shared_user_emails", None) or [])
-            if shared_user_ids:
-                allowed_ids = set(
-                    str(v if isinstance(v, UUID) else v[0])
-                    for v in (
-                        await session.exec(
-                            select(UserDepartmentMembership.user_id).where(
-                                UserDepartmentMembership.department_id == current_dept_id,
-                                UserDepartmentMembership.status == "active",
-                            )
-                        )
-                    ).all()
-                )
-                if not set(shared_user_ids).issubset(allowed_ids):
-                    raise HTTPException(status_code=403, detail="shared_user_emails must belong to your current department")
         else:
-            if user_role in {"developer", "business_user"} and dept_pairs:
-                current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
-                payload.org_id = current_org_id
-                payload.dept_id = current_dept_id
-            else:
-                payload.org_id = None
-                payload.dept_id = None
+            payload.org_id = None
+            payload.dept_id = None
+        shared_user_ids = []
     else:
         # public
         if public_scope is None:
@@ -521,7 +485,9 @@ def _can_access_connector(
     dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
 
     if visibility == "private":
-        return str(row.created_by) == user_id or user_id in set(row.shared_user_ids or [])
+        if role == "department_admin":
+            return bool(row.dept_id and str(row.dept_id) in dept_id_set)
+        return str(row.created_by) == user_id
     if getattr(row, "public_scope", None) == "organization":
         return bool(row.org_id and row.org_id in org_ids)
     if getattr(row, "public_scope", None) == "department":
@@ -530,6 +496,40 @@ def _can_access_connector(
             dept_candidates.add(str(row.dept_id))
         return bool(dept_candidates.intersection(dept_id_set))
     return False
+
+
+def _test_connector_payload_or_raise(payload: TestConnectionPayload) -> dict:
+    provider = (payload.provider or "").strip().lower()
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider is required")
+
+    if provider in STORAGE_PROVIDERS:
+        config = payload.provider_config or {}
+        if provider == "azure_blob":
+            return _test_azure_blob_connection(config)
+        return _test_sharepoint_connection(config)
+
+    if provider in EMAIL_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail="Outlook connectors must be saved first and linked via OAuth before they can be tested.",
+        )
+
+    if not payload.host or not payload.port or not payload.database_name or not payload.username:
+        raise HTTPException(
+            status_code=400,
+            detail="host, port, database_name, username are required for DB providers",
+        )
+    return _test_db_connection(
+        provider=provider,
+        host=payload.host,
+        port=payload.port,
+        database_name=payload.database_name,
+        schema_name=payload.schema_name or "public",
+        username=payload.username,
+        password=payload.password or "",
+        ssl_enabled=bool(payload.ssl_enabled),
+    )
 
 
 # ---------- DB Connection helper ----------
@@ -833,7 +833,17 @@ async def list_connectors(
     rows = (await session.exec(query)).all()
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     visible_rows = [row for row in rows if _can_access_connector(row, current_user, org_ids, dept_pairs)]
-    return [_serialize_connector(row) for row in visible_rows]
+    creator_ids = [row.created_by for row in visible_rows if row.created_by]
+    created_by_lookup: dict[str, str] = {}
+    if creator_ids:
+        creator_rows = (
+            await session.exec(select(User.id, User.username, User.email).where(User.id.in_(creator_ids)))
+        ).all()
+        created_by_lookup = {
+            str(row[0]): (row[1] or row[2] or str(row[0]))
+            for row in creator_rows
+        }
+    return [_serialize_connector(row, created_by_lookup) for row in visible_rows]
 
 
 @router.get("/visibility-options")
@@ -875,26 +885,9 @@ async def get_connector_visibility_options(
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
 
-    private_share_users = []
-    if role == "department_admin" and dept_ids:
-        primary_dept = sorted(dept_ids, key=str)[0]
-        user_rows = (
-            await session.exec(
-                select(User.id, User.email)
-                .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
-                .where(
-                    UserDepartmentMembership.department_id == primary_dept,
-                    UserDepartmentMembership.status == "active",
-                    User.email.is_not(None),
-                )
-            )
-        ).all()
-        private_share_users = [{"id": str(r[0]), "email": r[1]} for r in user_rows if r[1]]
-
     return {
         "organizations": organizations,
         "departments": departments,
-        "private_share_users": private_share_users,
         "role": role,
     }
 
@@ -909,12 +902,34 @@ async def create_connector(
     await _require_connector_permission(current_user, "connectore_page")
     await _require_connector_permission(current_user, "add_connector")
 
+    provider = payload.provider.lower()
+    if provider not in EMAIL_PROVIDERS:
+        draft_payload = (
+            TestConnectionPayload(provider=provider, provider_config=payload.provider_config or {})
+            if provider in STORAGE_PROVIDERS
+            else TestConnectionPayload(
+                provider=provider,
+                host=payload.host,
+                port=payload.port,
+                database_name=payload.database_name,
+                schema_name=payload.schema_name,
+                username=payload.username,
+                password=payload.password,
+                ssl_enabled=payload.ssl_enabled,
+            )
+        )
+        test_result = _test_connector_payload_or_raise(draft_payload)
+        if not test_result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail=test_result.get("message") or "Connector connection test failed",
+            )
+
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
         session, current_user, payload
     )
     await _ensure_connector_name_available(session, payload.name, payload.org_id, payload.dept_id)
     now = datetime.now(timezone.utc)
-    provider = payload.provider.lower()
 
     connector_id = uuid4()
 
@@ -1123,7 +1138,9 @@ async def update_connector(
     row.visibility = visibility
     row.public_scope = public_scope
     row.public_dept_ids = public_dept_ids
-    row.shared_user_ids = shared_user_ids
+    row.shared_user_ids = shared_user_ids or []
+    if visibility == "private":
+        row.created_by = current_user.id
     row.updated_by = current_user.id
     row.updated_at = now
 
@@ -1250,38 +1267,8 @@ async def test_connector_connection_payload(
     await _require_connector_permission(current_user, "connectore_page")
     await _require_connector_permission(current_user, "add_connector")
 
-    provider = (payload.provider or "").strip().lower()
-    if not provider:
-        raise HTTPException(status_code=400, detail="provider is required")
-
     try:
-        if provider in STORAGE_PROVIDERS:
-            config = payload.provider_config or {}
-            if provider == "azure_blob":
-                return _test_azure_blob_connection(config)
-            return _test_sharepoint_connection(config)
-
-        if provider in EMAIL_PROVIDERS:
-            raise HTTPException(
-                status_code=400,
-                detail="Save the connector first, then link a mailbox via OAuth before testing.",
-            )
-
-        if not payload.host or not payload.port or not payload.database_name or not payload.username:
-            raise HTTPException(
-                status_code=400,
-                detail="host, port, database_name, username are required for DB providers",
-            )
-        return _test_db_connection(
-            provider=provider,
-            host=payload.host,
-            port=payload.port,
-            database_name=payload.database_name,
-            schema_name=payload.schema_name or "public",
-            username=payload.username,
-            password=payload.password or "",
-            ssl_enabled=bool(payload.ssl_enabled),
-        )
+        return _test_connector_payload_or_raise(payload)
     except HTTPException:
         raise
     except Exception as e:

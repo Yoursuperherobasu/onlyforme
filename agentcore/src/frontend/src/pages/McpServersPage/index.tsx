@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import {
   Plus,
   Server,
@@ -32,6 +32,7 @@ import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
 import type { McpRegistryType, McpProbeResponse } from "@/types/mcp";
+import { api } from "@/controllers/API/api";
 
 import { useTranslation } from "react-i18next";
 
@@ -58,6 +59,9 @@ export default function MCPServersPage() {
   const [probeResults, setProbeResults] = useState<Record<string, McpProbeResponse>>({});
   const [probingServerId, setProbingServerId] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [visibilityOptions, setVisibilityOptions] = useState<{
+    departments: { id: string; name: string; org_id: string }[];
+  }>({ departments: [] });
 
   // Toggle state (tracks which servers are currently being toggled)
   const [togglingServerId, setTogglingServerId] = useState<string | null>(null);
@@ -102,6 +106,28 @@ export default function MCPServersPage() {
       return VISIBILITY_BADGE_CLASSES.department;
     }
     return VISIBILITY_BADGE_CLASSES.private;
+  };
+  const getDepartmentScopeLabel = (server: McpRegistryType) => {
+    const deptNameById = new Map(
+      visibilityOptions.departments.map((dept) => [dept.id, dept.name]),
+    );
+    if (server.visibility === "public" && server.public_scope === "organization") {
+      return t("All departments");
+    }
+    const deptIds =
+      server.visibility === "public" && server.public_scope === "department"
+        ? server.public_dept_ids?.length
+          ? server.public_dept_ids
+          : server.dept_id
+            ? [server.dept_id]
+            : []
+        : server.dept_id
+          ? [server.dept_id]
+          : [];
+    if (deptIds.length === 0) return "-";
+    const names = deptIds.map((id) => deptNameById.get(id) || id);
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   };
 
   const handleEdit = (server: McpRegistryType) => {
@@ -277,6 +303,18 @@ export default function MCPServersPage() {
     return false;
   };
 
+  useEffect(() => {
+    if (!isMcpAdmin) return;
+    api
+      .get("api/mcp/registry/visibility-options")
+      .then((res) => {
+        setVisibilityOptions({ departments: res.data?.departments || [] });
+      })
+      .catch(() => {
+        setVisibilityOptions({ departments: [] });
+      });
+  }, [isMcpAdmin]);
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header - Fixed */}
@@ -360,6 +398,16 @@ export default function MCPServersPage() {
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       {t("Visibility")}
                     </th>
+                    {isDepartmentAdmin ? (
+                      <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        {t("Requested By")}
+                      </th>
+                    ) : null}
+                    {isSuperAdmin ? (
+                      <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        {t("Department Scope")}
+                      </th>
+                    ) : null}
                     <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                       {t("Status")}
                     </th>
@@ -443,6 +491,23 @@ export default function MCPServersPage() {
                             {t(getVisibilityLabel(server))}
                           </span>
                         </td>
+                        {isDepartmentAdmin ? (
+                          <td className="px-6 py-4 text-sm text-muted-foreground">
+                            <div
+                              className="max-w-[170px] truncate"
+                              title={server.created_by || "-"}
+                            >
+                              {server.created_by || "-"}
+                            </div>
+                          </td>
+                        ) : null}
+                        {isSuperAdmin ? (
+                          <td className="px-6 py-4 text-sm text-muted-foreground">
+                            <span className="text-sm text-muted-foreground">
+                              {getDepartmentScopeLabel(server)}
+                            </span>
+                          </td>
+                        ) : null}
 
                         {/* Status - Toggle Switch */}
                         <td className="px-6 py-4">
@@ -588,7 +653,7 @@ export default function MCPServersPage() {
                           probeResults[server.id].tools!.length > 0) ||
                           (server.tools_snapshot && server.tools_snapshot.length > 0)) && (
                           <tr key={`${server.id}-tools`} className="bg-muted/30">
-                            <td colSpan={canSeeActions ? 7 : 6} className="px-6 py-3">
+                            <td colSpan={6 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canSeeActions ? 1 : 0)} className="px-6 py-3">
                               <div className="ml-[52px] space-y-1">
                                 <div className="mb-2 text-xs font-medium text-muted-foreground">
                                   {t("Discovered Tools:")}

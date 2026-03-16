@@ -17,11 +17,19 @@ import {
   XCircle,
   Cloud,
   Mail,
+  ChevronDown,
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import OutlookConnectorForm from "./components/OutlookConnectorForm";
 import { ENABLE_OUTLOOK_CONNECTOR } from "@/customization/feature-flags";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import Loading from "@/components/ui/loading";
 import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
@@ -39,6 +47,7 @@ import {
   useTestConnectorDraftConnection,
   useDisconnectConnector,
 } from "@/controllers/API/queries/connectors/use-mutate-connector";
+import useAlertStore from "@/stores/alertStore";
 
 type ProviderFilter =
   | "all"
@@ -111,7 +120,6 @@ const BLANK_FORM = {
   org_id: "",
   dept_id: "",
   public_dept_ids: [] as string[],
-  shared_user_emails: [] as string[],
 };
 
 type FormState = typeof BLANK_FORM;
@@ -127,8 +135,24 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     success: boolean;
     message: string;
   } | null>(null);
+  const [testPayloadKey, setTestPayloadKey] = useState<string | null>(null);
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const { data: connectors, isLoading, error, refetch } = useGetConnectorCatalogue();
+  const createMutation = useCreateConnector();
+  const updateMutation = useUpdateConnector();
+  const deleteMutation = useDeleteConnector();
+  const testMutation = useTestConnectorConnection();
+  const testDraftMutation = useTestConnectorDraftConnection();
+  const disconnectMutation = useDisconnectConnector();
+
+  const getErrorMessage = (err: any, fallback: string) =>
+    err?.response?.data?.detail ||
+    err?.response?.data?.message ||
+    err?.message ||
+    fallback;
 
   // Handle OAuth redirect results on mount
   useEffect(() => {
@@ -137,10 +161,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
     if (success === "outlook_account_linked") {
       const email = searchParams.get("email") || "";
-      setTestResult({ success: true, message: `Outlook mailbox linked successfully${email ? `: ${email}` : ""}` });
+      const message = `Outlook mailbox linked successfully${email ? `: ${email}` : ""}`;
+      setTestResult({ success: true, message });
+      setSuccessData({ title: message });
+      void refetch();
     } else if (errorParam) {
       const detail = searchParams.get("detail") || errorParam;
-      setTestResult({ success: false, message: `Outlook OAuth failed: ${detail}` });
+      const message = `Outlook OAuth failed: ${detail}`;
+      setTestResult({ success: false, message });
+      setErrorData({ title: "Mailbox linking failed", list: [detail] });
     }
 
     if (success || errorParam) {
@@ -159,28 +188,22 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     permissions?.includes("view_connectors_page") ||
     permissions?.includes("connector_page");
   const canAddConnector = permissions?.includes("add_connector");
-  const canSeeVisibilityColumn = role === "department_admin" || role === "super_admin";
+  const canMultiDept = role === "super_admin" || role === "root";
+  const canSeeVisibilityColumn = true;
+  const isDepartmentAdmin = role === "department_admin";
+  const isSuperAdmin = role === "super_admin";
 
   const [visibilityOptions, setVisibilityOptions] = useState<{
     organizations: { id: string; name: string }[];
     departments: { id: string; name: string; org_id: string }[];
-    private_share_users: { id: string; email: string }[];
-  }>({ organizations: [], departments: [], private_share_users: [] });
-
-  const { data: connectors, isLoading, error } = useGetConnectorCatalogue();
-  const createMutation = useCreateConnector();
-  const updateMutation = useUpdateConnector();
-  const deleteMutation = useDeleteConnector();
-  const testMutation = useTestConnectorConnection();
-  const testDraftMutation = useTestConnectorDraftConnection();
-  const disconnectMutation = useDisconnectConnector();
+  }>({ organizations: [], departments: [] });
 
   const [form, setForm] = useState<FormState>({ ...BLANK_FORM });
 
   useEffect(() => {
     if (!canViewConnectorPage) return;
     api.get(`${getURL("CONNECTOR_CATALOGUE")}/visibility-options`).then((res) => {
-      setVisibilityOptions(res.data || { organizations: [], departments: [], private_share_users: [] });
+      setVisibilityOptions(res.data || { organizations: [], departments: [] });
       const firstOrg = res.data?.organizations?.[0]?.id || "";
       const firstDept = res.data?.departments?.[0]?.id || "";
       setForm((prev) => ({ ...prev, org_id: prev.org_id || firstOrg, dept_id: prev.dept_id || firstDept }));
@@ -194,6 +217,66 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       ),
     [visibilityOptions.departments, form.org_id],
   );
+  const visibilityScope = useMemo<"private" | "department" | "organization">(() => {
+    if (form.visibility === "private") return "private";
+    return form.public_scope === "organization" ? "organization" : "department";
+  }, [form.visibility, form.public_scope]);
+  const selectedDeptLabel = useMemo(() => {
+    const selectedIds = canMultiDept ? form.public_dept_ids : form.dept_id ? [form.dept_id] : [];
+    if (selectedIds.length === 0) return "Select departments";
+    const names = departmentsForSelectedOrg
+      .filter((dept) => selectedIds.includes(dept.id))
+      .map((dept) => dept.name);
+    if (names.length === 0) return "Select departments";
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  }, [canMultiDept, departmentsForSelectedOrg, form.dept_id, form.public_dept_ids]);
+  const getVisibilityBadgeClass = (c: ConnectorInfo) => {
+    if (c.visibility === "private") {
+      return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+    }
+    if (c.public_scope === "organization") {
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+    }
+    return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+  };
+  const getDepartmentScopeLabel = (connector: ConnectorInfo) => {
+    const deptNameById = new Map(
+      visibilityOptions.departments.map((dept) => [dept.id, dept.name]),
+    );
+    if (connector.visibility === "public" && connector.public_scope === "organization") {
+      return "All departments";
+    }
+    const deptIds =
+      connector.visibility === "public" && connector.public_scope === "department"
+        ? connector.public_dept_ids?.length
+          ? connector.public_dept_ids
+          : connector.dept_id
+            ? [connector.dept_id]
+            : []
+        : connector.dept_id
+          ? [connector.dept_id]
+          : [];
+    if (deptIds.length === 0) return "-";
+    const names = deptIds.map((id) => deptNameById.get(id) || id);
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  };
+  const setVisibilityScope = (scope: "private" | "department" | "organization") => {
+    setForm((prev) => ({
+      ...prev,
+      visibility: scope === "private" ? "private" : "public",
+      public_scope: scope === "private" ? "department" : scope,
+      org_id:
+        scope === "private"
+          ? prev.org_id
+          : scope === "organization"
+            ? prev.org_id
+            : prev.org_id,
+      dept_id: scope === "department" ? prev.dept_id : "",
+      public_dept_ids: scope === "department" ? prev.public_dept_ids : [],
+    }));
+  };
   const effectiveNameScope = useMemo(() => {
     let orgId: string | null = form.org_id || null;
     let deptId: string | null = form.dept_id || null;
@@ -277,6 +360,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   const resetForm = () => {
     setForm({ ...BLANK_FORM });
     setTestResult(null);
+    setTestPayloadKey(null);
     setShowPassword(false);
   };
 
@@ -320,7 +404,6 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       org_id: connector.org_id ?? "",
       dept_id: connector.dept_id ?? "",
       public_dept_ids: connector.public_dept_ids || [],
-      shared_user_emails: [],
     });
     setEditingConnector(connector);
     setTestResult(null);
@@ -360,10 +443,6 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       public_dept_ids:
         form.visibility === "public" && form.public_scope === "department"
           ? form.public_dept_ids
-          : [],
-      shared_user_emails:
-        role === "department_admin" && form.visibility === "private"
-          ? form.shared_user_emails
           : [],
     };
 
@@ -481,28 +560,63 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
   const handleSave = async () => {
     if (connectorNameAvailability.isNameTaken) {
+      setErrorData({
+        title: "Name already in use",
+        list: ["Choose a different connector name for this scope."],
+      });
       return;
     }
     try {
       const payload = buildPayload();
+      if (!editingConnector && form.provider !== "outlook") {
+        const currentTestKey = JSON.stringify(payload);
+        let result = testResult && testPayloadKey === currentTestKey ? testResult : null;
+        let autoTestRan = false;
+        if (!result) {
+          result = await testDraftMutation.mutateAsync(payload);
+          setTestResult(result);
+          setTestPayloadKey(currentTestKey);
+          autoTestRan = true;
+        }
+        if (!result.success) {
+          setErrorData({ title: "Connection failed", list: [result.message] });
+          return;
+        }
+        if (autoTestRan) {
+          setSuccessData({ title: result.message || "Connection verified." });
+        }
+      }
       if (editingConnector) {
         await updateMutation.mutateAsync({ id: editingConnector.id, payload });
+        setSuccessData({ title: `Connector "${payload.name}" updated.` });
       } else {
         await createMutation.mutateAsync(payload as any);
+        setSuccessData({ title: `Connector "${payload.name}" created.` });
       }
+      await refetch();
       setShowModal(false);
       resetForm();
     } catch (err: any) {
-      console.error("Save failed:", err);
+      setErrorData({
+        title: editingConnector ? "Failed to update connector" : "Failed to create connector",
+        list: [getErrorMessage(err, "Save request failed")],
+      });
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
+      const connectorName =
+        connectors?.find((connector) => connector.id === id)?.name || "Connector";
       await deleteMutation.mutateAsync(id);
+      await refetch();
       setDeleteConfirm(null);
+      setSuccessData({ title: `${connectorName} deleted.` });
     } catch (err: any) {
-      console.error("Delete failed:", err);
+      setErrorData({
+        title: "Failed to delete connector",
+        list: [getErrorMessage(err, "Delete request failed")],
+      });
     }
   };
 
@@ -510,8 +624,16 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     try {
       const result = await testMutation.mutateAsync(connectorId);
       setTestResult(result);
+      await refetch();
+      if (result.success) {
+        setSuccessData({ title: result.message || "Connection verified." });
+      } else {
+        setErrorData({ title: "Connection failed", list: [result.message] });
+      }
     } catch (err: any) {
-      setTestResult({ success: false, message: "Test request failed" });
+      const detail = getErrorMessage(err, "Test request failed");
+      setTestResult({ success: false, message: detail });
+      setErrorData({ title: "Connection test failed", list: [detail] });
     }
   };
 
@@ -573,8 +695,17 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
       const result = await testDraftMutation.mutateAsync(payload);
       setTestResult(result);
+      setTestPayloadKey(JSON.stringify(payload));
+      if (result.success) {
+        setSuccessData({ title: result.message || "Connection verified." });
+      } else {
+        setErrorData({ title: "Connection failed", list: [result.message] });
+      }
     } catch (err: any) {
-      setTestResult({ success: false, message: err?.response?.data?.detail || "Test request failed" });
+      const detail = getErrorMessage(err, "Test request failed");
+      setTestResult({ success: false, message: detail });
+      setTestPayloadKey(null);
+      setErrorData({ title: "Connection test failed", list: [detail] });
     }
   };
 
@@ -582,11 +713,21 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     try {
       if (connector.status === "connected") {
         await disconnectMutation.mutateAsync(connector.id);
+        setSuccessData({ title: `Connector "${connector.name}" disconnected.` });
       } else {
-        await testMutation.mutateAsync(connector.id);
+        const result = await testMutation.mutateAsync(connector.id);
+        if (result.success) {
+          setSuccessData({ title: result.message || `Connector "${connector.name}" connected.` });
+        } else {
+          setErrorData({ title: "Connection failed", list: [result.message] });
+        }
       }
+      await refetch();
     } catch (err: any) {
-      console.error("Toggle connection failed:", err);
+      setErrorData({
+        title: "Connector action failed",
+        list: [getErrorMessage(err, "Unable to update connector status")],
+      });
     }
   };
 
@@ -598,10 +739,13 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       const { authorize_url } = res.data;
       if (authorize_url) {
         window.location.href = authorize_url;
+        return;
       }
+      throw new Error("OAuth authorization URL was not returned.");
     } catch (err: any) {
-      console.error("Link mailbox failed:", err);
-      setTestResult({ success: false, message: err?.response?.data?.detail || "Failed to start OAuth flow" });
+      const detail = getErrorMessage(err, "Failed to start OAuth flow");
+      setTestResult({ success: false, message: detail });
+      setErrorData({ title: "Mailbox linking failed", list: [detail] });
       setLinkingMailbox(false);
     }
   };
@@ -682,13 +826,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   const getConnectorVisibilityLabel = (c: ConnectorInfo): string => {
     if (c.visibility === "private") return "Private";
     if (c.public_scope === "organization") {
-      const org = visibilityOptions.organizations.find((o) => o.id === c.org_id);
-      return `Organization: ${org?.name || c.org_id || "Unknown"}`;
+      return "Organization";
     }
     if (c.public_scope === "department") {
-      const deptId = c.dept_id || c.public_dept_ids?.[0];
-      const dept = visibilityOptions.departments.find((d) => d.id === deptId);
-      return `Department: ${dept?.name || deptId || "Unknown"}`;
+      return "Department";
     }
     return "Private";
   };
@@ -775,6 +916,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     {[
                       "Connector Name",
                       "Provider",
+                      ...(isDepartmentAdmin ? ["Created By"] : []),
+                      ...(isSuperAdmin ? ["Department Scope"] : []),
                       "Host / Container / Site",
                       "Database",
                       "Schema",
@@ -796,7 +939,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   {filteredConnectors.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={7 + (canSeeVisibilityColumn ? 1 : 0) + (canAddConnector ? 1 : 0)}
+                        colSpan={7 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canSeeVisibilityColumn ? 1 : 0) + (canAddConnector ? 1 : 0)}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         <div className="flex flex-col items-center gap-3">
@@ -836,6 +979,23 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             {PROVIDER_LABELS[c.provider] || c.provider}
                           </span>
                         </td>
+                        {isDepartmentAdmin && (
+                          <td className="px-6 py-4 text-sm text-muted-foreground">
+                            <div
+                              className="max-w-[170px] truncate"
+                              title={c.created_by || "-"}
+                            >
+                              {c.created_by || "-"}
+                            </div>
+                          </td>
+                        )}
+                        {isSuperAdmin && (
+                          <td className="px-6 py-4">
+                            <span className="text-sm text-muted-foreground">
+                              {getDepartmentScopeLabel(c)}
+                            </span>
+                          </td>
+                        )}
                         <td className="px-6 py-4">
                           <span className="text-sm font-mono">
                             {getConnectorTarget(c)}
@@ -851,7 +1011,11 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                         </td>
                         {canSeeVisibilityColumn && (
                           <td className="px-6 py-4">
-                            <span className="text-sm">{getConnectorVisibilityLabel(c)}</span>
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(c)}`}
+                            >
+                              {getConnectorVisibilityLabel(c)}
+                            </span>
                           </td>
                         )}
                         <td className="px-6 py-4">
@@ -995,33 +1159,31 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 />
               </div>
 
-              <div>
-                <label className="mb-1.5 block text-sm font-medium">Visibility</label>
-                <select
-                  value={form.visibility}
-                  onChange={(e) => setForm({ ...form, visibility: e.target.value as "private" | "public" })}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="private">Private</option>
-                  <option value="public">Public</option>
-                </select>
-              </div>
+              <div className="rounded-lg border border-border p-4">
+                <div className="mb-4">
+                  <label className="mb-1.5 block text-sm font-medium">Tenancy</label>
+                  <p className="text-xs text-muted-foreground">
+                    Connectors use direct tenancy only. No approval flow applies here.
+                  </p>
+                </div>
 
-              {form.visibility === "public" && (
-                <>
+                <div className="space-y-4">
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium">Public To</label>
+                    <label className="mb-1.5 block text-sm font-medium">Visibility Scope</label>
                     <select
-                      value={form.public_scope}
-                      onChange={(e) => setForm({ ...form, public_scope: e.target.value as "organization" | "department" })}
+                      value={visibilityScope}
+                      onChange={(e) =>
+                        setVisibilityScope(e.target.value as "private" | "department" | "organization")
+                      }
                       className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                     >
-                      <option value="organization">Organization</option>
+                      <option value="private">Private</option>
                       <option value="department">Department</option>
+                      <option value="organization">Organization</option>
                     </select>
                   </div>
 
-                  {form.public_scope === "organization" && (
+                  {visibilityScope === "organization" && (
                     <div>
                       <label className="mb-1.5 block text-sm font-medium">Organization</label>
                       <select
@@ -1030,6 +1192,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                         disabled={role === "developer" || role === "department_admin"}
                         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-80"
                       >
+                        <option value="">Select organization</option>
                         {visibilityOptions.organizations.map((org) => (
                           <option key={org.id} value={org.id}>
                             {org.name}
@@ -1039,16 +1202,19 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     </div>
                   )}
 
-                  {form.public_scope === "department" && (
-                    <div>
-                      {(role === "super_admin" || role === "root") && (
-                        <div className="mb-3">
+                  {visibilityScope === "department" && (
+                    <>
+                      {canMultiDept && (
+                        <div>
                           <label className="mb-1.5 block text-sm font-medium">Organization</label>
                           <select
                             value={form.org_id}
-                            onChange={(e) => setForm({ ...form, org_id: e.target.value, public_dept_ids: [] })}
+                            onChange={(e) =>
+                              setForm({ ...form, org_id: e.target.value, public_dept_ids: [] })
+                            }
                             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                           >
+                            <option value="">Select organization</option>
                             {visibilityOptions.organizations.map((org) => (
                               <option key={org.id} value={org.id}>
                                 {org.name}
@@ -1057,67 +1223,62 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                           </select>
                         </div>
                       )}
-                      <label className="mb-1.5 block text-sm font-medium">Department{role === "super_admin" || role === "root" ? "s" : ""}</label>
-                      {role === "super_admin" || role === "root" ? (
-                        <select
-                          multiple
-                          value={form.public_dept_ids}
-                          onChange={(e) =>
-                            setForm({
-                              ...form,
-                              public_dept_ids: Array.from(e.target.selectedOptions).map((o) => o.value),
-                            })
-                          }
-                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                          {departmentsForSelectedOrg.map((dept) => (
-                            <option key={dept.id} value={dept.id}>
-                              {dept.name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <select
-                          value={form.dept_id}
-                          disabled
-                          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm opacity-80"
-                        >
-                          {visibilityOptions.departments.map((dept) => (
-                            <option key={dept.id} value={dept.id}>
-                              {dept.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
 
-              {form.visibility === "private" && role === "department_admin" && (
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">
-                    Additional Users (optional, same department)
-                  </label>
-                  <select
-                    multiple
-                    value={form.shared_user_emails}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        shared_user_emails: Array.from(e.target.selectedOptions).map((o) => o.value),
-                      })
-                    }
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    {visibilityOptions.private_share_users.map((u) => (
-                      <option key={u.id} value={u.email}>
-                        {u.email}
-                      </option>
-                    ))}
-                  </select>
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium">
+                          Department{canMultiDept ? "s" : ""}
+                        </label>
+                        {canMultiDept ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="w-full justify-between font-normal"
+                              >
+                                <span className="truncate text-left">{selectedDeptLabel}</span>
+                                <ChevronDown className="ml-2 h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="max-h-64 w-[340px] overflow-auto">
+                              {departmentsForSelectedOrg.map((dept) => (
+                                <DropdownMenuCheckboxItem
+                                  key={dept.id}
+                                  checked={form.public_dept_ids.includes(dept.id)}
+                                  onSelect={(event) => event.preventDefault()}
+                                  onCheckedChange={(checked) => {
+                                    setForm((prev) => ({
+                                      ...prev,
+                                      public_dept_ids: checked
+                                        ? Array.from(new Set([...prev.public_dept_ids, dept.id]))
+                                        : prev.public_dept_ids.filter((id) => id !== dept.id),
+                                    }));
+                                  }}
+                                >
+                                  {dept.name}
+                                </DropdownMenuCheckboxItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : (
+                          <select
+                            value={form.dept_id}
+                            disabled
+                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm opacity-80"
+                          >
+                            <option value="">Select department</option>
+                            {visibilityOptions.departments.map((dept) => (
+                              <option key={dept.id} value={dept.id}>
+                                {dept.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
-              )}
+              </div>
 
               {/* Provider */}
               <div>

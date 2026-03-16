@@ -270,10 +270,12 @@ export default function RequestModelModal({
       const currentTestKey = buildTestKey();
       let connectionResult =
         testResult && testPayloadKey === currentTestKey ? testResult : null;
+      let autoTestRan = false;
       if (!connectionResult) {
         connectionResult = await testMutation.mutateAsync(buildTestPayload());
         setTestResult(connectionResult);
         setTestPayloadKey(currentTestKey);
+        autoTestRan = true;
       }
       if (!connectionResult.success) {
         const message = connectionResult.message || "Connection test failed.";
@@ -282,6 +284,11 @@ export default function RequestModelModal({
           list: [message],
         });
         return;
+      }
+      if (autoTestRan) {
+        setSuccessData({
+          title: `Connection successful${connectionResult.latency_ms ? ` (${connectionResult.latency_ms}ms)` : ""}`,
+        });
       }
 
       await createMutation.mutateAsync({
