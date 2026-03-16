@@ -1,103 +1,117 @@
 import {
   Search,
   Activity,
+  ArrowRight,
+  CheckCircle,
+  Clock,
+  XCircle,
+  Database,
+  Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Loading from "@/components/ui/loading";
-import { useGetVectorDBCatalogue } from "@/controllers/API/queries/vector-db/use-get-vector-db-catalogue";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  useGetVectorDBCatalogue,
+  type VectorDBInfo,
+} from "@/controllers/API/queries/vector-db/use-get-vector-db-catalogue";
+import { useDeleteVectorDBCatalogue } from "@/controllers/API/queries/vector-db/use-delete-vector-db-catalogue";
 import { getProviderIcon } from "@/utils/logo_provider";
 
-interface VectorDBType {
-  id: string;
-  name: string;
-  description: string;
-  provider: string;
-  deployment: "SaaS" | "Self-hosted" | "Hybrid";
-  dimensions: string;
-  indexType: string;
-  status: "connected" | "disconnected" | "configuring";
-  vectorCount: string;
-  isCustom: boolean;
-}
+type EnvFilter = "all" | "uat" | "prod";
 
-interface VectorDBViewProps {
-  vectorDBs?: VectorDBType[];
-  setSearch?: (search: string) => void;
-  onEditVectorDB?: (vectorDB: VectorDBType) => void;
-  onDeleteVectorDB?: (vectorDB: VectorDBType) => void;
-  onConfigureVectorDB?: (vectorDB: VectorDBType) => void;
-}
+const ENV_LABELS: Record<string, string> = {
+  all: "All Envs",
+  uat: "UAT",
+  prod: "PROD",
+};
 
-type DeploymentType = "all" | "saas" | "self-hosted" | "hybrid";
+const ENV_BADGE_CLASSES: Record<string, string> = {
+  uat: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  prod: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+};
 
-export default function VectorDBView({
-  vectorDBs = [],
-  setSearch = () => {},
-  onEditVectorDB,
-  onDeleteVectorDB,
-  onConfigureVectorDB,
-}: VectorDBViewProps): JSX.Element {
+const MIGRATION_BADGE: Record<string, { cls: string; icon: typeof CheckCircle }> = {
+  completed: { cls: "text-green-600", icon: CheckCircle },
+  pending: { cls: "text-yellow-600", icon: Clock },
+  failed: { cls: "text-red-600", icon: XCircle },
+};
+
+export default function VectorDBView(): JSX.Element {
   const { t } = useTranslation();
-  const [filter, setFilter] = useState<DeploymentType>("all");
+  const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Always fetch all entries so stats reflect the full picture
   const {
     data: dbVectorDBs,
     isLoading,
     error,
-  } = useGetVectorDBCatalogue();
+  } = useGetVectorDBCatalogue({ environment: "all" });
 
+  const deleteMutation = useDeleteVectorDBCatalogue();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const getProviderLogo = (provider: string) => {
-      const iconSrc = getProviderIcon(provider);
-      return (
-        <img 
-          src={iconSrc} 
-          alt={`${provider} icon`} 
-          className="h-4 w-4 object-contain"
-        />
-      );
+  const handleDelete = (db: VectorDBInfo) => {
+    if (!window.confirm(`Delete "${db.name}" from the catalogue?`)) return;
+    setDeletingId(db.id);
+    deleteMutation.mutate(
+      { id: db.id },
+      { onSettled: () => setDeletingId(null) },
+    );
+  };
+
+  const displayVectorDBs: VectorDBInfo[] = dbVectorDBs ?? [];
+
+  /* ---------------------------------- Stats ---------------------------------- */
+
+  const stats = useMemo(() => {
+    const all = dbVectorDBs ?? [];
+    return {
+      total: all.length,
+      uat: all.filter((d) => d.environment === "uat").length,
+      prod: all.filter((d) => d.environment === "prod").length,
+      migrated: all.filter((d) => d.migrationStatus === "completed").length,
     };
-
-  const displayVectorDBs = vectorDBs?.length ? vectorDBs : (dbVectorDBs ?? []);
+  }, [dbVectorDBs]);
 
   /* ---------------------------------- Filtering ---------------------------------- */
 
   const filteredVectorDBs = displayVectorDBs.filter((db) => {
-    const matchesFilter =
-      filter === "all" ||
-      db.deployment.toLowerCase().replace("-", "") === filter.replace("-", "");
+    const matchesEnv =
+      envFilter === "all" || db.environment === envFilter;
+    if (!matchesEnv) return false;
+
     const matchesSearch =
       !searchQuery ||
       db.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       db.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      db.provider.toLowerCase().includes(searchQuery.toLowerCase());
+      db.provider.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      db.indexName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      db.namespace?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      db.agentName?.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return matchesFilter && matchesSearch;
+    return matchesSearch;
   });
-
-  /* ---------------------------------- Debounced Search ---------------------------------- */
-
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchQuery), 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery, setSearch]);
 
   /* ---------------------------------- Helpers ---------------------------------- */
 
-
-
-  const getDeploymentBadgeColor = (deployment: string) => {
-    const colors: Record<string, string> = {
-      SaaS: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-      "Self-hosted":
-        "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-      Hybrid:
-        "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
-    };
+  const getProviderLogo = (provider: string) => {
+    const iconSrc = getProviderIcon(provider);
     return (
-      colors[deployment] ||
-      "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400"
+      <img
+        src={iconSrc}
+        alt={`${provider} icon`}
+        className="h-4 w-4 object-contain"
+      />
     );
   };
 
@@ -106,6 +120,7 @@ export default function VectorDBView({
       connected: "bg-green-500",
       disconnected: "bg-red-500",
       configuring: "bg-yellow-500",
+      error: "bg-red-500",
     };
     return colors[status] || "bg-gray-400";
   };
@@ -115,6 +130,7 @@ export default function VectorDBView({
       connected: "Connected",
       disconnected: "Disconnected",
       configuring: "Configuring",
+      error: "Error",
     };
     return t(labels[status] || status);
   };
@@ -123,15 +139,14 @@ export default function VectorDBView({
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* Header - Fixed */}
+      {/* Header */}
       <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            
-            <h1 className="text-2xl font-semibold">{t("Vector Database Catalogue")}</h1>
+            <h1 className="text-2xl font-semibold">{t("Vector Store Observatory")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("Manage and configure vector database connections")}
+            {t("View Pinecone namespaces across UAT and PROD environments")}
           </p>
         </div>
 
@@ -139,18 +154,76 @@ export default function VectorDBView({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder={t("Search vector databases...")}
+              placeholder={t("Search by name, index, namespace, agent...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-80 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
         </div>
       </div>
 
-     
+      {/* Stats Cards */}
+      <div className="flex-shrink-0 border-b px-8 py-4">
+        <div className="grid grid-cols-4 gap-4">
+          <div className="rounded-lg border bg-card p-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Database className="h-4 w-4" />
+              {t("Total Namespaces")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold">{stats.total}</div>
+          </div>
+          <div className="rounded-lg border bg-card p-4">
+            <div className="flex items-center gap-2 text-sm text-blue-600">
+              <Activity className="h-4 w-4" />
+              {t("UAT Active")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold">{stats.uat}</div>
+          </div>
+          <div className="rounded-lg border bg-card p-4">
+            <div className="flex items-center gap-2 text-sm text-green-600">
+              <CheckCircle className="h-4 w-4" />
+              {t("PROD Active")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold">{stats.prod}</div>
+          </div>
+          <div className="rounded-lg border bg-card p-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <ArrowRight className="h-4 w-4" />
+              {t("Promoted to PROD")}
+            </div>
+            <div className="mt-1 text-2xl font-semibold">{stats.migrated}</div>
+          </div>
+        </div>
+      </div>
 
-      {/* Table - Scrollable */}
+      {/* Filters */}
+      <div className="flex-shrink-0 border-b px-8 py-4">
+        <div className="flex items-end gap-4">
+          <div className="min-w-[200px]">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              {t("Environment")}
+            </p>
+            <Select
+              value={envFilter}
+              onValueChange={(value) => setEnvFilter(value as EnvFilter)}
+            >
+              <SelectTrigger className="w-full bg-card">
+                <SelectValue placeholder={t("All Envs")} />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(ENV_LABELS) as EnvFilter[]).map((env) => (
+                  <SelectItem key={env} value={env}>
+                    {t(ENV_LABELS[env])}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
       <div className="flex-1 overflow-auto p-8">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
@@ -168,19 +241,20 @@ export default function VectorDBView({
                 <thead className="bg-muted/50">
                   <tr className="border-b border-border">
                     {[
-                      "Database Name",
-                      "Provider",
-                      "Deployment",
-                      "Dimensions",
-                      "Index Type",
+                      "Name",
+                      "Environment",
+                      "Index / Namespace",
+                      "Agent",
                       "Status",
                       "Vectors",
-                    ].map((h) => (
+                      "Migration",
+                      "",
+                    ].map((h, i) => (
                       <th
-                        key={h}
+                        key={h || `col-${i}`}
                         className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                       >
-                        {t(h)}
+                        {h ? t(h) : ""}
                       </th>
                     ))}
                   </tr>
@@ -190,86 +264,136 @@ export default function VectorDBView({
                   {filteredVectorDBs.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={8}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
-                        {t("No vector databases found matching your criteria")}
+                        {displayVectorDBs.length === 0
+                          ? t("No namespaces tracked yet. Entries appear automatically when agents with Pinecone are deployed or promoted to PROD.")
+                          : t("No entries match your current filters.")}
                       </td>
                     </tr>
                   ) : (
-                    filteredVectorDBs.map((db) => (
-                      <tr key={db.id} className="group hover:bg-muted/50">
-                        {/* Database Name */}
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="font-semibold">{db.name}</div>
-                            {db.isCustom && (
-                              <span className="inline-flex rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                                {t("Custom")}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {db.description}
-                          </div>
-                        </td>
+                    filteredVectorDBs.map((db) => {
+                      const migBadge = MIGRATION_BADGE[db.migrationStatus] ?? null;
+                      const MigIcon = migBadge?.icon;
 
-                        {/* Provider */}
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="flex h-8 w-8 items-center justify-center rounded border">
-                              {getProviderLogo(db.provider)}
+                      return (
+                        <tr key={db.id} className="group hover:bg-muted/50">
+                          {/* Name */}
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <div className="flex h-8 w-8 items-center justify-center rounded border">
+                                {getProviderLogo(db.provider)}
+                              </div>
+                              <div>
+                                <div className="font-semibold">{db.name}</div>
+                                {db.description && (
+                                  <div className="mt-0.5 max-w-[220px] truncate text-xs text-muted-foreground">
+                                    {db.description}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <span className="text-sm">{t(db.provider)}</span>
-                          </div>
-                        </td>
+                          </td>
 
-                        {/* Deployment */}
-                        <td className="px-6 py-4">
-                          <span
-                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getDeploymentBadgeColor(db.deployment)}`}
-                          >
-                            {t(db.deployment)}
-                          </span>
-                        </td>
-
-                        {/* Dimensions */}
-                        <td className="px-6 py-4">
-                          <span className="text-sm text-muted-foreground">
-                            {db.dimensions}
-                          </span>
-                        </td>
-
-                        {/* Index Type */}
-                        <td className="px-6 py-4">
-                          <span className="text-sm font-mono text-muted-foreground">
-                            {db.indexType}
-                          </span>
-                        </td>
-
-                        {/* Status */}
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
+                          {/* Environment */}
+                          <td className="px-6 py-4">
                             <span
-                              className={`h-2 w-2 rounded-full ${getStatusColor(db.status)}`}
-                            ></span>
-                            <span className="text-sm">
-                              {getStatusLabel(db.status)}
+                              className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium uppercase ${
+                                ENV_BADGE_CLASSES[db.environment] ??
+                                "bg-gray-100 text-gray-700"
+                              }`}
+                            >
+                              {t(ENV_LABELS[db.environment] ?? db.environment)}
                             </span>
-                          </div>
-                        </td>
+                          </td>
 
-                        {/* Vector Count */}
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-1">
-                            <Activity className="h-3 w-3 text-muted-foreground" />
-                            <span className="text-sm font-medium">
-                              {db.vectorCount}
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                          {/* Index / Namespace */}
+                          <td className="px-6 py-4">
+                            {db.indexName ? (
+                              <div>
+                                <div className="font-mono text-sm">{db.indexName}</div>
+                                <div className="mt-0.5 font-mono text-xs text-muted-foreground">
+                                  ns: {db.namespace || "(default)"}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">—</span>
+                            )}
+                          </td>
+
+                          {/* Agent */}
+                          <td className="px-6 py-4">
+                            {db.agentName ? (
+                              <div className="max-w-[150px] truncate text-sm" title={db.agentName}>
+                                {db.agentName}
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">—</span>
+                            )}
+                          </td>
+
+                          {/* Status */}
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`h-2 w-2 rounded-full ${getStatusColor(db.status)}`}
+                              ></span>
+                              <span className="text-sm">
+                                {getStatusLabel(db.status)}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Vectors */}
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-1">
+                              <Activity className="h-3 w-3 text-muted-foreground" />
+                              <span className="text-sm font-medium">
+                                {db.environment === "prod" && db.vectorsCopied > 0
+                                  ? db.vectorsCopied.toLocaleString()
+                                  : db.vectorCount}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Migration */}
+                          <td className="px-6 py-4">
+                            {db.environment === "prod" && migBadge && MigIcon ? (
+                              <div>
+                                <span className={`inline-flex items-center gap-1 text-xs font-medium ${migBadge.cls}`}>
+                                  <MigIcon className="h-3.5 w-3.5" />
+                                  {t(db.migrationStatus.charAt(0).toUpperCase() + db.migrationStatus.slice(1))}
+                                </span>
+                                {db.migratedAt && (
+                                  <div className="mt-0.5 text-[10px] text-muted-foreground">
+                                    {new Date(db.migratedAt).toLocaleDateString()}
+                                  </div>
+                                )}
+                              </div>
+                            ) : db.environment === "uat" ? (
+                              <span className="text-xs text-muted-foreground">{t("Source")}</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+
+                          {/* Delete */}
+                          <td className="px-4 py-4">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                              disabled={deletingId === db.id}
+                              onClick={() => handleDelete(db)}
+                              title={t("Delete entry")}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

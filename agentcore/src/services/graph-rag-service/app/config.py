@@ -78,6 +78,16 @@ class Settings(BaseSettings):
     ingest_batch_size: int = 100
     embed_batch_size: int = 200
 
+    # Azure Key Vault
+    key_vault_url: str | None = None
+    key_vault_secret_prefix: str = "agentcore-graph-rag"
+    key_vault_tenant_id: str | None = None
+    key_vault_client_id: str | None = None
+    key_vault_client_secret: str | None = None
+    key_vault_api_key_secret_name: str | None = None
+    key_vault_neo4j_password_secret_name: str | None = None
+    key_vault_database_url_secret_name: str | None = None
+
     model_config = SettingsConfigDict(
         env_prefix="GRAPH_RAG_SERVICE_",
         env_file=".env",

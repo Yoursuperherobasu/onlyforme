@@ -1,10 +1,3 @@
-"""
-Pinecone Vector Store Component
-
-Delegates all Pinecone SDK operations to the pinecone-service microservice.
-Embedding generation stays local (via the connected Embedding component).
-"""
-
 import time
 
 import numpy as np
@@ -22,7 +15,6 @@ from agentcore.services.pinecone_service_client import (
 )
 
 
-# ═══════════════════════════════════════════════════════════════
 
 class PineconeVectorStoreNode(LCVectorStoreNode):
     display_name = "Pinecone"
@@ -54,10 +46,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         IntInput(name="number_of_results", display_name="Number of Results", value=4, advanced=True),
     ]
 
-    # ══════════════════════════════════════════════════════════
-    #  HELPERS
-    # ══════════════════════════════════════════════════════════
-
     def _get_alpha(self) -> float:
         try:
             return float(self.hybrid_alpha)
@@ -78,10 +66,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             return (query.get("text", "") or "").strip()
         return str(query).strip()
 
-    # ══════════════════════════════════════════════════════════
-    #  AUTO-CREATE INDEX via microservice
-    # ══════════════════════════════════════════════════════════
-
     def _ensure_index_exists(self):
         if not self.auto_create_index:
             logger.info(f"[Pinecone] Auto-create disabled, assuming index '{self.index_name}' exists")
@@ -98,20 +82,10 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         else:
             logger.info(f"[Pinecone] Index '{self.index_name}' already exists")
 
-    # ══════════════════════════════════════════════════════════
-    #  EMBEDDING MODEL (stays local — from connected component)
-    # ══════════════════════════════════════════════════════════
-
     def _get_embedding_model(self):
         emb = self.embedding
-        if hasattr(emb, "build_embeddings"):
-            model = emb.build_embeddings()
-            if model is not None:
-                return model
-        if hasattr(emb, "build"):
-            model = emb.build()
-            if model and hasattr(model, "embed_documents"):
-                return model
+        # The flow engine already calls build_embeddings() on the Embedding component
+        # and passes the result here, so self.embedding is already an Embeddings object.
         if hasattr(emb, "embed_documents") and hasattr(emb, "embed_query"):
             return emb
         raise ValueError(
@@ -119,9 +93,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             "that implements embed_documents() and embed_query()."
         )
 
-    # ══════════════════════════════════════════════════════════
-    #  INGESTION via microservice
-    # ══════════════════════════════════════════════════════════
 
     def _ingest_documents(self, documents, embedder):
         texts = [doc.page_content for doc in documents]
@@ -176,9 +147,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             return 0
         return self._ingest_documents(documents, wrapped_embeddings)
 
-    # ══════════════════════════════════════════════════════════
-    #  BUILD VECTOR STORE
-    # ══════════════════════════════════════════════════════════
 
     @check_cached_vector_store
     def build_vector_store(self) -> VectorStore:
@@ -206,10 +174,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             embedding=wrapped,
             component=self,
         )
-
-    # ══════════════════════════════════════════════════════════
-    #  SEARCH via microservice
-    # ══════════════════════════════════════════════════════════
 
     def search_documents(self) -> list[Data]:
         query = self._resolve_search_query()
@@ -276,7 +240,6 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         return data
 
 
-# ═══════════════════════════════════════════════════════════════
 
 class Float32Embeddings:
     """Wrapper that ensures float32 output."""

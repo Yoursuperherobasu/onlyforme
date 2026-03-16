@@ -13,6 +13,8 @@ from app.schemas import (
     CommunityDetectRequest,
     CommunityDetectResponse,
     CommunityItem,
+    CopyGraphKbRequest,
+    CopyGraphKbResponse,
     EmbedEntitiesRequest,
     EmbedEntitiesResponse,
     EnsureVectorIndexRequest,
@@ -43,12 +45,8 @@ logger = logging.getLogger(__name__)
 _driver = None
 
 
-def get_driver():
-    """Return the singleton Neo4j driver, creating it on first call."""
-    global _driver
-    if _driver is not None:
-        return _driver
-
+def _create_driver():
+    """Create a fresh Neo4j driver instance."""
     from neo4j import GraphDatabase
 
     settings = get_settings()
@@ -56,13 +54,47 @@ def get_driver():
         raise ValueError(
             "Neo4j URI is required. Set NEO4J_URI or GRAPH_RAG_SERVICE_NEO4J_URI in .env."
         )
+    if not settings.neo4j_password:
+        raise ValueError(
+            "Neo4j password is empty. Ensure it is set via Key Vault, "
+            "NEO4J_PASSWORD env var, or GRAPH_RAG_SERVICE_NEO4J_PASSWORD in .env."
+        )
 
-    _driver = GraphDatabase.driver(
+    logger.info(
+        "Connecting to Neo4j at %s (user=%s, db=%s)...",
+        settings.neo4j_uri, settings.neo4j_username, settings.neo4j_database,
+    )
+    driver = GraphDatabase.driver(
         settings.neo4j_uri,
         auth=(settings.neo4j_username, settings.neo4j_password),
+        connection_timeout=15,
+        max_transaction_retry_time=30,
     )
-    _driver.verify_connectivity()
+    driver.verify_connectivity()
     logger.info("Neo4j driver connected to %s", settings.neo4j_uri)
+    return driver
+
+
+def get_driver():
+    """Return the singleton Neo4j driver, reconnecting if the connection is stale."""
+    global _driver
+    if _driver is not None:
+        try:
+            _driver.verify_connectivity()
+            return _driver
+        except Exception as e:
+            logger.warning("Neo4j connection stale, reconnecting: %s", e)
+            try:
+                _driver.close()
+            except Exception:
+                pass
+            _driver = None
+
+    try:
+        _driver = _create_driver()
+    except Exception as e:
+        logger.error("Neo4j connection failed: %s", e)
+        raise ValueError(f"Cannot connect to Neo4j at {get_settings().neo4j_uri}: {e}") from e
     return _driver
 
 
@@ -335,6 +367,13 @@ def ingest_entities(req: IngestRequest) -> IngestResponse:
     if not entity_rows:
         return IngestResponse(entities_created=0, relationships_created=0, graph_kb_id=graph_kb_id)
 
+    total_entities = len(entity_rows)
+    total_rels = len(relationship_rows)
+    logger.info(
+        "[INGEST] Starting: %d entities, %d relationships (kb=%s, batch_size=%d)",
+        total_entities, total_rels, graph_kb_id, batch_size,
+    )
+
     entities_created = 0
     for i in range(0, len(entity_rows), batch_size):
         batch = entity_rows[i : i + batch_size]
@@ -358,6 +397,7 @@ def ingest_entities(req: IngestRequest) -> IngestResponse:
                 rows=batch,
             )
             entities_created += len(batch)
+            logger.info("[INGEST] Entities: %d/%d", entities_created, total_entities)
 
             chunk_links = [r for r in batch if r.get("source_chunk_id")]
             if chunk_links:
@@ -394,7 +434,9 @@ def ingest_entities(req: IngestRequest) -> IngestResponse:
                     rows=batch,
                 )
                 rels_created += len(batch)
+                logger.info("[INGEST] Relationships: %d/%d", rels_created, total_rels)
 
+    logger.info("[INGEST] Done: %d entities, %d relationships (kb=%s)", entities_created, rels_created, graph_kb_id)
     return IngestResponse(
         entities_created=entities_created,
         relationships_created=rels_created,
@@ -874,3 +916,138 @@ def test_connection(req: TestConnectionRequest) -> TestConnectionResponse:
     except Exception as e:
         logger.warning("Neo4j test-connection failed: %s", e)
         return TestConnectionResponse(success=False, message=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Copy graph_kb (UAT → PROD migration)
+# ---------------------------------------------------------------------------
+
+
+def copy_graph_kb(req: CopyGraphKbRequest) -> CopyGraphKbResponse:
+    """Copy all entities, relationships, chunks, communities from one graph_kb_id to another.
+
+    Used during UAT → PROD promotion so PROD agents get an isolated copy of the graph data.
+    """
+    driver = get_driver()
+    db = _get_database()
+    src = req.source_graph_kb_id
+    tgt = req.target_graph_kb_id
+    batch_size = req.batch_size
+
+    logger.info("[COPY_GRAPH_KB_START] src=%s dst=%s batch=%d", src, tgt, batch_size)
+
+    # Step 1: Copy __Entity__ nodes in batches
+    entities_copied = 0
+    with driver.session(database=db) as session:
+        count_rec = session.run(
+            "MATCH (e:__Entity__ {graph_kb_id: $src}) RETURN count(e) AS cnt",
+            src=src,
+        ).single()
+        total_entities = count_rec["cnt"] if count_rec else 0
+
+    offset = 0
+    while offset < total_entities:
+        with driver.session(database=db) as session:
+            result = session.run(
+                """
+                MATCH (e:__Entity__ {graph_kb_id: $src})
+                WITH e ORDER BY e.name SKIP $offset LIMIT $batch_size
+                WITH collect(e) AS entities
+                UNWIND entities AS e
+                CREATE (n:__Entity__)
+                SET n = properties(e),
+                    n.graph_kb_id = $tgt,
+                    n.id = randomUUID(),
+                    n._source_name = e.name
+                RETURN count(n) AS copied
+                """,
+                src=src, tgt=tgt, offset=offset, batch_size=batch_size,
+            )
+            rec = result.single()
+            entities_copied += rec["copied"] if rec else 0
+        offset += batch_size
+
+    logger.info("[COPY_GRAPH_KB] Entities copied: %d", entities_copied)
+
+    # Step 2: Recreate RELATED_TO relationships between copied entities
+    rels_copied = 0
+    with driver.session(database=db) as session:
+        result = session.run(
+            """
+            MATCH (src_a:__Entity__ {graph_kb_id: $src})-[r:RELATED_TO]->(src_b:__Entity__ {graph_kb_id: $src})
+            WITH src_a.name AS a_name, src_b.name AS b_name, r
+            MATCH (tgt_a:__Entity__ {graph_kb_id: $tgt, name: a_name})
+            MATCH (tgt_b:__Entity__ {graph_kb_id: $tgt, name: b_name})
+            CREATE (tgt_a)-[nr:RELATED_TO]->(tgt_b)
+            SET nr.description = r.description,
+                nr.weight = r.weight
+            RETURN count(nr) AS copied
+            """,
+            src=src, tgt=tgt,
+        )
+        rec = result.single()
+        rels_copied = rec["copied"] if rec else 0
+
+    logger.info("[COPY_GRAPH_KB] Relationships copied: %d", rels_copied)
+
+    # Step 3: Copy __Chunk__ nodes and MENTIONS relationships
+    with driver.session(database=db) as session:
+        session.run(
+            """
+            MATCH (c:__Chunk__ {graph_kb_id: $src})-[:MENTIONS]->(src_e:__Entity__ {graph_kb_id: $src})
+            WITH c, src_e.name AS entity_name
+            MERGE (nc:__Chunk__ {id: c.id, graph_kb_id: $tgt})
+            ON CREATE SET nc.text = c.text
+            WITH nc, entity_name
+            MATCH (tgt_e:__Entity__ {graph_kb_id: $tgt, name: entity_name})
+            MERGE (nc)-[:MENTIONS]->(tgt_e)
+            """,
+            src=src, tgt=tgt,
+        )
+
+    # Step 4: Copy __Community__ nodes and HAS_MEMBER relationships
+    communities_copied = 0
+    with driver.session(database=db) as session:
+        result = session.run(
+            """
+            MATCH (c:__Community__ {graph_kb_id: $src})
+            OPTIONAL MATCH (c)-[:HAS_MEMBER]->(src_e:__Entity__ {graph_kb_id: $src})
+            WITH c, collect(src_e.name) AS member_names
+            CREATE (nc:__Community__)
+            SET nc = properties(c),
+                nc.graph_kb_id = $tgt
+            WITH nc, member_names
+            UNWIND member_names AS mname
+            MATCH (tgt_e:__Entity__ {graph_kb_id: $tgt, name: mname})
+            MERGE (nc)-[:HAS_MEMBER]->(tgt_e)
+            RETURN count(DISTINCT nc) AS copied
+            """,
+            src=src, tgt=tgt,
+        )
+        rec = result.single()
+        communities_copied = rec["copied"] if rec else 0
+
+    logger.info("[COPY_GRAPH_KB] Communities copied: %d", communities_copied)
+
+    # Clean up temporary _source_name property
+    with driver.session(database=db) as session:
+        session.run(
+            "MATCH (e:__Entity__ {graph_kb_id: $tgt}) REMOVE e._source_name",
+            tgt=tgt,
+        )
+
+    msg = (
+        f"Copied {entities_copied} entities, {rels_copied} relationships, "
+        f"{communities_copied} communities from '{src}' to '{tgt}'"
+    )
+    logger.info("[COPY_GRAPH_KB_DONE] %s", msg)
+
+    return CopyGraphKbResponse(
+        success=True,
+        entities_copied=entities_copied,
+        relationships_copied=rels_copied,
+        communities_copied=communities_copied,
+        source_graph_kb_id=src,
+        target_graph_kb_id=tgt,
+        message=msg,
+    )
