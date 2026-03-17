@@ -109,6 +109,14 @@ KPI_PRESETS = [
         "thresholds": {"green": 5, "yellow": 10},
     },
     {
+        "id": "avg_session_duration",
+        "name": "Avg Session Duration",
+        "section": "Experience",
+        "query": "avg(agentcore_session_duration_ms_milliseconds_sum / clamp_min(agentcore_session_duration_ms_milliseconds_count, 1))",
+        "unit": "ms",
+        "thresholds": {"green": 0, "yellow": 0},
+    },
+    {
         "id": "avg_response_time",
         "name": "Avg Response Time",
         "section": "Experience",
