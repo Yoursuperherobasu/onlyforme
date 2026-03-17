@@ -53,7 +53,9 @@ from agentcore.services.database.models.agent_deployment_uat.model import (
     DeploymentVisibilityEnum,
 )
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
+from agentcore.services.auth.utils import generate_agent_api_key
 from agentcore.services.database.models.agent_registry.model import RegistryDeploymentEnvEnum
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.database.models.agent_bundle.model import (
@@ -254,6 +256,7 @@ class PublishActionResponse(BaseModel):
     is_active: bool
     version_number: str
     promoted_from_uat_id: UUID | None = None
+    api_key: str | None = None
 
 
 class PublishNotifyRequest(BaseModel):
@@ -1978,6 +1981,23 @@ async def publish_agent(
             await session.commit()
             await session.refresh(new_record)
 
+            # ─── Auto-generate API key for this UAT deployment ──
+            plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+            api_key_record = AgentApiKey(
+                agent_id=agent_id,
+                deployment_id=new_record.id,
+                version=f"v{next_version}",
+                environment="uat",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                is_active=True,
+                created_by=current_user.id,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(api_key_record)
+            await session.commit()
+            logger.info(f"Generated API key (prefix={key_prefix}) for UAT deploy {new_record.id} v{next_version}")
+
             logger.info(
                 f"Deployed agent '{agent.name}' ({agent_id}) to UAT as v{next_version} "
                 f"by user {current_user.id} [dept={resolved_department_id}]"
@@ -2075,6 +2095,7 @@ async def publish_agent(
                 status=new_record.status.value,
                 is_active=True,
                 version_number=f"v{next_version}",
+                api_key=plaintext_key,
             )
 
         else:
@@ -2115,6 +2136,23 @@ async def publish_agent(
 
                 await session.commit()
                 await session.refresh(new_record)
+
+                # ─── Auto-generate API key for this PROD deployment ──
+                plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+                api_key_record = AgentApiKey(
+                    agent_id=agent_id,
+                    deployment_id=new_record.id,
+                    version=f"v{next_version}",
+                    environment="prod",
+                    key_hash=key_hash,
+                    key_prefix=key_prefix,
+                    is_active=True,
+                    created_by=current_user.id,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(api_key_record)
+                await session.commit()
+                logger.info(f"Generated API key (prefix={key_prefix}) for PROD deploy {new_record.id} v{next_version}")
 
                 logger.info(
                     f"Admin direct-deployed agent '{agent.name}' ({agent_id}) to PROD "
@@ -2214,6 +2252,7 @@ async def publish_agent(
                     is_active=True,
                     version_number=f"v{next_version}",
                     promoted_from_uat_id=promoted_from_uat_id,
+                    api_key=plaintext_key,
                 )
 
             else:

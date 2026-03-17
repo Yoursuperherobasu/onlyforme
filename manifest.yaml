@@ -34,3 +34,13 @@ deployments:
   version_number: v1
   environment: uat
   deployment_id: d7b6e27c-6a1c-40ca-91fb-08b17a4ce35a
+- agent_id: 6c61cf7a-2e7b-4a96-b1d3-19814249537f
+  agent_name: ttt
+  version_number: v1
+  environment: prod
+  deployment_id: 0c7a8d1a-742e-4aa5-b7ea-e3e4cdd0b645
+- agent_id: 62e3babf-7d46-47d2-b663-8ff56e70676d
+  agent_name: simi
+  version_number: v1
+  environment: uat
+  deployment_id: 4c8691b6-80d7-4758-a7f6-ba3582cdb2fa

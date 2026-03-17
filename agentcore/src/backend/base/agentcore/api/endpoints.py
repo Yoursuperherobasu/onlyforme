@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 import sqlalchemy as sa
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from loguru import logger
@@ -43,8 +43,9 @@ from agentcore.helpers.agent import get_agent_by_id_or_endpoint_name
 from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
 from agentcore.interface.initialize.loading import update_params_with_load_from_db_fields
 from agentcore.processing.process import process_tweaks, run_graph_internal
-from agentcore.services.auth.utils import api_key_security, get_current_active_user
+from agentcore.services.auth.utils import api_key_security, get_current_active_user, validate_agent_api_key, generate_agent_api_key
 from agentcore.services.database.models.agent.model import Agent, AgentRead
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.models.agent.utils import get_all_webhook_components_in_agent
 from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
 from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
@@ -71,6 +72,25 @@ class RunEnvironment(str, Enum):
     DEV = "dev"    # Read from `agent` table (draft / live editor version)
     UAT = "uat"    # Read from `agent_deployment_uat` table
     PROD = "prod"  # Read from `agent_deployment_prod` table
+
+
+_ENV_NUMERIC_MAP = {"0": RunEnvironment.DEV, "1": RunEnvironment.UAT, "2": RunEnvironment.PROD}
+
+
+def _parse_env(env_raw: str = Query(
+    alias="env",
+    description="Environment: dev/0 (draft), uat/1 (UAT deployment), prod/2 (PROD deployment)",
+)) -> RunEnvironment:
+    """Accept both string names (dev, uat, prod) and numeric codes (0, 1, 2)."""
+    if env_raw in _ENV_NUMERIC_MAP:
+        return _ENV_NUMERIC_MAP[env_raw]
+    try:
+        return RunEnvironment(env_raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid env '{env_raw}'. Use: dev/0, uat/1, prod/2",
+        )
 
 
 async def _resolve_agent_data_for_env(
@@ -150,6 +170,93 @@ async def _resolve_agent_data_for_env(
             )
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
         return record.agent_snapshot, record, None
+
+
+async def _enforce_agent_api_key(
+    agent_api_key: AgentApiKey | None,
+    agent_id: UUID,
+    env: RunEnvironment,
+    deployment_id: UUID | None = None,
+    version: str | None = None,
+) -> str | None:
+    """Enforce API key auth for UAT/PROD environments.
+
+    Each deployment version has its own API key (shadow deployment support).
+    The caller still only passes `x-api-key` — we resolve deployment_id internally
+    from env+version and validate the key matches that specific deployment.
+
+    For dev: no API key required.
+    For uat/prod: API key required, scoped to the specific deployment.
+
+    Returns:
+        The auto-generated plaintext key if one was created, else None.
+    """
+    if env == RunEnvironment.DEV:
+        return None
+
+    if agent_api_key is not None:
+        # Key was provided and validated — check it matches this agent + env + deployment
+        if agent_api_key.agent_id != agent_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API key is not authorized for this agent",
+            )
+        if agent_api_key.environment != env.value:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"API key is not authorized for the '{env.value}' environment",
+            )
+        if deployment_id and agent_api_key.deployment_id != deployment_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API key is not authorized for this deployment version. "
+                       "Each version has its own API key.",
+            )
+        return None
+
+    # No API key provided — check if this deployment has a key
+    async with session_scope() as session:
+        from sqlmodel import select as sel
+        stmt = (
+            sel(AgentApiKey)
+            .where(AgentApiKey.agent_id == agent_id)
+            .where(AgentApiKey.environment == env.value)
+            .where(AgentApiKey.is_active == True)  # noqa: E712
+        )
+        if deployment_id:
+            stmt = stmt.where(AgentApiKey.deployment_id == deployment_id)
+        existing_key = (await session.exec(stmt)).first()
+
+    if existing_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key required. Pass it via the x-api-key header.",
+        )
+
+    # No key exists yet (legacy deployment) — auto-generate one
+    from datetime import datetime as dt, timezone as tz
+    plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+    async with session_scope() as session:
+        new_key = AgentApiKey(
+            agent_id=agent_id,
+            deployment_id=deployment_id or agent_id,
+            version=version or "v1",
+            environment=env.value,
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            is_active=True,
+            created_by=agent_id,  # system-generated
+            created_at=dt.now(tz.utc),
+        )
+        session.add(new_key)
+        await session.commit()
+    logger.warning(
+        f"[AUTO_API_KEY] Auto-generated API key (prefix={key_prefix}) for legacy "
+        f"deployment agent={agent_id} deploy={deployment_id} env={env.value}. "
+        f"Key returned in X-Generated-Api-Key header."
+    )
+    return plaintext_key
+
 
 @router.get("/all", dependencies=[Depends(get_current_active_user)])
 async def get_all():
@@ -399,14 +506,13 @@ async def run_agent_generator(
 @router.post("/run/{agent_id_or_name}", response_model=None, response_model_exclude_none=True)
 async def simplified_run_agent(
     *,
+    response: Response,
     background_tasks: BackgroundTasks,
     agent: Annotated[AgentRead | None, Depends(get_agent_by_id_or_endpoint_name)],
     input_request: SimplifiedAPIRequest | None = None,
     stream: bool = False,
-    # api_key_user: Annotated[UserRead, Depends(api_key_security)],  # Disabled for testing
-    env: RunEnvironment = Query(
-        description="Environment to run the agent from: dev (draft from agent table), uat (agent_deployment_uat), or prod (agent_deployment_prod)",
-    ),
+    agent_api_key: Annotated[AgentApiKey | None, Depends(validate_agent_api_key)] = None,
+    env: Annotated[RunEnvironment, Depends(_parse_env)] = RunEnvironment.DEV,
     version: str = Query(
         description="Version to run (e.g. 'v1', 'v2'). For env=dev this is ignored but still required.",
     ),
@@ -451,6 +557,7 @@ async def simplified_run_agent(
     input_request = input_request if input_request is not None else SimplifiedAPIRequest()
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
+
     # --- Resolve flow data from the correct environment / version ---
     logger.info(f"[RUN_AGENT] Resolving agent={agent.id} env={env.value} version={version}")
     agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
@@ -458,6 +565,17 @@ async def simplified_run_agent(
     )
     resolved_source = "PROD table" if prod_deployment else ("UAT table" if uat_deployment else "DEV (agent table)")
     logger.info(f"[RUN_AGENT] Resolved from: {resolved_source} | agent={agent.id}")
+
+    # --- Enforce API key auth for UAT/PROD (per-deployment/version) ---
+    deployment_id = (
+        prod_deployment.id if prod_deployment
+        else uat_deployment.id if uat_deployment
+        else None
+    )
+    auto_generated_key = await _enforce_agent_api_key(agent_api_key, agent.id, env, deployment_id, version)
+    if auto_generated_key:
+        response.headers["X-Generated-Api-Key"] = auto_generated_key
+
     start_time = time.perf_counter()
 
     if stream:
@@ -544,10 +662,10 @@ async def webhook_run_agent(
     agent: Annotated[Agent, Depends(get_agent_by_id_or_endpoint_name)],
     user: Annotated[User, Depends(get_user_by_agent_id_or_endpoint_name)],
     request: Request,
+    response: Response,
     background_tasks: BackgroundTasks,
-    env: RunEnvironment = Query(
-        description="Environment to run the agent from: dev (draft), uat, or prod",
-    ),
+    agent_api_key: Annotated[AgentApiKey | None, Depends(validate_agent_api_key)] = None,
+    env: Annotated[RunEnvironment, Depends(_parse_env)] = RunEnvironment.DEV,
     version: str = Query(
         description="Version to run (e.g. 'v1'). Ignored when env=dev.",
     ),
@@ -575,6 +693,16 @@ async def webhook_run_agent(
     agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
         agent_id=agent.id, env=env, version=version
     )
+
+    # --- Enforce API key auth for UAT/PROD (per-deployment/version) ---
+    deployment_id = (
+        prod_deployment.id if prod_deployment
+        else uat_deployment.id if uat_deployment
+        else None
+    )
+    auto_generated_key = await _enforce_agent_api_key(agent_api_key, agent.id, env, deployment_id, version)
+    if auto_generated_key:
+        response.headers["X-Generated-Api-Key"] = auto_generated_key
 
     try:
         try:

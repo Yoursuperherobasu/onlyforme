@@ -48,7 +48,9 @@ from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
+from agentcore.services.auth.utils import generate_agent_api_key
 
 router = APIRouter(prefix="/control-panel", tags=["Control Panel"])
 
@@ -192,6 +194,7 @@ class PromoteFromUATResponse(BaseModel):
     status: str
     is_active: bool
     version_number: str
+    api_key: str | None = None
 
 
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -1230,6 +1233,29 @@ async def promote_uat_to_prod(
         await session.commit()
         await session.refresh(new_record)
 
+        # ─── Auto-generate API key for admin direct PROD promotion ──
+        plaintext_key = None
+        if is_admin:
+            try:
+                pk, kh, kp = generate_agent_api_key()
+                api_key_record = AgentApiKey(
+                    agent_id=uat_dep.agent_id,
+                    deployment_id=new_record.id,
+                    version=f"v{next_version}",
+                    environment="prod",
+                    key_hash=kh,
+                    key_prefix=kp,
+                    is_active=True,
+                    created_by=current_user.id,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(api_key_record)
+                await session.commit()
+                plaintext_key = pk
+                logger.info(f"Generated API key (prefix={kp}) for PROD promote {new_record.id}")
+            except Exception as key_err:
+                logger.warning(f"API key generation failed for PROD promote {new_record.id}: {key_err}")
+
         guardrails_ready = True
         if is_admin:
             # Admin publish: no approval required — promote guardrails now.
@@ -1327,6 +1353,7 @@ async def promote_uat_to_prod(
             status=new_record.status.value if hasattr(new_record.status, "value") else str(new_record.status),
             is_active=new_record.is_active,
             version_number=f"v{next_version}",
+            api_key=plaintext_key,
         )
     except HTTPException:
         raise

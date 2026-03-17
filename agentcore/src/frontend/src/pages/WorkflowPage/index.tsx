@@ -30,6 +30,7 @@ import {
 } from "@/controllers/API/queries/control-panel";
 import CustomLoader from "@/customization/components/custom-loader";
 import EmbedModal from "@/modals/EmbedModal/embed-modal";
+import ExportApiModal from "@/modals/exportApiModal";
 import ExportModal from "@/modals/exportModal";
 import useAlertStore from "@/stores/alertStore";
 import type { AgentType } from "@/types/agent";
@@ -107,6 +108,13 @@ export default function WorkflowsView({
     useState(false);
   const [openExportModal, setOpenExportModal] = useState(false);
   const [openEmbedModal, setOpenEmbedModal] = useState(false);
+  const [openExportApiModal, setOpenExportApiModal] = useState(false);
+  const [exportApiAgent, setExportApiAgent] = useState<{
+    agentId: string;
+    agentName: string;
+    version: string;
+    deployId: string;
+  } | null>(null);
   const [exportAgentData, setExportAgentData] = useState<AgentType | undefined>(
     undefined,
   );
@@ -765,7 +773,18 @@ export default function WorkflowsView({
                             >
                               {t("Export as Widget")}
                             </DropdownMenuItem>
-                            <DropdownMenuItem disabled>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExportApiAgent({
+                                  agentId: workflow.agentId ?? "",
+                                  agentName: workflow.name,
+                                  version: workflow.version ?? "v1",
+                                  deployId: workflow.id,
+                                });
+                                setOpenExportApiModal(true);
+                              }}
+                            >
                               {t("Export as API")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -888,6 +907,17 @@ export default function WorkflowsView({
         setOpen={setOpenExportModal}
         agentData={exportAgentData}
       />
+      {exportApiAgent && (
+        <ExportApiModal
+          open={openExportApiModal}
+          setOpen={setOpenExportApiModal}
+          agentId={exportApiAgent.agentId}
+          agentName={exportApiAgent.agentName}
+          version={exportApiAgent.version}
+          environment={activeTab.toLowerCase() as "uat" | "prod"}
+          deployId={exportApiAgent.deployId}
+        />
+      )}
       <Dialog open={promoteDialogOpen} onOpenChange={setPromoteDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

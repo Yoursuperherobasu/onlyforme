@@ -1,5 +1,7 @@
 import base64
+import hashlib
 import random
+import secrets
 import warnings
 from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
@@ -549,3 +551,76 @@ async def get_current_active_user_mcp(current_user: Annotated[User, Depends(get_
     if not current_user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
     return current_user
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Agent API Key — generation & validation
+# ═══════════════════════════════════════════════════════════════════════════
+
+def generate_agent_api_key() -> tuple[str, str, str]:
+    """Generate a new agent API key.
+
+    Returns:
+        tuple: (plaintext_key, key_hash, key_prefix)
+            - plaintext_key: The full key to return to the user once (e.g. "agk_abc123...")
+            - key_hash: SHA-256 hex digest for storage in DB
+            - key_prefix: First 8 chars for UI display
+    """
+    raw = secrets.token_urlsafe(32)
+    plaintext = f"agk_{raw}"
+    key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
+    key_prefix = plaintext[:8]
+    return plaintext, key_hash, key_prefix
+
+
+async def validate_agent_api_key(
+    header_param: Annotated[str | None, Security(api_key_header)] = None,
+    query_param: Annotated[str | None, Security(api_key_query)] = None,
+):
+    """FastAPI dependency: validate an agent API key from header or query param.
+
+    Returns the AgentApiKey record if valid, None if no key provided.
+    Raises 401 if key is provided but invalid/expired.
+    """
+    from agentcore.services.database.models.agent_api_key.model import AgentApiKey
+    from agentcore.services.deps import session_scope
+
+    raw_key = header_param or query_param
+    if not raw_key:
+        return None
+
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+
+    async with session_scope() as session:
+        record = (
+            await session.exec(
+                select(AgentApiKey)
+                .where(AgentApiKey.key_hash == key_hash)
+                .where(AgentApiKey.is_active == True)  # noqa: E712
+            )
+        ).first()
+
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+
+    if record.expires_at and record.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key has expired",
+        )
+
+    # Update last_used_at in background (non-blocking)
+    try:
+        async with session_scope() as session:
+            db_record = await session.get(AgentApiKey, record.id)
+            if db_record:
+                db_record.last_used_at = datetime.now(timezone.utc)
+                session.add(db_record)
+                await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to update last_used_at for agent API key")
+
+    return record

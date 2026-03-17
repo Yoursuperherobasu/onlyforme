@@ -44,7 +44,9 @@ from agentcore.services.database.models.model_registry.model import (
 from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
+from agentcore.services.auth.utils import generate_agent_api_key
 
 
 class SubmittedBy(BaseModel):
@@ -90,6 +92,7 @@ class ApprovalResponse(BaseModel):
     newStatus: str
     timestamp: str
     approvedBy: str | None = None
+    api_key: str | None = None
 
 
 class GuardrailPromotionResult(BaseModel):
@@ -1417,6 +1420,28 @@ async def approve_agent(
 
     await session.commit()
 
+    # ─── Auto-generate API key for this approved PROD deployment ──
+    generated_api_key: str | None = None
+    try:
+        plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+        api_key_record = AgentApiKey(
+            agent_id=deployment.agent_id,
+            deployment_id=deployment.id,
+            version=f"v{deployment.version_number}",
+            environment="prod",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            is_active=True,
+            created_by=current_user.id,
+            created_at=datetime.now(timezone.utc),
+        )
+        session.add(api_key_record)
+        await session.commit()
+        generated_api_key = plaintext_key
+        logger.info(f"Generated API key (prefix={key_prefix}) for approved PROD deploy {deployment.id}")
+    except Exception as key_err:
+        logger.warning(f"API key generation failed after approval {req.id}: {key_err}")
+
     try:
         await sync_agent_registry(
             session,
@@ -1614,6 +1639,7 @@ async def approve_agent(
         newStatus="approved",
         timestamp=now.isoformat(),
         approvedBy=approver_name,
+        api_key=generated_api_key,
     )
     logger.info(
         f"[APPROVE_RESPONSE] {response_payload.model_dump()} "
