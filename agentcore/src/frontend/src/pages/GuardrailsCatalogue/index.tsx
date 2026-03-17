@@ -94,8 +94,9 @@ export default function GuardrailsView({
   );
   const deleteMutation = useDeleteGuardrailCatalogue();
   const [visibilityOptions, setVisibilityOptions] = useState<{
+    organizations: { id: string; name: string }[];
     departments: { id: string; name: string; org_id: string }[];
-  }>({ departments: [] });
+  }>({ organizations: [], departments: [] });
 
   const displayGuardrails = guardrails?.length
     ? guardrails
@@ -123,10 +124,13 @@ export default function GuardrailsView({
     api
       .get(`${getURL("GUARDRAILS_CATALOGUE")}/visibility-options`)
       .then((res) => {
-        setVisibilityOptions({ departments: res.data?.departments || [] });
+        setVisibilityOptions({
+          organizations: res.data?.organizations || [],
+          departments: res.data?.departments || [],
+        });
       })
       .catch(() => {
-        setVisibilityOptions({ departments: [] });
+        setVisibilityOptions({ organizations: [], departments: [] });
       });
   }, [selectedFramework, isDepartmentAdmin, isSuperAdmin]);
 
@@ -172,10 +176,14 @@ export default function GuardrailsView({
   };
   const getDepartmentScopeLabel = (guardrail: GuardrailInfo) => {
     const deptNameById = new Map(
-      visibilityOptions.departments.map((dept) => [dept.id, dept.name]),
+      visibilityOptions.departments.map((dept) => [String(dept.id), dept.name]),
     );
     if (guardrail.visibility === "public" && guardrail.public_scope === "organization") {
-      return "All departments";
+      const orgId = guardrail.org_id ? String(guardrail.org_id) : "";
+      const orgName =
+        visibilityOptions.organizations.find((org) => String(org.id) === orgId)
+          ?.name || null;
+      return orgName ? `${orgName} (All departments)` : "All departments";
     }
     const deptIds =
       guardrail.visibility === "public" && guardrail.public_scope === "department"
@@ -188,7 +196,10 @@ export default function GuardrailsView({
           ? [guardrail.dept_id]
           : [];
     if (deptIds.length === 0) return "-";
-    const names = deptIds.map((id) => deptNameById.get(id) || id);
+    const names = deptIds.map((id) => {
+      const key = String(id);
+      return deptNameById.get(key) || key;
+    });
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   };
