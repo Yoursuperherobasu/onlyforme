@@ -12,6 +12,7 @@ import type {
   Filters, DateRangePreset, LangfuseEnvironment,
   ScopeOptionsResponse, DepartmentScopeOption, Metrics,
 } from "../types";
+import type { TraceScope } from "../hooks/useObservabilityFilters";
 
 interface FilterBarProps {
   filters: Filters;
@@ -23,11 +24,17 @@ interface FilterBarProps {
   scopeOptions: ScopeOptionsResponse | undefined;
   availableScopeDepartments: DepartmentScopeOption[];
   metrics: Metrics | undefined;
+  traceScope: TraceScope;
+  hasTraceScopeToggle: boolean;
+  isDeptAdmin: boolean;
+  isSuperAdmin: boolean;
+  showDeptFilter: boolean;
   onDateRangeChange: (v: DateRangePreset) => void;
   onSearch: () => void;
   onModelChange: (models: string[]) => void;
   onOrgChange: (orgId: string) => void;
   onDeptChange: (deptId: string) => void;
+  onTraceScopeChange: (scope: TraceScope) => void;
   onClearFilters: () => void;
   onClearScope: () => void;
   onRefresh: () => void;
@@ -36,15 +43,28 @@ interface FilterBarProps {
   isFetching: boolean;
 }
 
+const DEPT_ADMIN_SCOPE_OPTIONS: { value: TraceScope; label: string }[] = [
+  { value: "all", label: "Dept Traces" },
+  { value: "my", label: "My Traces" },
+];
+
+const SUPER_ADMIN_SCOPE_OPTIONS: { value: TraceScope; label: string }[] = [
+  { value: "all", label: "Org Traces" },
+  { value: "dept", label: "Dept Traces" },
+  { value: "my", label: "My Traces" },
+];
+
 export function FilterBar({
   filters, searchInput, setSearchInput,
   selectedEnvironment, selectedOrgId, selectedDeptId,
   scopeOptions, availableScopeDepartments, metrics,
+  traceScope, hasTraceScopeToggle, isDeptAdmin, isSuperAdmin, showDeptFilter,
   onDateRangeChange, onSearch, onModelChange,
-  onOrgChange, onDeptChange, onClearFilters, onClearScope,
+  onOrgChange, onDeptChange, onTraceScopeChange, onClearFilters, onClearScope,
   onRefresh, isRefreshing, isLoading, isFetching,
 }: FilterBarProps) {
   const availableModels = useMemo(() => metrics?.by_model?.map(m => m.model) || [], [metrics?.by_model]);
+  const scopeToggleOptions = isSuperAdmin ? SUPER_ADMIN_SCOPE_OPTIONS : isDeptAdmin ? DEPT_ADMIN_SCOPE_OPTIONS : [];
 
   return (
     <div className="flex flex-wrap items-center gap-3 p-4 bg-white rounded-xl border shadow-sm">
@@ -61,7 +81,7 @@ export function FilterBar({
         </Select>
       </div>
 
-      {/* Org Scope */}
+      {/* Org Scope (root only now) */}
       {(scopeOptions?.organizations?.length ?? 0) > 0 && (
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide" style={{ color: THEME.textSecondary }}>Org</span>
@@ -76,12 +96,28 @@ export function FilterBar({
         </div>
       )}
 
-      {/* Dept Scope */}
-      {(scopeOptions?.departments?.length ?? 0) > 0 && (
+      {/* Trace Scope Toggle (dept_admin / super_admin) */}
+      {hasTraceScopeToggle && scopeToggleOptions.length > 0 && (
+        <div className="flex items-center rounded-lg border bg-gray-50 p-0.5">
+          {scopeToggleOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => { if (traceScope !== opt.value) onTraceScopeChange(opt.value); }}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${traceScope === opt.value ? "shadow-sm" : "hover:bg-gray-100"}`}
+              style={traceScope === opt.value ? { backgroundColor: THEME.primary, color: "#fff" } : { color: THEME.textSecondary }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Dept Scope (super_admin in "dept" mode, or root) */}
+      {(showDeptFilter || (!isSuperAdmin && !isDeptAdmin && (scopeOptions?.departments?.length ?? 0) > 0)) && (
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide" style={{ color: THEME.textSecondary }}>Dept</span>
           <Select value={selectedDeptId ?? undefined} onValueChange={onDeptChange}>
-            <SelectTrigger className="w-[220px] h-9 bg-gray-50 border-gray-200"><SelectValue placeholder="Department scope" /></SelectTrigger>
+            <SelectTrigger className="w-[220px] h-9 bg-gray-50 border-gray-200"><SelectValue placeholder="Select department" /></SelectTrigger>
             <SelectContent>
               {availableScopeDepartments.map((dept) => (
                 <SelectItem key={dept.id} value={dept.id}>{dept.name}</SelectItem>
@@ -135,7 +171,7 @@ export function FilterBar({
         </Button>
       )}
 
-      {(selectedOrgId || selectedDeptId) && (
+      {((selectedOrgId && !isSuperAdmin && !isDeptAdmin) || (selectedDeptId && showDeptFilter)) && (
         <Button size="sm" variant="ghost" onClick={onClearScope} className="h-9" style={{ color: THEME.textSecondary }}>
           <X className="h-4 w-4 mr-1" />Clear Scope
         </Button>
@@ -161,12 +197,12 @@ export function FilterBar({
           <button onClick={() => onModelChange([])} className="ml-1 hover:opacity-70"><X className="h-3 w-3" /></button>
         </Badge>
       )}
-      {selectedOrgId && (
+      {selectedOrgId && !isSuperAdmin && !isDeptAdmin && (
         <Badge variant="secondary" className="bg-gray-100">
           Org: {(scopeOptions?.organizations ?? []).find((org) => org.id === selectedOrgId)?.name || selectedOrgId}
         </Badge>
       )}
-      {selectedDeptId && (
+      {selectedDeptId && showDeptFilter && (
         <Badge variant="secondary" className="bg-gray-100">
           Dept: {(scopeOptions?.departments ?? []).find((dept) => dept.id === selectedDeptId)?.name || selectedDeptId}
         </Badge>

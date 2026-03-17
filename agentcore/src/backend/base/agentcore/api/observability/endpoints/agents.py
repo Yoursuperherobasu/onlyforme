@@ -43,12 +43,14 @@ async def get_user_agents(
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
     fetch_all: Annotated[bool, Query()] = False,
     environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
+    trace_scope: Annotated[str, Query(description="Trace scope: 'all', 'dept', or 'my'")] = "all",
 ) -> AgentListResponse:
     """Get all agents for the current user with aggregated metrics."""
     clear_request_caches()
 
     allowed_user_ids, scoped_clients, scope_key, scope_warnings = await resolve_scope_context(
         session=session, current_user=current_user, org_id=org_id, dept_id=dept_id,
+        trace_scope=trace_scope,
     )
     if not scoped_clients:
         return AgentListResponse(
@@ -118,12 +120,14 @@ async def get_agent_detail(
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     tz_offset: Annotated[int | None, Query(description="Timezone offset in minutes from UTC")] = None,
     environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
+    trace_scope: Annotated[str, Query(description="Trace scope: 'all', 'dept', or 'my'")] = "all",
 ) -> AgentDetailResponse:
     """Get detailed agent information including sessions and metrics breakdown."""
     clear_request_caches()
 
     allowed_user_ids, scoped_clients, scope_key, scope_warnings = await resolve_scope_context(
         session=session, current_user=current_user, org_id=org_id, dept_id=dept_id,
+        trace_scope=trace_scope,
     )
     if not scoped_clients:
         raise HTTPException(status_code=404, detail=(scope_warnings[0] if scope_warnings else "Agent not found"))

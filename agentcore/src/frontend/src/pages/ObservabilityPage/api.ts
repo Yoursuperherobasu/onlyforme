@@ -18,6 +18,7 @@ function applyScopeParams(searchParams: URLSearchParams, params: FetchMetricsPar
   if (params.org_id) searchParams.set("org_id", params.org_id);
   if (params.dept_id) searchParams.set("dept_id", params.dept_id);
   if (params.environment) searchParams.set("environment", params.environment);
+  if (params.trace_scope && params.trace_scope !== "all") searchParams.set("trace_scope", params.trace_scope);
 }
 
 export async function fetchStatus(): Promise<LangfuseStatus> {

@@ -62,6 +62,7 @@ async def get_user_traces(
     from_date: Annotated[str | None, Query(description="Start date (YYYY-MM-DD)")] = None,
     to_date: Annotated[str | None, Query(description="End date (YYYY-MM-DD)")] = None,
     environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
+    trace_scope: Annotated[str, Query(description="Trace scope: 'all', 'dept', or 'my'")] = "all",
 ) -> TracesListResponse:
     """Get traces for the current user with aggregated metrics."""
     clear_request_caches()
@@ -69,6 +70,7 @@ async def get_user_traces(
     try:
         allowed_user_ids, scoped_clients, scope_key, scope_warnings = await resolve_scope_context(
             session=session, current_user=current_user, org_id=org_id, dept_id=dept_id,
+            trace_scope=trace_scope,
         )
         if not scoped_clients:
             return TracesListResponse(
@@ -122,12 +124,14 @@ async def get_trace_detail(
     session: Annotated[AsyncSession, Depends(get_session)],
     org_id: Annotated[UUID | None, Query(description="Organization scope")] = None,
     dept_id: Annotated[UUID | None, Query(description="Department scope")] = None,
+    trace_scope: Annotated[str, Query(description="Trace scope: 'all', 'dept', or 'my'")] = "all",
 ) -> TraceDetailResponse:
     """Get detailed trace information including all observations (spans)."""
     clear_request_caches()
 
     allowed_user_ids, scoped_clients, _scope_key, scope_warnings = await resolve_scope_context(
         session=session, current_user=current_user, org_id=org_id, dept_id=dept_id,
+        trace_scope=trace_scope,
     )
     if not scoped_clients:
         raise HTTPException(status_code=404, detail=(scope_warnings[0] if scope_warnings else "Trace not found"))
