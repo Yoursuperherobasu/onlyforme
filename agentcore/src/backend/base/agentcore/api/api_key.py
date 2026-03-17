@@ -60,8 +60,12 @@ async def rotate_agent_api_key(
     current_user: CurrentActiveUser,
     session: DbSession,
     environment: str = "uat",
+    version: str | None = None,
 ):
-    """Revoke all active keys for an agent+environment and generate a new one.
+    """Revoke all active keys for an agent+environment+version and generate a new one.
+
+    If version is provided (e.g. "v2"), generates a key for that specific deployment version.
+    If version is omitted, generates a key for the latest published deployment.
 
     Returns the new plaintext key (one-time only).
     """
@@ -69,12 +73,57 @@ async def rotate_agent_api_key(
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    # Revoke all existing active keys for this agent+environment
+    # Look up the deployment for the requested version (or latest)
+    deployment_id = None
+    version_number = int(version.lstrip("v")) if version else None
+
+    if environment == "uat":
+        stmt = (
+            select(AgentDeploymentUAT)
+            .where(AgentDeploymentUAT.agent_id == agent_id)
+            .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+        )
+        if version_number is not None:
+            stmt = stmt.where(AgentDeploymentUAT.version_number == version_number)
+        else:
+            stmt = stmt.where(AgentDeploymentUAT.is_active == True).order_by(  # noqa: E712
+                desc(AgentDeploymentUAT.version_number)
+            )
+        dep = (await session.exec(stmt)).first()
+        if dep:
+            deployment_id = dep.id
+            version = f"v{dep.version_number}"
+    elif environment == "prod":
+        stmt = (
+            select(AgentDeploymentProd)
+            .where(AgentDeploymentProd.agent_id == agent_id)
+            .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
+        )
+        if version_number is not None:
+            stmt = stmt.where(AgentDeploymentProd.version_number == version_number)
+        else:
+            stmt = stmt.where(AgentDeploymentProd.is_active == True).order_by(  # noqa: E712
+                desc(AgentDeploymentProd.version_number)
+            )
+        dep = (await session.exec(stmt)).first()
+        if dep:
+            deployment_id = dep.id
+            version = f"v{dep.version_number}"
+
+    if not deployment_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No published {environment.upper()} deployment "
+                   f"{'version ' + version if version else ''} found for this agent",
+        )
+
+    # Revoke all existing active keys for this agent+environment+deployment
     existing = (
         await session.exec(
             select(AgentApiKey)
             .where(AgentApiKey.agent_id == agent_id)
             .where(AgentApiKey.environment == environment)
+            .where(AgentApiKey.deployment_id == deployment_id)
             .where(AgentApiKey.is_active == True)  # noqa: E712
         )
     ).all()
@@ -85,43 +134,6 @@ async def rotate_agent_api_key(
 
     # Generate new key
     plaintext_key, key_hash, key_prefix = generate_agent_api_key()
-
-    # Resolve deployment_id and version from the actual deployment record
-    if existing:
-        deployment_id = existing[0].deployment_id
-        version = existing[0].version
-    else:
-        # No existing key — look up the latest published deployment for this agent+env
-        deployment_id = None
-        version = "v1"
-        if environment == "uat":
-            dep = (await session.exec(
-                select(AgentDeploymentUAT)
-                .where(AgentDeploymentUAT.agent_id == agent_id)
-                .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
-                .where(AgentDeploymentUAT.is_active == True)  # noqa: E712
-                .order_by(desc(AgentDeploymentUAT.version_number))
-            )).first()
-            if dep:
-                deployment_id = dep.id
-                version = f"v{dep.version_number}"
-        elif environment == "prod":
-            dep = (await session.exec(
-                select(AgentDeploymentProd)
-                .where(AgentDeploymentProd.agent_id == agent_id)
-                .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
-                .where(AgentDeploymentProd.is_active == True)  # noqa: E712
-                .order_by(desc(AgentDeploymentProd.version_number))
-            )).first()
-            if dep:
-                deployment_id = dep.id
-                version = f"v{dep.version_number}"
-
-        if not deployment_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No active published {environment.upper()} deployment found for this agent",
-            )
     new_record = AgentApiKey(
         agent_id=agent_id,
         deployment_id=deployment_id,

@@ -62,7 +62,7 @@ export default function ExportApiModal({
     setLoading(true);
     try {
       const response = await api.post(
-        `/api/api_key/agent/${agentId}/rotate?environment=${environment}`,
+        `/api/api_key/agent/${agentId}/rotate?environment=${environment}&version=${version}`,
       );
       setApiKey(response.data.api_key);
       setApiKeyPrefix(response.data.key_prefix);
