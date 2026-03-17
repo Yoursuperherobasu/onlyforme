@@ -69,3 +69,18 @@ deployments:
   version_number: v3
   environment: prod
   deployment_id: 05eb9d12-983e-4a39-8b69-f47d8b566cc0
+- agent_id: 322ce449-ea09-4547-805e-2a459fa54ca2
+  agent_name: gaurdnew2
+  version_number: v4
+  environment: uat
+  deployment_id: ed6cdf24-ce4c-4fba-bad0-4a41428136bb
+- agent_id: 322ce449-ea09-4547-805e-2a459fa54ca2
+  agent_name: gaurdnew2
+  version_number: v4
+  environment: prod
+  deployment_id: 69deff6b-fc45-4c8c-ab41-096392a2ea1c
+- agent_id: 72e01775-f2b8-41e4-b870-9ad0677b3a9e
+  agent_name: hitl2
+  version_number: v1
+  environment: uat
+  deployment_id: 86d8236b-3e98-4d9c-8580-2864bdd62927

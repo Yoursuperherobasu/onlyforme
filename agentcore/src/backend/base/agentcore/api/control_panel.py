@@ -1263,7 +1263,7 @@ async def promote_uat_to_prod(
             # Admin publish: no approval required - promote guardrails now.
             try:
                 guardrail_promotions = await _promote_guardrails_for_deployment(
-                    deployment=new_record,
+                    snapshot=new_record.agent_snapshot,
                     promoted_by=current_user.id,
                 )
                 guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
