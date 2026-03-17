@@ -21,6 +21,7 @@ from .knowledge_base import KnowledgeBase
 from .agent_bundle import AgentBundle
 from .agent_publish_recipient import AgentPublishRecipient
 from .agent_edit_lock import AgentEditLock
+from .agent_api_key import AgentApiKey
 from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
@@ -49,6 +50,7 @@ from .observability_schema_lock import ObservabilitySchemaLock
 
 __all__ = [
     "Agent",
+    "AgentApiKey",
     "AgentBundle",
     "AgentPublishRecipient",
     "AgentEditLock",

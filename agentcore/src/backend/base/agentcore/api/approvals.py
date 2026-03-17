@@ -46,7 +46,9 @@ from agentcore.services.database.models.user_department_membership.model import 
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.mcp_service_client import update_mcp_server_via_service
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
+from agentcore.services.auth.utils import generate_agent_api_key
 
 
 class SubmittedBy(BaseModel):
@@ -93,6 +95,7 @@ class ApprovalResponse(BaseModel):
     newStatus: str
     timestamp: str
     approvedBy: str | None = None
+    api_key: str | None = None
 
 
 class GuardrailPromotionResult(BaseModel):
@@ -1557,6 +1560,28 @@ async def approve_agent(
 
     await session.commit()
 
+    # ─── Auto-generate API key for this approved PROD deployment ──
+    generated_api_key: str | None = None
+    try:
+        plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+        api_key_record = AgentApiKey(
+            agent_id=deployment.agent_id,
+            deployment_id=deployment.id,
+            version=f"v{deployment.version_number}",
+            environment="prod",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            is_active=True,
+            created_by=current_user.id,
+            created_at=datetime.now(timezone.utc),
+        )
+        session.add(api_key_record)
+        await session.commit()
+        generated_api_key = plaintext_key
+        logger.info(f"Generated API key (prefix={key_prefix}) for approved PROD deploy {deployment.id}")
+    except Exception as key_err:
+        logger.warning(f"API key generation failed after approval {req.id}: {key_err}")
+
     try:
         await sync_agent_registry(
             session,
@@ -1687,7 +1712,8 @@ async def approve_agent(
         )
     # ─── HTTP notify (only if guardrail promotion succeeded) ──
     guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
-    if guardrails_ready:
+    rag_ready = not pinecone_migration_failed and not neo4j_migration_failed
+    if guardrails_ready and rag_ready:
         try:
             import httpx
             from agentcore.services.deps import get_settings_service
@@ -1712,10 +1738,26 @@ async def approve_agent(
         except Exception as notify_err:
             logger.warning(f"Post-approval notify API failed for approval {req.id}: {notify_err}")
     else:
-        failed = [g.uat_guardrail_id for g in guardrail_promotions if not g.ready]
-        logger.warning(
-            f"[APPROVAL_NOTIFY] Skipped — guardrail promotion not ready for approval {req.id}. "
-            f"Failed guardrails: {failed}"
+        error_reasons = []
+        if not guardrails_ready:
+            failed = [g.uat_guardrail_id for g in guardrail_promotions if not g.ready]
+            error_reasons.append(f"Guardrail promotion not ready: {failed}")
+        if not rag_ready:
+            if pinecone_migration_failed:
+                error_reasons.append(f"Pinecone VDB migration failed: {pinecone_error_msg}")
+            if neo4j_migration_failed:
+                error_reasons.append(f"Neo4j graph migration failed: {neo4j_error_msg}")
+        logger.error(
+            f"[APPROVAL_NOTIFY] Failed for approval {req.id}. "
+            f"Reasons: {' | '.join(error_reasons)}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Agent approved but promotion checks failed. "
+                f"{' | '.join(error_reasons)}. "
+                f"Deployment {deployment.id} will not be notified for PROD."
+            ),
         )
 
     # Trigger handoff payload only for approved AGENT promotions (never on reject).
@@ -1737,6 +1779,7 @@ async def approve_agent(
         newStatus="approved",
         timestamp=now.isoformat(),
         approvedBy=approver_name,
+        api_key=generated_api_key,
     )
     logger.info(
         f"[APPROVE_RESPONSE] {response_payload.model_dump()} "

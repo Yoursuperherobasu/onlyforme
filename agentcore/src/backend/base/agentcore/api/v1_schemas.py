@@ -257,6 +257,25 @@ class ApiKeyCreateRequest(BaseModel):
     api_key: str
 
 
+class AgentApiKeyResponse(BaseModel):
+    """Agent API key info for list views (never includes full key)."""
+    id: UUID
+    agent_id: UUID
+    deployment_id: UUID
+    version: str
+    environment: str
+    key_prefix: str
+    is_active: bool
+    created_at: str
+    last_used_at: str | None = None
+    expires_at: str | None = None
+
+
+class AgentApiKeyCreatedResponse(AgentApiKeyResponse):
+    """Returned only at creation/rotation time — includes the plaintext key."""
+    api_key: str
+
+
 class VerticesOrderResponse(BaseModel):
     ids: list[str]
     run_id: UUID
