@@ -164,6 +164,7 @@ class ChatOutput(ChatNode):
             self.status = message
             # Update STM cache even for pre-stored messages (e.g. Agent component responses)
             await self._update_stm_cache(message)
+            await self._notify_ltm_service(message)
             if message.sender == MESSAGE_SENDER_AI:
                 preview = (message.text or "")[:150]
                 logger.info(f"[AI_MESSAGE] AI: {preview}")
@@ -198,6 +199,7 @@ class ChatOutput(ChatNode):
             message = stored_message
 
             await self._update_stm_cache(message)
+            await self._notify_ltm_service(message)
 
         self.status = message
         if message.sender == MESSAGE_SENDER_AI:
@@ -346,6 +348,34 @@ class ChatOutput(ChatNode):
                     )
         except Exception as e:
             logger.debug(f"[ChatOutput] STM cache update skipped: {e}")
+
+    async def _notify_ltm_service(self, message: Message) -> None:
+        """Notify the LTM background service that a message was stored.
+
+        This increments the message counter for the agent. When the threshold
+        is reached, the LTM pipeline (summarize → extract facts → store) triggers.
+        Failures are silently logged — LTM should never block the chat flow.
+        """
+        try:
+            from agentcore.services.deps import get_settings_service
+
+            settings = get_settings_service().settings
+            if not settings.ltm_enabled:
+                return
+
+            agent_id = self.graph.agent_id if hasattr(self, "graph") and self.graph else None
+            if not agent_id:
+                return
+
+            from agentcore.services.ltm.factory import LTMServiceFactory
+            from agentcore.services.deps import get_service
+            from agentcore.services.schema import ServiceType
+
+            ltm_service = get_service(ServiceType.LTM_SERVICE, LTMServiceFactory())
+            logger.info(f"[ChatOutput] Notifying LTM service for agent={agent_id}")
+            await ltm_service.on_message_stored(agent_id, self.session_id)
+        except Exception as e:
+            logger.warning(f"[ChatOutput] LTM notification failed: {e}")
 
     def _serialize_data(self, data: Data) -> str:
         """Serialize Data object to JSON string."""

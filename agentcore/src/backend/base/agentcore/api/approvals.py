@@ -42,9 +42,13 @@ from agentcore.services.database.models.model_registry.model import (
     ModelVisibilityScope,
 )
 from agentcore.services.database.models.role.model import Role
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.mcp_service_client import update_mcp_server_via_service
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
+from agentcore.services.auth.utils import generate_agent_api_key
 
 
 class SubmittedBy(BaseModel):
@@ -68,7 +72,8 @@ class ApprovalAgent(BaseModel):
     description: str
     submittedBy: SubmittedBy
     approver: ApproverInfo | None = None
-    project: str
+    project: str = ""
+    visibility: str | None = None
     submitted: str
     version: str
     recentChanges: str
@@ -90,6 +95,7 @@ class ApprovalResponse(BaseModel):
     newStatus: str
     timestamp: str
     approvedBy: str | None = None
+    api_key: str | None = None
 
 
 class GuardrailPromotionResult(BaseModel):
@@ -123,6 +129,26 @@ def _build_approver_info(user: User | None) -> ApproverInfo | None:
         email=email,
         role=getattr(user, "role", None),
     )
+
+
+def _format_model_visibility_label(value: str | None) -> str:
+    normalized = str(value or ModelVisibilityScope.PRIVATE.value).strip().lower()
+    if normalized == ModelVisibilityScope.ORGANIZATION.value:
+        return "Organization"
+    if normalized == ModelVisibilityScope.DEPARTMENT.value:
+        return "Department"
+    return "Private"
+
+
+def _format_mcp_visibility_label(value: str | None, public_scope: str | None) -> str:
+    normalized_visibility = str(value or "private").strip().lower()
+    normalized_scope = str(public_scope or "").strip().lower()
+    if normalized_visibility == "public" and normalized_scope == "organization":
+        return "Organization"
+    if normalized_visibility == "public" and normalized_scope == "department":
+        return "Department"
+    return "Private"
+
 async def _promote_guardrails_for_deployment(
     snapshot: dict,
     promoted_by: UUID,
@@ -529,11 +555,38 @@ def _normalize_mcp_mode(value: str) -> str:
 
 def _normalize_mcp_deployment_env(value: str) -> str:
     normalized = str(value).strip().upper()
-    if normalized == "TEST":
-        normalized = "DEV"
-    if normalized not in {"DEV", "UAT", "PROD"}:
+    if normalized in {"TEST", "DEV"}:
+        normalized = "UAT"
+    if normalized not in {"UAT", "PROD"}:
         raise HTTPException(status_code=400, detail=f"Unsupported deployment_env '{value}'")
     return normalized
+
+
+def _normalize_mcp_environment_list(values: list[str] | None, fallback: str | None = None) -> list[str]:
+    normalized = [_normalize_mcp_deployment_env(v).lower() for v in (values or []) if v is not None]
+    if not normalized and fallback is not None:
+        normalized = [_normalize_mcp_deployment_env(fallback).lower()]
+    ordered: list[str] = []
+    for env in ("uat", "prod"):
+        if env in normalized and env not in ordered:
+            ordered.append(env)
+    for env in normalized:
+        if env not in ordered:
+            ordered.append(env)
+    return ordered
+
+
+def _format_mcp_env_label(req: McpApprovalRequest) -> str:
+    requested_envs = [str(v).lower() for v in (getattr(req, "requested_environments", None) or []) if v]
+    if requested_envs:
+        normalized = _normalize_mcp_environment_list(requested_envs)
+    else:
+        normalized = _normalize_mcp_environment_list([], req.deployment_env or "UAT")
+    if not normalized:
+        return "UAT"
+    if "uat" in normalized and "prod" in normalized:
+        return "UAT + PROD"
+    return normalized[0].upper()
 
 
 def _to_status_label(decision: ApprovalDecisionEnum | None) -> str:
@@ -720,11 +773,9 @@ async def _get_mcp_approval_for_action(
     if not req:
         raise HTTPException(status_code=404, detail="MCP approval request not found")
     if req.request_to != current_user.id:
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            if req.org_id and req.org_id in org_ids:
-                return req
         raise HTTPException(status_code=403, detail="Not allowed to act on this approval")
+    if req.requested_by == current_user.id:
+        raise HTTPException(status_code=400, detail="No user can approve their own request")
     return req
 
 
@@ -821,11 +872,57 @@ async def _get_model_approval_for_view(
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
 
-def _next_model_environment(env: str) -> str | None:
-    normalized = str(env or "").strip().lower()
-    if normalized == ModelEnvironment.UAT.value:
+def _normalize_model_env_list(values: list[str] | None, fallback: str | None = None) -> list[str]:
+    normalized = [str(v).strip().lower() for v in (values or []) if v]
+    if not normalized and fallback:
+        normalized = [str(fallback).strip().lower()]
+    ordered: list[str] = []
+    for env in (ModelEnvironment.UAT.value, ModelEnvironment.PROD.value):
+        if env in normalized and env not in ordered:
+            ordered.append(env)
+    for env in normalized:
+        if env not in ordered:
+            ordered.append(env)
+    return ordered
+
+
+def _resolve_model_environments(row: ModelRegistry) -> list[str]:
+    envs = [str(v).strip().lower() for v in (getattr(row, "environments", None) or []) if v]
+    if envs:
+        return _normalize_model_env_list(envs)
+    return _normalize_model_env_list([getattr(row, "environment", ModelEnvironment.UAT.value)])
+
+
+def _next_model_environment(envs: list[str]) -> str | None:
+    normalized = _normalize_model_env_list(envs)
+    if ModelEnvironment.UAT.value in normalized and ModelEnvironment.PROD.value not in normalized:
         return ModelEnvironment.PROD.value
     return None
+
+
+def _format_model_env_label(row: ModelRegistry) -> str:
+    envs = _resolve_model_environments(row)
+    if not envs:
+        return ModelEnvironment.UAT.value.upper()
+    if len(envs) > 1:
+        return "UAT + PROD"
+    return envs[0].upper()
+
+
+def _format_model_env_label_for_request(row: ModelRegistry, req: ModelApprovalRequest) -> str:
+    requested_envs = [str(v).lower() for v in (getattr(req, "requested_environments", None) or []) if v]
+    if ModelEnvironment.UAT.value in requested_envs and ModelEnvironment.PROD.value in requested_envs:
+        return "UAT + PROD"
+    if req.request_type == ModelApprovalRequestType.CREATE:
+        envs = _resolve_model_environments(row)
+        if ModelEnvironment.UAT.value in envs and ModelEnvironment.PROD.value in envs:
+            return "UAT + PROD"
+    if str(req.target_environment or "").lower() == ModelEnvironment.PROD.value:
+        envs = _resolve_model_environments(row)
+        if ModelEnvironment.UAT.value in envs:
+            return "UAT + PROD"
+        return ModelEnvironment.PROD.value.upper()
+    return _format_model_env_label(row)
 
 
 async def _resolve_super_admin_user_id(
@@ -853,6 +950,60 @@ async def _resolve_super_admin_user_id(
             continue
         return row.id
     raise HTTPException(status_code=400, detail="No Super Admin approver available")
+
+
+async def _resolve_user_primary_dept(
+    *,
+    session: DbSession,
+    user_id: UUID | None,
+) -> UUID | None:
+    if not user_id:
+        return None
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    if not dept_rows:
+        return None
+    dept_ids = [r if isinstance(r, UUID) else r[0] for r in dept_rows]
+    return sorted(dept_ids, key=lambda x: str(x))[0]
+
+
+async def _resolve_department_admin_user_id(
+    *,
+    session: DbSession,
+    dept_id: UUID | None,
+    requested_by: UUID | None,
+) -> UUID:
+    resolved_dept_id = dept_id or await _resolve_user_primary_dept(session=session, user_id=requested_by)
+    if not resolved_dept_id:
+        raise HTTPException(status_code=400, detail="Department id is required for department admin resolution")
+    dept = await session.get(Department, resolved_dept_id)
+    if not dept or not dept.admin_user_id:
+        raise HTTPException(status_code=400, detail="No department admin configured for requester department")
+    return dept.admin_user_id
+
+
+async def _resolve_model_visibility_approver(
+    *,
+    session: DbSession,
+    org_id: UUID | None,
+    dept_id: UUID | None,
+    visibility_scope: str,
+    requested_by: UUID | None,
+) -> UUID:
+    normalized_visibility = str(visibility_scope or "").strip().lower()
+    if normalized_visibility == ModelVisibilityScope.ORGANIZATION.value:
+        return await _resolve_super_admin_user_id(session=session, org_id=org_id, exclude_user_id=requested_by)
+    return await _resolve_department_admin_user_id(
+        session=session,
+        dept_id=dept_id,
+        requested_by=requested_by,
+    )
 
 
 async def _append_model_audit(
@@ -994,11 +1145,7 @@ async def get_approvals(
             )
 
         mcp_stmt = select(McpApprovalRequest).order_by(McpApprovalRequest.requested_at.desc())
-        if _is_org_scoped_super_admin(current_user):
-            org_ids = await _designated_super_admin_org_ids(session, current_user)
-            mcp_stmt = mcp_stmt.where(McpApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
-        else:
-            mcp_stmt = mcp_stmt.where(McpApprovalRequest.request_to == current_user.id)
+        mcp_stmt = mcp_stmt.where(McpApprovalRequest.request_to == current_user.id)
         mcp_rows = (await session.exec(mcp_stmt)).all()
         for req in mcp_rows:
             row = await session.get(McpRegistry, req.mcp_id)
@@ -1027,7 +1174,7 @@ async def get_approvals(
                 )
             )
             submitted_at = req.requested_at
-            deployment_env = (req.deployment_env or "DEV").upper()
+            deployment_env = _format_mcp_env_label(req)
             payload.append(
                 ApprovalAgent(
                     id=str(req.id),
@@ -1037,14 +1184,18 @@ async def get_approvals(
                     description=row.description or "",
                     submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     approver=_build_approver_info(approver),
-                    project=dept_name,
+                    project="",
+                    visibility=_format_mcp_visibility_label(
+                        req.requested_visibility or row.visibility,
+                        req.requested_public_scope or row.public_scope,
+                    ),
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()
                         if submitted_at.tzinfo is None
                         else submitted_at.isoformat()
                     ),
                     version=f"{deployment_env} / {(row.mode or 'mcp').upper()}",
-                    recentChanges=f"New MCP server {deployment_env} request",
+                    recentChanges="",
                 )
             )
         model_stmt = select(ModelApprovalRequest).order_by(ModelApprovalRequest.requested_at.desc())
@@ -1081,7 +1232,7 @@ async def get_approvals(
             # Extract project name from provider_config.request_meta
             provider_cfg = row.provider_config if isinstance(row.provider_config, dict) else {}
             request_meta = provider_cfg.get("request_meta", {})
-            model_project_name = request_meta.get("project_name", "") or dept_name
+            model_project_name = request_meta.get("project_name", "") or ""
             payload.append(
                 ApprovalAgent(
                     id=str(req.id),
@@ -1092,12 +1243,13 @@ async def get_approvals(
                     submittedBy=SubmittedBy(name=submitter_name, avatar=None, email=submitter_email),
                     approver=_build_approver_info(approver),
                     project=model_project_name,
+                    visibility=_format_model_visibility_label(req.visibility_requested or row.visibility_scope),
                     submitted=(
                         submitted_at.replace(tzinfo=timezone.utc).isoformat()
                         if submitted_at.tzinfo is None
                         else submitted_at.isoformat()
                     ),
-                    version=f"{row.model_name} ({str(row.environment).upper()})",
+                    version=f"{row.model_name} ({_format_model_env_label_for_request(row, req)})",
                     recentChanges=row.description or "",
                 )
             )
@@ -1187,6 +1339,29 @@ async def approve_agent(
         mcp_row.is_active = True
         mcp_row.status = "connected"
         mcp_row.updated_at = now
+
+        # Apply any pending visibility changes from the request.
+        if mcp_req.requested_visibility:
+            mcp_row.visibility = mcp_req.requested_visibility
+            mcp_row.public_scope = mcp_req.requested_public_scope
+            mcp_row.org_id = mcp_req.requested_org_id
+            mcp_row.dept_id = mcp_req.requested_dept_id
+            mcp_row.public_dept_ids = (
+                [str(v) for v in (mcp_req.requested_public_dept_ids or [])] or None
+            )
+            try:
+                await update_mcp_server_via_service(
+                    str(mcp_row.id),
+                    {
+                        "visibility": mcp_row.visibility,
+                        "public_scope": mcp_row.public_scope,
+                        "org_id": str(mcp_row.org_id) if mcp_row.org_id else None,
+                        "dept_id": str(mcp_row.dept_id) if mcp_row.dept_id else None,
+                        "public_dept_ids": mcp_row.public_dept_ids or [],
+                    },
+                )
+            except Exception as reg_err:
+                logger.warning("MCP registry sync failed after approval %s: %s", mcp_req.id, reg_err)
         session.add(mcp_req)
         session.add(mcp_row)
         await session.commit()
@@ -1225,7 +1400,8 @@ async def approve_agent(
         model_req.reviewed_at = now
         model_req.updated_at = now
 
-        current_env = str(model_row.environment or ModelEnvironment.UAT.value).lower()
+        current_envs = _resolve_model_environments(model_row)
+        current_env = current_envs[0] if current_envs else ModelEnvironment.UAT.value
         current_visibility = str(model_row.visibility_scope or ModelVisibilityScope.PRIVATE.value).lower()
         model_row.review_comments = model_req.justification
         model_row.review_attachments = model_req.file_path
@@ -1234,13 +1410,15 @@ async def approve_agent(
         model_row.updated_at = now
 
         if model_req.request_type == ModelApprovalRequestType.PROMOTE:
-            expected_next = _next_model_environment(current_env)
+            expected_next = _next_model_environment(current_envs)
             if not expected_next or str(model_req.target_environment).lower() != expected_next:
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid promotion path. Backend enforces UAT->PROD only.",
                 )
-            model_row.environment = str(model_req.target_environment).lower()
+            target_env = str(model_req.target_environment).lower()
+            model_row.environments = _normalize_model_env_list([*current_envs, target_env])
+            model_row.environment = model_row.environments[0] if model_row.environments else target_env
             model_row.approval_status = ModelApprovalStatus.APPROVED.value
             model_row.is_active = True
             model_row.request_to = None
@@ -1251,53 +1429,14 @@ async def approve_agent(
                 model_id=model_row.id,
                 actor_id=current_user.id,
                 action="model.promotion.approved",
-                from_environment=current_env,
-                to_environment=model_row.environment,
+                from_environment=",".join(current_envs),
+                to_environment=",".join(model_row.environments or []),
                 message="Model promotion approved",
                 org_id=model_row.org_id,
                 dept_id=model_row.dept_id,
             )
 
-            if (
-                str(model_req.final_target_environment or "").lower() == ModelEnvironment.PROD.value
-                and str(model_req.target_environment).lower() == ModelEnvironment.UAT.value
-            ):
-                super_admin_id = await _resolve_super_admin_user_id(
-                    session=session,
-                    org_id=model_row.org_id,
-                    exclude_user_id=model_req.requested_by,
-                )
-                follow_up = ModelApprovalRequest(
-                    model_id=model_row.id,
-                    org_id=model_row.org_id,
-                    dept_id=model_row.dept_id,
-                    request_type=ModelApprovalRequestType.PROMOTE,
-                    source_environment=ModelEnvironment.UAT.value,
-                    target_environment=ModelEnvironment.PROD.value,
-                    final_target_environment=None,
-                    visibility_requested=model_row.visibility_scope,
-                    requested_by=model_req.requested_by,
-                    request_to=super_admin_id,
-                    requested_at=now,
-                )
-                session.add(follow_up)
-                model_row.approval_status = ModelApprovalStatus.PENDING.value
-                model_row.request_to = super_admin_id
-                model_row.requested_at = now
-                model_row.is_active = False
-                await _append_model_audit(
-                    session=session,
-                    model_id=model_row.id,
-                    actor_id=current_user.id,
-                    action="model.promotion.requested",
-                    from_environment=ModelEnvironment.UAT.value,
-                    to_environment=ModelEnvironment.PROD.value,
-                    message="Auto-created UAT->PROD promotion request",
-                    details={"auto_chained": True},
-                    org_id=model_row.org_id,
-                    dept_id=model_row.dept_id,
-                )
-            elif model_req.request_type == ModelApprovalRequestType.VISIBILITY:
+            if model_req.request_type == ModelApprovalRequestType.VISIBILITY:
                 model_row.visibility_scope = str(model_req.visibility_requested).lower()
                 if model_req.visibility_requested == ModelVisibilityScope.DEPARTMENT.value:
                     if model_req.org_id:
@@ -1314,7 +1453,8 @@ async def approve_agent(
                 else:
                     if model_req.org_id:
                         model_row.org_id = model_req.org_id
-                    model_row.dept_id = None
+                    if model_req.dept_id:
+                        model_row.dept_id = model_req.dept_id
                     model_row.public_dept_ids = None
             model_row.approval_status = ModelApprovalStatus.APPROVED.value
             model_row.is_active = True
@@ -1335,7 +1475,10 @@ async def approve_agent(
             # CREATE type: apply both visibility and environment changes
             model_row.visibility_scope = str(model_req.visibility_requested or current_visibility).lower()
             target_env = str(model_req.target_environment or current_env).lower()
-            model_row.environment = target_env or current_env
+            model_row.environments = _normalize_model_env_list(
+                getattr(model_row, "environments", None) or [target_env], fallback=target_env
+            )
+            model_row.environment = model_row.environments[0] if model_row.environments else (target_env or current_env)
 
             model_row.approval_status = ModelApprovalStatus.APPROVED.value
             model_row.is_active = True
@@ -1347,8 +1490,8 @@ async def approve_agent(
                 model_id=model_row.id,
                 actor_id=current_user.id,
                 action="model.create.approved",
-                from_environment=current_env,
-                to_environment=model_row.environment,
+                from_environment=",".join(current_envs),
+                to_environment=",".join(model_row.environments or []),
                 from_visibility=current_visibility,
                 to_visibility=model_row.visibility_scope,
                 message="Model onboarding request approved",
@@ -1416,6 +1559,28 @@ async def approve_agent(
     # multiple versions can run side-by-side.
 
     await session.commit()
+
+    # ─── Auto-generate API key for this approved PROD deployment ──
+    generated_api_key: str | None = None
+    try:
+        plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+        api_key_record = AgentApiKey(
+            agent_id=deployment.agent_id,
+            deployment_id=deployment.id,
+            version=f"v{deployment.version_number}",
+            environment="prod",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            is_active=True,
+            created_by=current_user.id,
+            created_at=datetime.now(timezone.utc),
+        )
+        session.add(api_key_record)
+        await session.commit()
+        generated_api_key = plaintext_key
+        logger.info(f"Generated API key (prefix={key_prefix}) for approved PROD deploy {deployment.id}")
+    except Exception as key_err:
+        logger.warning(f"API key generation failed after approval {req.id}: {key_err}")
 
     try:
         await sync_agent_registry(
@@ -1547,7 +1712,8 @@ async def approve_agent(
         )
     # ─── HTTP notify (only if guardrail promotion succeeded) ──
     guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
-    if guardrails_ready:
+    rag_ready = not pinecone_migration_failed and not neo4j_migration_failed
+    if guardrails_ready and rag_ready:
         try:
             import httpx
             from agentcore.services.deps import get_settings_service
@@ -1572,10 +1738,26 @@ async def approve_agent(
         except Exception as notify_err:
             logger.warning(f"Post-approval notify API failed for approval {req.id}: {notify_err}")
     else:
-        failed = [g.uat_guardrail_id for g in guardrail_promotions if not g.ready]
-        logger.warning(
-            f"[APPROVAL_NOTIFY] Skipped — guardrail promotion not ready for approval {req.id}. "
-            f"Failed guardrails: {failed}"
+        error_reasons = []
+        if not guardrails_ready:
+            failed = [g.uat_guardrail_id for g in guardrail_promotions if not g.ready]
+            error_reasons.append(f"Guardrail promotion not ready: {failed}")
+        if not rag_ready:
+            if pinecone_migration_failed:
+                error_reasons.append(f"Pinecone VDB migration failed: {pinecone_error_msg}")
+            if neo4j_migration_failed:
+                error_reasons.append(f"Neo4j graph migration failed: {neo4j_error_msg}")
+        logger.error(
+            f"[APPROVAL_NOTIFY] Failed for approval {req.id}. "
+            f"Reasons: {' | '.join(error_reasons)}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Agent approved but promotion checks failed. "
+                f"{' | '.join(error_reasons)}. "
+                f"Deployment {deployment.id} will not be notified for PROD."
+            ),
         )
 
     # Trigger handoff payload only for approved AGENT promotions (never on reject).
@@ -1597,6 +1779,7 @@ async def approve_agent(
         newStatus="approved",
         timestamp=now.isoformat(),
         approvedBy=approver_name,
+        api_key=generated_api_key,
     )
     logger.info(
         f"[APPROVE_RESPONSE] {response_payload.model_dump()} "
@@ -1966,7 +2149,7 @@ async def get_agent_details(
                 if submitted_at.tzinfo is None
                 else submitted_at.isoformat()
             ),
-            version=f"{(mcp_req.deployment_env or 'DEV').upper()} / {(row.mode or 'mcp').upper()}",
+            version=f"{_format_mcp_env_label(mcp_req)} / {(row.mode or 'mcp').upper()}",
             recentChanges="New MCP server request",
             adminComments=mcp_req.justification,
             adminAttachments=(mcp_req.file_path.get("files", []) if isinstance(mcp_req.file_path, dict) else []),
@@ -2012,7 +2195,7 @@ async def get_agent_details(
                 if submitted_at.tzinfo is None
                 else submitted_at.isoformat()
             ),
-            version=f"{row.model_name} ({str(row.environment).upper()})",
+            version=f"{row.model_name} ({_format_model_env_label_for_request(row, model_req)})",
             recentChanges=row.description or "",
             adminComments=model_req.justification,
             adminAttachments=(model_req.file_path.get("files", []) if isinstance(model_req.file_path, dict) else []),
@@ -2126,8 +2309,20 @@ async def update_mcp_config_for_approval(
         updates["mode"] = _normalize_mcp_mode(updates["mode"])
     effective_mode = updates.get("mode", row.mode)
 
+    if "environments" in updates:
+        raise HTTPException(status_code=400, detail="Direct environment change is blocked during approval")
+
     if "deployment_env" in updates and updates["deployment_env"] is not None:
-        updates["deployment_env"] = _normalize_mcp_deployment_env(updates["deployment_env"])
+        normalized_env = _normalize_mcp_deployment_env(updates["deployment_env"])
+        if normalized_env != _normalize_mcp_deployment_env(row.deployment_env or "UAT"):
+            raise HTTPException(status_code=400, detail="Direct environment change is blocked during approval")
+        updates["deployment_env"] = normalized_env
+
+    if any(
+        key in updates
+        for key in ("visibility", "public_scope", "public_dept_ids", "org_id", "dept_id")
+    ):
+        raise HTTPException(status_code=400, detail="Tenancy changes are blocked during approval")
 
     # Keep transport fields coherent whenever mode changes.
     if effective_mode == "sse":
@@ -2144,11 +2339,6 @@ async def update_mcp_config_for_approval(
         "url",
         "command",
         "args",
-        "visibility",
-        "public_scope",
-        "public_dept_ids",
-        "org_id",
-        "dept_id",
     }
     for field_name, value in updates.items():
         if field_name in allowed_fields:
@@ -2201,12 +2391,13 @@ async def get_agent_preview(
         return ApprovalPreviewResponse(
             id=str(mcp_req.id),
             title=row.server_name,
-            version=f"{(mcp_req.deployment_env or 'DEV').upper()} / {(row.mode or 'mcp').upper()}",
+            version=f"{_format_mcp_env_label(mcp_req)} / {(row.mode or 'mcp').upper()}",
             snapshot={
                 "server_name": row.server_name,
                 "description": row.description,
                 "mode": row.mode,
-                "deployment_env": mcp_req.deployment_env,
+                "deployment_env": _format_mcp_env_label(mcp_req),
+                "requested_environments": [str(v).lower() for v in (getattr(mcp_req, "requested_environments", None) or []) if v] or None,
                 "url": row.url,
                 "command": row.command,
                 "args": row.args,
@@ -2224,7 +2415,7 @@ async def get_agent_preview(
         return ApprovalPreviewResponse(
             id=str(model_req.id),
             title=row.display_name,
-            version=f"{str(row.environment).upper()} / {str(row.model_type).upper()}",
+            version=f"{_format_model_env_label(row)} / {str(row.model_type).upper()}",
             snapshot={
                 "model_id": str(row.id),
                 "display_name": row.display_name,
@@ -2233,10 +2424,11 @@ async def get_agent_preview(
                 "model_name": row.model_name,
                 "model_type": row.model_type,
                 "environment": row.environment,
+                "environments": row.environments,
+                "requested_environments": model_req.requested_environments,
                 "requested_type": str(model_req.request_type),
                 "source_environment": model_req.source_environment,
                 "target_environment": model_req.target_environment,
-                "final_target_environment": model_req.final_target_environment,
                 "visibility_requested": model_req.visibility_requested,
                 "visibility_scope": row.visibility_scope,
                 "org_id": str(row.org_id) if row.org_id else None,
@@ -2378,8 +2570,3 @@ async def reset_agent_status(
         "agentId": str(req.agent_id),
         "newStatus": "pending",
     }
-
-
-
-
-

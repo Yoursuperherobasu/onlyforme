@@ -22,7 +22,8 @@ interface AgentCardProps {
     email?: string | null;
     role?: string | null;
   } | null;
-  project: string;
+  project?: string;
+  visibility?: string | null;
   submitted: string;
   version: string;
   recentChanges: string;
@@ -53,6 +54,7 @@ export function AgentCard({
   submittedBy,
   approver,
   project,
+  visibility,
   submitted,
   version,
   recentChanges,
@@ -105,6 +107,49 @@ export function AgentCard({
     const raw = submittedBy?.name?.trim() ?? "";
     return raw.includes("@") ? raw : "";
   })();
+  const projectDisplay = project?.trim() ?? "";
+  const visibilityDisplay = visibility?.trim() ?? "";
+  const metadataItems = [
+    {
+      key: "submitted-by",
+      label: t("Submitted By"),
+      content: submittedByEmail ? (
+        <ShadTooltip content={submittedByEmail}>
+          <div className="truncate font-medium">{submittedByDisplay}</div>
+        </ShadTooltip>
+      ) : (
+        <div className="truncate font-medium">{submittedByDisplay}</div>
+      ),
+    },
+    ...(entityType !== "package" && entityType !== "mcp" && projectDisplay
+      ? [
+          {
+            key: "project",
+            label: t("Project"),
+            content: <div className="font-medium">{projectDisplay}</div>,
+          },
+        ]
+      : []),
+    ...((entityType === "model" || entityType === "mcp") && visibilityDisplay
+      ? [
+          {
+            key: "visibility",
+            label: t("Visibility"),
+            content: <div className="font-medium">{visibilityDisplay}</div>,
+          },
+        ]
+      : []),
+    {
+      key: "version",
+      label: t("Version"),
+      content: <div className="font-medium">{version || "-"}</div>,
+    },
+    {
+      key: "submitted",
+      label: t("Submitted"),
+      content: <div className="font-medium">{submittedDisplay}</div>,
+    },
+  ];
 
   return (
     <div className="rounded-lg border border-border bg-card p-6 transition-shadow hover:shadow-md">
@@ -147,34 +192,16 @@ export function AgentCard({
 
       {/* Metadata */}
       <div className="mb-4 grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-        <div className="min-w-0">
-          <div className="text-xs text-muted-foreground">{t("Submitted By")}</div>
-          {submittedByEmail ? (
-            <ShadTooltip content={submittedByEmail}>
-              <div className="truncate font-medium">{submittedByDisplay}</div>
-            </ShadTooltip>
-          ) : (
-            <div className="truncate font-medium">{submittedByDisplay}</div>
-          )}
-        </div>
-        {entityType !== "package" && (
-          <div>
-            <div className="text-xs text-muted-foreground">{t("Project")}</div>
-            <div className="font-medium">{project}</div>
+        {metadataItems.map((item) => (
+          <div key={item.key} className="min-w-0">
+            <div className="text-xs text-muted-foreground">{item.label}</div>
+            {item.content}
           </div>
-        )}
-        <div>
-          <div className="text-xs text-muted-foreground">{t("Version")}</div>
-          <div className="font-medium">{version || "-"}</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground">{t("Submitted")}</div>
-          <div className="font-medium">{submittedDisplay}</div>
-        </div>
+        ))}
       </div>
 
       {/* Recent Changes - hidden for models */}
-      {entityType !== "model" && entityType !== "package" && (
+      {entityType !== "model" && entityType !== "package" && entityType !== "mcp" && (
         <div className="mb-4 rounded-md bg-muted/50 p-3">
           <div className="mb-1 text-xs font-medium text-muted-foreground">
             {t("Recent Changes")}
@@ -191,7 +218,7 @@ export function AgentCard({
           {entityType === "mcp" ? (
             <Button variant="outline" onClick={onViewMcpConfig} className="gap-2">
               <FileCode2 className="h-4 w-4" />
-              {t("MCP Config")}
+              {t("Review Details")}
             </Button>
           ) : entityType === "package" ? null : (
             <Button variant="outline" onClick={onReviewDetails} className="gap-2">

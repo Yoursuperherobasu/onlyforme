@@ -72,10 +72,22 @@ def run_migrations_offline() -> None:
         context.run_migrations()
  
  
+def _compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    """Treat DateTime and TIMESTAMP as equivalent (SQLModel uses DateTime in
+    metadata but PostgreSQL reflects TIMESTAMP — they are the same type)."""
+    from sqlalchemy import DateTime, TIMESTAMP
+    if isinstance(inspected_type, TIMESTAMP) and isinstance(metadata_type, DateTime):
+        return False
+    if isinstance(inspected_type, DateTime) and isinstance(metadata_type, TIMESTAMP):
+        return False
+    return None
+
+
 def _do_run_migrations(connection):
     target_metadata = get_target_metadata()
     context.configure(
-        connection=connection, target_metadata=target_metadata, render_as_batch=True, prepare_threshold=None
+        connection=connection, target_metadata=target_metadata, render_as_batch=True, prepare_threshold=None,
+        compare_type=_compare_type,
     )
     with context.begin_transaction():
         if connection.dialect.name == "postgresql":

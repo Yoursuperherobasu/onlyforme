@@ -24,6 +24,7 @@ export interface McpRegistryType {
   description?: string | null;
   mode: "sse" | "stdio";
   deployment_env?: "DEV" | "UAT" | "PROD" | "dev" | "uat" | "prod";
+  environments?: string[] | null;
   url?: string | null;
   command?: string | null;
   args?: string[] | null;
@@ -44,6 +45,9 @@ export interface McpRegistryType {
   reviewed_at?: string | null;
   reviewed_by?: string | null;
   review_comments?: string | null;
+  tools_count?: number | null;
+  tools_checked_at?: string | null;
+  tools_snapshot?: McpToolInfo[] | null;
   created_by?: string | null;
   created_by_id?: string | null;
   created_at?: string;
@@ -55,6 +59,7 @@ export interface McpRegistryCreateRequest {
   description?: string | null;
   mode: "sse" | "stdio";
   deployment_env?: "DEV" | "UAT" | "PROD" | "dev" | "uat" | "prod";
+  environments?: string[] | null;
   url?: string | null;
   command?: string | null;
   args?: string[] | null;
@@ -77,6 +82,7 @@ export interface McpRegistryUpdateRequest {
   description?: string | null;
   mode?: "sse" | "stdio";
   deployment_env?: "DEV" | "UAT" | "PROD" | "dev" | "uat" | "prod";
+  environments?: string[] | null;
   url?: string | null;
   command?: string | null;
   args?: string[] | null;
@@ -105,6 +111,7 @@ export interface McpTestConnectionResponse {
   success: boolean;
   message: string;
   tools_count?: number;
+  tools?: McpToolInfo[];
 }
 
 export interface McpToolInfo {

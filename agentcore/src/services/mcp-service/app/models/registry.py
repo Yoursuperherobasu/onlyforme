@@ -184,6 +184,7 @@ class McpTestConnectionResponse(BaseModel):
     success: bool
     message: str
     tools_count: int | None = None
+    tools: list[McpToolInfo] | None = None
 
 
 # ---------------------------------------------------------------------------

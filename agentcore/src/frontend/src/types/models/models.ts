@@ -28,6 +28,7 @@ export interface ModelType {
   model_type: ModelTypeFilter;
   base_url?: string | null;
   environment: ModelEnvironment;
+  environments?: ModelEnvironment[] | null;
   visibility_scope?: ModelVisibilityScope;
   org_id?: string | null;
   dept_id?: string | null;
@@ -54,6 +55,7 @@ export interface ModelCreateRequest {
   base_url?: string | null;
   api_key?: string | null;
   environment?: ModelEnvironment;
+  environments?: ModelEnvironment[] | null;
   visibility_scope?: ModelVisibilityScope;
   org_id?: string | null;
   dept_id?: string | null;
@@ -73,6 +75,7 @@ export interface ModelUpdateRequest {
   base_url?: string | null;
   api_key?: string | null;
   environment?: ModelEnvironment;
+  environments?: ModelEnvironment[] | null;
   visibility_scope?: ModelVisibilityScope;
   org_id?: string | null;
   dept_id?: string | null;

@@ -24,6 +24,7 @@ async def resolve_scope_context(
     org_id: UUID | None = None,
     dept_id: UUID | None = None,
     enforce_filter_for_admin: bool = True,
+    trace_scope: str = "all",
 ) -> tuple[set[str], list[Any], str, list[str]]:
     """Resolve RBAC scope into (allowed_user_ids, langfuse_clients, scope_key, warnings)."""
     try:
@@ -33,6 +34,7 @@ async def resolve_scope_context(
             org_id=org_id,
             dept_id=dept_id,
             enforce_filter_for_admin=enforce_filter_for_admin,
+            trace_scope=trace_scope,
         )
     except ObservabilityScopeError as exc:
         detail = str(exc)
@@ -69,7 +71,7 @@ async def resolve_scope_context(
         if sorted_uids
         else "none"
     )
-    scope_key = f"{resolution.role}:{resolution.org_id}:{resolution.dept_id}:{user_hash}"
+    scope_key = f"{resolution.role}:{resolution.org_id}:{resolution.dept_id}:{trace_scope}:{user_hash}"
     return resolution.allowed_user_ids, clients, scope_key, scope_warnings
 
 

@@ -33,6 +33,7 @@ const useUploadFile = ({
     public_scope,
     org_id,
     dept_id,
+    public_dept_ids,
   }: {
     files?: File[];
     knowledgeBaseName?: string;
@@ -40,6 +41,7 @@ const useUploadFile = ({
     public_scope?: "organization" | "department";
     org_id?: string;
     dept_id?: string;
+    public_dept_ids?: string[];
   }): Promise<string[]> => {
     try {
       const filesToUpload = await getFilesToUpload({ files });
@@ -68,6 +70,7 @@ const useUploadFile = ({
           public_scope,
           org_id,
           dept_id,
+          public_dept_ids,
         });
         filesIds.push(res.path);
       }

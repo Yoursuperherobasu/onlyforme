@@ -26,6 +26,8 @@ export interface ConnectorInfo {
   public_scope?: "organization" | "department" | null;
   public_dept_ids?: string[];
   shared_user_ids?: string[];
+  created_by?: string | null;
+  created_by_id?: string | null;
 }
 
 export const useGetConnectorCatalogue: useQueryFunctionType<
@@ -43,7 +45,7 @@ export const useGetConnectorCatalogue: useQueryFunctionType<
     ["useGetConnectorCatalogue"],
     getConnectorCatalogueFn,
     {
-      refetchOnWindowFocus: false,
+      refetchOnMount: true,
       ...options,
     },
   );

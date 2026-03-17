@@ -33,7 +33,8 @@ export interface GuardrailInfo {
   visibility?: "private" | "public";
   public_scope?: "organization" | "department" | null;
   public_dept_ids?: string[];
-  shared_user_ids?: string[];
+  created_by?: string | null;
+  created_by_id?: string | null;
   // Environment separation fields
   environment?: GuardrailEnvironment;
   sourceGuardrailId?: string | null;
@@ -57,7 +58,6 @@ export interface GuardrailCreateOrUpdatePayload {
   visibility?: "private" | "public";
   public_scope?: "organization" | "department" | null;
   public_dept_ids?: string[] | null;
-  shared_user_emails?: string[] | null;
 }
 
 export interface GuardrailsCatalogueParams {
@@ -86,7 +86,7 @@ export const useGetGuardrailsCatalogue: useQueryFunctionType<
     ["useGetGuardrailsCatalogue", params?.framework ?? "all", params?.environment ?? "uat"],
     getGuardrailsCatalogueFn,
     {
-      refetchOnWindowFocus: false,
+      refetchOnMount: true,
       ...options,
     },
   );

@@ -228,3 +228,4 @@ all.env
 \myenv
 scripts/keyvault_master.env
 scripts/compare_keyvault_secrets.py
+docs

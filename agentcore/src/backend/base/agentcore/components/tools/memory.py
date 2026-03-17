@@ -5,7 +5,7 @@ from loguru import logger
 
 from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
-from agentcore.inputs.inputs import DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
+from agentcore.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
 from agentcore.memory import aget_messages, astore_message
 from agentcore.schema.content_block import ContentBlock
 from agentcore.schema.data import Data
@@ -18,6 +18,8 @@ from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI,
 
 # STM Redis cache settings
 STM_CACHE_PREFIX = "stm:history:"
+# LTM Redis cache settings
+LTM_CACHE_PREFIX = "ltm:context:"
 
 
 class MemoryComponent(Node):
@@ -28,7 +30,7 @@ class MemoryComponent(Node):
     mode_config = {
         "Store": ["message", "memory", "sender", "sender_name", "session_id"],
         "Retrieve": ["n_messages", "order", "template", "memory"],
-        "Short Term Memory": ["input_value", "n_messages", "session_id", "template", "memory"],
+        "Short Term Memory": ["input_value", "n_messages", "session_id", "enable_ltm", "ltm_retrieval_mode", "ltm_max_summary_tokens", "ltm_max_context_chars", "ltm_pinecone_top_k", "ltm_neo4j_top_k", "template", "memory"],
     }
 
     inputs = [
@@ -37,7 +39,7 @@ class MemoryComponent(Node):
             display_name="Mode",
             options=["Retrieve", "Store", "Short Term Memory"],
             value="Retrieve",
-            info="Operation mode: Store messages, Retrieve messages, or Short Term Memory (fetch recent conversation and concat with current input).",
+            info="Operation mode: Store, Retrieve, or Short Term Memory (with optional LTM for cross-session context).",
             real_time_refresh=True,
         ),
         HandleInput(
@@ -63,6 +65,22 @@ class MemoryComponent(Node):
             info="Retrieve messages from an external memory. If empty, it will use the AgentCore tables.",
             advanced=True,
             show=True,
+        ),
+        BoolInput(
+            name="enable_ltm",
+            display_name="Enable Long Term Memory",
+            value=False,
+            info="When enabled, cross-session memory from Pinecone/Neo4j is also included alongside session history.",
+            show=False,
+            real_time_refresh=True,
+        ),
+        HandleInput(
+            name="llm",
+            display_name="Language Model",
+            input_types=["LanguageModel"],
+            info="LLM for LTM summarization and fact extraction. Connect the same LLM used in your agent flow.",
+            required=False,
+            show=False,
         ),
         DropdownInput(
             name="sender_type",
@@ -115,6 +133,46 @@ class MemoryComponent(Node):
             tool_mode=True,
             required=True,
             show=True,
+        ),
+        DropdownInput(
+            name="ltm_retrieval_mode",
+            display_name="LTM Retrieval Mode",
+            options=["Both", "Pinecone Only", "Neo4j Only"],
+            value="Both",
+            info="How to retrieve long-term memory: semantic search (Pinecone), graph search (Neo4j), or both.",
+            show=False,
+        ),
+        IntInput(
+            name="ltm_max_summary_tokens",
+            display_name="LTM Max Summary Tokens",
+            value=500,
+            info="Maximum tokens for LLM-generated conversation summaries stored in Pinecone.",
+            show=False,
+            advanced=True,
+        ),
+        IntInput(
+            name="ltm_max_context_chars",
+            display_name="LTM Max Context Characters",
+            value=2000,
+            info="Maximum characters of LTM context (summaries + facts) prepended to the user message.",
+            show=False,
+            advanced=True,
+        ),
+        IntInput(
+            name="ltm_pinecone_top_k",
+            display_name="LTM Pinecone Top K",
+            value=5,
+            info="Number of most relevant summaries to retrieve from Pinecone.",
+            show=False,
+            advanced=True,
+        ),
+        IntInput(
+            name="ltm_neo4j_top_k",
+            display_name="LTM Neo4j Top K",
+            value=10,
+            info="Maximum number of entities/relationships to retrieve from Neo4j knowledge graph.",
+            show=False,
+            advanced=True,
         ),
         MultilineInput(
             name="template",
@@ -199,18 +257,31 @@ class MemoryComponent(Node):
             logger.debug("[STM] Redis not available, skipping cache layer")
         return None, 300
 
+    def _detect_env(self) -> str:
+        """Detect the execution environment from graph flags.
+        Returns: 'orch', 'dev' (default).
+        """
+        if (
+            hasattr(self, "graph")
+            and getattr(self.graph, "skip_dev_logging", False)
+            and getattr(self.graph, "orch_deployment_id", None)
+        ):
+            return "orch"
+        return "dev"
+
     async def _get_stm_cache(self, session_id: str, n_messages: int) -> list[dict] | None:
         """Try to get cached STM history from Redis."""
         redis, _ = self._get_redis_client_and_ttl()
         if not redis:
             return None
         try:
-            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
+            env = self._detect_env()
+            cache_key = f"{STM_CACHE_PREFIX}{env}:{session_id}:{n_messages}"
             data = await redis.get(cache_key)
             if data:
-                logger.info(f"[STM] Cache HIT for session={session_id}, n={n_messages}")
+                logger.info(f"[STM] Cache HIT for session={session_id}, n={n_messages}, env={env}")
                 return json.loads(data)
-            logger.debug(f"[STM] Cache MISS for session={session_id}, n={n_messages}")
+            logger.debug(f"[STM] Cache MISS for session={session_id}, n={n_messages}, env={env}")
         except Exception as e:
             logger.warning(f"[STM] Redis cache read failed: {e}")
         return None
@@ -221,7 +292,8 @@ class MemoryComponent(Node):
         if not redis:
             return
         try:
-            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
+            env = self._detect_env()
+            cache_key = f"{STM_CACHE_PREFIX}{env}:{session_id}:{n_messages}"
             data = []
             for m in messages:
                 entry = {
@@ -241,13 +313,19 @@ class MemoryComponent(Node):
         except Exception as e:
             logger.warning(f"[STM] Redis cache write failed: {e}")
 
-    async def _invalidate_stm_cache(self, session_id: str) -> None:
-        """Invalidate all STM cache entries for a session (any n_messages value)."""
+    async def _invalidate_stm_cache(self, session_id: str, env: str | None = None) -> None:
+        """Invalidate all STM cache entries for a session (any n_messages value).
+        If env is None, invalidates across all environments for safety.
+        """
         redis, _ = self._get_redis_client_and_ttl()
         if not redis:
             return
         try:
-            pattern = f"{STM_CACHE_PREFIX}{session_id}:*"
+            if env:
+                pattern = f"{STM_CACHE_PREFIX}{env}:{session_id}:*"
+            else:
+                # Invalidate all envs for this session
+                pattern = f"{STM_CACHE_PREFIX}*:{session_id}:*"
             keys = []
             async for key in redis.scan_iter(match=pattern, count=100):
                 keys.append(key)
@@ -256,6 +334,78 @@ class MemoryComponent(Node):
                 logger.debug(f"[STM] Invalidated {len(keys)} cache entries for session={session_id}")
         except Exception as e:
             logger.warning(f"[STM] Redis cache invalidation failed: {e}")
+
+    async def _fetch_orch_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from orch_conversation table (for deployed agents via orchestrator)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(OrchConversationTable)
+                    .where(OrchConversationTable.session_id == str(session_id))
+                    .where(OrchConversationTable.error == False)  # noqa: E712
+                    .order_by(col(OrchConversationTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in orch_conversation for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] orch_conversation fetch failed: {e}")
+        return []
+
+    async def _fetch_prod_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from conversation_prod table (for PROD deployed agents)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.conversation_prod.model import ConversationProdTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationProdTable)
+                    .where(ConversationProdTable.session_id == str(session_id))
+                    .where(ConversationProdTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationProdTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in conversation_prod for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] conversation_prod fetch failed: {e}")
+        return []
+
+    async def _fetch_uat_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from conversation_uat table (for UAT deployed agents)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.conversation_uat.model import ConversationUATTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationUATTable)
+                    .where(ConversationUATTable.session_id == str(session_id))
+                    .where(ConversationUATTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationUATTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in conversation_uat for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] conversation_uat fetch failed: {e}")
+        return []
 
     def _effective_session_id(self) -> str | None:
         """Return the session_id to use: explicit input field → graph session → None."""
@@ -266,6 +416,12 @@ class MemoryComponent(Node):
             return self._session_id
         if hasattr(self, "graph") and getattr(self.graph, "session_id", None):
             return self.graph.session_id
+        return None
+
+    def _effective_agent_id(self) -> str | None:
+        """Return the agent_id to use: graph agent_id → None."""
+        if hasattr(self, "graph") and getattr(self.graph, "agent_id", None):
+            return str(self.graph.agent_id)
         return None
 
     async def store_message(self) -> Message:
@@ -473,14 +629,41 @@ class MemoryComponent(Node):
                     history_source = "redis_cache"
                 else:
                     # Cache miss — fetch from DB
-                    history_messages = await aget_messages(
-                        session_id=session_id,
-                        order="DESC",
-                        limit=n_messages,
+                    # Detect orchestrator mode from graph flags
+                    is_orch = (
+                        hasattr(self, "graph")
+                        and getattr(self.graph, "skip_dev_logging", False)
+                        and getattr(self.graph, "orch_deployment_id", None)
                     )
+
+                    if is_orch:
+                        # Orchestrator mode — read from orch_conversation directly
+                        orch_dep_id = getattr(self.graph, "orch_deployment_id", "?")
+                        logger.info(f"[STM] Orchestrator mode detected (deployment_id={orch_dep_id}), reading from orch_conversation")
+                        history_messages = await self._fetch_orch_messages(session_id, n_messages)
+                        history_source = "orch_database"
+                    else:
+                        # Non-orchestrator: check PROD → UAT → Dev (priority order)
+                        # PROD first
+                        history_messages = await self._fetch_prod_messages(session_id, n_messages)
+                        if history_messages:
+                            history_source = "prod_database"
+                        else:
+                            # UAT second
+                            history_messages = await self._fetch_uat_messages(session_id, n_messages)
+                            if history_messages:
+                                history_source = "uat_database"
+                            else:
+                                # Dev/playground fallback
+                                history_messages = await aget_messages(
+                                    session_id=session_id,
+                                    order="DESC",
+                                    limit=n_messages,
+                                )
+                                history_source = "database"
+
                     # Reverse to chronological order (oldest first)
                     history_messages = list(reversed(history_messages))
-                    history_source = "database"
 
                     # Cache the fresh DB result in Redis for rapid re-fetches
                     if history_messages:
@@ -506,13 +689,57 @@ class MemoryComponent(Node):
             conversation_history = ""
 
         # Build the enriched text: history + current input
+        # If LTM is enabled, also fetch cross-session context from Pinecone/Neo4j
+        ltm_context = ""
+        enable_ltm = getattr(self, "enable_ltm", False)
+        connected_llm = getattr(self, "llm", None)
+        agent_id = self._effective_agent_id()
+
+        if enable_ltm and agent_id and current_text:
+            logger.info(f"[LTM] LTM enabled for agent={agent_id}")
+            # Process pending messages (uses LLM from settings — no wiring needed)
+            try:
+                from agentcore.services.deps import get_ltm_service
+                ltm_svc = get_ltm_service()
+                should = await ltm_svc.should_process(agent_id)
+                logger.info(f"[LTM] should_process={should} for agent={agent_id}")
+                if should:
+                    await ltm_svc.process_with_llm(agent_id)
+            except Exception as e:
+                logger.warning(f"[LTM] Inline processing failed: {e}")
+
+            # Retrieve LTM context
+            try:
+                from agentcore.services.ltm import LTM_DEFAULTS
+                retrieval_mode = getattr(self, "ltm_retrieval_mode", "Both") or "Both"
+                pinecone_top_k = getattr(self, "ltm_pinecone_top_k", LTM_DEFAULTS["pinecone_top_k"]) or LTM_DEFAULTS["pinecone_top_k"]
+                neo4j_top_k = getattr(self, "ltm_neo4j_top_k", LTM_DEFAULTS["neo4j_top_k"]) or LTM_DEFAULTS["neo4j_top_k"]
+                max_context_chars = getattr(self, "ltm_max_context_chars", LTM_DEFAULTS["max_context_chars"]) or LTM_DEFAULTS["max_context_chars"]
+                from agentcore.services.ltm.retriever import retrieve
+                # Let retriever auto-detect environment (PROD/UAT/Dev)
+                # from deployment tables — it resolves the exact env
+                ltm_context = await retrieve(
+                    query=current_text,
+                    agent_id=agent_id,
+                    mode=retrieval_mode,
+                    pinecone_top_k=pinecone_top_k,
+                    neo4j_top_k=neo4j_top_k,
+                )
+                # Truncate LTM context to max chars
+                if ltm_context and len(ltm_context) > max_context_chars:
+                    ltm_context = ltm_context[:max_context_chars] + "\n... (truncated)"
+                if ltm_context:
+                    logger.info(f"[LTM] Retrieved {len(ltm_context)} chars of cross-session context")
+            except Exception as e:
+                logger.error(f"[LTM] Retrieval failed: {e}")
+
+        parts = []
+        if ltm_context:
+            parts.append(f"Long Term Memory (Cross-Session Context):\n{ltm_context}")
         if conversation_history:
-            enriched_text = (
-                f"Conversation History:\n{conversation_history}\n\n"
-                f"Current Message:\n{current_text}"
-            )
-        else:
-            enriched_text = current_text
+            parts.append(f"Conversation History:\n{conversation_history}")
+        parts.append(f"Current Message:\n{current_text}")
+        enriched_text = "\n\n".join(parts)
 
         # Collect all files from history messages and current input
         # Ensure every image path is an Image object so resolve_images() can
@@ -573,6 +800,12 @@ class MemoryComponent(Node):
         self.status = enriched_message
         return enriched_message
 
+    # Fields that only show when "Enable Long Term Memory" is toggled ON
+    _ltm_only_fields = [
+        "ltm_retrieval_mode", "ltm_max_summary_tokens", "ltm_max_context_chars",
+        "ltm_pinecone_top_k", "ltm_neo4j_top_k",
+    ]
+
     def update_build_config(
         self,
         build_config: dotdict,
@@ -594,5 +827,11 @@ class MemoryComponent(Node):
         if selected_mode in self.mode_config:
             for field in self.mode_config[selected_mode]:
                 build_config = set_field_display(build_config, field, True)
+
+        # Show LTM-specific controls only when "Enable Long Term Memory" is ON
+        if selected_mode == "Short Term Memory":
+            enable_ltm = build_config.get("enable_ltm", {}).get("value", False)
+            for field in self._ltm_only_fields:
+                build_config = set_field_display(build_config, field, bool(enable_ltm))
 
         return build_config

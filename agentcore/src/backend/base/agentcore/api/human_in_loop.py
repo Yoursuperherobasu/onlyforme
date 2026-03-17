@@ -160,10 +160,13 @@ async def list_pending_hitl(
     from sqlalchemy import and_, or_
     stmt = stmt.where(
         or_(
-            # Published/deployed runs: only the assigned approver sees them
+            # Published/deployed runs: assigned approver OR the run creator
             and_(
                 HITLRequest.is_deployed_run == True,  # noqa: E712
-                HITLRequest.assigned_to == current_user.id,
+                or_(
+                    HITLRequest.assigned_to == current_user.id,
+                    HITLRequest.user_id == current_user.id,
+                ),
             ),
             # Playground runs: creator sees their own (current behavior)
             and_(
@@ -554,13 +557,15 @@ async def get_delegatable_users(
 def _check_hitl_authorization(hitl_req: HITLRequest, current_user) -> None:
     """Verify the current user is allowed to act on this HITL request.
 
-    For deployed runs with an assigned approver, only that approver may
-    resume / cancel / delegate.  No superuser bypass — superusers must be
-    explicitly assigned or delegated by the department admin.
+    For deployed runs with an assigned approver, the assigned approver OR the
+    user who triggered the run (user_id) may resume / cancel / delegate.
     Playground requests (no assigned_to) remain accessible to the original
     creator.
     """
     if hitl_req.assigned_to and hitl_req.assigned_to != current_user.id:
+        # Also allow the user who triggered the run to act on it
+        if hitl_req.user_id and hitl_req.user_id == current_user.id:
+            return
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not assigned to this approval request",

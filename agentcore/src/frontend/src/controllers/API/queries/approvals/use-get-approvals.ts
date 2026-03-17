@@ -20,7 +20,8 @@ export interface ApprovalAgent {
     email?: string | null;
     role?: string | null;
   } | null;
-  project: string;
+  project?: string;
+  visibility?: string | null;
   submitted: string;
   version: string;
   recentChanges: string;

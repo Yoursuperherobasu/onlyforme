@@ -31,6 +31,7 @@ interface QueryConfig {
   selectedOrgId: string | null;
   selectedDeptId: string | null;
   selectedEnvironment: string;
+  traceScope?: string;
 }
 
 export function useObservabilityQueries(config: QueryConfig) {
@@ -48,6 +49,7 @@ export function useObservabilityQueries(config: QueryConfig) {
     selectedOrgId,
     selectedDeptId,
     selectedEnvironment,
+    traceScope,
   } = config;
 
   const includeModelBreakdown = activeTab === "models";
@@ -85,6 +87,7 @@ export function useObservabilityQueries(config: QueryConfig) {
       selectedOrgId,
       selectedDeptId,
       selectedEnvironment,
+      traceScope,
     ],
     queryFn: () =>
       fetchMetrics({
@@ -102,7 +105,7 @@ export function useObservabilityQueries(config: QueryConfig) {
   });
 
   const sessionsData = useQuery({
-    queryKey: ["observability-sessions", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
+    queryKey: ["observability-sessions", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
     queryFn: () => fetchSessions({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchSessions,
     staleTime: LIST_STALE_MS,
@@ -112,7 +115,7 @@ export function useObservabilityQueries(config: QueryConfig) {
   });
 
   const agentsData = useQuery({
-    queryKey: ["observability-agents", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
+    queryKey: ["observability-agents", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
     queryFn: () => fetchAgents({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchAgents,
     staleTime: LIST_STALE_MS,
@@ -122,7 +125,7 @@ export function useObservabilityQueries(config: QueryConfig) {
   });
 
   const projectsData = useQuery({
-    queryKey: ["observability-projects", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
+    queryKey: ["observability-projects", filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
     queryFn: () => fetchProjects({ ...dateParams, ...scopeParams }),
     enabled: canRunScopedQueries && shouldFetchProjects,
     staleTime: LIST_STALE_MS,
@@ -132,7 +135,7 @@ export function useObservabilityQueries(config: QueryConfig) {
   });
 
   const sessionDetail = useQuery({
-    queryKey: ["session-detail", selectedSession, filters.dateRange, selectedOrgId, selectedDeptId, selectedEnvironment],
+    queryKey: ["session-detail", selectedSession, filters.dateRange, selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
     queryFn: () => fetchSessionDetail(selectedSession!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedSession && canRunScopedQueries,
     staleTime: DETAIL_STALE_MS,
@@ -142,7 +145,7 @@ export function useObservabilityQueries(config: QueryConfig) {
   });
 
   const traceDetail = useQuery({
-    queryKey: ["trace-detail", selectedTrace, selectedOrgId, selectedDeptId, selectedEnvironment],
+    queryKey: ["trace-detail", selectedTrace, selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
     queryFn: () => fetchTraceDetail(selectedTrace!, scopeParams),
     enabled: !!selectedTrace && canRunScopedQueries,
     staleTime: DETAIL_STALE_MS,
@@ -153,7 +156,7 @@ export function useObservabilityQueries(config: QueryConfig) {
   });
 
   const agentDetail = useQuery({
-    queryKey: ["agent-detail", selectedAgent, filters.dateRange, selectedOrgId, selectedDeptId, selectedEnvironment],
+    queryKey: ["agent-detail", selectedAgent, filters.dateRange, selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
     queryFn: () => fetchAgentDetail(selectedAgent!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedAgent && canRunScopedQueries,
     staleTime: DETAIL_STALE_MS,
@@ -163,7 +166,7 @@ export function useObservabilityQueries(config: QueryConfig) {
   });
 
   const projectDetail = useQuery({
-    queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment],
+    queryKey: ["project-detail", selectedProject, filters.dateRange, fetchAllMode, selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
     queryFn: () => fetchProjectDetail(selectedProject!, { ...dateParams, ...scopeParams }),
     enabled: !!selectedProject && canRunScopedQueries,
     staleTime: DETAIL_STALE_MS,

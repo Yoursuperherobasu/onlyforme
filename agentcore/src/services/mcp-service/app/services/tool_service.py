@@ -190,7 +190,7 @@ def _extract_content_items(result: Any) -> list[ToolContentItem]:
 async def test_connection(config: dict, mode: str) -> dict:
     """Test an ad-hoc MCP connection.
 
-    Returns a dict with success, message, tools_count.
+    Returns a dict with success, message, tools_count, tools.
     """
     server_config: dict = {}
     if mode == "sse":
@@ -209,14 +209,19 @@ async def test_connection(config: dict, mode: str) -> dict:
 
     try:
         tool_schemas = await list_tools_from_config(server_config, server_name="test-connection")
+        tools_info = [
+            {"name": t.name, "description": t.description or ""} for t in tool_schemas
+        ]
         return {
             "success": True,
             "message": f"Connected successfully. Found {len(tool_schemas)} tool(s).",
             "tools_count": len(tool_schemas),
+            "tools": tools_info,
         }
     except Exception as e:
         return {
             "success": False,
             "message": str(e),
             "tools_count": None,
+            "tools": None,
         }

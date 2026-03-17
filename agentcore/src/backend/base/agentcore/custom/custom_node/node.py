@@ -1556,6 +1556,11 @@ class Node(ExecutableNode):
             # Orchestrator messages go to the dedicated orch_conversation table
             if getattr(self.graph, "skip_dev_logging", False):
                 return await self._store_orch_message(message, agent_id)
+            # UAT/PROD messages go to their respective conversation tables
+            uat_deployment_id = getattr(self.graph, "uat_deployment_id", None)
+            prod_deployment_id = getattr(self.graph, "prod_deployment_id", None)
+            if uat_deployment_id or prod_deployment_id:
+                return await self._store_env_message(message, agent_id, uat_deployment_id, prod_deployment_id)
 
         stored_messages = await astore_message(message, agent_id=agent_id)
         if len(stored_messages) != 1:
@@ -1570,6 +1575,69 @@ class Node(ExecutableNode):
         result = await Message.create(**dump)
 
         return result
+
+    async def _store_env_message(
+        self, message: Message, agent_id: str | None,
+        uat_deployment_id: str | None, prod_deployment_id: str | None,
+    ) -> Message:
+        """Store a message in conversation_uat or conversation_prod based on deployment context.
+
+        Only stores meaningful messages (non-empty text from User or AI sender).
+        Intermediate Worker Node messages and empty messages are skipped to keep
+        the environment conversation tables clean.
+        """
+        from uuid import UUID as _UUID, uuid4 as _uuid4
+        from agentcore.services.deps import session_scope
+
+        # Skip empty/blank messages to keep env conversation tables clean
+        message_text = message.text if isinstance(message.text, str) else ""
+        if not message_text.strip():
+            if not getattr(message, "id", None):
+                message.id = str(_uuid4())
+            return message
+
+        # Deduplicate: skip if the same sender+text was already stored in this run
+        dedup_key = f"{message.sender}:{message_text}"
+        seen = getattr(self.graph, "_env_msg_seen", None)
+        if seen is None:
+            seen = set()
+            self.graph._env_msg_seen = seen
+        if dedup_key in seen:
+            if not getattr(message, "id", None):
+                message.id = str(_uuid4())
+            return message
+        seen.add(dedup_key)
+
+        if uat_deployment_id:
+            from agentcore.services.database.models.conversation_uat.model import ConversationUATTable
+            from agentcore.services.database.models.conversation_uat.crud import add_conversation_uat
+
+            row = ConversationUATTable.from_message(
+                message, agent_id=agent_id, deployment_id=_UUID(uat_deployment_id),
+            )
+            row.org_id = _UUID(self.graph.uat_org_id) if getattr(self.graph, "uat_org_id", None) else None
+            row.dept_id = _UUID(self.graph.uat_dept_id) if getattr(self.graph, "uat_dept_id", None) else None
+
+            async with session_scope() as session:
+                stored = await add_conversation_uat(row, session)
+
+        else:
+            from agentcore.services.database.models.conversation_prod.model import ConversationProdTable
+            from agentcore.services.database.models.conversation_prod.crud import add_conversation_prod
+
+            row = ConversationProdTable.from_message(
+                message, agent_id=agent_id, deployment_id=_UUID(prod_deployment_id),
+            )
+            row.org_id = _UUID(self.graph.prod_org_id) if getattr(self.graph, "prod_org_id", None) else None
+            row.dept_id = _UUID(self.graph.prod_dept_id) if getattr(self.graph, "prod_dept_id", None) else None
+
+            async with session_scope() as session:
+                stored = await add_conversation_prod(row, session)
+
+        # Return a Message object so callers can access .id etc.
+        if not getattr(message, "id", None):
+            message.id = str(stored.id)
+        return message
 
     async def _store_orch_message(self, message: Message, agent_id: str | None) -> Message:
         """Store a message in the orch_conversation table instead of the regular conversation table.

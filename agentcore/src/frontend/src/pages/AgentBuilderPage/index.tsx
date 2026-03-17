@@ -52,7 +52,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const normalizedRole = String(role ?? "")
     .toLowerCase()
     .replace(/\s+/g, "_");
-  const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
+  const isAdminRole = ["root", "super_admin", "department_admin"].includes(
     normalizedRole,
   );
   const requestedReadOnlyMode = view || searchParams.get("readonly") === "1";

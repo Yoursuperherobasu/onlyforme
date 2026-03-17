@@ -168,6 +168,7 @@ async def resolve_observability_scope(
     org_id: UUID | None = None,
     dept_id: UUID | None = None,
     enforce_filter_for_admin: bool = True,
+    trace_scope: str = "all",
 ) -> ObservabilityScopeResolution:
     role = normalize_role(current_user.role)
     user_id = current_user.id
@@ -202,37 +203,43 @@ async def resolve_observability_scope(
             raise ObservabilityScopeError("Selected department is outside your scope.")
         target_dept_ids = {selected_dept_id} if selected_dept_id else dept_ids
         target_org_ids = {dept_to_org[d] for d in target_dept_ids if d in dept_to_org}
-        allowed_user_ids |= await _users_for_departments(
-            session,
-            dept_ids=target_dept_ids,
-            role_names=DEPT_ADMIN_VISIBLE_ROLES,
-        )
+        if trace_scope != "my":
+            allowed_user_ids |= await _users_for_departments(
+                session,
+                dept_ids=target_dept_ids,
+                role_names=DEPT_ADMIN_VISIBLE_ROLES,
+            )
 
     elif role == "super_admin":
         if not org_ids:
             raise ObservabilityScopeError("Super admin has no active organization scope.")
-        if enforce_filter_for_admin and selected_org_id is None and selected_dept_id is None:
-            raise ObservabilityScopeError("org_id or dept_id is required for super admin observability.")
         if selected_org_id is not None and selected_org_id not in org_ids:
             raise ObservabilityScopeError("Selected organization is outside your scope.")
         if selected_department and selected_department.org_id not in org_ids:
             raise ObservabilityScopeError("Selected department is outside your organization scope.")
 
-        target_org_ids = {selected_org_id} if selected_org_id else set(org_ids)
-        if selected_department:
-            target_org_ids = {selected_department.org_id}
+        # trace_scope="all" → org-wide (all projects), no filter required
+        # trace_scope="dept" → specific department, dept_id required
+        # trace_scope="my" → only own traces, no filter required
+        if trace_scope == "dept":
+            if enforce_filter_for_admin and selected_dept_id is None:
+                raise ObservabilityScopeError("dept_id is required for department trace scope.")
+        elif enforce_filter_for_admin and selected_org_id is None and selected_dept_id is None:
+            # "all" and "my" auto-resolve to the super_admin's org(s)
+            pass
+
+        if trace_scope == "dept" and selected_department:
+            # Narrow to the single selected department only
             target_dept_ids = {selected_department.id}
-        elif selected_org_id:
-            dept_in_org_rows = (
-                await session.exec(
-                    select(Department.id).where(
-                        Department.org_id == selected_org_id,
-                        Department.status == "active",
-                    )
-                )
-            ).all()
-            target_dept_ids = {row for row in dept_in_org_rows}
+            target_org_ids = {selected_department.org_id}
+            allowed_user_ids |= await _users_for_departments(
+                session,
+                dept_ids=target_dept_ids,
+                role_names=SUPER_ADMIN_VISIBLE_ROLES,
+            )
         else:
+            # "all" and "my" — org-wide resolution
+            target_org_ids = {selected_org_id} if selected_org_id else set(org_ids)
             dept_in_scope_rows = (
                 await session.exec(
                     select(Department.id).where(
@@ -242,12 +249,12 @@ async def resolve_observability_scope(
                 )
             ).all()
             target_dept_ids = {row for row in dept_in_scope_rows}
-
-        allowed_user_ids |= await _users_for_organizations(
-            session,
-            org_ids=target_org_ids,
-            role_names=SUPER_ADMIN_VISIBLE_ROLES,
-        )
+            if trace_scope != "my":
+                allowed_user_ids |= await _users_for_organizations(
+                    session,
+                    org_ids=target_org_ids,
+                    role_names=SUPER_ADMIN_VISIBLE_ROLES,
+                )
 
     elif role == "root":
         if enforce_filter_for_admin and selected_org_id is None and selected_dept_id is None:
@@ -292,7 +299,7 @@ async def resolve_observability_scope(
     bindings: list[LangfuseBinding] = []
     if target_dept_ids:
         bindings.extend(await _active_department_bindings(session, target_dept_ids))
-    if role in {"root", "super_admin"} and target_org_ids:
+    if role in {"root", "super_admin"} and target_org_ids and trace_scope != "dept":
         bindings.extend(await _active_org_admin_bindings(session, target_org_ids))
 
     return ObservabilityScopeResolution(

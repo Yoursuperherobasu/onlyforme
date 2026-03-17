@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import UUID
 
 from enum import Enum as PyEnum
@@ -52,7 +53,9 @@ from agentcore.services.database.models.agent_deployment_uat.model import (
     DeploymentVisibilityEnum,
 )
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
+from agentcore.services.auth.utils import generate_agent_api_key
 from agentcore.services.database.models.agent_registry.model import RegistryDeploymentEnvEnum
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.database.models.agent_bundle.model import (
@@ -253,6 +256,7 @@ class PublishActionResponse(BaseModel):
     is_active: bool
     version_number: str
     promoted_from_uat_id: UUID | None = None
+    api_key: str | None = None
 
 
 class PublishNotifyRequest(BaseModel):
@@ -1267,25 +1271,33 @@ async def publish_notify_verify(
     body: PublishNotifyRequest,
     session: DbSession,
 ):
-    """DB-verified publish notification endpoint for PROD deployments.
+    """DB-verified publish notification endpoint for UAT and PROD deployments.
 
-    Triggered after agent approval in prod. Looks up the deployment
-    record in the agent_deployment_prod table, verifies that the
-    agent_id and version match, and returns the full deployment
+    Triggered after agent publish (UAT) or approval (PROD). Looks up the
+    deployment record in the appropriate table, verifies that the agent_id
+    and version match, updates manifest.yaml, and returns the full deployment
     details for downstream deployment orchestration.
 
     Raises:
-        404: Deployment record not found in prod table.
+        404: Deployment record not found.
         409: Mismatch between request payload and DB record.
     """
-    # 1. Find the deployment record in PROD table only
-    record = (await session.exec(
-        select(AgentDeploymentProd).where(AgentDeploymentProd.id == body.deployment_id)
-    )).first()
+    env = (body.environment or "prod").lower()
+
+    # 1. Find the deployment record in the appropriate table
+    if env == "uat":
+        record = (await session.exec(
+            select(AgentDeploymentUAT).where(AgentDeploymentUAT.id == body.deployment_id)
+        )).first()
+    else:
+        record = (await session.exec(
+            select(AgentDeploymentProd).where(AgentDeploymentProd.id == body.deployment_id)
+        )).first()
+
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"PROD deployment record {body.deployment_id} not found",
+            detail=f"{env.upper()} deployment record {body.deployment_id} not found",
         )
 
     # 2. Verify agent_id matches
@@ -1314,15 +1326,27 @@ async def publish_notify_verify(
     logger.info(
         f"[PUBLISH_NOTIFY] Verified: agent='{record.agent_name}' "
         f"agent_id={record.agent_id} deployment_id={record.id} "
-        f"env=prod version=v{record.version_number} "
+        f"env={env} version=v{record.version_number} "
         f"status={record.status} is_active={record.is_active}",
+    )
+
+    # Append core deployment details to manifest.yaml.
+    # Failure here is non-fatal — the API response is always returned regardless.
+    from agentcore.services.manifest import add_manifest_entry
+
+    add_manifest_entry(
+        agent_id=str(record.agent_id),
+        agent_name=record.agent_name,
+        version_number=f"v{record.version_number}",
+        environment=env,
+        deployment_id=str(record.id),
     )
 
     return PublishNotifyVerifiedResponse(
         agent_id=record.agent_id,
         agent_name=record.agent_name,
         agent_description=record.agent_description,
-        environment="prod",
+        environment=env,
         version_number=f"v{record.version_number}",
         deployment_id=record.id,
         status=record.status.value if hasattr(record.status, "value") else str(record.status),
@@ -1957,6 +1981,23 @@ async def publish_agent(
             await session.commit()
             await session.refresh(new_record)
 
+            # ─── Auto-generate API key for this UAT deployment ──
+            plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+            api_key_record = AgentApiKey(
+                agent_id=agent_id,
+                deployment_id=new_record.id,
+                version=f"v{next_version}",
+                environment="uat",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                is_active=True,
+                created_by=current_user.id,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(api_key_record)
+            await session.commit()
+            logger.info(f"Generated API key (prefix={key_prefix}) for UAT deploy {new_record.id} v{next_version}")
+
             logger.info(
                 f"Deployed agent '{agent.name}' ({agent_id}) to UAT as v{next_version} "
                 f"by user {current_user.id} [dept={resolved_department_id}]"
@@ -2021,6 +2062,31 @@ async def publish_agent(
                 published_at=new_record.deployed_at,
             )
 
+            # ─── HTTP notify (for downstream deployment orchestration + manifest.yaml) ──
+            try:
+                import httpx
+                from agentcore.services.deps import get_settings_service
+                settings = get_settings_service().settings
+                base_url = f"http://{settings.host}:{settings.port}"
+                payload = {
+                    "agent_id": str(agent_id),
+                    "environment": "uat",
+                    "version_number": str(next_version),
+                    "deployment_id": str(new_record.id),
+                }
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(f"{base_url}/api/publish/notify", json=payload)
+                    resp.raise_for_status()
+                    verified = resp.json()
+                logger.info(
+                    f"[UAT_NOTIFY] API triggered: agent={verified.get('agent_name')} "
+                    f"deployment_id={verified.get('deployment_id')} "
+                    f"version={verified.get('version_number')} "
+                    f"status={verified.get('status')} is_active={verified.get('is_active')}",
+                )
+            except Exception as notify_err:
+                logger.warning(f"Post-deploy notify API failed for UAT deploy of {agent_id}: {notify_err}")
+
             return PublishActionResponse(
                 success=True,
                 message=f"Agent '{agent.name}' deployed to UAT as v{next_version}",
@@ -2029,6 +2095,7 @@ async def publish_agent(
                 status=new_record.status.value,
                 is_active=True,
                 version_number=f"v{next_version}",
+                api_key=plaintext_key,
             )
 
         else:
@@ -2069,6 +2136,23 @@ async def publish_agent(
 
                 await session.commit()
                 await session.refresh(new_record)
+
+                # ─── Auto-generate API key for this PROD deployment ──
+                plaintext_key, key_hash, key_prefix = generate_agent_api_key()
+                api_key_record = AgentApiKey(
+                    agent_id=agent_id,
+                    deployment_id=new_record.id,
+                    version=f"v{next_version}",
+                    environment="prod",
+                    key_hash=key_hash,
+                    key_prefix=key_prefix,
+                    is_active=True,
+                    created_by=current_user.id,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(api_key_record)
+                await session.commit()
+                logger.info(f"Generated API key (prefix={key_prefix}) for PROD deploy {new_record.id} v{next_version}")
 
                 logger.info(
                     f"Admin direct-deployed agent '{agent.name}' ({agent_id}) to PROD "
@@ -2168,6 +2252,7 @@ async def publish_agent(
                     is_active=True,
                     version_number=f"v{next_version}",
                     promoted_from_uat_id=promoted_from_uat_id,
+                    api_key=plaintext_key,
                 )
 
             else:
