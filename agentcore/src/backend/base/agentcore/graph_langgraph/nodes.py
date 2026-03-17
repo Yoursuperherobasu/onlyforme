@@ -491,10 +491,20 @@ def _emit_hitl_pause_event(
         )
 
         msg_id = str(uuid4())
+
+        # Flag deployed runs so the frontend can show "pending admin approval"
+        # instead of inline action buttons (only dept admin can approve).
+        _is_deployed = bool(
+            getattr(graph, "orch_deployment_id", None)
+            or getattr(graph, "prod_deployment_id", None)
+            or getattr(graph, "uat_deployment_id", None)
+        )
+
         hitl_properties = {
             "hitl": True,
             "thread_id": session_id,
             "actions": actions,
+            "is_deployed_run": _is_deployed,
         }
 
         event_manager.on_message(data={

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -49,6 +49,7 @@ interface Message {
   hitl?: boolean;
   hitlActions?: string[];
   hitlThreadId?: string;
+  hitlIsDeployed?: boolean;
 }
 
 interface FilePreview {
@@ -97,6 +98,7 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
     hitl: !!m.properties?.hitl,
     hitlActions: m.properties?.hitl ? (m.properties.actions ?? []) : undefined,
     hitlThreadId: m.properties?.hitl ? (m.properties.thread_id ?? "") : undefined,
+    hitlIsDeployed: m.properties?.hitl ? !!(m.properties as any).is_deployed_run : undefined,
   }));
 }
 
@@ -586,6 +588,7 @@ export default function AgentOrchestrator() {
             const actions: string[] = data.properties.actions ?? [];
             const threadId: string = data.properties.thread_id ?? "";
             const hitlText: string = data.text || data.message || "";
+            const isDeployedRun: boolean = data.properties.is_deployed_run ?? false;
             flushSync(() => {
               setStreamingAgentName("");
               setMessages((prev) =>
@@ -597,6 +600,7 @@ export default function AgentOrchestrator() {
                         hitl: true,
                         hitlActions: actions,
                         hitlThreadId: threadId,
+                        hitlIsDeployed: isDeployedRun,
                       }
                     : m,
                 ),
@@ -981,6 +985,22 @@ export default function AgentOrchestrator() {
                         />
                         {/* HITL action buttons */}
                         {msg.hitl && msg.hitlActions && msg.hitlActions.length > 0 && (
+                          msg.hitlIsDeployed ? (
+                            /* Deployed runs: approval goes to dept admin via HITL page */
+                            <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm dark:border-amber-700 dark:bg-amber-950/30">
+                              <Clock size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
+                              <span className="text-amber-700 dark:text-amber-300">
+                                Pending department admin approval. The assigned admin can approve or reject from the{" "}
+                                <a
+                                  href="/hitl-approvals"
+                                  className="font-medium underline hover:text-amber-900 dark:hover:text-amber-100"
+                                >
+                                  HITL Approvals
+                                </a>{" "}
+                                page.
+                              </span>
+                            </div>
+                          ) : (
                           <div className="mt-3 flex flex-col gap-2.5">
                             <div className="flex flex-wrap gap-2">
                             {msg.hitlActions.map((action) => {
@@ -1032,6 +1052,7 @@ export default function AgentOrchestrator() {
                               </span>
                             )}
                           </div>
+                          )
                         )}
                       </div>
                     )}
