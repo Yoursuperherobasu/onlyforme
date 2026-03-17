@@ -1,4 +1,4 @@
-﻿import {
+import {
   Activity,
   BarChart3,
   LineChart,
@@ -186,6 +186,8 @@ const sections: SectionConfig[] = [
     description: "Policy enforcement, unsafe content interception, breach attempts, and agents operating without guardrails.",
     kpis: [
       { name: "Guardrail Violation Rate", value: "0.7%" },
+      { name: "Policy Breach Attempts", value: "41" },
+      { name: "Unsafe Content Interception", value: "63" },
       { name: "Escalation to Human Review", value: "96" },
       { name: "% Agents Without Guardrails", value: "12%" },
     ],
@@ -210,6 +212,8 @@ const departmentSections: SectionConfig[] = [
     kpis: [
       { name: "Active Agents in Dept (UAT)", value: "42" },
       { name: "Active Agents in Dept (PROD)", value: "18" },
+      { name: "Agent Success Rate", value: "94%" },
+      { name: "Department Token Usage", value: "8.6M" },
       { name: "Avg Response Time", value: "--", scope: "global" },
     ],
     charts: [
@@ -268,7 +272,40 @@ const departmentSections: SectionConfig[] = [
       },
     ],
   },
-  
+  {
+    id: "rag",
+    label: "RAG Governance",
+    headline: "RAG Governance KPIs",
+    description: "Document indexing health, retrieval accuracy, vector DB growth, Pinecone latency, and data governance compliance.",
+    kpis: [
+      { name: "Total Documents Indexed", value: "420K" },
+      { name: "Vector DB Growth Rate", value: "+12%" },
+      { name: "RAG Retrieval Accuracy", value: "91%" },
+      { name: "Sensitive Data Classification", value: "2.4%" },
+      { name: "Data Deletion Requests", value: "14" },
+      { name: "Pinecone Query Latency P95", value: "190ms" },
+    ],
+    charts: [
+      {
+        title: "Retrieval Accuracy",
+        subtitle: "Weekly trend",
+        type: "area",
+        data: [{ label: "W1", value: 88 }, { label: "W2", value: 89 }, { label: "W3", value: 90 }, { label: "W4", value: 91 }],
+      },
+      {
+        title: "Index Growth",
+        subtitle: "Docs per week",
+        type: "bar",
+        data: [{ label: "W1", value: 90 }, { label: "W2", value: 110 }, { label: "W3", value: 120 }, { label: "W4", value: 100 }],
+      },
+      {
+        title: "Data Requests",
+        subtitle: "Request types",
+        type: "donut",
+        data: [{ label: "Deletion", value: 14 }, { label: "Correction", value: 9 }, { label: "Access", value: 6 }],
+      },
+    ],
+  },
 ];
 
 const developerSections: SectionConfig[] = [
@@ -276,11 +313,11 @@ const developerSections: SectionConfig[] = [
     id: "quality",
     label: "Agent Quality",
     headline: "Agent Quality KPIs (Langfuse Evaluations)",
-    description: "LLM evaluation scores — hallucination rates and RAG relevance from Langfuse.",
+    description: "LLM evaluation scores — hallucination rates, RAG relevance, and tool call accuracy from Langfuse.",
     kpis: [
       { name: "Hallucination Score", value: "2.1%" },
       { name: "RAG Relevance Score", value: "0.84" },
-  
+      { name: "Tool Call Accuracy", value: "96%" },
     ],
     charts: [],
   },
@@ -308,11 +345,25 @@ const developerSections: SectionConfig[] = [
       },
     ],
   },
-  
+  {
+    id: "code",
+    label: "Code & Version Governance",
+    headline: "Code & Version Governance KPIs",
+    description: "Version control discipline and agent code lifecycle tracking across the development organization.",
+    kpis: [{ name: "Avg. Version Count of Agents", value: "--" }],
+    charts: [],
+  },
 ];
 
 const businessSections: SectionConfig[] = [
-  
+  {
+    id: "productivity",
+    label: "Productivity",
+    headline: "Productivity KPIs",
+    description: "Business-level impact of AI automation — task throughput, hours saved, and workforce efficiency gains.",
+    kpis: [],
+    charts: [],
+  },
   {
     id: "experience",
     label: "Experience",
@@ -330,7 +381,38 @@ const businessSections: SectionConfig[] = [
 ];
 
 const rootSections: SectionConfig[] = [
-  
+  {
+    id: "roi",
+    label: "ROI & Financial Health",
+    headline: "ROI & Financial Health",
+    description: "Cost-efficiency ratios, automation savings by department, spend drivers, and model dependency risk.",
+    kpis: [
+      { name: "Cost vs Productivity Gain", value: "2.6x" },
+      { name: "Automation Savings", value: "1,420 hrs" },
+      { name: "Cost Trend (Monthly)", value: "+4.1%" },
+      { name: "Single Model Dependency %", value: "38%" },
+    ],
+    charts: [
+      {
+        title: "ROI Ratio",
+        subtitle: "Quarterly trend",
+        type: "area",
+        data: [{ label: "Q1", value: 2.1 }, { label: "Q2", value: 2.3 }, { label: "Q3", value: 2.5 }, { label: "Q4", value: 2.6 }],
+      },
+      {
+        title: "Automation Savings",
+        subtitle: "Hours saved",
+        type: "bar",
+        data: [{ label: "Ops", value: 420 }, { label: "Support", value: 360 }, { label: "Sales", value: 310 }, { label: "IT", value: 330 }],
+      },
+      {
+        title: "Spend Drivers",
+        subtitle: "Budget mix",
+        type: "donut",
+        data: [{ label: "LLM", value: 52 }, { label: "Infra", value: 24 }, { label: "RAG", value: 14 }, { label: "Other", value: 10 }],
+      },
+    ],
+  },
   {
     id: "maturity",
     label: "AI Maturity Indicators",
@@ -343,7 +425,38 @@ const rootSections: SectionConfig[] = [
     ],
     charts: [],
   },
-  
+  {
+    id: "risk",
+    label: "Enterprise Risk Indicators",
+    headline: "Enterprise Risk Indicators",
+    description: "High-risk autonomous agents, guardrail bypass attempts, data leakage incidents, and audit readiness posture.",
+    kpis: [
+      { name: "High-Risk Autonomous Agents", value: "6" },
+      { name: "Guardrail Bypass Attempts", value: "14" },
+      { name: "Data Leakage Incidents", value: "2" },
+      { name: "Audit Readiness Score", value: "92%" },
+    ],
+    charts: [
+      {
+        title: "Risk Events",
+        subtitle: "Monthly trend",
+        type: "area",
+        data: [{ label: "Jan", value: 4 }, { label: "Feb", value: 6 }, { label: "Mar", value: 5 }, { label: "Apr", value: 3 }],
+      },
+      {
+        title: "Incident Types",
+        subtitle: "Count by type",
+        type: "bar",
+        data: [{ label: "Bypass", value: 14 }, { label: "Leakage", value: 2 }, { label: "Policy", value: 6 }, { label: "Other", value: 4 }],
+      },
+      {
+        title: "Risk Mix",
+        subtitle: "Severity split",
+        type: "donut",
+        data: [{ label: "Low", value: 58 }, { label: "Medium", value: 30 }, { label: "High", value: 12 }],
+      },
+    ],
+  },
 ];
 
 // ─── Style constants ───────────────────────────────────────────────────────
