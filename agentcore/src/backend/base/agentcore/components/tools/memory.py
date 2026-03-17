@@ -710,20 +710,20 @@ class MemoryComponent(Node):
 
             # Retrieve LTM context
             try:
+                from agentcore.services.ltm import LTM_DEFAULTS
                 retrieval_mode = getattr(self, "ltm_retrieval_mode", "Both") or "Both"
-                pinecone_top_k = getattr(self, "ltm_pinecone_top_k", 5) or 5
-                neo4j_top_k = getattr(self, "ltm_neo4j_top_k", 10) or 10
-                max_context_chars = getattr(self, "ltm_max_context_chars", 2000) or 2000
+                pinecone_top_k = getattr(self, "ltm_pinecone_top_k", LTM_DEFAULTS["pinecone_top_k"]) or LTM_DEFAULTS["pinecone_top_k"]
+                neo4j_top_k = getattr(self, "ltm_neo4j_top_k", LTM_DEFAULTS["neo4j_top_k"]) or LTM_DEFAULTS["neo4j_top_k"]
+                max_context_chars = getattr(self, "ltm_max_context_chars", LTM_DEFAULTS["max_context_chars"]) or LTM_DEFAULTS["max_context_chars"]
                 from agentcore.services.ltm.retriever import retrieve
-                # Pass environment so retriever queries correct namespace
-                env = "Orchestrator" if self._detect_env() == "orch" else "Dev"
+                # Let retriever auto-detect environment (PROD/UAT/Dev)
+                # from deployment tables — it resolves the exact env
                 ltm_context = await retrieve(
                     query=current_text,
                     agent_id=agent_id,
                     mode=retrieval_mode,
                     pinecone_top_k=pinecone_top_k,
                     neo4j_top_k=neo4j_top_k,
-                    env=env,
                 )
                 # Truncate LTM context to max chars
                 if ltm_context and len(ltm_context) > max_context_chars:

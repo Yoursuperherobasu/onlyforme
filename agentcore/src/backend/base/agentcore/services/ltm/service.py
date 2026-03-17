@@ -126,21 +126,36 @@ class LTMService(Service):
             logger.debug(f"[LTM] on_message_stored (in-memory fallback): {e}")
 
     async def _time_based_sweep(self) -> None:
-        """Periodic sweep: log agents with pending messages."""
+        """Periodic sweep: process agents with pending messages that have reached the threshold."""
+        from agentcore.services.deps import get_settings_service
+
+        settings = get_settings_service().settings
+        threshold = settings.ltm_message_threshold
+
         try:
+            agents_to_process = []
             redis = self._get_redis()
             if redis:
-                count = 0
                 async for key in redis.scan_iter(match=f"{LTM_COUNT_PREFIX}*", count=100):
                     val = await redis.get(key)
-                    if val and int(val) > 0:
-                        count += 1
-                if count:
-                    logger.info(f"[LTM] Time sweep: {count} agents have pending messages")
+                    if val and int(val) >= threshold:
+                        # Extract agent_id from key: "ltm:msg_count:{agent_id}"
+                        agent_id = key.decode() if isinstance(key, bytes) else key
+                        agent_id = agent_id.replace(LTM_COUNT_PREFIX, "")
+                        agents_to_process.append(agent_id)
             elif self._message_counts:
-                pending = sum(1 for c in self._message_counts.values() if c > 0)
-                if pending:
-                    logger.info(f"[LTM] Time sweep: {pending} agents have pending messages (in-memory)")
+                for agent_id, count in self._message_counts.items():
+                    if count >= threshold:
+                        agents_to_process.append(agent_id)
+
+            if agents_to_process:
+                logger.info(f"[LTM] Time sweep: {len(agents_to_process)} agents ready for processing")
+                for agent_id in agents_to_process:
+                    try:
+                        logger.info(f"[LTM] Time sweep: triggering pipeline for agent={agent_id}")
+                        await self.process_with_llm(agent_id)
+                    except Exception as e:
+                        logger.error(f"[LTM] Time sweep failed for agent={agent_id}: {e}")
         except Exception as e:
             logger.debug(f"[LTM] Time-based sweep failed: {e}")
 
@@ -206,17 +221,17 @@ class LTMService(Service):
 
             logger.info(f"[LTM] Processing {len(messages)} messages for agent={agent_id} (env={env})")
 
-            # 2. Summarize (uses settings LLM if none passed)
+            # 2. Summarize (uses agent's flow LLM — same model user selected in canvas)
             from agentcore.services.deps import get_settings_service
-            max_summary_tokens = get_settings_service().settings.ltm_max_summary_tokens or 500
+            max_summary_tokens = get_settings_service().settings.ltm_max_summary_tokens
             from agentcore.services.ltm.summarizer import summarize_conversation
-            summary = await summarize_conversation(messages, llm, max_tokens=max_summary_tokens)
+            summary = await summarize_conversation(messages, llm, max_tokens=max_summary_tokens, agent_id=agent_id)
             if not summary:
                 return
 
-            # 3. Extract facts (uses settings LLM if none passed)
+            # 3. Extract facts (uses agent's flow LLM)
             from agentcore.services.ltm.fact_extractor import extract_facts
-            facts = await extract_facts(summary, llm)
+            facts = await extract_facts(summary, llm, agent_id=agent_id)
 
             # 4. Store to Neo4j (namespaced by environment)
             await self._store_to_neo4j(agent_id, facts, env=env)
@@ -495,23 +510,35 @@ class LTMService(Service):
 
             with driver.session(database=settings.ltm_neo4j_database) as session:
                 for entity in entities:
+                    # Normalize name to lowercase to prevent case-sensitive duplicates
+                    # (e.g., "Agentic AI" vs "agentic AI")
+                    name = (entity.get("name", "") or "").strip()
+                    if not name:
+                        continue
                     session.run(
-                        "MERGE (e:__Entity__ {name: $name, graph_kb_id: $graph_kb_id}) "
-                        "SET e.type = $type, e.description = $description",
-                        name=entity.get("name", ""),
+                        "MERGE (e:__Entity__ {name: toLower($name), graph_kb_id: $graph_kb_id}) "
+                        "SET e.type = $type, e.description = $description, "
+                        "e.display_name = $display_name, e.updated_at = datetime()",
+                        name=name,
+                        display_name=name,  # Keep original casing for display
                         type=entity.get("type", "CONCEPT"),
                         description=entity.get("description", ""),
                         graph_kb_id=graph_kb_id,
                     )
 
                 for rel in relationships:
+                    source = (rel.get("source", "") or "").strip()
+                    target = (rel.get("target", "") or "").strip()
+                    if not source or not target:
+                        continue
                     session.run(
-                        "MATCH (a:__Entity__ {name: $source, graph_kb_id: $graph_kb_id}) "
-                        "MATCH (b:__Entity__ {name: $target, graph_kb_id: $graph_kb_id}) "
+                        "MATCH (a:__Entity__ {name: toLower($source), graph_kb_id: $graph_kb_id}) "
+                        "MATCH (b:__Entity__ {name: toLower($target), graph_kb_id: $graph_kb_id}) "
                         "MERGE (a)-[r:RELATED_TO]->(b) "
-                        "SET r.type = $rel_type, r.description = $description, r.weight = $weight",
-                        source=rel.get("source", ""),
-                        target=rel.get("target", ""),
+                        "SET r.type = $rel_type, r.description = $description, "
+                        "r.weight = $weight, r.updated_at = datetime()",
+                        source=source,
+                        target=target,
                         rel_type=rel.get("type", "RELATED_TO"),
                         description=rel.get("description", ""),
                         weight=rel.get("weight", 0.5),
@@ -567,12 +594,29 @@ class LTMService(Service):
 
             embedding = await self._embed_text(summary)
 
-            vec_id = hashlib.sha256(summary.encode()).hexdigest()[:16]
-            timestamp = datetime.now(timezone.utc).isoformat()
-
             # Namespace by environment: {agent_id}_prod, {agent_id}_uat, {agent_id}
             env_suffix = f"_{env.lower()}" if env != "Dev" else ""
             namespace = f"{agent_id}{env_suffix}"
+
+            # Dedup check: query existing summaries with this embedding
+            # If a very similar summary already exists (cosine > 0.95), skip storage
+            try:
+                existing = index.query(
+                    namespace=namespace,
+                    vector=embedding,
+                    top_k=1,
+                    include_metadata=True,
+                )
+                matches = existing.get("matches", [])
+                if matches and matches[0].get("score", 0) > 0.95:
+                    existing_preview = matches[0].get("metadata", {}).get("summary", "")[:100]
+                    logger.info(f"[LTM] Pinecone dedup: similar summary exists (score={matches[0]['score']:.3f}), skipping. Existing: {existing_preview}...")
+                    return
+            except Exception:
+                pass  # If dedup check fails, proceed with storage
+
+            vec_id = hashlib.sha256(summary.encode()).hexdigest()[:16]
+            timestamp = datetime.now(timezone.utc).isoformat()
 
             index.upsert(
                 vectors=[{

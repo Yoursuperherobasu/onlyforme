@@ -13,6 +13,8 @@ import yaml
 from aiofile import async_open
 from loguru import logger
 from pydantic import Field, field_validator
+
+from agentcore.services.ltm import LTM_DEFAULTS as _LTM_D
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -127,12 +129,12 @@ class Settings(BaseSettings):
     stm_cache_ttl: int = int(os.getenv("STM_CACHE_TTL", "300"))
     """STM (Short Term Memory) cache TTL in seconds. Default is 300 (5 minutes)."""
 
-    # LTM (Long Term Memory) settings
-    ltm_enabled: bool = False
+    # LTM (Long Term Memory) settings — defaults from services/ltm/LTM_DEFAULTS
+    ltm_enabled: bool = _LTM_D["enabled"]
     """Enable the Long Term Memory background processor."""
-    ltm_message_threshold: int = 10
+    ltm_message_threshold: int = _LTM_D["message_threshold"]
     """Trigger LTM processing after this many new messages per agent."""
-    ltm_time_interval_minutes: int = 15
+    ltm_time_interval_minutes: int = _LTM_D["time_interval_minutes"]
     """Trigger LTM processing every N minutes (time-based trigger)."""
     ltm_embedding_provider: str = "openai"
     """Embedding provider for LTM: 'openai' or 'azure_openai'."""
@@ -146,13 +148,13 @@ class Settings(BaseSettings):
     """Azure OpenAI API version."""
     ltm_embedding_dimensions: int = 0
     """Optional: Reduce embedding dimensions (e.g., 512 to match Pinecone index). 0 = use model default."""
-    ltm_max_summary_tokens: int = 500
+    ltm_max_summary_tokens: int = _LTM_D["max_summary_tokens"]
     """Maximum tokens for LLM-generated conversation summaries."""
-    ltm_max_context_chars: int = 2000
+    ltm_max_context_chars: int = _LTM_D["max_context_chars"]
     """Maximum characters of LTM context prepended to user messages."""
-    ltm_pinecone_top_k: int = 5
+    ltm_pinecone_top_k: int = _LTM_D["pinecone_top_k"]
     """Number of summaries to retrieve from Pinecone."""
-    ltm_neo4j_top_k: int = 10
+    ltm_neo4j_top_k: int = _LTM_D["neo4j_top_k"]
     """Number of entities/relationships to retrieve from Neo4j."""
     ltm_llm_provider: str = ""
     """LLM provider for LTM summarization (e.g., groq, openai, azure). Uses model service."""

@@ -26,10 +26,10 @@ Summary:
 Return ONLY the JSON object:"""
 
 
-def _get_ltm_llm():
+def _get_ltm_llm(agent_id: str | None = None):
     """Build a MicroserviceChatModel — reuses the auto-discovery from summarizer."""
     from agentcore.services.ltm.summarizer import _get_ltm_llm as _get_llm
-    return _get_llm()
+    return _get_llm(agent_id=agent_id)
 
 
 def _parse_llm_json(raw: str) -> dict:
@@ -79,12 +79,13 @@ def _parse_llm_json(raw: str) -> dict:
     return {"entities": [], "relationships": []}
 
 
-async def extract_facts(summary: str, llm=None) -> dict:
+async def extract_facts(summary: str, llm=None, agent_id: str | None = None) -> dict:
     """Extract entities and relationships from a conversation summary.
 
     Args:
         summary: A conversation summary text.
         llm: Optional LangChain BaseChatModel. If None, uses LTM settings to create one.
+        agent_id: Optional agent ID to discover the LLM from the agent's flow.
 
     Returns:
         Dict with "entities" and "relationships" lists.
@@ -93,7 +94,7 @@ async def extract_facts(summary: str, llm=None) -> dict:
         return {"entities": [], "relationships": []}
 
     if llm is None:
-        llm = _get_ltm_llm()
+        llm = _get_ltm_llm(agent_id=agent_id)
 
     prompt = EXTRACTION_PROMPT.format(summary_text=summary)
 
