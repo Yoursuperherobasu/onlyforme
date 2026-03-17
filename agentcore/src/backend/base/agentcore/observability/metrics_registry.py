@@ -26,6 +26,7 @@ _errors_counter = None
 _active_sessions = None
 _login_attempts_counter = None
 _api_errors_counter = None
+_session_duration = None
 
 
 def init_instruments(meter) -> None:
@@ -36,7 +37,7 @@ def init_instruments(meter) -> None:
     global _agent_runs_counter, _agent_run_duration, _component_builds_counter, \
         _component_build_duration, _llm_calls_counter, _llm_tokens_counter, \
         _llm_call_duration, _errors_counter, _active_sessions, \
-        _login_attempts_counter, _api_errors_counter
+        _login_attempts_counter, _api_errors_counter, _session_duration
 
     if _agent_runs_counter is not None:
         return  # already initialised
@@ -95,6 +96,11 @@ def init_instruments(meter) -> None:
         name="agentcore_api_errors_total",
         unit="1",
         description="HTTP 4xx/5xx errors by status code and route",
+    )
+    _session_duration = meter.create_histogram(
+        name="agentcore_session_duration_ms",
+        unit="ms",
+        description="Chat session duration in milliseconds",
     )
 
 
@@ -179,5 +185,14 @@ def record_api_error(status_code: str, route: str) -> None:
     try:
         if _api_errors_counter is not None:
             _api_errors_counter.add(1, {"status_code": status_code, "route": route})
+    except Exception:
+        pass
+
+
+def record_session_duration(duration_ms: float) -> None:
+    """Record a completed chat session's duration."""
+    try:
+        if _session_duration is not None:
+            _session_duration.record(duration_ms)
     except Exception:
         pass
