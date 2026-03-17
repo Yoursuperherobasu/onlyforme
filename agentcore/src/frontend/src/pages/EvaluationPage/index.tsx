@@ -153,7 +153,6 @@ export default function EvaluationPage() {
     () => datasets.find((dataset) => dataset.name === selectedDatasetName) || null,
     [datasets, selectedDatasetName],
   );
-  const canManageSelectedDataset = canDeleteDataset(selectedDataset);
   const [datasetForm, setDatasetForm] = useState({
     name: "",
     description: "",
@@ -380,6 +379,7 @@ export default function EvaluationPage() {
     }
     return false;
   }, [getDatasetOwnerId, isDeptScopedForUser, isMultiDeptScope, userId, userRole]);
+  const canManageSelectedDataset = canDeleteDataset(selectedDataset);
   const datasetVisibilityScope = toVisibilityScope(datasetForm.visibility, datasetForm.public_scope);
   const judgeVisibilityScope = toVisibilityScope(judgeForm.visibility, judgeForm.public_scope);
   const datasetDepartmentsForSelectedOrg = useMemo(
