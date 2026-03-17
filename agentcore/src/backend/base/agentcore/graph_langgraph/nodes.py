@@ -587,6 +587,9 @@ async def _persist_hitl_request(
             HITLStatus,
         )
         from agentcore.services.deps import session_scope as _session_scope
+        from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+        from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+        from sqlmodel import col, select
 
         thread_id = getattr(graph, "_session_id", None) or ""
         agent_id_raw = getattr(graph, "agent_id", None)
@@ -661,7 +664,6 @@ async def _persist_hitl_request(
             # Resolve the department admin to route the HIL request to them.
             if dept_id_val:
                 try:
-                    from sqlmodel import select
                     from agentcore.services.database.models.department.model import Department
 
                     async with _session_scope() as _dept_db:
@@ -678,6 +680,40 @@ async def _persist_hitl_request(
                             )
                 except Exception as _dept_err:
                     logger.warning(f"[HITL] Could not resolve dept admin: {_dept_err}")
+        else:
+            # Playground / non-deployed runs: stamp org/dept from user membership
+            if user_id_raw:
+                try:
+                    async with _session_scope() as _mem_db:
+                        udm = (
+                            await _mem_db.exec(
+                                select(UserDepartmentMembership)
+                                .where(
+                                    UserDepartmentMembership.user_id == uuid.UUID(str(user_id_raw)),
+                                    UserDepartmentMembership.status == "active",
+                                )
+                                .order_by(col(UserDepartmentMembership.updated_at).desc())
+                                .limit(1)
+                            )
+                        ).first()
+                        if udm:
+                            dept_id_val = udm.department_id
+                            org_id_val = udm.org_id
+                        else:
+                            uom = (
+                                await _mem_db.exec(
+                                    select(UserOrganizationMembership.org_id)
+                                    .where(
+                                        UserOrganizationMembership.user_id == uuid.UUID(str(user_id_raw)),
+                                        UserOrganizationMembership.status == "active",
+                                    )
+                                    .limit(1)
+                                )
+                            ).first()
+                            if uom:
+                                org_id_val = uom if isinstance(uom, uuid.UUID) else uom[0]
+                except Exception as _mem_err:
+                    logger.warning(f"[HITL] Could not resolve org/dept from user membership: {_mem_err}")
 
         async with _session_scope() as _db:
             _hitl = HITLRequest(

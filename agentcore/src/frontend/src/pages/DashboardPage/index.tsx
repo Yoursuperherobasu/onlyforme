@@ -244,6 +244,7 @@ const departmentSections: SectionConfig[] = [
     headline: "HITL Governance KPIs",
     description: "Human-in-the-loop invocation frequency, response time benchmarks, and daily escalation patterns.",
     kpis: [
+      { name: "Agents with HITL", value: "--" },
       { name: "HITL Invocation Rate", value: "3.6%" },
       { name: "Avg HITL Response Time", value: "12 min" },
     ],
@@ -780,7 +781,7 @@ export default function DashboardAdmin(): JSX.Element {
   const governanceKpiFallback:  SectionKpi[] = [{ name: "Escalation to Human Review", value: "--" }, { name: "% Agents Without Guardrails", value: "--" }];
   const deptUsageKpiFallback:   SectionKpi[] = [{ name: "Active Agents in Dept (UAT)", value: "--" }, { name: "Active Agents in Dept (PROD)", value: "--" }, { name: "Avg Response Time", value: "--" }];
   const deptApprovalKpiFallback:SectionKpi[] = [{ name: "Pending Approvals", value: "--" }, { name: "Rejection Rate", value: "--" }, { name: "Avg Approval Time", value: "--" }];
-  const deptHitlKpiFallback:    SectionKpi[] = [{ name: "HITL Invocation Rate", value: "--" }, { name: "Avg HITL Response Time", value: "--" }];
+  const deptHitlKpiFallback:    SectionKpi[] = [{ name: "Agents with HITL", value: "--" }, { name: "HITL Invocation Rate", value: "--" }, { name: "Avg HITL Response Time", value: "--" }];
   const devCodeKpiFallback:     SectionKpi[] = [{ name: "Avg. Version Count of Agents", value: "--" }];
   const businessMaturityFallback:SectionKpi[]= [{ name: "% Agents with Guardrails", value: "--" }, { name: "% Agents with RAG", value: "--" }, { name: "% Agents with HITL", value: "--" }];
   const rootMaturityFallback:   SectionKpi[] = [{ name: "% Agents with Guardrails", value: "--" }, { name: "% Agents with RAG", value: "--" }, { name: "% Agents with HITL", value: "--" }];

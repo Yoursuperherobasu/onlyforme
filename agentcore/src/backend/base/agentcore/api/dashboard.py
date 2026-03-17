@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -15,6 +15,7 @@ from agentcore.services.database.models.agent_deployment_prod.model import Agent
 from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
 from agentcore.services.database.models.approval_request.model import ApprovalRequest
 from agentcore.services.database.models.agent_registry.model import AgentRegistryRating
+from agentcore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
 from agentcore.services.database.models.hitl_request.model import HITLRequest
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
@@ -39,7 +40,7 @@ class DashboardSectionResponse(BaseModel):
 
 class TimeseriesPoint(BaseModel):
     date: str
-    value: int
+    value: float | int
 
 
 class PendingSeriesResponse(BaseModel):
@@ -291,11 +292,18 @@ async def get_department_usage_kpis(
             ],
         )
 
+    assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
+        AgentPublishRecipient.dept_id.in_(list(dept_ids))
+    )
+
     uat_active = (
         await session.exec(
             select(func.count())
             .where(
-                AgentDeploymentUAT.dept_id.in_(list(dept_ids)),
+                or_(
+                    AgentDeploymentUAT.dept_id.in_(list(dept_ids)),
+                    AgentDeploymentUAT.agent_id.in_(assigned_agent_ids),
+                ),
                 AgentDeploymentUAT.is_active.is_(True),
                 AgentDeploymentUAT.moved_to_prod.is_(False),
             )
@@ -305,7 +313,10 @@ async def get_department_usage_kpis(
         await session.exec(
             select(func.count())
             .where(
-                AgentDeploymentProd.dept_id.in_(list(dept_ids)),
+                or_(
+                    AgentDeploymentProd.dept_id.in_(list(dept_ids)),
+                    AgentDeploymentProd.agent_id.in_(assigned_agent_ids),
+                ),
                 AgentDeploymentProd.is_active.is_(True),
             )
         )
@@ -349,12 +360,19 @@ async def get_department_approval_kpis(
             ],
         )
 
+    assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
+        AgentPublishRecipient.dept_id.in_(list(dept_ids))
+    )
+
     pending_count = (
         await session.exec(
             select(func.count())
             .where(
                 ApprovalRequest.decision.is_(None),
-                ApprovalRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
             )
         )
     ).one()
@@ -363,7 +381,10 @@ async def get_department_approval_kpis(
             select(func.count())
             .where(
                 ApprovalRequest.decision.is_not(None),
-                ApprovalRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
             )
         )
     ).one()
@@ -372,7 +393,10 @@ async def get_department_approval_kpis(
             select(func.count())
             .where(
                 ApprovalRequest.decision == "REJECTED",
-                ApprovalRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
             )
         )
     ).one()
@@ -388,7 +412,10 @@ async def get_department_approval_kpis(
             )
             .where(
                 ApprovalRequest.reviewed_at.is_not(None),
-                ApprovalRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
             )
         )
     ).one()
@@ -491,11 +518,17 @@ async def get_department_approval_pending_series(
         ]
         return PendingSeriesResponse(range=range_key, series=series)
 
+    assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
+        AgentPublishRecipient.dept_id.in_(list(dept_ids))
+    )
     baseline_pending = (
         await session.exec(
             select(func.count())
             .where(
-                ApprovalRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
                 ApprovalRequest.requested_at < start_dt,
                 (
                     ApprovalRequest.decision.is_(None)
@@ -509,7 +542,10 @@ async def get_department_approval_pending_series(
         await session.exec(
             select(ApprovalRequest.requested_at)
             .where(
-                ApprovalRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
                 ApprovalRequest.requested_at >= start_dt,
                 ApprovalRequest.requested_at < end_dt,
             )
@@ -521,7 +557,10 @@ async def get_department_approval_pending_series(
             .where(
                 ApprovalRequest.decision.is_not(None),
                 ApprovalRequest.reviewed_at.is_not(None),
-                ApprovalRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
                 ApprovalRequest.reviewed_at >= start_dt,
                 ApprovalRequest.reviewed_at < end_dt,
             )
@@ -567,15 +606,22 @@ async def get_department_hitl_kpis(
         return DashboardSectionResponse(
             section="department_hitl",
             kpis=[
+                DashboardKpi(id="hitl_enabled_agents", label="Agents with HITL", value=0),
                 DashboardKpi(id="hitl_invocation_rate", label="HITL Invocation Rate", value=0, unit="%"),
                 DashboardKpi(id="avg_hitl_response_time", label="Avg HITL Response Time", value=0, unit="min"),
             ],
         )
 
+    assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
+        AgentPublishRecipient.dept_id.in_(list(dept_ids))
+    )
     total_agents = (
         await session.exec(
             select(func.count(func.distinct(Agent.id))).where(
-                Agent.dept_id.in_(list(dept_ids)),
+                or_(
+                    Agent.dept_id.in_(list(dept_ids)),
+                    Agent.id.in_(assigned_agent_ids),
+                ),
                 Agent.deleted_at.is_(None),
             )
         )
@@ -583,7 +629,30 @@ async def get_department_hitl_kpis(
     hitl_total = (
         await session.exec(
             select(func.count())
-            .where(HITLRequest.dept_id.in_(list(dept_ids)))
+            .where(
+                or_(
+                    HITLRequest.dept_id.in_(list(dept_ids)),
+                    HITLRequest.agent_id.in_(assigned_agent_ids),
+                )
+            )
+        )
+    ).one()
+    hitl_enabled_agents = (
+        await session.exec(
+            select(func.count(func.distinct(AgentBundle.agent_id)))
+            .select_from(AgentBundle)
+            .join(Agent, Agent.id == AgentBundle.agent_id, isouter=True)
+            .where(
+                AgentBundle.bundle_type == BundleTypeEnum.TOOL,
+                AgentBundle.resource_name == "Human Approval",
+                or_(
+                    AgentBundle.dept_id.in_(list(dept_ids)),
+                    Agent.dept_id.in_(list(dept_ids)),
+                    AgentBundle.agent_id.in_(assigned_agent_ids),
+                    Agent.id.in_(assigned_agent_ids),
+                ),
+                Agent.deleted_at.is_(None),
+            )
         )
     ).one()
 
@@ -591,7 +660,10 @@ async def get_department_hitl_kpis(
         await session.exec(
             select(HITLRequest.requested_at, HITLRequest.decided_at)
             .where(
-                HITLRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    HITLRequest.dept_id.in_(list(dept_ids)),
+                    HITLRequest.agent_id.in_(assigned_agent_ids),
+                ),
                 HITLRequest.decided_at.is_not(None),
             )
         )
@@ -599,6 +671,7 @@ async def get_department_hitl_kpis(
 
     total_agents_count = int(total_agents or 0)
     hitl_total_count = int(hitl_total or 0)
+    hitl_enabled_count = int(hitl_enabled_agents or 0)
     invocation_rate = int(round((hitl_total_count / total_agents_count) * 100)) if total_agents_count else 0
 
     total_minutes = 0.0
@@ -611,11 +684,16 @@ async def get_department_hitl_kpis(
         delta = decided_at - requested_at
         total_minutes += max(delta.total_seconds(), 0) / 60.0
         decided_count += 1
-    avg_minutes = int(round(total_minutes / decided_count)) if decided_count else 0
+    avg_minutes = round((total_minutes / decided_count), 1) if decided_count else 0
 
     return DashboardSectionResponse(
         section="department_hitl",
         kpis=[
+            DashboardKpi(
+                id="hitl_enabled_agents",
+                label="Agents with HITL",
+                value=hitl_enabled_count,
+            ),
             DashboardKpi(
                 id="hitl_invocation_rate",
                 label="HITL Invocation Rate",
@@ -656,10 +734,16 @@ async def get_department_hitl_invocation_series(
         ]
         return HitlSeriesResponse(range=range_key, series=series)
 
+    assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
+        AgentPublishRecipient.dept_id.in_(list(dept_ids))
+    )
     total_agents = (
         await session.exec(
             select(func.count(func.distinct(Agent.id))).where(
-                Agent.dept_id.in_(list(dept_ids)),
+                or_(
+                    Agent.dept_id.in_(list(dept_ids)),
+                    Agent.id.in_(assigned_agent_ids),
+                ),
                 Agent.deleted_at.is_(None),
             )
         )
@@ -670,7 +754,10 @@ async def get_department_hitl_invocation_series(
         await session.exec(
             select(HITLRequest.requested_at)
             .where(
-                HITLRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    HITLRequest.dept_id.in_(list(dept_ids)),
+                    HITLRequest.agent_id.in_(assigned_agent_ids),
+                ),
                 HITLRequest.requested_at >= start_dt,
                 HITLRequest.requested_at < end_dt,
             )
@@ -716,11 +803,17 @@ async def get_department_hitl_response_time_series(
         ]
         return HitlSeriesResponse(range=range_key, series=series)
 
+    assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
+        AgentPublishRecipient.dept_id.in_(list(dept_ids))
+    )
     rows = (
         await session.exec(
             select(HITLRequest.requested_at, HITLRequest.decided_at)
             .where(
-                HITLRequest.dept_id.in_(list(dept_ids)),
+                or_(
+                    HITLRequest.dept_id.in_(list(dept_ids)),
+                    HITLRequest.agent_id.in_(assigned_agent_ids),
+                ),
                 HITLRequest.decided_at.is_not(None),
                 HITLRequest.requested_at >= start_dt,
                 HITLRequest.requested_at < end_dt,
@@ -748,7 +841,7 @@ async def get_department_hitl_response_time_series(
             series.append(TimeseriesPoint(date=day.isoformat(), value=0))
         else:
             avg = totals[day] / counts[day]
-            series.append(TimeseriesPoint(date=day.isoformat(), value=int(round(avg))))
+            series.append(TimeseriesPoint(date=day.isoformat(), value=round(avg, 1)))
 
     return HitlSeriesResponse(range=range_key, series=series)
 
@@ -843,8 +936,14 @@ async def get_business_maturity_kpis(
 
     hitl_agents = (
         await session.exec(
-            select(func.count(func.distinct(HITLRequest.agent_id)))
-            .where(HITLRequest.user_id == current_user.id)
+            select(func.count(func.distinct(AgentBundle.agent_id)))
+            .select_from(AgentBundle)
+            .join(Agent, Agent.id == AgentBundle.agent_id, isouter=True)
+            .where(
+                Agent.user_id == current_user.id,
+                AgentBundle.bundle_type == BundleTypeEnum.TOOL,
+                AgentBundle.resource_name == "Human Approval",
+            )
         )
     ).one()
     hitl_count = int(hitl_agents or 0)
@@ -870,25 +969,42 @@ async def get_business_experience_kpis(
     if role != "business_user":
         raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-    total_sessions = (
-        await session.exec(
-            select(func.count(func.distinct(OrchConversationTable.session_id))).where(
+    assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
+        AgentPublishRecipient.recipient_user_id == current_user.id
+    )
+    user_sessions = (
+        select(func.distinct(OrchConversationTable.session_id).label("session_id"))
+        .where(
+            or_(
                 OrchConversationTable.user_id == current_user.id,
-            )
+                OrchConversationTable.agent_id.in_(assigned_agent_ids),
+            ),
+            OrchConversationTable.session_id.is_not(None),
         )
-    ).one()
-    total_sessions_count = int(total_sessions or 0)
-
-    hitl_sessions = (
+        .subquery()
+    )
+    total_messages = (
         await session.exec(
-            select(func.count(func.distinct(HITLRequest.session_id))).where(
-                HITLRequest.user_id == current_user.id,
-                HITLRequest.session_id.is_not(None),
+            select(func.count())
+            .select_from(OrchConversationTable)
+            .where(
+                OrchConversationTable.session_id.is_not(None),
+                OrchConversationTable.session_id.in_(select(user_sessions.c.session_id)),
             )
         )
     ).one()
-    hitl_sessions_count = int(hitl_sessions or 0)
-    escalation_pct = round((hitl_sessions_count / total_sessions_count) * 100, 2) if total_sessions_count else 0
+    total_messages_count = int(total_messages or 0)
+
+    hitl_requests = (
+        await session.exec(
+            select(func.count()).where(
+                HITLRequest.session_id.is_not(None),
+                HITLRequest.session_id.in_(select(user_sessions.c.session_id)),
+            )
+        )
+    ).one()
+    hitl_requests_count = int(hitl_requests or 0)
+    escalation_pct = round((hitl_requests_count / total_messages_count) * 100, 2) if total_messages_count else 0
 
     avg_rating = (
         await session.exec(
@@ -961,7 +1077,12 @@ async def get_root_maturity_kpis(
 
     hitl_agents = (
         await session.exec(
-            select(func.count(func.distinct(HITLRequest.agent_id)))
+            select(func.count(func.distinct(AgentBundle.agent_id)))
+            .select_from(AgentBundle)
+            .where(
+                AgentBundle.bundle_type == BundleTypeEnum.TOOL,
+                AgentBundle.resource_name == "Human Approval",
+            )
         )
     ).one()
     hitl_count = int(hitl_agents or 0)
