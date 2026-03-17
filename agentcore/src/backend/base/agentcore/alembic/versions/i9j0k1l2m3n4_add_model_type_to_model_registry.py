@@ -7,6 +7,7 @@ Create Date: 2026-02-28 00:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -14,9 +15,9 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "i9j0k1l2m3n4"
-down_revision: str | Sequence[str] | None = "m3r9g8h7k6l5"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "m3r9g8h7k6l5"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -30,3 +31,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_model_registry_model_type", table_name="model_registry")
     op.drop_column("model_registry", "model_type")
+

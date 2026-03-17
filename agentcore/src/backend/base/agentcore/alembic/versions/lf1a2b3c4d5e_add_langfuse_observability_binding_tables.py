@@ -6,6 +6,7 @@ Create Date: 2026-03-03
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -13,15 +14,15 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "lf1a2b3c4d5e"
-down_revision: str | Sequence[str] | None = (
+down_revision: Union[str, Sequence[str], None] = (
     "m1n2o3p4q5r8",
     "c2e5756285b4",
     "77540cb8b124",
     "c9d2f6",
     "d1e2f3a4b5c6",
 )
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -171,4 +172,5 @@ def downgrade() -> None:
             if _has_index(bind, "langfuse_binding", idx_name):
                 op.drop_index(idx_name, table_name="langfuse_binding")
         op.drop_table("langfuse_binding")
+
 

@@ -6,6 +6,7 @@ Create Date: 2026-02-18 02:30:00.000000
 """
 
 from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -13,9 +14,9 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "f1a2b3c4d5e6"
-down_revision: str | Sequence[str] | None = "e7f8a9b0c1d2"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "e7f8a9b0c1d2"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _has_column(bind, table: str, column: str) -> bool:
@@ -47,3 +48,4 @@ def downgrade() -> None:
 
     if _has_index(bind, "agent", "ix_agent_project_id") and not _has_index(bind, "agent", "ix_agent_project_id"):
         op.execute(sa.text("ALTER INDEX ix_agent_project_id RENAME TO ix_agent_project_id"))
+

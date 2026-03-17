@@ -6,6 +6,7 @@ Create Date: 2026-03-17
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "k1b2c3d4e5f7"
-down_revision: str | Sequence[str] | None = "k1b2c3d4e5f6"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "k1b2c3d4e5f6"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -61,3 +62,4 @@ def downgrade() -> None:
             type_=sa.JSON(),
             postgresql_using="public_dept_ids::json",
         )
+

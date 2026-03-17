@@ -6,6 +6,7 @@ Create Date: 2026-02-23 20:30:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 from uuid import uuid4
@@ -16,9 +17,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "n2o3p4q5r6s7"
-down_revision: str | Sequence[str] | None = "m1n2o3p4q5r6"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "m1n2o3p4q5r6"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
@@ -275,3 +276,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     pass
+

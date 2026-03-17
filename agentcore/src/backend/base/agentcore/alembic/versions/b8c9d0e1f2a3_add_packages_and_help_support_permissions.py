@@ -6,6 +6,7 @@ Create Date: 2026-02-25 12:30:00.000000
 
 """
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 from uuid import uuid4
@@ -15,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b8c9d0e1f2a3"
-down_revision: str | Sequence[str] | None = "a7b8c9d0e1f2"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "a7b8c9d0e1f2"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 NEW_PERMISSIONS = [
     ("view_packages_page", "Packages"),
@@ -118,3 +119,4 @@ def downgrade() -> None:
         ),
         {"keys": keys},
     )
+

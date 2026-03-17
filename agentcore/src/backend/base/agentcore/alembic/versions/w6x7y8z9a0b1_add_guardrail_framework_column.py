@@ -6,6 +6,7 @@ Create Date: 2026-03-01 18:10:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -14,9 +15,9 @@ from alembic import op
 
 
 revision: str = "w6x7y8z9a0b1"
-down_revision: str | Sequence[str] | None = "v5w6x7y8z9a0"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "v5w6x7y8z9a0"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -72,3 +73,4 @@ def downgrade() -> None:
 
     if _has_column(bind, "guardrail_catalogue", "framework"):
         op.drop_column("guardrail_catalogue", "framework")
+

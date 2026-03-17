@@ -6,6 +6,7 @@ Create Date: 2026-02-19 22:05:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 import uuid
 from collections.abc import Sequence
@@ -16,9 +17,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "i6d7e8f9a0b1"
-down_revision: str | Sequence[str] | None = ("g4b5c6d7e8f9", "h5c6d7e8f9a0")
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = ("g4b5c6d7e8f9", "h5c6d7e8f9a0")
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _get_table_columns(bind, table_name: str) -> set[str]:
@@ -207,3 +208,4 @@ def downgrade() -> None:
         if _has_index(bind, "knowledge_base", "ix_knowledge_base_org_id"):
             op.drop_index("ix_knowledge_base_org_id", table_name="knowledge_base")
         op.drop_table("knowledge_base")
+

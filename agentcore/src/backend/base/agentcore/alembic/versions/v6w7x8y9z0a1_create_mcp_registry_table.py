@@ -7,6 +7,7 @@ Create Date: 2026-02-28 00:00:01.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "v6w7x8y9z0a1"
-down_revision: str | Sequence[str] | None = "r1s2t3u4v5w6"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "r1s2t3u4v5w6"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -44,3 +45,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_mcp_registry_server_name", table_name="mcp_registry")
     op.drop_table("mcp_registry")
+

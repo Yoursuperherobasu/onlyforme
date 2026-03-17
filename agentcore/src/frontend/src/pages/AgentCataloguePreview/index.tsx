@@ -1,7 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
+import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AuthContext } from "@/contexts/authContext";
 import { useGetTypes } from "@/controllers/API/queries/agents/use-get-types";
 import { useGetRegistryPreview } from "@/controllers/API/queries/registry";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
@@ -12,13 +14,17 @@ import Page from "../AgentBuilderPage/components/PageComponent";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AgentSearchProvider, AgentSidebarComponent } from "../AgentBuilderPage/components/agentSidebarComponent";
 import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
+import CopyAgentDialog from "@/components/agents/copy-agent-dialog";
 
 export default function AgentCataloguePreviewPage(): JSX.Element {
   const { t } = useTranslation();
   const navigate = useCustomNavigate();
   const { registryId } = useParams();
+  const { permissions } = useContext(AuthContext);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const types = useTypesStore((state) => state.types);
   const setCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);
+  const canCopy = permissions?.includes("copy_agents");
 
   useGetTypes({
     enabled: Object.keys(types).length <= 0,
@@ -85,6 +91,27 @@ export default function AgentCataloguePreviewPage(): JSX.Element {
           </SidebarProvider>
         )}
       </div>
+      {canCopy && previewAgent && (
+        <Button
+          className="fixed bottom-6 right-6 z-40 gap-2 shadow-lg"
+          onClick={() => setCloneOpen(true)}
+        >
+          <Copy className="h-4 w-4" />
+          {t("Copy")}
+        </Button>
+      )}
+      <CopyAgentDialog
+        open={cloneOpen}
+        onOpenChange={setCloneOpen}
+        source={
+          registryId && previewAgent
+            ? { type: "registry", registryId, title: previewAgent.name }
+            : null
+        }
+        onSuccess={(agentId, projectId) =>
+          navigate(`/agent/${agentId}/folder/${projectId}`)
+        }
+      />
     </div>
   );
 }

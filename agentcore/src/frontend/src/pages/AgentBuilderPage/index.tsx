@@ -1,5 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { useBlocker, useParams, useSearchParams } from "react-router-dom";
+import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useGetAgent } from "@/controllers/API/queries/agents/use-get-agent";
@@ -19,6 +20,7 @@ import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useTranslation } from "react-i18next";
 import { AuthContext } from "@/contexts/authContext";
 import VersionSavePrompt from "@/components/core/agentToolbarComponent/components/version-save-prompt";
+import CopyAgentDialog from "@/components/agents/copy-agent-dialog";
 import {
   AgentSearchProvider,
   AgentSidebarComponent,
@@ -38,6 +40,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const [isLoading, setIsLoading] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
 
   const isBuilding = useAgentStore((state) => state.isBuilding);
   const setOnAgentBuilderPage = useAgentStore((state) => state.setOnAgentBuilderPage);
@@ -46,7 +49,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useCustomNavigate();
   const saveAgent = useSaveAgent();
-  const { userData, role } = useContext(AuthContext);
+  const { userData, role, permissions } = useContext(AuthContext);
   const currentUserId = String(userData?.id ?? "");
   const normalizedRole = String(role ?? "")
     .toLowerCase()
@@ -54,6 +57,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const isAdminRole = ["root", "super_admin", "department_admin"].includes(
     normalizedRole,
   );
+  const canCopy = permissions?.includes("copy_agents");
   const requestedReadOnlyMode = view || searchParams.get("readonly") === "1";
   const forceReadOnlyByOwnership =
     !!folderId &&
@@ -286,6 +290,27 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
                 </AgentSearchProvider>
               </SidebarProvider>
             )}
+            {isReadOnlyMode && currentAgent && canCopy && (
+              <Button
+                className="fixed bottom-6 right-6 z-40 gap-2 shadow-lg"
+                onClick={() => setCloneOpen(true)}
+              >
+                <Copy className="h-4 w-4" />
+                {t("Copy")}
+              </Button>
+            )}
+            <CopyAgentDialog
+              open={cloneOpen}
+              onOpenChange={setCloneOpen}
+              source={
+                isReadOnlyMode && currentAgent
+                  ? { type: "agent", agent: currentAgent }
+                  : null
+              }
+              onSuccess={(agentId, projectId) =>
+                navigate(`/agent/${agentId}/folder/${projectId}`)
+              }
+            />
           </div>
         )}
       </div>

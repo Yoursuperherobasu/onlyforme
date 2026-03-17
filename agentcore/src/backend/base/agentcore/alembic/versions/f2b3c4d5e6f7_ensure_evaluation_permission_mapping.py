@@ -1,3 +1,4 @@
+from typing import Union
 """ensure evaluation permission mapping
 
 Revision ID: f2b3c4d5e6f7
@@ -36,7 +37,7 @@ def _has_column(bind, table_name: str, column_name: str) -> bool:
     return column_name in [column["name"] for column in inspector.get_columns(table_name)]
 
 
-def _upsert_evaluation_permission(bind) -> str | None:
+def _upsert_evaluation_permission(bind) -> Union[str, None]:
     if not _table_exists(bind, "permission"):
         return None
 
@@ -183,4 +184,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Intentionally non-destructive data migration.
     return
+
 

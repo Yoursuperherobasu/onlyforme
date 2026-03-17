@@ -6,6 +6,7 @@ Create Date: 2026-02-20 16:40:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -14,9 +15,9 @@ from alembic import op
 
 
 revision: str = "l9a0b1c2d3e4"
-down_revision: str | Sequence[str] | None = "k8f9a0b1c2d3"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "k8f9a0b1c2d3"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -145,3 +146,4 @@ def downgrade() -> None:
         op.drop_column("vector_db_catalogue", "published_by")
     if _has_column(bind, "vector_db_catalogue", "dept_id"):
         op.drop_column("vector_db_catalogue", "dept_id")
+

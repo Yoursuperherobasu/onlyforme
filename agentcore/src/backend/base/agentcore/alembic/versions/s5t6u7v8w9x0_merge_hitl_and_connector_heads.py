@@ -13,14 +13,15 @@ linear head so Alembic upgrade/downgrade operations are unambiguous.
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
 # revision identifiers, used by Alembic.
 revision: str = "s5t6u7v8w9x0"
 down_revision: tuple[str, str] = ("m3r9g8h7k6l5", "r4s5t6u7v8w9")
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -29,3 +30,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     pass
+

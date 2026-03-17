@@ -14,6 +14,7 @@ Create Date: 2026-03-12 12:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -23,9 +24,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "v9w0x1y2z3a4"
-down_revision: str | Sequence[str] | None = "u8v9w0x1y2z3"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "u8v9w0x1y2z3"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -158,3 +159,4 @@ def downgrade() -> None:
     for col in ("prod_ref_count", "promoted_by", "promoted_at", "source_guardrail_id", "environment"):
         if _has_column(bind, "guardrail_catalogue", col):
             op.drop_column("guardrail_catalogue", col)
+

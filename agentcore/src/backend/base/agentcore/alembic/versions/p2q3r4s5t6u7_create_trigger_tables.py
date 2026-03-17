@@ -7,6 +7,7 @@ Create Date: 2026-02-25 00:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "p2q3r4s5t6u7"
-down_revision: str | Sequence[str] | None = "17b99611cc4e"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "17b99611cc4e"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -111,3 +112,4 @@ def downgrade() -> None:
     # Drop the enum types
     sa.Enum(name="trigger_execution_status_enum").drop(op.get_bind(), checkfirst=True)
     sa.Enum(name="trigger_type_enum").drop(op.get_bind(), checkfirst=True)
+

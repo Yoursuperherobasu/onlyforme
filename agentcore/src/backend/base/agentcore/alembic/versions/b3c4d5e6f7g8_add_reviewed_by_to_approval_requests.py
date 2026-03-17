@@ -5,6 +5,7 @@ Create Date: 2026-03-14
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -13,9 +14,9 @@ from alembic import op
 
 
 revision: str = "b3c4d5e6f7g8"
-down_revision: str | Sequence[str] | None = "u8v9w0x1y2z3"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "u8v9w0x1y2z3"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 TABLES = (
@@ -79,3 +80,4 @@ def downgrade() -> None:
     for table in TABLES:
         if _table_exists(bind, table) and _has_column(bind, table, "reviewed_by"):
             op.drop_column(table, "reviewed_by")
+

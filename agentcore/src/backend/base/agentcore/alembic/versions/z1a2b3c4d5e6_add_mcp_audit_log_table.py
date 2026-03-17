@@ -6,6 +6,7 @@ Create Date: 2026-03-03
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -13,9 +14,9 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "z1a2b3c4d5e6"
-down_revision: str | Sequence[str] | None = "77540cb8b124"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "77540cb8b124"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -79,3 +80,4 @@ def downgrade() -> None:
             except Exception:
                 pass
         op.drop_table("mcp_audit_log")
+

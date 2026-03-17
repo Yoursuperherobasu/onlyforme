@@ -6,6 +6,7 @@ Create Date: 2026-03-10 23:40:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "t2u3v4w5x6y7"
-down_revision: str | Sequence[str] | None = "s1u2v3w4x5y6"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "s1u2v3w4x5y6"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _has_constraint(bind, table_name: str, constraint_name: str) -> bool:
@@ -78,3 +79,4 @@ def downgrade() -> None:
         batch_op.drop_column("end_date")
         batch_op.drop_column("start_date")
         batch_op.drop_column("required_by_details")
+

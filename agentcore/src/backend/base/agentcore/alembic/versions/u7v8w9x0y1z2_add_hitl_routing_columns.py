@@ -10,6 +10,7 @@ HIL requests are routed to the department admin and can be delegated.
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -19,8 +20,8 @@ from alembic import op
 # revision identifiers, used by Alembic.
 revision: str = "u7v8w9x0y1z2"
 down_revision: str = "e552a211c0b9"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -59,3 +60,4 @@ def downgrade() -> None:
     op.drop_column("hitl_request", "org_id")
     op.drop_column("hitl_request", "dept_id")
     op.drop_column("hitl_request", "assigned_to")
+

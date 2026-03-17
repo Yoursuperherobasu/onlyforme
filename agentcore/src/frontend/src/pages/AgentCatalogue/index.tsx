@@ -3,28 +3,17 @@ import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { AuthContext } from "@/contexts/authContext";
-import { api } from "@/controllers/API/api";
-import { getURL } from "@/controllers/API/helpers/constants";
-import { useGetFoldersQuery } from "@/controllers/API/queries/folders/use-get-folders";
 import {
   useGetRegistry,
   useGetRegistryRatings,
-  usePostRegistryClone,
   usePostRegistryRate,
   type RegistryEntry,
 } from "@/controllers/API/queries/registry";
 import CustomLoader from "@/customization/components/custom-loader";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useAlertStore from "@/stores/alertStore";
+import CopyAgentDialog from "@/components/agents/copy-agent-dialog";
 
 interface AgentCatalogueViewProps {
   setSearch?: (search: string) => void;
@@ -38,16 +27,11 @@ export default function AgentCatalogueView({
   const [selectedEntry, setSelectedEntry] = useState<RegistryEntry | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [ratingOpen, setRatingOpen] = useState(false);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [cloneName, setCloneName] = useState("");
-  const [createProject, setCreateProject] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
-  const [newProjectDescription, setNewProjectDescription] = useState("");
   const [score, setScore] = useState(5);
   const [scoreInput, setScoreInput] = useState("5");
   const [review, setReview] = useState("");
 
-  const { permissions, role, userData } = useContext(AuthContext);
+  const { permissions } = useContext(AuthContext);
   const navigate = useCustomNavigate();
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -65,14 +49,10 @@ export default function AgentCatalogueView({
       keepPreviousData: true,
     },
   );
-  const { data: folders = [], refetch: refetchFolders } = useGetFoldersQuery({
-    staleTime: 0,
-  });
   const { data: ratingsData, refetch: refetchRatings } = useGetRegistryRatings(
     { registry_id: selectedEntry?.id || "" },
     { enabled: ratingOpen && !!selectedEntry?.id },
   );
-  const cloneMutation = usePostRegistryClone();
   const rateMutation = usePostRegistryRate();
 
   const filteredAgents = useMemo(
@@ -86,40 +66,9 @@ export default function AgentCatalogueView({
     return () => clearTimeout(timer);
   }, [searchQuery, setSearch]);
 
-  const normalizedRole = String(role ?? "")
-    .toLowerCase()
-    .replace(/\s+/g, "_");
-  const isAdminRole = [
-    "root",
-    "super_admin",
-    "department_admin",
-  ].includes(normalizedRole);
-  const currentUserEmail = String(userData?.email ?? "").toLowerCase();
-
-  const foldersForClone = useMemo(() => {
-    if (!isAdminRole) return folders;
-    return folders.filter((folder) => {
-      if (folder.is_own_project) return true;
-      if (folder.created_by_email) {
-        return folder.created_by_email.toLowerCase() === currentUserEmail;
-      }
-      return false;
-    });
-  }, [folders, isAdminRole, currentUserEmail]);
-
-  useEffect(() => {
-    if (!selectedProjectId && foldersForClone.length > 0) {
-      setSelectedProjectId(String(foldersForClone[0].id || ""));
-    }
-  }, [foldersForClone, selectedProjectId]);
-
   const openCloneModal = (entry: RegistryEntry) => {
     setSelectedEntry(entry);
     setCloneOpen(true);
-    setCloneName(`${entry.title} (Copy)`);
-    setCreateProject(false);
-    setNewProjectName("");
-    setNewProjectDescription("");
   };
 
   const openRatingModal = (entry: RegistryEntry) => {
@@ -128,55 +77,6 @@ export default function AgentCatalogueView({
     setScore(5);
     setScoreInput("5");
     setReview("");
-  };
-
-  const handleClone = async () => {
-    try {
-      if (!selectedEntry) return;
-      let projectId = selectedProjectId;
-      if (createProject) {
-        if (!newProjectName.trim()) {
-          setErrorData({ title: t("Project name is required") });
-          return;
-        }
-        const created = await api.post(`${getURL("PROJECTS")}/`, {
-          name: newProjectName.trim(),
-          description: newProjectDescription.trim(),
-          agents_list: [],
-          components_list: [],
-        });
-        projectId = String(created?.data?.id || "");
-        const refreshed = await refetchFolders();
-        if (!projectId) {
-          const updatedFolders = refreshed?.data || folders;
-          const fallback = updatedFolders.find(
-            (f) => f.name === newProjectName.trim(),
-          );
-          projectId = String(fallback?.id || "");
-        }
-      }
-      if (!projectId) {
-        setErrorData({ title: t("Please select a project first") });
-        return;
-      }
-      const response = await cloneMutation.mutateAsync({
-        registry_id: selectedEntry.id,
-        project_id: projectId,
-        new_name: cloneName.trim() || undefined,
-      });
-      setSuccessData({
-        title: t("Agent '{{name}}' copied successfully", {
-          name: response.agent_name,
-        }),
-      });
-      setCloneOpen(false);
-      navigate(`/agent/${response.agent_id}/folder/${projectId}`);
-    } catch (error: any) {
-      setErrorData({
-        title: t("Failed to copy agent"),
-        list: [error?.response?.data?.detail || t("Please try again")],
-      });
-    }
   };
 
   const handleRate = async () => {
@@ -404,83 +304,22 @@ export default function AgentCatalogueView({
         )}
       </div>
 
-      <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("Copy Agent")}</DialogTitle>
-            <DialogDescription>
-              {t(
-                "Choose existing project or create a new project, then copy this registry agent.",
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 text-sm">
-            <label className="block">
-              <span className="mb-1 block text-xs text-muted-foreground">
-                {t("Agent Name")}
-              </span>
-              <input
-                value={cloneName}
-                onChange={(e) => setCloneName(e.target.value)}
-                className="w-full rounded-md border bg-card px-3 py-2"
-                placeholder={t("Copied agent name")}
-              />
-            </label>
-
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={createProject}
-                onChange={(e) => setCreateProject(e.target.checked)}
-              />
-              <span>{t("Create new project and copy there")}</span>
-            </label>
-
-            {createProject ? (
-              <div className="space-y-2">
-                <input
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  className="w-full rounded-md border bg-card px-3 py-2"
-                  placeholder={t("New project name")}
-                />
-                <textarea
-                  value={newProjectDescription}
-                  onChange={(e) => setNewProjectDescription(e.target.value)}
-                  className="w-full rounded-md border bg-card px-3 py-2"
-                  placeholder={t("New project description (optional)")}
-                />
-              </div>
-            ) : (
-              <select
-                value={selectedProjectId}
-                onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="w-full rounded-md border bg-card px-3 py-2"
-              >
-                <option value="">{t("Select project")}</option>
-                {foldersForClone.map((folder) => (
-                  <option
-                    key={folder.id || folder.name}
-                    value={String(folder.id || "")}
-                  >
-                    {folder.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCloneOpen(false)}>
-              {t("Cancel")}
-            </Button>
-            <Button onClick={handleClone} disabled={cloneMutation.isLoading}>
-              {cloneMutation.isLoading ? t("Copying...") : t("Copy Agent")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CopyAgentDialog
+        open={cloneOpen}
+        onOpenChange={setCloneOpen}
+        source={
+          selectedEntry
+            ? {
+                type: "registry",
+                registryId: selectedEntry.id,
+                title: selectedEntry.title,
+              }
+            : null
+        }
+        onSuccess={(agentId, projectId) =>
+          navigate(`/agent/${agentId}/folder/${projectId}`)
+        }
+      />
 
       <Dialog open={ratingOpen} onOpenChange={setRatingOpen}>
         <DialogContent>

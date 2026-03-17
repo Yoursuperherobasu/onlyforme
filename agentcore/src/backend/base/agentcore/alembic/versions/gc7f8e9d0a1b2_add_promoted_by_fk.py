@@ -9,6 +9,7 @@ Create Date: 2026-03-13 15:30:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -18,9 +19,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "gc7f8e9d0a1b2"
-down_revision: str | Sequence[str] | None = "354596a8b250"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "354596a8b250"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -60,3 +61,4 @@ def downgrade() -> None:
             "guardrail_catalogue",
             type_="foreignkey",
         )
+

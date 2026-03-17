@@ -137,7 +137,21 @@ function envBadge(env: string): JSX.Element {
 
 // ── Main component ────────────────────────────────────────────────────────
 
-export default function SchedulerPage(): JSX.Element {
+type SchedulerPageProps = {
+  embedded?: boolean;
+  agentFilter?: {
+    deploymentId?: string;
+    agentId?: string;
+    agentName?: string;
+  };
+  onRequestClose?: () => void;
+};
+
+export default function SchedulerPage({
+  embedded = false,
+  agentFilter,
+  onRequestClose,
+}: SchedulerPageProps): JSX.Element {
   const { permissions } = useContext(AuthContext);
   const canAddScheduler = permissions?.includes("add_scheduler");
   const [typeFilter, setTypeFilter] = useState<TriggerTypeFilter>("all");
@@ -193,25 +207,57 @@ export default function SchedulerPage(): JSX.Element {
     }
   };
 
+  const visibleTriggers = useMemo(() => {
+    const deploymentId = agentFilter?.deploymentId;
+    const agentId = agentFilter?.agentId;
+    if (!deploymentId && !agentId) {
+      return triggers;
+    }
+    return triggers.filter((trigger) => {
+      if (deploymentId && trigger.deployment_id !== deploymentId) return false;
+      if (agentId && trigger.agent_id !== agentId) return false;
+      return true;
+    });
+  }, [agentFilter?.agentId, agentFilter?.deploymentId, triggers]);
+
+  const headerTitle = agentFilter?.agentName
+    ? `${agentFilter.agentName} — Automations`
+    : "Agent Scheduler";
+  const headerSubtitle = agentFilter?.agentName
+    ? "Schedule and monitor automations for this agent deployment"
+    : "Schedule and monitor autonomous agent runs for published agents";
+
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div
+      className={`flex flex-col overflow-hidden bg-background ${
+        embedded ? "max-h-[80vh]" : "h-full"
+      }`}
+    >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-6 py-4">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">Agent Scheduler</h1>
-          <p className="text-sm text-muted-foreground">
-            Schedule and monitor autonomous agent runs for published agents
-          </p>
+          <h1 className="text-xl font-semibold text-foreground">{headerTitle}</h1>
+          <p className="text-sm text-muted-foreground">{headerSubtitle}</p>
         </div>
-        {canAddScheduler && (
-          <button
-            onClick={() => { setEditingTrigger(null); setShowModal(true); }}
-            className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
-          >
-            <Plus className="h-4 w-4" />
-            Add Scheduler
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {canAddScheduler && (
+            <button
+              onClick={() => { setEditingTrigger(null); setShowModal(true); }}
+              className="flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]"
+            >
+              <Plus className="h-4 w-4" />
+              Add Scheduler
+            </button>
+          )}
+          {embedded && onRequestClose && (
+            <button
+              onClick={onRequestClose}
+              className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              Close
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filter tabs */}
@@ -240,14 +286,15 @@ export default function SchedulerPage(): JSX.Element {
           <div className="flex h-40 items-center justify-center">
             <Loading />
           </div>
-        ) : triggers.length === 0 ? (
+        ) : visibleTriggers.length === 0 ? (
           <EmptyState
             canAddScheduler={!!canAddScheduler}
             onAdd={() => { setEditingTrigger(null); setShowModal(true); }}
+            agentName={agentFilter?.agentName}
           />
         ) : (
           <TriggersTable
-            triggers={triggers}
+            triggers={visibleTriggers}
             runningId={runningId}
             deploymentStatusMap={deploymentStatusMap}
             onToggle={handleToggle}
@@ -264,6 +311,7 @@ export default function SchedulerPage(): JSX.Element {
         <AddSchedulerModal
           editing={editingTrigger}
           onClose={() => setShowModal(false)}
+          prefillDeploymentId={agentFilter?.deploymentId}
         />
       )}
 
@@ -272,7 +320,7 @@ export default function SchedulerPage(): JSX.Element {
         <LogsSlideOver
           triggerId={logsTriggerId}
           triggerName={
-            triggers.find((t) => t.id === logsTriggerId)?.agent_name ?? "Trigger"
+            visibleTriggers.find((t) => t.id === logsTriggerId)?.agent_name ?? "Trigger"
           }
           onClose={() => setLogsTriggerId(null)}
         />
@@ -314,9 +362,11 @@ export default function SchedulerPage(): JSX.Element {
 function EmptyState({
   onAdd,
   canAddScheduler,
+  agentName,
 }: {
   onAdd: () => void;
   canAddScheduler: boolean;
+  agentName?: string;
 }): JSX.Element {
   return (
     <div className="flex h-64 flex-col items-center justify-center gap-3 text-center">
@@ -324,9 +374,13 @@ function EmptyState({
         <Zap className="h-8 w-8 text-muted-foreground" />
       </div>
       <div>
-        <p className="font-medium text-foreground">No schedulers yet</p>
+        <p className="font-medium text-foreground">
+          {agentName ? "No automations for this agent yet" : "No schedulers yet"}
+        </p>
         <p className="text-sm text-muted-foreground">
-          Add your first scheduler to start running agents on a schedule or trigger.
+          {agentName
+            ? "Add an automation to run this agent on a schedule or trigger."
+            : "Add your first scheduler to start running agents on a schedule or trigger."}
         </p>
       </div>
       {canAddScheduler && (
@@ -801,9 +855,11 @@ const BLANK_EMAIL = {
 function AddSchedulerModal({
   editing,
   onClose,
+  prefillDeploymentId,
 }: {
   editing: TriggerInfo | null;
   onClose: () => void;
+  prefillDeploymentId?: string;
 }): JSX.Element {
   // When editing, skip step 1 (agent selection) and go straight to config
   const [step, setStep] = useState<Step>(editing ? 2 : 1);
@@ -903,6 +959,15 @@ function AddSchedulerModal({
     }
     return list;
   }, [uatData, prodData]);
+
+  useEffect(() => {
+    if (editing || selectedAgent || !prefillDeploymentId) return;
+    const match = agents.find((agent) => agent.deployId === prefillDeploymentId);
+    if (match) {
+      setSelectedAgent(match);
+      setEnvironment(match.environment);
+    }
+  }, [agents, editing, prefillDeploymentId, selectedAgent]);
 
   const createMutation = useCreateTrigger();
   const updateMutation = useUpdateTrigger();

@@ -6,12 +6,13 @@ Create Date: 2026-03-03 00:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
 # revision identifiers, used by Alembic.
 revision: str = "q4r5s6t7u8v9"
-down_revision: str | Sequence[str] | None = "02ab22100132"
+down_revision: Union[str, Sequence[str], None] = "02ab22100132"
 branch_labels = None
 depends_on = None
 
@@ -26,3 +27,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     """PostgreSQL cannot remove enum values — no-op."""
     pass
+

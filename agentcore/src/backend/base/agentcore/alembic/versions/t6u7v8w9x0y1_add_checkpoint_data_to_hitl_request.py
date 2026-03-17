@@ -11,6 +11,7 @@ before calling ainvoke(Command(resume=...)).
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -20,8 +21,8 @@ from alembic import op
 # revision identifiers, used by Alembic.
 revision: str = "t6u7v8w9x0y1"
 down_revision: str = "s5t6u7v8w9x0"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -33,3 +34,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("hitl_request", "checkpoint_data")
+

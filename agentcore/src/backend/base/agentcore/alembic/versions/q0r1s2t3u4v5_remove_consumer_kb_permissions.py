@@ -6,6 +6,7 @@ Create Date: 2026-03-07 00:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "q0r1s2t3u4v5"
-down_revision: str | Sequence[str] | None = "p9q0r1s2t3u4"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "p9q0r1s2t3u4"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 REMOVE_KEYS = ("view_knowledge_base", "add_new_knowledge")
@@ -62,3 +63,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Intentionally non-destructive.
     return
+

@@ -6,6 +6,7 @@ Create Date: 2026-03-09 00:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "ev1a2b3c4d5e"
-down_revision: str | Sequence[str] | None = "q0r1s2t3u4v5"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "q0r1s2t3u4v5"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def column_exists(table_name: str, column_name: str) -> bool:
@@ -49,3 +50,4 @@ def downgrade() -> None:
             "evaluator",
             sa.Column("model_api_key", sa.String(), nullable=True),
         )
+

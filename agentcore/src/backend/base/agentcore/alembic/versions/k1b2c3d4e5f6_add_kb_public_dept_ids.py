@@ -6,6 +6,7 @@ Create Date: 2026-03-17
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -14,9 +15,9 @@ from alembic import op
 
 
 revision: str = "k1b2c3d4e5f6"
-down_revision: str | Sequence[str] | None = "e3f4g5h6i7j8"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "e3f4g5h6i7j8"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -44,3 +45,4 @@ def downgrade() -> None:
         return
     if _has_column(bind, "knowledge_base", "public_dept_ids"):
         op.drop_column("knowledge_base", "public_dept_ids")
+

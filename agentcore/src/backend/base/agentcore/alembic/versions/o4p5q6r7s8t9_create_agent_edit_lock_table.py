@@ -6,6 +6,7 @@ Create Date: 2026-02-24 17:40:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "o4p5q6r7s8t9"
-down_revision: str | Sequence[str] | None = "n2o3p4q5r6s7"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "n2o3p4q5r6s7"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -49,4 +50,5 @@ def downgrade() -> None:
         op.drop_index("ix_agent_edit_lock_expires_at", table_name="agent_edit_lock")
         op.drop_index("ix_agent_edit_lock_locked_by", table_name="agent_edit_lock")
         op.drop_table("agent_edit_lock")
+
 

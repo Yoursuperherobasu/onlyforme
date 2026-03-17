@@ -61,7 +61,6 @@ import VectorDBView from "./pages/VectorDbPage";
 import ConnectorsCatalogueView from "./pages/ConnectorsCatalogue";
 import AutomationsPage from "./pages/AutomationsPage";
 import HITLApprovalsPage from "./pages/HITLApprovalsPage";
-import SchedulerPage from "./pages/SchedulerPage";
 import useAuthStore from "./stores/authStore";
 
 function DefaultLandingRedirect() {
@@ -101,7 +100,7 @@ function DefaultLandingRedirect() {
   }
 
   if (permissions.includes("view_agent_scheduler_page")) {
-    return <CustomNavigate replace to="scheduler" />;
+    return <CustomNavigate replace to="workflows" />;
   }
 
   return <CustomNavigate replace to="dashboard-admin" />;
@@ -211,14 +210,6 @@ const router = createBrowserRouter(
                     path="connectors"
                     element={
                         <ConnectorsCatalogueView />
-                    }
-                  />
-                  <Route
-                    path="scheduler"
-                    element={
-                      <ProtectedPermissionRoute permission="view_agent_scheduler_page">
-                        <SchedulerPage />
-                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route

@@ -34,6 +34,7 @@ import ExportApiModal from "@/modals/exportApiModal";
 import ExportModal from "@/modals/exportModal";
 import useAlertStore from "@/stores/alertStore";
 import type { AgentType } from "@/types/agent";
+import SchedulerPage from "@/pages/SchedulerPage";
 
 type EnvironmentTab = "UAT" | "PROD";
 
@@ -54,6 +55,7 @@ interface WorkagentType {
   movedToProd?: boolean;
   status: boolean;
   enabled: boolean;
+  inputType?: "chat" | "autonomous" | "file_processing";
 }
 
 interface WorkflowsViewProps {
@@ -109,6 +111,9 @@ export default function WorkflowsView({
   const [openExportModal, setOpenExportModal] = useState(false);
   const [openEmbedModal, setOpenEmbedModal] = useState(false);
   const [openExportApiModal, setOpenExportApiModal] = useState(false);
+  const [schedulerAgent, setSchedulerAgent] = useState<WorkagentType | null>(
+    null,
+  );
   const [exportApiAgent, setExportApiAgent] = useState<{
     agentId: string;
     agentName: string;
@@ -126,6 +131,7 @@ export default function WorkflowsView({
   const promoteMutation = usePostControlPanelPromote();
   const validatePublishEmail = useValidatePublishEmail();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canViewScheduler = can("view_agent_scheduler_page");
 
   const { data, isLoading } = useGetControlPanelAgents(
     {
@@ -143,11 +149,11 @@ export default function WorkflowsView({
       return workflows;
     }
 
-    return (data?.items ?? []).map((item) => ({
-      id: item.deploy_id,
-      agentId: item.agent_id,
-      name: item.agent_name,
-      description: item.agent_description ?? "",
+      return (data?.items ?? []).map((item) => ({
+        id: item.deploy_id,
+        agentId: item.agent_id,
+        name: item.agent_name,
+        description: item.agent_description ?? "",
       version: item.version_number ?? "-",
       user: item.creator_name ?? "-",
       userEmail: item.creator_email ?? undefined,
@@ -156,11 +162,12 @@ export default function WorkflowsView({
       ownerNames: item.owner_names ?? [],
       ownerEmails: item.owner_emails ?? [],
       department: item.creator_department ?? "-",
-      created: formatDateTime(item.created_at),
-      movedToProd: item.moved_to_prod ?? false,
-      status: item.is_active,
-      enabled: item.is_enabled,
-    }));
+        created: formatDateTime(item.created_at),
+        movedToProd: item.moved_to_prod ?? false,
+        status: item.is_active,
+        enabled: item.is_enabled,
+        inputType: item.input_type,
+      }));
   }, [workflows, data?.items]);
 
   const normalizedPromoteEmails = useMemo(
@@ -564,6 +571,13 @@ export default function WorkflowsView({
     return () => clearTimeout(timer);
   }, [searchQuery, setSearch]);
 
+  const tableColumnCount =
+    6 +
+    (can("view_project_page") ? 3 : 0) +
+    (canViewScheduler ? 1 : 0) +
+    (can("start_stop_agent") ? 1 : 0) +
+    (can("enable_disable_agent") ? 1 : 0);
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8 md:py-6">
@@ -646,6 +660,11 @@ export default function WorkflowsView({
                     {t("Moved to PROD")}
                   </th>
                 )}
+                {canViewScheduler && (
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                    {t("Agent Scheduler")}
+                  </th>
+                )}
                 {can("start_stop_agent") && (
                   <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                     {t("Start/Stop")}
@@ -662,7 +681,7 @@ export default function WorkflowsView({
             <tbody className="divide-y">
               {isLoading ? (
                 <tr>
-                  <td colSpan={11} className="px-6 py-10 text-center">
+                  <td colSpan={tableColumnCount} className="px-6 py-10 text-center">
                     <div className="flex items-center justify-center">
                       <CustomLoader />
                     </div>
@@ -671,7 +690,7 @@ export default function WorkflowsView({
               ) : filteredworkflows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={11}
+                    colSpan={tableColumnCount}
                     className="px-6 py-10 text-center text-sm text-muted-foreground"
                   >
                     {t("No deployed agents found")}
@@ -828,6 +847,44 @@ export default function WorkflowsView({
                         )}
                       </td>
                     )}
+                    {canViewScheduler && (
+                      <td className="px-6 py-4">
+                        {(() => {
+                          const isChat = workflow.inputType === "chat";
+                          const disabledReason = isChat
+                            ? "Chat agents cannot be scheduled."
+                            : undefined;
+                          const button = (
+                            <button
+                              type="button"
+                              className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                                isChat
+                                  ? "cursor-not-allowed border-muted-foreground/30 text-muted-foreground"
+                                  : "hover:bg-muted"
+                              }`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isChat) return;
+                                setSchedulerAgent(workflow);
+                              }}
+                              aria-disabled={isChat}
+                            >
+                              {t("Schedule")}
+                            </button>
+                          );
+
+                          if (disabledReason) {
+                            return (
+                              <ShadTooltip content={disabledReason}>
+                                <span>{button}</span>
+                              </ShadTooltip>
+                            );
+                          }
+
+                          return button;
+                        })()}
+                      </td>
+                    )}
                     {can("start_stop_agent") && (
                       <td className="px-6 py-4">
                         <button
@@ -901,6 +958,27 @@ export default function WorkflowsView({
           </div>
         </div>
       </div>
+
+      <Dialog
+        open={Boolean(schedulerAgent)}
+        onOpenChange={(open) => {
+          if (!open) setSchedulerAgent(null);
+        }}
+      >
+        <DialogContent className="max-w-5xl p-0">
+          {schedulerAgent && (
+            <SchedulerPage
+              embedded
+              agentFilter={{
+                deploymentId: schedulerAgent.id,
+                agentId: schedulerAgent.agentId,
+                agentName: schedulerAgent.name,
+              }}
+              onRequestClose={() => setSchedulerAgent(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <ExportModal
         open={openExportModal}

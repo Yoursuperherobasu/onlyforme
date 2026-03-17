@@ -6,6 +6,7 @@ Create Date: 2026-03-17 00:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -15,9 +16,9 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "20260317_agent_api_key"
-down_revision: str | Sequence[str] | None = "20260316_moved_uat_prod"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "20260316_moved_uat_prod"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -70,3 +71,4 @@ def downgrade() -> None:
     op.drop_constraint("fk_agent_api_key_created_by_user", "agent_api_key", type_="foreignkey")
     op.drop_constraint("fk_agent_api_key_agent_id_agent", "agent_api_key", type_="foreignkey")
     op.drop_table("agent_api_key")
+

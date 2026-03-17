@@ -549,24 +549,6 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {/* Automations */}
-        {can("view_agent_scheduler_page") && (
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="md"
-              isActive={pathname.startsWith("/scheduler")}
-              onClick={() => _navigate("/scheduler")}
-              className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
-            >
-              <ForwardedIconComponent
-                name="Zap"
-                className="h-4 w-4"
-              />
-              {t("Agent Scheduler")}
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        )}
-
         {/* Orchestrator */}
         {can("view_orchastration_page") && (
           <SidebarMenuItem>
@@ -702,7 +684,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="BookOpen"
                 className="h-4 w-4"
               />
-              {t("Knowledge Base Management")}
+              {t("Knowledge Hub")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}

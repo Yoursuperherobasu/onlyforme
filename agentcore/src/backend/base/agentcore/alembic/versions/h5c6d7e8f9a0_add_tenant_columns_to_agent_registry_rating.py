@@ -6,6 +6,7 @@ Create Date: 2026-02-19
 """
 
 from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -13,9 +14,9 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "h5c6d7e8f9a0"
-down_revision: str | Sequence[str] | None = "c3d4e5f6a7b8"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "c3d4e5f6a7b8"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -104,4 +105,5 @@ def downgrade() -> None:
         op.drop_column(table, "dept_id")
     if _has_column(bind, table, "org_id"):
         op.drop_column(table, "org_id")
+
 

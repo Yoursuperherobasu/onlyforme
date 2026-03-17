@@ -7,6 +7,7 @@ Create Date: 2026-02-25 00:00:00.000000
 """
 
 from __future__ import annotations
+from typing import Union
 
 from collections.abc import Sequence
 
@@ -14,9 +15,9 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "q3r4s5t6u7v8"
-down_revision: str | Sequence[str] | None = "p2q3r4s5t6u7"
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+down_revision: Union[str, Sequence[str], None] = "p2q3r4s5t6u7"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -46,3 +47,4 @@ def downgrade() -> None:
     op.alter_column("connector_catalogue", "schema_name", nullable=False)
     op.alter_column("connector_catalogue", "username", nullable=False)
     op.alter_column("connector_catalogue", "password_encrypted", nullable=False)
+
