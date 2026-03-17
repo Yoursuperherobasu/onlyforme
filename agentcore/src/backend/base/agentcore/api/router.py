@@ -28,6 +28,7 @@ from agentcore.api.departments import router as departments_router
 from agentcore.api.approvals import router as approvals_router
 from agentcore.api.cache import router as cache_router
 from agentcore.api.control_panel import router as control_panel_router
+from agentcore.api.dashboard import router as dashboard_router
 from agentcore.api.knowledge_bases import router as knowledge_bases_router
 from agentcore.api.model_registry import router as model_registry_router
 from agentcore.api.orchestrator import router as orchestrator_router
@@ -46,6 +47,7 @@ from agentcore.api.triggers import router as triggers_router
 from agentcore.api.human_in_loop import router as hitl_router
 from agentcore.api.mcp_registry import router as mcp_registry_router
 from agentcore.api.package_inventory import router as package_inventory_router
+from agentcore.api.metrics_dashboard import router as metrics_dashboard_router
 
 router = APIRouter(
     prefix="/api",
@@ -77,6 +79,7 @@ router.include_router(organizations_router)
 router.include_router(departments_router)
 router.include_router(approvals_router)
 router.include_router(control_panel_router)
+router.include_router(dashboard_router)
 router.include_router(cache_router)
 router.include_router(knowledge_bases_router)
 router.include_router(model_registry_router)
@@ -96,3 +99,4 @@ router.include_router(triggers_router)
 router.include_router(hitl_router)
 router.include_router(mcp_registry_router)
 router.include_router(package_inventory_router)
+router.include_router(metrics_dashboard_router)

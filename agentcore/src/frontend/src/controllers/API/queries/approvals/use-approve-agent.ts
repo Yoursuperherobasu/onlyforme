@@ -3,6 +3,7 @@ import type { useMutationFunctionType } from "@/types/api";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
+import { emitDashboardRefresh } from "@/utils/dashboardRefresh";
 
 interface ApproveAgentParams {
   agentId: string;
@@ -44,9 +45,14 @@ export const useApproveAgent: useMutationFunctionType<
     ApproveAgentParams
   > = mutate(["useApproveAgent"], approveAgentFn, {
     ...options,
-    onSettled: () => {
+    onSuccess: (data, variables, context) => {
+      emitDashboardRefresh();
+      options?.onSuccess?.(data, variables, context);
+    },
+    onSettled: (data, error, variables, context) => {
       // Refetch approvals list after approval
       queryClient.refetchQueries({ queryKey: ["useGetApprovals"] });
+      options?.onSettled?.(data, error, variables, context);
     },
   });
 

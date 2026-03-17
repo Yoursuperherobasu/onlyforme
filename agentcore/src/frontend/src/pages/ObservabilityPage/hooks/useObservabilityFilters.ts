@@ -3,6 +3,8 @@ import useAuthStore from "@/stores/authStore";
 import type { Filters, DateRangePreset, LangfuseEnvironment, ScopeOptionsResponse } from "../types";
 import { getDateRangeParams, getUserTimezoneOffset } from "../utils";
 
+export type TraceScope = "all" | "dept" | "my";
+
 export function useObservabilityFilters(scopeOptions: ScopeOptionsResponse | undefined) {
   const currentRole = useAuthStore((state) => state.role);
   const sessionRole = String(currentRole || "").toLowerCase();
@@ -12,20 +14,31 @@ export function useObservabilityFilters(scopeOptions: ScopeOptionsResponse | und
   const [fetchAllMode, setFetchAllMode] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
+  const [traceScope, setTraceScope] = useState<TraceScope>("all");
   const [filters, setFilters] = useState<Filters>({ dateRange: "today", search: "", models: [] });
   const [searchInput, setSearchInput] = useState("");
 
   const normalizedRole = String(scopeOptions?.role || currentRole || "").toLowerCase();
   const roleKnown = normalizedRole.length > 0;
   const requiresFilterFirst =
-    scopeOptions?.requires_filter_first ?? (normalizedRole === "root" || normalizedRole === "super_admin");
+    scopeOptions?.requires_filter_first ?? (normalizedRole === "root");
   const scopeReady = !requiresFilterFirst || Boolean(selectedOrgId || selectedDeptId);
+
+  const isDeptAdmin = normalizedRole === "department_admin";
+  const isSuperAdmin = normalizedRole === "super_admin";
+  const hasTraceScopeToggle = isDeptAdmin || isSuperAdmin;
+
+  // For super_admin in "dept" mode without a dept selected, scope is not ready
+  const traceScopeReady = !(isSuperAdmin && traceScope === "dept" && !selectedDeptId);
 
   const availableScopeDepartments = useMemo(() => {
     const departments = scopeOptions?.departments ?? [];
     if (!selectedOrgId) return departments;
     return departments.filter((dept) => dept.org_id === selectedOrgId);
   }, [scopeOptions?.departments, selectedOrgId]);
+
+  // Show dept dropdown only for super_admin in "dept" trace scope
+  const showDeptFilter = isSuperAdmin && traceScope === "dept" && (scopeOptions?.departments?.length ?? 0) > 0;
 
   // Sync dept with org
   useEffect(() => {
@@ -49,6 +62,13 @@ export function useObservabilityFilters(scopeOptions: ScopeOptionsResponse | und
     }
   }, [scopeOptions?.departments, selectedDeptId, selectedOrgId]);
 
+  // Clear dept selection when switching away from "dept" trace scope
+  useEffect(() => {
+    if (traceScope !== "dept") {
+      setSelectedDeptId(null);
+    }
+  }, [traceScope]);
+
   const dateParams = useMemo(
     () => ({
       ...getDateRangeParams(filters.dateRange),
@@ -63,8 +83,9 @@ export function useObservabilityFilters(scopeOptions: ScopeOptionsResponse | und
       ...(selectedOrgId ? { org_id: selectedOrgId } : {}),
       ...(selectedDeptId ? { dept_id: selectedDeptId } : {}),
       environment: selectedEnvironment,
+      ...(traceScope !== "all" ? { trace_scope: traceScope } : {}),
     }),
-    [selectedOrgId, selectedDeptId, selectedEnvironment],
+    [selectedOrgId, selectedDeptId, selectedEnvironment, traceScope],
   );
 
   const handleDateRangeChange = useCallback((value: DateRangePreset) => {
@@ -90,6 +111,11 @@ export function useObservabilityFilters(scopeOptions: ScopeOptionsResponse | und
 
   const handleEnvironmentChange = useCallback((env: LangfuseEnvironment) => {
     setSelectedEnvironment(env);
+    setFetchAllMode(false);
+  }, []);
+
+  const handleTraceScopeChange = useCallback((scope: TraceScope) => {
+    setTraceScope(scope);
     setFetchAllMode(false);
   }, []);
 
@@ -127,17 +153,24 @@ export function useObservabilityFilters(scopeOptions: ScopeOptionsResponse | und
     selectedDeptId,
     fetchAllMode,
     setFetchAllMode,
+    traceScope,
+    hasTraceScopeToggle,
+    isDeptAdmin,
+    isSuperAdmin,
+    showDeptFilter,
+    traceScopeReady,
     dateParams,
     scopeParams,
     normalizedRole,
     roleKnown,
     requiresFilterFirst,
-    scopeReady,
+    scopeReady: scopeReady && traceScopeReady,
     isProvisioningAdminSessionRole,
     availableScopeDepartments,
     handleDateRangeChange,
     handleSearch,
     handleEnvironmentChange,
+    handleTraceScopeChange,
     handleOrgChange,
     handleDeptChange,
     clearFilters,

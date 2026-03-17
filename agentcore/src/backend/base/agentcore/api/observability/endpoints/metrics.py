@@ -35,6 +35,7 @@ async def get_metrics(
     include_model_breakdown: Annotated[bool, Query()] = True,
     fetch_all: Annotated[bool, Query(description="Fetch all traces (up to 5000)")] = False,
     environment: Annotated[str | None, Query(description="'uat' or 'production'")] = None,
+    trace_scope: Annotated[str, Query(description="Trace scope: 'all', 'dept', or 'my'")] = "all",
 ) -> MetricsResponse:
     """Comprehensive aggregated metrics for enterprise dashboards."""
     clear_request_caches()
@@ -42,6 +43,7 @@ async def get_metrics(
     try:
         allowed_user_ids, scoped_clients, scope_key, scope_warnings = await resolve_scope_context(
             session=session, current_user=current_user, org_id=org_id, dept_id=dept_id,
+            trace_scope=trace_scope,
         )
         if not scoped_clients or not allowed_user_ids:
             return MetricsResponse(**scope_warning_payload(scope_warnings))

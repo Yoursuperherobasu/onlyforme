@@ -1570,7 +1570,7 @@ async def approve_agent(
                 f"Please retry the approval or contact support."
             ),
         )
-    # ─── HTTP notify (only if guardrail promotion AND data migrations succeeded) ──
+    # ─── HTTP notify (only if guardrail promotion succeeded) ──
     guardrails_ready = all(g.ready for g in guardrail_promotions) if guardrail_promotions else True
     rag_ready = not pinecone_migration_failed and not neo4j_migration_failed
     if guardrails_ready and rag_ready:

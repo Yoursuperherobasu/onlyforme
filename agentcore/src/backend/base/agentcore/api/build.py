@@ -410,8 +410,9 @@ async def generate_agent_events(
         raise ValueError(msg)
 
     logger.info("Executing graph via compiled astream")
-    from agentcore.observability.metrics_registry import adjust_active_sessions
+    from agentcore.observability.metrics_registry import adjust_active_sessions, record_session_duration
     adjust_active_sessions(1)
+    _session_start = time.perf_counter()
     try:
         from agentcore.schema.schema import INPUT_FIELD_NAME
 
@@ -486,6 +487,7 @@ async def generate_agent_events(
 
     except asyncio.CancelledError:
         adjust_active_sessions(-1)
+        record_session_duration((time.perf_counter() - _session_start) * 1000)
         background_tasks.add_task(graph.end_all_traces_in_context)
         raise
     # NOTE: GraphInterrupt is NOT caught here.
@@ -496,6 +498,7 @@ async def generate_agent_events(
     # which is the only reliable execution point for interrupt handling.
     except Exception as e:
         adjust_active_sessions(-1)
+        record_session_duration((time.perf_counter() - _session_start) * 1000)
         from agentcore.observability.metrics_registry import record_agent_run
         record_agent_run(agent_name or "unknown", "error", (time.perf_counter() - _run_start) * 1000)
         logger.error(f"Error in LangGraph execution: {e}")
@@ -508,6 +511,7 @@ async def generate_agent_events(
         raise
 
     adjust_active_sessions(-1)
+    record_session_duration((time.perf_counter() - _session_start) * 1000)
     from agentcore.observability.metrics_registry import record_agent_run
     record_agent_run(agent_name or "unknown", "success", (time.perf_counter() - _run_start) * 1000)
     event_manager.on_end(data={})
