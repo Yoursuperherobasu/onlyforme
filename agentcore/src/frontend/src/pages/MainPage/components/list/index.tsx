@@ -59,7 +59,7 @@ const ListComponent = ({
   const normalizedRole = String(role ?? "")
     .toLowerCase()
     .replace(/\s+/g, "_");
-  const isAdminRole = ["root", "super_admin", "department_admin", "admin", "root_admin"].includes(
+  const isAdminRole = ["root", "super_admin", "department_admin"].includes(
     normalizedRole,
   );
   const isRestrictedDuplicateRole = ["super_admin", "department_admin"].includes(
@@ -371,6 +371,5 @@ const ListComponent = ({
 };
 
 export default ListComponent;
-
 
 

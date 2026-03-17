@@ -123,7 +123,11 @@ export default function ApprovalPreviewPage(): JSX.Element {
                     <div className="text-xs text-muted-foreground">{t("Requested Environment")}</div>
                     <div className="font-medium uppercase">
                       {(() => {
-                        const env = snapshot.final_target_environment || snapshot.target_environment || snapshot.environment;
+                        const envs = Array.isArray(snapshot.environments)
+                          ? snapshot.environments.map((env: string) => String(env).toLowerCase())
+                          : [];
+                        if (envs.includes("uat") && envs.includes("prod")) return "UAT + PROD";
+                        const env = snapshot.target_environment || snapshot.environment;
                         return env === "test" ? "UAT" : env?.toUpperCase();
                       })()}
                     </div>

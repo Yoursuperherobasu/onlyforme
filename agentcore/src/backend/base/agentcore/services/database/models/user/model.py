@@ -107,6 +107,7 @@ class UserRead(SQLModel):
     created_by: UUID | None = Field(default=None)
     created_by_username: str | None = Field(default=None)
     country: str | None = Field(default=None)
+    department_id: UUID | None = Field(default=None)
     organization_name: str | None = Field(default=None)
 
 

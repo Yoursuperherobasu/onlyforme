@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlmodel import col, select
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 
 from agentcore.api.schemas import UploadFileResponse
 from agentcore.api.utils import CurrentActiveUser, DbSession
@@ -35,70 +35,78 @@ SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
 
 
 async def _build_file_visibility_filters(session: DbSession, current_user: CurrentActiveUser):
-    viewer_dept_ids = select(UserDepartmentMembership.department_id).where(
-        UserDepartmentMembership.user_id == current_user.id,
-        UserDepartmentMembership.status == "active",
-    )
-    viewer_org_ids = select(UserOrganizationMembership.org_id).where(
-        UserOrganizationMembership.user_id == current_user.id,
-        UserOrganizationMembership.status.in_(["accepted", "active"]),
-    )
-    viewer_is_dept_admin_of_creator_dept = (
-        select(Department.id)
-        .where(
-            Department.admin_user_id == current_user.id,
-            Department.id.in_(
-                select(UserDepartmentMembership.department_id).where(
-                    UserDepartmentMembership.user_id == KnowledgeBase.created_by,
-                    UserDepartmentMembership.status == "active",
-                )
-            ),
-        )
-        .exists()
-    )
-    private_kb_visible = (
-        select(KnowledgeBase.id)
-        .where(
-            KnowledgeBase.id == UserFile.knowledge_base_id,
-            KnowledgeBase.visibility == KBVisibilityEnum.PRIVATE,
-            or_(
-                KnowledgeBase.created_by == current_user.id,
-                viewer_is_dept_admin_of_creator_dept,
-            ),
-        )
-        .exists()
-    )
-    dept_kb_visible = (
-        select(KnowledgeBase.id)
-        .where(
-            KnowledgeBase.id == UserFile.knowledge_base_id,
-            KnowledgeBase.visibility == KBVisibilityEnum.DEPARTMENT,
-            select(UserDepartmentMembership.id)
-            .where(
-                UserDepartmentMembership.user_id == KnowledgeBase.created_by,
-                UserDepartmentMembership.status == "active",
-                UserDepartmentMembership.department_id.in_(viewer_dept_ids),
-            )
-            .exists(),
-        )
-        .exists()
-    )
-    org_kb_visible = (
-        select(KnowledgeBase.id)
-        .where(
-            KnowledgeBase.id == UserFile.knowledge_base_id,
-            KnowledgeBase.visibility == KBVisibilityEnum.ORGANIZATION,
-            select(UserOrganizationMembership.id)
-            .where(
-                UserOrganizationMembership.user_id == KnowledgeBase.created_by,
+    role = normalize_role(getattr(current_user, "role", "") or "")
+    org_rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == current_user.id,
                 UserOrganizationMembership.status.in_(["accepted", "active"]),
-                UserOrganizationMembership.org_id.in_(viewer_org_ids),
             )
-            .exists(),
         )
-        .exists()
-    )
-    return [UserFile.user_id == current_user.id, private_kb_visible, dept_kb_visible, org_kb_visible]
+    ).all()
+    org_ids = {r if isinstance(r, uuid.UUID) else r[0] for r in org_rows}
+    dept_pairs = await _get_allowed_department_pairs_for_user(session, current_user)
+    dept_ids = {dept_id for _, dept_id in dept_pairs}
+
+    def _kb_exists(predicate):
+        return (
+            select(KnowledgeBase.id)
+            .where(KnowledgeBase.id == UserFile.knowledge_base_id, predicate)
+            .exists()
+        )
+
+    if role == "root":
+        root_kb_visible = _kb_exists(
+            and_(
+                KnowledgeBase.created_by == current_user.id,
+                KnowledgeBase.org_id.is_(None),
+                KnowledgeBase.dept_id.is_(None),
+            )
+        )
+        return [UserFile.user_id == current_user.id, root_kb_visible]
+
+    predicates: list = []
+
+    if role == "super_admin" and org_ids:
+        predicates.append(KnowledgeBase.org_id.in_(list(org_ids)))
+
+    if dept_ids:
+        dept_visibility_predicates = [KnowledgeBase.dept_id.in_(list(dept_ids))]
+        dept_visibility_predicates.extend(
+            [KnowledgeBase.public_dept_ids.contains([str(d)]) for d in dept_ids]
+        )
+        predicates.append(
+            and_(
+                KnowledgeBase.visibility == KBVisibilityEnum.DEPARTMENT,
+                or_(*dept_visibility_predicates),
+            )
+        )
+        predicates.append(
+            and_(
+                KnowledgeBase.visibility == KBVisibilityEnum.PRIVATE,
+                KnowledgeBase.created_by == current_user.id,
+                KnowledgeBase.dept_id.in_(list(dept_ids)),
+            )
+        )
+        if role == "department_admin":
+            predicates.append(
+                and_(
+                    KnowledgeBase.visibility == KBVisibilityEnum.PRIVATE,
+                    KnowledgeBase.dept_id.in_(list(dept_ids)),
+                )
+            )
+
+    if org_ids:
+        predicates.append(
+            and_(
+                KnowledgeBase.visibility == KBVisibilityEnum.ORGANIZATION,
+                KnowledgeBase.org_id.in_(list(org_ids)),
+            )
+        )
+
+    if not predicates:
+        return [UserFile.user_id == current_user.id, KnowledgeBase.id.is_(None)]
+    return [UserFile.user_id == current_user.id, _kb_exists(or_(*predicates))]
 
 
 async def _resolve_default_scope(session: DbSession, current_user: CurrentActiveUser) -> tuple[uuid.UUID, uuid.UUID]:
@@ -162,14 +170,18 @@ async def _resolve_upload_scope(
     public_scope: str | None,
     org_id: str | None,
     dept_id: str | None,
-) -> tuple[KBVisibilityEnum, uuid.UUID, uuid.UUID | None]:
+    public_dept_ids: list[str] | None,
+) -> tuple[KBVisibilityEnum, uuid.UUID, uuid.UUID | None, list[str] | None]:
     normalized_visibility = (visibility or "PRIVATE").strip().upper()
     if normalized_visibility not in {"PRIVATE", "PUBLIC", "DEPARTMENT", "ORGANIZATION"}:
         raise HTTPException(status_code=400, detail="Unsupported visibility")
 
+    role = normalize_role(getattr(current_user, "role", "") or "")
     if normalized_visibility == "PRIVATE":
-        resolved_org_id, resolved_dept_id = await _resolve_default_scope(session, current_user)
-        return KBVisibilityEnum.PRIVATE, resolved_org_id, resolved_dept_id
+        if role in {"department_admin", "developer", "business_user"}:
+            resolved_org_id, resolved_dept_id = await _resolve_default_scope(session, current_user)
+            return KBVisibilityEnum.PRIVATE, resolved_org_id, resolved_dept_id, None
+        return KBVisibilityEnum.PRIVATE, None, None, None
 
     if normalized_visibility == "PUBLIC":
         if not public_scope:
@@ -178,16 +190,27 @@ async def _resolve_upload_scope(
 
     if normalized_visibility == "DEPARTMENT":
         allowed = await _get_allowed_department_pairs_for_user(session, current_user)
+        if role in {"super_admin", "root"}:
+            if not org_id:
+                raise HTTPException(status_code=400, detail="org_id is required for department visibility")
+            parsed_org_id = uuid.UUID(org_id)
+            if dept_id:
+                parsed_dept_id = uuid.UUID(dept_id)
+                if (parsed_org_id, parsed_dept_id) not in allowed:
+                    raise HTTPException(status_code=403, detail="Selected department is outside your scope")
+            requested_public_dept_ids = list(public_dept_ids or [])
+            if not requested_public_dept_ids and dept_id:
+                requested_public_dept_ids = [dept_id]
+            if not requested_public_dept_ids:
+                raise HTTPException(status_code=400, detail="Select at least one department")
+            dept_uuid_list = [uuid.UUID(v) for v in requested_public_dept_ids]
+            await _validate_departments_exist_for_org(session, parsed_org_id, dept_uuid_list)
+            resolved_dept_id = uuid.UUID(requested_public_dept_ids[0]) if len(requested_public_dept_ids) == 1 else None
+            return KBVisibilityEnum.DEPARTMENT, parsed_org_id, resolved_dept_id, requested_public_dept_ids
         if not allowed:
             raise HTTPException(status_code=403, detail="No active department scope found for user")
-        if org_id and dept_id:
-            parsed_org_id = uuid.UUID(org_id)
-            parsed_dept_id = uuid.UUID(dept_id)
-            if (parsed_org_id, parsed_dept_id) not in allowed:
-                raise HTTPException(status_code=403, detail="Selected department is outside your scope")
-            return KBVisibilityEnum.DEPARTMENT, parsed_org_id, parsed_dept_id
         default_org_id, default_dept_id = sorted(allowed, key=lambda x: (str(x[0]), str(x[1])))[0]
-        return KBVisibilityEnum.DEPARTMENT, default_org_id, default_dept_id
+        return KBVisibilityEnum.DEPARTMENT, default_org_id, default_dept_id, [str(default_dept_id)]
 
     # ORGANIZATION
     org_memberships = (
@@ -199,12 +222,32 @@ async def _resolve_upload_scope(
         )
     ).all()
     allowed_orgs = {r if isinstance(r, uuid.UUID) else r[0] for r in org_memberships}
+    if role == "root":
+        if not org_id:
+            raise HTTPException(status_code=400, detail="org_id is required for organization visibility")
+        return KBVisibilityEnum.ORGANIZATION, uuid.UUID(org_id), None, None
     if not allowed_orgs:
         raise HTTPException(status_code=403, detail="No active organization scope found for user")
     parsed_org_id = uuid.UUID(org_id) if org_id else sorted(allowed_orgs, key=str)[0]
     if parsed_org_id not in allowed_orgs:
         raise HTTPException(status_code=403, detail="Selected organization is outside your scope")
-    return KBVisibilityEnum.ORGANIZATION, parsed_org_id, None
+    return KBVisibilityEnum.ORGANIZATION, parsed_org_id, None, None
+
+
+async def _validate_departments_exist_for_org(
+    session: DbSession,
+    org_id: uuid.UUID,
+    dept_ids: list[uuid.UUID],
+) -> None:
+    if not dept_ids:
+        return
+    rows = (
+        await session.exec(
+            select(Department.id).where(Department.org_id == org_id, Department.id.in_(dept_ids))
+        )
+    ).all()
+    if len({str(r if isinstance(r, uuid.UUID) else r[0]) for r in rows}) != len({str(d) for d in dept_ids}):
+        raise HTTPException(status_code=400, detail="One or more public_dept_ids are invalid for org_id")
 
 
 def sanitize_knowledge_base_name(raw_name: str) -> str:
@@ -215,55 +258,47 @@ def sanitize_knowledge_base_name(raw_name: str) -> str:
 
 
 async def _can_access_existing_kb(session: DbSession, current_user: CurrentActiveUser, kb: KnowledgeBase) -> bool:
-    if kb.created_by == current_user.id:
+    role = normalize_role(getattr(current_user, "role", "") or "")
+    if role == "root":
+        return (
+            kb.created_by == current_user.id
+            and kb.org_id is None
+            and kb.dept_id is None
+        )
+
+    if kb.created_by == current_user.id and kb.visibility == KBVisibilityEnum.PRIVATE:
         return True
-    if kb.visibility == KBVisibilityEnum.PRIVATE:
-        creator_dept_ids = (
-            await session.exec(
-                select(UserDepartmentMembership.department_id).where(
-                    UserDepartmentMembership.user_id == kb.created_by,
-                    UserDepartmentMembership.status == "active",
-                )
-            )
-        ).all()
-        if not creator_dept_ids:
-            return False
-        return (
-            await session.exec(
-                select(Department.id)
-                .where(
-                    Department.admin_user_id == current_user.id,
-                    Department.id.in_(list(creator_dept_ids)),
-                )
-            )
-        ).first() is not None
-    if kb.visibility == KBVisibilityEnum.DEPARTMENT:
-        viewer_dept_ids = select(UserDepartmentMembership.department_id).where(
-            UserDepartmentMembership.user_id == current_user.id,
-            UserDepartmentMembership.status == "active",
-        )
-        return (
-            await session.exec(
-                select(UserDepartmentMembership.id).where(
-                    UserDepartmentMembership.user_id == kb.created_by,
-                    UserDepartmentMembership.status == "active",
-                    UserDepartmentMembership.department_id.in_(viewer_dept_ids),
-                )
-            )
-        ).first() is not None
-    viewer_org_ids = select(UserOrganizationMembership.org_id).where(
-        UserOrganizationMembership.user_id == current_user.id,
-        UserOrganizationMembership.status.in_(["accepted", "active"]),
-    )
-    return (
+
+    org_rows = (
         await session.exec(
-            select(UserOrganizationMembership.id).where(
-                UserOrganizationMembership.user_id == kb.created_by,
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == current_user.id,
                 UserOrganizationMembership.status.in_(["accepted", "active"]),
-                UserOrganizationMembership.org_id.in_(viewer_org_ids),
             )
         )
-    ).first() is not None
+    ).all()
+    org_ids = {r if isinstance(r, uuid.UUID) else r[0] for r in org_rows}
+    dept_pairs = await _get_allowed_department_pairs_for_user(session, current_user)
+    dept_ids = {dept_id for _, dept_id in dept_pairs}
+
+    if role == "super_admin" and kb.org_id and kb.org_id in org_ids:
+        return True
+
+    if kb.visibility == KBVisibilityEnum.PRIVATE:
+        if role == "department_admin":
+            kb_dept_ids = {str(v) for v in (kb.public_dept_ids or [])}
+            if kb.dept_id:
+                kb_dept_ids.add(str(kb.dept_id))
+            return bool(kb_dept_ids.intersection({str(d) for d in dept_ids}))
+        return False
+    if kb.visibility == KBVisibilityEnum.DEPARTMENT:
+        kb_dept_ids = {str(v) for v in (kb.public_dept_ids or [])}
+        if kb.dept_id:
+            kb_dept_ids.add(str(kb.dept_id))
+        return bool(kb_dept_ids.intersection({str(d) for d in dept_ids}))
+    if kb.visibility == KBVisibilityEnum.ORGANIZATION:
+        return bool(kb.org_id and kb.org_id in org_ids)
+    return False
 
 
 async def _get_or_create_knowledge_base(
@@ -273,6 +308,7 @@ async def _get_or_create_knowledge_base(
     visibility: KBVisibilityEnum,
     org_id: uuid.UUID,
     dept_id: uuid.UUID | None,
+    public_dept_ids: list[str] | None,
 ) -> KnowledgeBase:
     existing = (
         await session.exec(
@@ -293,6 +329,7 @@ async def _get_or_create_knowledge_base(
         visibility=visibility,
         org_id=org_id,
         dept_id=dept_id,
+        public_dept_ids=public_dept_ids,
         created_by=current_user.id,
     )
     session.add(kb)
@@ -369,6 +406,7 @@ async def upload_user_file(
     public_scope: Annotated[str | None, Form()] = None,
     org_id: Annotated[str | None, Form()] = None,
     dept_id: Annotated[str | None, Form()] = None,
+    public_dept_ids: Annotated[list[str] | None, Form()] = None,
 ) -> UploadFileResponse:
 
     """Upload a file for the current user and track it in the database."""
@@ -432,13 +470,14 @@ async def upload_user_file(
             safe_knowledge_base_name = sanitize_knowledge_base_name(knowledge_base_name)
             if not safe_knowledge_base_name:
                 raise HTTPException(status_code=400, detail="Invalid knowledge base name")
-            kb_visibility, kb_org_id, kb_dept_id = await _resolve_upload_scope(
+            kb_visibility, kb_org_id, kb_dept_id, kb_public_dept_ids = await _resolve_upload_scope(
                 session=session,
                 current_user=current_user,
                 visibility=visibility,
                 public_scope=public_scope,
                 org_id=org_id,
                 dept_id=dept_id,
+                public_dept_ids=public_dept_ids,
             )
             knowledge_base = await _get_or_create_knowledge_base(
                 session=session,
@@ -447,6 +486,7 @@ async def upload_user_file(
                 visibility=kb_visibility,
                 org_id=kb_org_id,
                 dept_id=kb_dept_id,
+                public_dept_ids=kb_public_dept_ids,
             )
 
         # For KB uploads, include KB id in storage path for stable unique mapping.

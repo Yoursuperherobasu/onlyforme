@@ -48,7 +48,6 @@ class GuardrailPayload(BaseModel):
     visibility: str = "private"  # private | public
     public_scope: str | None = None  # organization | department
     public_dept_ids: list[UUID] | None = None
-    shared_user_emails: list[str] | None = None
 
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
@@ -132,22 +131,6 @@ async def _validate_scope_refs(session: DbSession, payload: GuardrailPayload) ->
             raise HTTPException(status_code=400, detail="Invalid dept_id for org_id")
 
 
-async def _resolve_user_ids_by_emails(session: DbSession, emails: list[str]) -> list[str]:
-    if not emails:
-        return []
-    normalized = [e.strip().lower() for e in emails if e and e.strip()]
-    if not normalized:
-        return []
-    rows = (
-        await session.exec(select(User.id, User.email).where(User.email.in_(normalized)))
-    ).all()
-    found = {str(r[1]).lower(): str(r[0]) for r in rows}
-    missing = [e for e in normalized if e not in found]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Invalid shared_user_emails: {', '.join(missing)}")
-    return [found[e] for e in normalized]
-
-
 async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, dept_ids: list[UUID]) -> None:
     if not dept_ids:
         return
@@ -164,12 +147,11 @@ async def _enforce_creation_scope(
     session: DbSession,
     current_user: CurrentActiveUser,
     payload: GuardrailPayload,
-) -> tuple[str, str | None, list[str], list[str]]:
+) -> tuple[str, str | None, list[str]]:
     user_role = normalize_role(str(current_user.role))
     visibility = _normalize_visibility(getattr(payload, "visibility", None))
     public_scope = _normalize_public_scope(getattr(payload, "public_scope", None))
     public_dept_ids = _string_ids(getattr(payload, "public_dept_ids", None))
-    shared_user_ids: list[str] = []
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
 
     if user_role not in {"root", "super_admin", "department_admin", "developer", "business_user"}:
@@ -178,35 +160,15 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if user_role == "department_admin":
+        if user_role in {"department_admin", "developer", "business_user"}:
             if not dept_pairs:
                 raise HTTPException(status_code=403, detail="No active department scope found")
             current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
             payload.org_id = current_org_id
             payload.dept_id = current_dept_id
-            shared_user_ids = await _resolve_user_ids_by_emails(session, getattr(payload, "shared_user_emails", None) or [])
-            if shared_user_ids:
-                allowed_ids = set(
-                    str(v if isinstance(v, UUID) else v[0])
-                    for v in (
-                        await session.exec(
-                            select(UserDepartmentMembership.user_id).where(
-                                UserDepartmentMembership.department_id == current_dept_id,
-                                UserDepartmentMembership.status == "active",
-                            )
-                        )
-                    ).all()
-                )
-                if not set(shared_user_ids).issubset(allowed_ids):
-                    raise HTTPException(status_code=403, detail="shared_user_emails must belong to your current department")
         else:
-            if user_role in {"developer", "business_user"} and dept_pairs:
-                current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
-                payload.org_id = current_org_id
-                payload.dept_id = current_dept_id
-            else:
-                payload.org_id = None
-                payload.dept_id = None
+            payload.org_id = None
+            payload.dept_id = None
     else:
         if public_scope is None:
             raise HTTPException(status_code=400, detail="public_scope is required when visibility is public")
@@ -237,10 +199,8 @@ async def _enforce_creation_scope(
                 payload.org_id = current_org_id
                 payload.dept_id = current_dept_id
                 public_dept_ids = [str(current_dept_id)]
-        shared_user_ids = []
-
     await _validate_scope_refs(session, payload)
-    return visibility, public_scope, public_dept_ids, shared_user_ids
+    return visibility, public_scope, public_dept_ids
 
 
 def _can_access_guardrail(
@@ -252,7 +212,6 @@ def _can_access_guardrail(
     row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
     row_dept_id = UUID(row["dept_id"]) if row.get("dept_id") else None
     row_created_by = row.get("created_by")
-    row_shared_user_ids = row.get("shared_user_ids") or []
     row_visibility = (row.get("visibility") or "private").strip().lower()
     row_public_scope = row.get("public_scope")
     row_public_dept_ids = row.get("public_dept_ids") or []
@@ -272,7 +231,9 @@ def _can_access_guardrail(
     dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
 
     if row_visibility == "private":
-        return str(row_created_by) == user_id or user_id in set(row_shared_user_ids)
+        if role == "department_admin":
+            return bool(row_dept_id and str(row_dept_id) in dept_id_set)
+        return str(row_created_by) == user_id
     if row_public_scope == "organization":
         return bool(row_org_id and row_org_id in org_ids)
     if row_public_scope == "department":
@@ -280,6 +241,98 @@ def _can_access_guardrail(
         if row_dept_id:
             dept_candidates.add(str(row_dept_id))
         return bool(dept_candidates.intersection(dept_id_set))
+    return False
+
+
+def _guardrail_dept_candidates(row: dict[str, Any]) -> set[str]:
+    dept_candidates = set(row.get("public_dept_ids") or [])
+    if row.get("dept_id"):
+        dept_candidates.add(str(row.get("dept_id")))
+    return dept_candidates
+
+
+def _is_multi_dept_guardrail(row: dict[str, Any]) -> bool:
+    return (
+        (row.get("visibility") or "private").strip().lower() == "public"
+        and row.get("public_scope") == "department"
+        and len(_guardrail_dept_candidates(row)) > 1
+    )
+
+
+def _can_edit_guardrail(
+    row: dict[str, Any],
+    current_user: CurrentActiveUser,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(row.get("created_by")) == str(current_user.id)
+            and row.get("org_id") is None
+            and row.get("dept_id") is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
+
+    if role == "super_admin":
+        return bool(row_org_id and row_org_id in org_ids)
+
+    if role == "department_admin":
+        if _is_multi_dept_guardrail(row):
+            return False
+        if (row.get("visibility") or "private").strip().lower() == "public" and row.get("public_scope") == "organization":
+            return False
+        dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
+        dept_candidates = _guardrail_dept_candidates(row)
+        if (row.get("visibility") or "private").strip().lower() == "private":
+            return bool(dept_candidates.intersection(dept_id_set))
+        if row.get("public_scope") == "department":
+            return bool(dept_candidates.intersection(dept_id_set))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return (row.get("visibility") or "private").strip().lower() == "private" and str(row.get("created_by")) == str(current_user.id)
+
+    return False
+
+
+def _can_delete_guardrail(
+    row: dict[str, Any],
+    current_user: CurrentActiveUser,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(row.get("created_by")) == str(current_user.id)
+            and row.get("org_id") is None
+            and row.get("dept_id") is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    user_id = str(current_user.id)
+    row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
+
+    if role == "super_admin":
+        return bool(row_org_id and row_org_id in org_ids)
+
+    if role == "department_admin":
+        if _is_multi_dept_guardrail(row):
+            return False
+        if (row.get("visibility") or "private").strip().lower() == "public" and row.get("public_scope") == "organization":
+            return False
+        dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
+        dept_candidates = _guardrail_dept_candidates(row)
+        if (row.get("visibility") or "private").strip().lower() == "private":
+            return bool(dept_candidates.intersection(dept_id_set))
+        if row.get("public_scope") == "department":
+            return bool(dept_candidates.intersection(dept_id_set))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return (row.get("visibility") or "private").strip().lower() == "private" and str(row.get("created_by")) == user_id
+
     return False
 
 
@@ -380,7 +433,11 @@ def _is_nemo_runtime_config_ready(
     return False
 
 
-def _serialize_guardrail(row: dict[str, Any], model_row: ModelRegistry | None = None) -> dict:
+def _serialize_guardrail(
+    row: dict[str, Any],
+    model_row: ModelRegistry | None = None,
+    created_by_lookup: dict[str, str] | None = None,
+) -> dict:
     model_provider = row.get("provider")
     model_name: str | None = None
     model_display_name: str | None = None
@@ -415,7 +472,8 @@ def _serialize_guardrail(row: dict[str, Any], model_row: ModelRegistry | None = 
         "visibility": row.get("visibility"),
         "public_scope": row.get("public_scope"),
         "public_dept_ids": row.get("public_dept_ids") or [],
-        "shared_user_ids": row.get("shared_user_ids") or [],
+        "created_by": (created_by_lookup or {}).get(str(row.get("created_by"))) if row.get("created_by") else None,
+        "created_by_id": str(row["created_by"]) if row.get("created_by") else None,
         # Environment separation fields
         "environment": row.get("environment") or "uat",
         "sourceGuardrailId": str(row["source_guardrail_id"]) if row.get("source_guardrail_id") else None,
@@ -469,7 +527,25 @@ async def list_guardrails_catalogue(
         ).all()
         model_by_id = {str(model.id): model for model in model_rows}
 
-    return [_serialize_guardrail(row, model_by_id.get(str(row.get("model_registry_id")))) for row in rows]
+    creator_ids = [UUID(row["created_by"]) for row in rows if row.get("created_by")]
+    created_by_lookup: dict[str, str] = {}
+    if creator_ids:
+        creator_rows = (
+            await session.exec(select(User.id, User.username, User.email).where(User.id.in_(creator_ids)))
+        ).all()
+        created_by_lookup = {
+            str(row[0]): (row[1] or row[2] or str(row[0]))
+            for row in creator_rows
+        }
+
+    return [
+        _serialize_guardrail(
+            row,
+            model_by_id.get(str(row.get("model_registry_id"))),
+            created_by_lookup,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/visibility-options")
@@ -511,26 +587,9 @@ async def get_guardrail_visibility_options(
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
 
-    private_share_users = []
-    if role == "department_admin" and dept_ids:
-        primary_dept = sorted(dept_ids, key=str)[0]
-        user_rows = (
-            await session.exec(
-                select(User.id, User.email)
-                .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
-                .where(
-                    UserDepartmentMembership.department_id == primary_dept,
-                    UserDepartmentMembership.status == "active",
-                    User.email.is_not(None),
-                )
-            )
-        ).all()
-        private_share_users = [{"id": str(r[0]), "email": r[1]} for r in user_rows if r[1]]
-
     return {
         "organizations": organizations,
         "departments": departments,
-        "private_share_users": private_share_users,
         "role": role,
     }
 
@@ -545,7 +604,7 @@ async def create_guardrail_catalogue(
     await _require_guardrail_permission(current_user, "view_guardrail_page")
     await _require_guardrail_permission(current_user, "add_guardrails")
 
-    visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
+    visibility, public_scope, public_dept_ids = await _enforce_creation_scope(
         session, current_user, payload
     )
     framework = _normalize_guardrail_framework(payload.framework)
@@ -580,7 +639,7 @@ async def create_guardrail_catalogue(
         "visibility": visibility,
         "public_scope": public_scope,
         "public_dept_ids": public_dept_ids,
-        "shared_user_ids": shared_user_ids,
+        "shared_user_ids": [],
         "created_by": str(current_user.id),
         "updated_by": str(current_user.id),
         "published_by": str(current_user.id) if payload.status == "active" else None,
@@ -616,8 +675,8 @@ async def update_guardrail_catalogue(
         raise HTTPException(status_code=404, detail="Guardrail not found") from exc
 
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
+    if not _can_edit_guardrail(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this guardrail")
 
     if payload.org_id is None:
         payload.org_id = UUID(row["org_id"]) if row.get("org_id") else None
@@ -627,7 +686,7 @@ async def update_guardrail_catalogue(
         payload.dept_id = UUID(row["dept_id"]) if row.get("dept_id") else None
     framework = _normalize_guardrail_framework(payload.framework or row.get("framework"))
 
-    visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(
+    visibility, public_scope, public_dept_ids = await _enforce_creation_scope(
         session, current_user, payload
     )
     model_row = await _resolve_guardrail_model_registry(session, payload.modelRegistryId)
@@ -661,7 +720,7 @@ async def update_guardrail_catalogue(
         "visibility": visibility,
         "public_scope": public_scope,
         "public_dept_ids": public_dept_ids,
-        "shared_user_ids": shared_user_ids,
+        "shared_user_ids": [],
         "updated_by": str(current_user.id),
         "published_by": str(current_user.id) if payload.status == "active" else row.get("published_by"),
         "published_at": now.isoformat() if payload.status == "active" else row.get("published_at"),
@@ -696,8 +755,8 @@ async def delete_guardrail_catalogue(
         raise HTTPException(status_code=404, detail="Guardrail not found") from exc
 
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
+    if not _can_delete_guardrail(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this guardrail")
 
     # ── Guard: prevent deletion of guardrails used in production ──
     try:

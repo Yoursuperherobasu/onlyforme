@@ -8,6 +8,7 @@ interface IPostUploadFile {
   public_scope?: "organization" | "department";
   org_id?: string;
   dept_id?: string;
+  public_dept_ids?: string[];
 }
 
 export const customPostUploadFileV2: useMutationFunctionType<

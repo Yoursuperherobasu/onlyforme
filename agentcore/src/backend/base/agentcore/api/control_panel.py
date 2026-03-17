@@ -196,7 +196,7 @@ class PromoteFromUATResponse(BaseModel):
 
 
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-ADMIN_ROLES = {"root", "super_admin", "admin", "department_admin"}
+ADMIN_ROLES = {"root", "super_admin", "department_admin"}
 
 
 async def _resolve_super_admin_user_id(

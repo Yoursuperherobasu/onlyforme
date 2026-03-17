@@ -58,6 +58,7 @@ class ModelRegistry(SQLModel, table=True):
 
     # Environment tag: uat (default), prod
     environment: str = Field(default=ModelEnvironment.UAT.value, index=True)
+    environments: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     source_model_id: UUID | None = Field(default=None, foreign_key="model_registry.id", nullable=True, index=True)
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
@@ -109,6 +110,7 @@ class ModelRegistryCreate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # plain-text; encrypted before storage
     environment: str = ModelEnvironment.UAT.value  # defaults to uat
+    environments: list[str] | None = None
     visibility_scope: str = ModelVisibilityScope.PRIVATE.value
     org_id: UUID | None = None
     dept_id: UUID | None = None
@@ -140,6 +142,7 @@ class ModelRegistryUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # plain-text; re-encrypted if provided
     environment: str | None = None
+    environments: list[str] | None = None
     visibility_scope: str | None = None
     org_id: UUID | None = None
     dept_id: UUID | None = None
@@ -173,6 +176,7 @@ class ModelRegistryRead(BaseModel):
     model_type: str = "llm"
     base_url: str | None = None
     environment: str = ModelEnvironment.UAT.value
+    environments: list[str] | None = None
     source_model_id: UUID | None = None
     org_id: UUID | None = None
     dept_id: UUID | None = None

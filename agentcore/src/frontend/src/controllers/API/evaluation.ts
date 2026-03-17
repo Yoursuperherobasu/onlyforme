@@ -41,6 +41,8 @@ export interface EvaluationDataset {
   visibility?: "private" | "public";
   public_scope?: "organization" | "department" | null;
   owner_user_id?: string | null;
+  created_by?: string | null;
+  created_by_id?: string | null;
   org_id?: string | null;
   dept_id?: string | null;
   public_dept_ids?: string[] | null;
@@ -392,8 +394,9 @@ export interface EvaluatorConfig {
   created_at?: string;
   visibility?: "private" | "public";
   public_scope?: "organization" | "department" | null;
-  shared_user_ids?: string[];
   public_dept_ids?: string[];
+  created_by?: string | null;
+  created_by_id?: string | null;
 }
 
 export interface EvaluationPreset {
