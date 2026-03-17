@@ -97,7 +97,7 @@ export default function TemplatesModal({
           </main>
         </div>
       </BaseModal.Content>
-      
+
       <style>{`
         .custom-scrollbar {
           scrollbar-width: thin;

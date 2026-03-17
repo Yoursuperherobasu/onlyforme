@@ -7,6 +7,8 @@ import { track } from "@/customization/utils/analytics";
 import type { FolderType } from "@/pages/MainPage/entities";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
+import TagInput from "@/components/common/tagInputComponent";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +43,8 @@ export default function FolderCardsView({
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+  const [projectTags, setProjectTags] = useState<string[]>([]);
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string[]>([]);
   const [expandedTableRow, setExpandedTableRow] = useState<string | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedFolderDetail, setSelectedFolderDetail] = useState<FolderType | null>(null);
@@ -52,7 +56,7 @@ export default function FolderCardsView({
   const [agentCountFilter, setAgentCountFilter] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
   const [activeFilterTab, setActiveFilterTab] = useState<
-    "department" | "creator" | "sort" | "agents"
+    "department" | "creator" | "sort" | "agents" | "tags"
   >("department");
   
   const { mutate: mutateAddFolder, isPending } = usePostFolders();
@@ -108,9 +112,11 @@ export default function FolderCardsView({
   }, [displayFolders]);
 
   const filteredFolders = displayFolders.filter((folder) => {
+    const searchLower = searchQuery.toLowerCase();
     const matchesSearch =
-      folder.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      folder.description?.toLowerCase().includes(searchQuery.toLowerCase());
+      folder.name.toLowerCase().includes(searchLower) ||
+      folder.description?.toLowerCase().includes(searchLower) ||
+      folder.tags?.some((tag) => tag.toLowerCase().includes(searchLower));
 
     const matchesDepartment =
       selectedDepartment === "all" ||
@@ -131,7 +137,11 @@ export default function FolderCardsView({
       (agentCountFilter === "6-10" && count >= 6 && count <= 10) ||
       (agentCountFilter === "11+" && count >= 11);
 
-    return matchesSearch && matchesDepartment && matchesCreator && matchesAgentCount;
+    const matchesTags =
+      selectedTagFilter.length === 0 ||
+      selectedTagFilter.every((tag) => folder.tags?.includes(tag));
+
+    return matchesSearch && matchesDepartment && matchesCreator && matchesAgentCount && matchesTags;
   });
 
   const sortedFolders = [...filteredFolders].sort((a, b) => {
@@ -168,6 +178,7 @@ export default function FolderCardsView({
   const handleOpenCreateModal = () => {
     setProjectName("");
     setProjectDescription("");
+    setProjectTags([]);
     setCreateModalOpen(true);
   };
 
@@ -175,6 +186,7 @@ export default function FolderCardsView({
     const openModalFromEvent = () => {
       setProjectName("");
       setProjectDescription("");
+      setProjectTags([]);
       setCreateModalOpen(true);
     };
 
@@ -218,6 +230,7 @@ export default function FolderCardsView({
           name: projectName.trim(),
           parent_id: null,
           description: projectDescription.trim(),
+          tags: projectTags,
         },
       },
       {
@@ -229,6 +242,7 @@ export default function FolderCardsView({
           setCreateModalOpen(false);
           setProjectName("");
           setProjectDescription("");
+          setProjectTags([]);
           onFolderClick(folder.id);
         },
         onError: (err) => {
@@ -323,6 +337,7 @@ export default function FolderCardsView({
                       setSortByDate("newest");
                       setSortByAgents("none");
                       setAgentCountFilter("all");
+                      setSelectedTagFilter([]);
                     }}
                     className="text-sm text-primary hover:underline"
                   >
@@ -376,6 +391,21 @@ export default function FolderCardsView({
                         }`}
                       >
                         Agents
+                      </button>
+                      <button
+                        onClick={() => setActiveFilterTab("tags")}
+                        className={`rounded-md px-3 py-2 text-left ${
+                          activeFilterTab === "tags"
+                            ? "bg-background font-semibold shadow-sm"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        Tags
+                        {selectedTagFilter.length > 0 && (
+                          <Badge variant="default" size="sm" className="ml-1.5">
+                            {selectedTagFilter.length}
+                          </Badge>
+                        )}
                       </button>
                     </div>
                   </div>
@@ -461,6 +491,28 @@ export default function FolderCardsView({
                           <option value="6-10">6-10 agents</option>
                           <option value="11+">11+ agents</option>
                         </select>
+                      </div>
+                    )}
+
+                    {activeFilterTab === "tags" && (
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">Filter by Tags</h3>
+                        <p className="text-xs text-muted-foreground">
+                          Select tags to filter projects. Only projects with all selected tags will be shown.
+                        </p>
+                        <TagInput
+                          selectedTags={selectedTagFilter}
+                          onChange={setSelectedTagFilter}
+                          placeholder="Search and select tags..."
+                        />
+                        {selectedTagFilter.length > 0 && (
+                          <button
+                            onClick={() => setSelectedTagFilter([])}
+                            className="text-xs text-primary hover:underline"
+                          >
+                            Clear tag filter
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -609,6 +661,26 @@ export default function FolderCardsView({
                         <p className="text-xxs text-muted-foreground line-clamp-1">
                           Organization: {folder.organization_name}
                         </p>
+                      )}
+                      {/* Tags */}
+                      {folder.tags && folder.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {folder.tags.slice(0, 3).map((tag) => (
+                            <Badge
+                              key={tag}
+                              variant="outline"
+                              size="sm"
+                              className="text-[10px] px-1.5 py-0"
+                            >
+                              {tag}
+                            </Badge>
+                          ))}
+                          {folder.tags.length > 3 && (
+                            <Badge variant="outline" size="sm" className="text-[10px] px-1.5 py-0">
+                              +{folder.tags.length - 3}
+                            </Badge>
+                          )}
+                        </div>
                       )}
                     </div>
                   </button>
@@ -870,6 +942,17 @@ export default function FolderCardsView({
                   placeholder="Brief description of your project..."
                   rows={3}
                   className="resize-none bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  Tags (Optional)
+                </Label>
+                <TagInput
+                  selectedTags={projectTags}
+                  onChange={setProjectTags}
+                  placeholder="Add tags (e.g. rag, chatbot, finance)..."
                 />
               </div>
 

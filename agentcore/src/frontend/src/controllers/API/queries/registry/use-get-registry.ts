@@ -34,6 +34,7 @@ export interface RegistryListResponse {
 
 interface GetRegistryParams {
   search?: string;
+  tag?: string;
   page?: number;
   page_size?: number;
   deployment_env?: "UAT" | "PROD";
@@ -49,6 +50,7 @@ export const useGetRegistry: useQueryFunctionType<
     const res = await api.get<RegistryListResponse>(`${getURL("REGISTRY")}`, {
       params: {
         search: params?.search || undefined,
+        tag: params?.tag || undefined,
         page: params?.page ?? 1,
         page_size: params?.page_size ?? 20,
         deployment_env: params?.deployment_env || undefined,
@@ -61,6 +63,7 @@ export const useGetRegistry: useQueryFunctionType<
     [
       "useGetRegistry",
       params?.search,
+      params?.tag,
       params?.page,
       params?.page_size,
       params?.deployment_env,

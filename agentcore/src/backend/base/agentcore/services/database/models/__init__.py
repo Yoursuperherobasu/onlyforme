@@ -47,6 +47,7 @@ from .vertex_builds import VertexBuildTable
 from .langfuse_binding import LangfuseBinding
 from .observability_provision_job import ObservabilityProvisionJob
 from .observability_schema_lock import ObservabilitySchemaLock
+from .tag import Tag, ProjectTag, AgentTag
 
 __all__ = [
     "Agent",
@@ -110,4 +111,7 @@ __all__ = [
     "LangfuseBinding",
     "ObservabilityProvisionJob",
     "ObservabilitySchemaLock",
+    "Tag",
+    "ProjectTag",
+    "AgentTag",
 ]

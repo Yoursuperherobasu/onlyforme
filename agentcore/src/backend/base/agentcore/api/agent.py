@@ -53,6 +53,8 @@ from agentcore.services.database.models.user_department_membership.model import 
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.folder.model import Folder
 from agentcore.services.auth.permissions import normalize_role
+from agentcore.services.database.models.tag.model import AgentTag, Tag
+from agentcore.api.tags import get_tags_for_agent, sync_agent_tags, _get_user_org_id
 from agentcore.services.deps import get_settings_service
 from agentcore.utils.compression import compress_response
 
@@ -348,6 +350,13 @@ async def create_agent(
         await session.commit()
         await session.refresh(db_agent)
 
+        # ── Sync normalized tags ──
+        tag_names = agent.tags or []
+        if tag_names:
+            org_id = await _get_user_org_id(session, current_user.id)
+            await sync_agent_tags(session, db_agent.id, tag_names, org_id, current_user.id)
+            await session.commit()
+
         await _save_agent_to_fs(db_agent)
 
     except Exception as e:
@@ -366,7 +375,9 @@ async def create_agent(
         if isinstance(e, HTTPException):
             raise
         raise HTTPException(status_code=500, detail=str(e)) from e
-    return AgentRead.model_validate(db_agent, from_attributes=True)
+    agent_read = AgentRead.model_validate(db_agent, from_attributes=True)
+    agent_read.tags = await get_tags_for_agent(session, db_agent.id)
+    return agent_read
 
 
 @router.get("/", response_model=list[AgentRead] | Page[AgentRead] | list[AgentHeader], status_code=200)
@@ -380,6 +391,8 @@ async def read_agents(
     project_id: UUID | None = None,
     params: Annotated[Params, Depends()],
     header_agents: bool = False,
+    tags: str | None = None,
+    tag_match: str = "any",
 ):
     """Retrieve a list of agents with pagination support.
 
@@ -412,6 +425,23 @@ async def read_agents(
 
         if project_id:
             stmt = stmt.where(Agent.project_id == project_id)
+
+        # ── Tag filtering ──
+        if tags:
+            from sqlalchemy import func as sa_func
+
+            tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+            if tag_list:
+                tag_subq = (
+                    select(AgentTag.agent_id)
+                    .join(Tag, Tag.id == AgentTag.tag_id)
+                    .where(Tag.name.in_(tag_list))
+                )
+                if tag_match == "all":
+                    tag_subq = tag_subq.group_by(AgentTag.agent_id).having(
+                        sa_func.count(sa_func.distinct(Tag.name)) >= len(tag_list)
+                    )
+                stmt = stmt.where(Agent.id.in_(tag_subq))
 
         if get_all:
             agents = (await session.exec(stmt)).all()
@@ -576,6 +606,7 @@ async def update_agent(
             raise HTTPException(status_code=404, detail="agent not found")
 
         update_data = agent.model_dump(exclude_unset=True, exclude_none=True)
+        incoming_tags = update_data.pop("tags", None)
 
         # Always strip sensitive values (API keys, secrets) from agent data before saving to DB
         if "data" in update_data and update_data["data"]:
@@ -595,6 +626,12 @@ async def update_agent(
         await session.commit()
         await session.refresh(db_agent)
 
+        # ── Sync normalized tags ──
+        if incoming_tags is not None:
+            org_id = await _get_user_org_id(session, current_user.id)
+            await sync_agent_tags(session, db_agent.id, incoming_tags, org_id, current_user.id)
+            await session.commit()
+
         await _save_agent_to_fs(db_agent)
 
     except Exception as e:
@@ -613,7 +650,9 @@ async def update_agent(
             raise HTTPException(status_code=e.status_code, detail=str(e)) from e
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return AgentRead.model_validate(db_agent, from_attributes=True)
+    agent_read = AgentRead.model_validate(db_agent, from_attributes=True)
+    agent_read.tags = await get_tags_for_agent(session, db_agent.id)
+    return agent_read
 
 
 @router.delete("/{agent_id}", status_code=200)

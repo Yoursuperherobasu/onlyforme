@@ -47,6 +47,7 @@ from agentcore.services.database.models.agent_registry.model import (
     RegistryDeploymentEnvEnum,
     RegistryVisibilityEnum,
 )
+from agentcore.services.database.models.tag.model import AgentTag, Tag
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -91,6 +92,20 @@ async def sync_agent_registry(
     now = datetime.now(timezone.utc)
     env_label = deployment_env.value  # "UAT" or "PROD"
 
+    # ── 1b. Fetch agent tags from normalized tag table ────────────
+    agent_tags: list[str] = []
+    try:
+        tag_rows = (
+            await session.exec(
+                select(Tag.name)
+                .join(AgentTag, AgentTag.tag_id == Tag.id)
+                .where(AgentTag.agent_id == agent_id)
+            )
+        ).all()
+        agent_tags = list(tag_rows)
+    except Exception as tag_err:
+        logger.warning(f"Failed to fetch agent tags for registry sync: {tag_err}")
+
     # ── 2. Candidate found → upsert keyed by deployment_id ────────
     #    Each deployment version gets its own registry row instead of
     #    overwriting the previous version's entry.
@@ -110,6 +125,7 @@ async def sync_agent_registry(
             # Same deployment re-synced (e.g. title/description changed)
             existing.title = candidate.agent_name
             existing.summary = candidate.agent_description
+            existing.tags = agent_tags
             existing.visibility = RegistryVisibilityEnum.PUBLIC
             existing.updated_at = now
             session.add(existing)
@@ -127,6 +143,7 @@ async def sync_agent_registry(
                 deployment_env=deployment_env,
                 title=candidate.agent_name,
                 summary=candidate.agent_description,
+                tags=agent_tags,
                 visibility=RegistryVisibilityEnum.PUBLIC,
                 listed_by=acted_by,
                 listed_at=now,

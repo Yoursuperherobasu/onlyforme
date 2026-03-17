@@ -20,11 +20,13 @@ const updateAgentWithFormValues = (
   newName: string,
   newDescription: string,
   newLocked: boolean,
+  newTags?: string[],
 ): AgentType => {
   const newAgent = cloneDeep(baseAgent);
   newAgent.name = newName;
   newAgent.description = newDescription;
   newAgent.locked = newLocked;
+  if (newTags !== undefined) newAgent.tags = newTags;
   return newAgent;
 };
 
@@ -43,13 +45,15 @@ const isSaveDisabled = (
   name: string,
   description: string,
   locked: boolean,
+  tags?: string[],
 ): boolean => {
   if (!agent) return true;
   const isNameChangedAndValid =
     !invalidNameList.includes(name) && agent.name !== name;
   const isDescriptionChanged = agent.description !== description;
   const isLockedChanged = agent.locked !== locked;
-  return !(isNameChangedAndValid || isDescriptionChanged || isLockedChanged);
+  const isTagsChanged = JSON.stringify(agent.tags ?? []) !== JSON.stringify(tags ?? []);
+  return !(isNameChangedAndValid || isDescriptionChanged || isLockedChanged || isTagsChanged);
 };
 
 const AgentSettingsComponent = ({
@@ -68,6 +72,7 @@ const AgentSettingsComponent = ({
   const [name, setName] = useState(agent?.name ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [locked, setLocked] = useState<boolean>(agent?.locked ?? false);
+  const [tags, setTags] = useState<string[]>(agent?.tags ?? []);
   const [isSaving, setIsSaving] = useState(false);
   const [disableSave, setDisableSave] = useState(true);
   const autoSaving = useAgentsManagerStore((state) => state.autoSaving);
@@ -77,13 +82,14 @@ const AgentSettingsComponent = ({
     setName(agent?.name ?? "");
     setDescription(agent?.description ?? "");
     setLocked(agent?.locked ?? false);
+    setTags(agent?.tags ?? []);
   }, [agent?.name, agent?.description, agent?.endpoint_name, open]);
 
   function handleSubmit(event?: React.FormEvent<HTMLFormElement>): void {
     if (event) event.preventDefault();
     setIsSaving(true);
     if (!agent) return;
-    const newAgent = updateAgentWithFormValues(agent, name, description, locked);
+    const newAgent = updateAgentWithFormValues(agent, name, description, locked, tags);
 
     if (autoSaving) {
       saveAgent(newAgent)
@@ -113,8 +119,8 @@ const AgentSettingsComponent = ({
   }, [agents]);
 
   useEffect(() => {
-    setDisableSave(isSaveDisabled(agent, nameLists, name, description, locked));
-  }, [nameLists, agent, description, name, locked]);
+    setDisableSave(isSaveDisabled(agent, nameLists, name, description, locked, tags));
+  }, [nameLists, agent, description, name, locked, tags]);
   return (
     <Form.Root onSubmit={handleSubmit} ref={formRef}>
       <div className="flex flex-col gap-4">
@@ -128,6 +134,8 @@ const AgentSettingsComponent = ({
             submitForm={submitForm}
             locked={locked}
             setLocked={setLocked}
+            tags={tags}
+            setTags={setTags}
           />
         </div>
         <div className="flex justify-end gap-2">

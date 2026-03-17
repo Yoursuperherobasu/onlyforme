@@ -38,6 +38,8 @@ from agentcore.services.database.models.project.pagination_model import ProjectW
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.database.models.tag.model import ProjectTag, Tag
+from agentcore.api.tags import get_tags_for_project, sync_project_tags, _get_user_org_id
 from agentcore.services.auth.permissions import normalize_role
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -273,10 +275,19 @@ async def create_project(
             await session.exec(update_statement_agents)
             await session.commit()
 
+        # ── Tags ──
+        if project.tags:
+            org_id = await _get_user_org_id(session, current_user.id)
+            await sync_project_tags(session, new_project.id, project.tags, org_id, current_user.id)
+            await session.commit()
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return new_project
+    tag_names = await get_tags_for_project(session, new_project.id)
+    result = ProjectRead.model_validate(new_project, from_attributes=True)
+    result.tags = tag_names
+    return result
 
 
 @router.get("/", response_model=list[ProjectRead], status_code=200)
@@ -284,9 +295,27 @@ async def read_projects(
     *,
     session: DbSession,
     current_user: CurrentActiveUser,
+    tags: str | None = None,
+    tag_match: str = "any",
 ):
     try:
         statement = await _build_project_visibility_statement(session, current_user)
+
+        # ── Tag filtering ──
+        if tags:
+            tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+            if tag_list:
+                tag_subq = (
+                    select(ProjectTag.project_id)
+                    .join(Tag, Tag.id == ProjectTag.tag_id)
+                    .where(Tag.name.in_(tag_list))
+                )
+                if tag_match == "all":
+                    tag_subq = tag_subq.group_by(ProjectTag.project_id).having(
+                        func.count(func.distinct(Tag.name)) >= len(tag_list)
+                    )
+                statement = statement.where(Project.id.in_(tag_subq))
+
         projects = (await session.exec(statement)).all()
         projects = [project for project in projects if project.name != STARTER_FOLDER_NAME]
         try:
@@ -370,6 +399,7 @@ async def read_projects(
                     organization_name = None
                     department_name = None
 
+                project_tags = await get_tags_for_project(session, project.id)
                 result.append(
                     ProjectRead(
                         id=project.id,
@@ -382,6 +412,7 @@ async def read_projects(
                         created_by_email=created_by_email,
                         department_name=department_name,
                         organization_name=organization_name,
+                        tags=project_tags,
                     )
                 )
 
@@ -516,7 +547,7 @@ async def update_project(
     try:
         project_data = project.model_dump(exclude_unset=True)
         for key, value in project_data.items():
-            if key not in {"components", "agents"}:
+            if key not in {"components", "agents", "tags"}:
                 setattr(existing_project, key, value)
         existing_project.updated_at = datetime.now(timezone.utc)
         existing_project.updated_by = current_user.id
@@ -550,10 +581,19 @@ async def update_project(
             await session.exec(update_statement_components)
             await session.commit()
 
+        # ── Tags ──
+        if "tags" in project_data and project.tags is not None:
+            org_id = await _get_user_org_id(session, current_user.id)
+            await sync_project_tags(session, existing_project.id, project.tags, org_id, current_user.id)
+            await session.commit()
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return existing_project
+    tag_names = await get_tags_for_project(session, existing_project.id)
+    result = ProjectRead.model_validate(existing_project, from_attributes=True)
+    result.tags = tag_names
+    return result
 
 
 @router.delete("/{project_id}", status_code=204)

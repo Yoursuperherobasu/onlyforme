@@ -14,6 +14,7 @@ interface IPatchUpdateAgent {
   endpoint_name?: string | null | undefined;
   locked?: boolean | null | undefined;
   access_type?: "PUBLIC" | "PRIVATE" | "PROTECTED";
+  tags?: string[];
 }
 
 export const usePatchUpdateAgent: useMutationFunctionType<

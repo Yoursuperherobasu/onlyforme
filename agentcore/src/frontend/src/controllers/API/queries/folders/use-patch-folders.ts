@@ -23,6 +23,7 @@ export const usePatchFolders: useMutationFunctionType<
       description: newFolder.data.description,
       agents_list: newFolder.data.agents ?? [],
       components_list: newFolder.data.components ?? [],
+      tags: newFolder.data.tags ?? [],
     };
 
     const res = await api.patch(

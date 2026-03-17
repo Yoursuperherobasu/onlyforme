@@ -3,6 +3,7 @@ import type React from "react";
 import { useState } from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Switch } from "@/components/ui/switch";
+import TagInput from "@/components/common/tagInputComponent";
 import type { InputProps } from "../../../types/components";
 import { cn } from "../../../utils/utils";
 import { Input } from "../../ui/input";
@@ -13,6 +14,8 @@ export const EditAgentSettings: React.FC<
     submitForm?: () => void;
     locked?: boolean;
     setLocked?: (v: boolean) => void;
+    tags?: string[];
+    setTags?: (tags: string[]) => void;
   }
 > = ({
   name,
@@ -26,10 +29,14 @@ export const EditAgentSettings: React.FC<
   submitForm,
   locked = false,
   setLocked,
+  tags = [],
+  setTags,
 }: InputProps & {
   submitForm?: () => void;
   locked?: boolean;
   setLocked?: (v: boolean) => void;
+  tags?: string[];
+  setTags?: (tags: string[]) => void;
 }): JSX.Element => {
   const [isMaxLength, setIsMaxLength] = useState(false);
   const [isMaxDescriptionLength, setIsMaxDescriptionLength] = useState(false);
@@ -180,9 +187,22 @@ export const EditAgentSettings: React.FC<
           Please enter a description
         </Form.Message>
         <div className="mt-3">
-          
+
         </div>
       </Form.Field>
+      {setTags && (
+        <div className="mt-3">
+          <label className="text-mmd font-medium">Tags</label>
+          <div className="mt-2">
+            <TagInput
+              selectedTags={tags}
+              onChange={setTags}
+              placeholder="Add tags (e.g. rag, chatbot, hitl)..."
+              disabled={locked}
+            />
+          </div>
+        </div>
+      )}
     </>
   );
 };

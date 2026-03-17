@@ -61,6 +61,7 @@ class Project(ProjectBase, table=True):  # type: ignore[call-arg]
 class ProjectCreate(ProjectBase):
     components_list: list[UUID] | None = None
     agents_list: list[UUID] | None = None
+    tags: list[str] | None = None
 
 
 class ProjectRead(ProjectBase):
@@ -71,6 +72,7 @@ class ProjectRead(ProjectBase):
     created_by_email: str | None = None
     department_name: str | None = None
     organization_name: str | None = None
+    tags: list[str] = []
 
 
 class ProjectReadWithAgents(ProjectBase):
@@ -90,6 +92,7 @@ class ProjectUpdate(SQLModel):
     components: list[UUID] = Field(default_factory=list)
     agents: list[UUID] = Field(default_factory=list)
     auth_settings: dict | None = None
+    tags: list[str] | None = None
 
 
 # Backward-compatible aliases for existing imports.

@@ -13,6 +13,7 @@ export type FolderType = {
   organization_name?: string | null;
   agents: AgentType[];
   components: string[];
+  tags?: string[];
 };
 
 export type PaginatedFolderType = {
@@ -39,6 +40,7 @@ export type AddFolderType = {
   parent_id: string | null;
   agents?: string[];
   components?: string[];
+  tags?: string[];
 };
 
 export type StarterProjectsType = {
