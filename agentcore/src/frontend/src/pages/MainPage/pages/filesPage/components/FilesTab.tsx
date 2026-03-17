@@ -508,7 +508,7 @@ const FilesTab = ({
                           <span className="truncate text-sm">{file.name}</span>
                         </div>
                         <div className="ml-2 flex shrink-0 items-center gap-2">
-                          <span className="rounded bg-background px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground ring-1 ring-border">
+                          <span className="rounded bg-background px-1.5 py-0.5 text-xxs uppercase text-muted-foreground ring-1 ring-border">
                             {fileType || "file"}
                           </span>
                           <span className="text-xs text-muted-foreground">

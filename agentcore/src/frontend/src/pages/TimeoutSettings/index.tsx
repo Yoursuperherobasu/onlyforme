@@ -95,10 +95,10 @@ export default function TimeoutSettings() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-auto">
-      <div className="flex items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{t("Platform Configurations")}</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">{t("Platform Configurations")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("Configure system timeouts and session management")}
@@ -141,7 +141,7 @@ export default function TimeoutSettings() {
           <div className="w-full px-2 lg:px-4 xl:px-6">
             <h2 className="mb-6 text-lg font-semibold">{t("Timeouts")}</h2>
 
-            <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="overflow-x-auto rounded-lg border border-border bg-card">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">

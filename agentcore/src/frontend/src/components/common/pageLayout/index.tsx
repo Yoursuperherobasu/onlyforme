@@ -25,7 +25,7 @@ export default function PageLayout({
   return (
     <div className="flex w-full flex-1 flex-col justify-between overflow-auto overflow-x-hidden bg-background">
       <div className="mx-auto flex w-full  flex-1 flex-col">
-        <div className="flex flex-col gap-4 p-6 pt-0">
+        <div className="flex flex-col gap-4 px-4 py-6 pt-0 sm:px-6">
           <CustomBanner />
           <div className="flex w-full items-center justify-between gap-4 space-y-0.5 pb-2 pt-10">
             <div className="flex w-full flex-col">
@@ -45,7 +45,7 @@ export default function PageLayout({
                   </Button>
                 )}
                 <h2
-                  className="text-2xl font-bold tracking-tight"
+                  className="text-xl font-bold tracking-tight md:text-2xl"
                   data-testid="mainpage_title"
                 >
                   {title}
@@ -57,10 +57,10 @@ export default function PageLayout({
             <div className="flex-shrink-0">{button && button}</div>
           </div>
         </div>
-        <div className="flex shrink-0 px-6">
+        <div className="flex shrink-0 px-4 sm:px-6">
           <Separator className="flex" />
         </div>
-        <div className="flex flex-1 p-6 pt-7">{children}</div>
+        <div className="flex flex-1 px-4 py-6 pt-7 sm:px-6">{children}</div>
       </div>
     </div>
   );

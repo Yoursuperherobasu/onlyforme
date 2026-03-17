@@ -95,7 +95,7 @@ export const AccountMenu = () => {
         <div className="divide-y divide-foreground/10">
           <div className="px-4 py-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-xxs font-semibold text-primary-foreground">
                 {initials}
               </div>
               <div className="min-w-0 flex-1">
@@ -110,7 +110,7 @@ export const AccountMenu = () => {
                     styleClasses="max-w-none whitespace-normal break-all bg-popover text-popover-foreground border border-border shadow-md"
                   >
                     <div
-                      className="truncate pt-0.5 text-[11px] text-muted-foreground"
+                      className="truncate pt-0.5 text-xxs text-muted-foreground"
                       title={email}
                     >
                       {email}
@@ -119,7 +119,7 @@ export const AccountMenu = () => {
                 ) : null}
               </div>
             </div>
-            <div className="mt-2 grid grid-cols-[84px_1fr] items-center gap-x-2 gap-y-0.5 pl-11 text-[11px]">
+            <div className="mt-2 grid grid-cols-[84px_1fr] items-center gap-x-2 gap-y-0.5 pl-11 text-xxs">
               {showOrganization ? (
                 <>
                   <span className="text-muted-foreground">{t("Organization")}</span>

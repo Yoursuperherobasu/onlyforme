@@ -952,10 +952,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">Connectors</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">Connectors</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             Configure and manage connections for agents (databases, Azure Blob, SharePoint, Outlook)
@@ -968,7 +968,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               placeholder="Search connectors..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring sm:w-64"
             />
           </div>
           {canAddConnector && (
@@ -984,7 +984,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       </div>
 
       {/* Provider filter tabs */}
-      <div className="flex flex-wrap gap-2 border-b px-8 py-3">
+      <div className="flex flex-wrap gap-2 border-b px-4 py-3 sm:px-6 md:px-8">
         {FILTER_TABS.map((f) => (
           <button
             key={f}

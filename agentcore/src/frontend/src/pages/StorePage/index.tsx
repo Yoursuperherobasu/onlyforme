@@ -191,7 +191,7 @@ export default function StorePage(): JSX.Element {
           <div className="flex items-end gap-4">
             <InputSearchComponent
               loading={loading}
-              divClasses="relative h-12 w-[40%]"
+              divClasses="relative h-12 w-full sm:w-[40%]"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => {
@@ -265,7 +265,7 @@ export default function StorePage(): JSX.Element {
               onValueChange={setSelectFilter}
               value={selectFilter}
             >
-              <SelectTrigger className="mr-4 w-[160px] flex-shrink-0">
+              <SelectTrigger className="mr-4 w-full flex-shrink-0 sm:w-[160px]">
                 <SelectValue placeholder={t("Filter Values")} />
               </SelectTrigger>
               <SelectContent>

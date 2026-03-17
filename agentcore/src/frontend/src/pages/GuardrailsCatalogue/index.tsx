@@ -300,7 +300,7 @@ export default function GuardrailsView({
         />
       ) : (
         <div className="flex h-full w-full flex-col overflow-hidden">
-          <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
+          <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
             <div>
               <div className="mb-2 flex items-center gap-3">
                 <Button
@@ -442,19 +442,19 @@ export default function GuardrailsView({
                                 {guardrail.description}
                               </div>
                               {guardrail.runtimeReady === true && (
-                                <div className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                                <div className="mt-1 text-xxs text-emerald-600 dark:text-emerald-400">
                                   Runtime ready
                                 </div>
                               )}
                               {guardrail.runtimeConfig &&
                                 guardrail.runtimeReady === false && (
-                                  <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                                  <div className="mt-1 text-xxs text-amber-600 dark:text-amber-400">
                                     Runtime config incomplete
                                   </div>
                                 )}
                               {/* PROD view: show promotion timestamp */}
                               {isProdView && guardrail.promotedAt && (
-                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                <div className="mt-1 text-xxs text-muted-foreground">
                                   Promoted {new Date(guardrail.promotedAt).toLocaleDateString()}
                                 </div>
                               )}

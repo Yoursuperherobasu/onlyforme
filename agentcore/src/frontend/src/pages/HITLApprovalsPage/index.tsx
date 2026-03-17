@@ -66,7 +66,7 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
         : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
   return (
     <span
-      className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${color}`}
+      className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-xxs font-semibold ${color}`}
     >
       {confidence}%
     </span>
@@ -586,7 +586,7 @@ export default function HITLApprovalsPage(): JSX.Element {
             >
               {tab.label}
               {tab.value === "pending" && pendingCount > 0 && (
-                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-xxs font-bold text-white">
                   {pendingCount}
                 </span>
               )}

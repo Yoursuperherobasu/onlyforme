@@ -462,7 +462,7 @@ export default function RequestModelModal({
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
               />
-              <p className="mt-1 text-[11px] text-muted-foreground">
+              <p className="mt-1 text-xxs text-muted-foreground">
                 Required for request. A successful connection test is mandatory before submitting.
               </p>
             </div>
@@ -489,7 +489,7 @@ export default function RequestModelModal({
                   </button>
                 ))}
               </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">
+              <p className="mt-1 text-xxs text-muted-foreground">
                 Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.
               </p>
             </div>
@@ -540,7 +540,7 @@ export default function RequestModelModal({
                       setDimensions(e.target.value ? Number(e.target.value) : "")
                     }
                   />
-                  <p className="mt-1 text-[11px] text-muted-foreground">
+                  <p className="mt-1 text-xxs text-muted-foreground">
                     Leave empty to use the model's default dimension.
                   </p>
                 </div>

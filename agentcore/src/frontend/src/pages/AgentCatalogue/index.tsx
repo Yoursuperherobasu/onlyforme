@@ -221,10 +221,10 @@ export default function AgentCatalogueView({
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{t("Agent Registry")}</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">{t("Agent Registry")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t(
@@ -240,13 +240,13 @@ export default function AgentCatalogueView({
               placeholder={t("Search agents")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
+              className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm sm:w-64"
             />
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6 md:p-8">
         {isLoadingRegistry ? (
           <div className="flex h-full items-center justify-center">
             <CustomLoader />
@@ -271,7 +271,7 @@ export default function AgentCatalogueView({
                             {agent.title}
                           </h3>
                           {agent.version_number && (
-                            <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                            <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-xxs font-semibold text-muted-foreground">
                               {agent.version_number}
                             </span>
                           )}

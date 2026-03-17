@@ -490,7 +490,7 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
 function MaturityProgressBars({ kpis, accent }: { kpis: SectionKpi[]; accent: string }) {
   return (
     <div className="mt-4 rounded-xl border border-border bg-background/60 p-4 space-y-4">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Adoption Depth</p>
+      <p className="text-xxs font-semibold uppercase tracking-wider text-muted-foreground">Adoption Depth</p>
       {kpis.map((kpi) => {
         const m = kpi.value.match(/(\d+)/);
         const pct = m ? Math.min(parseInt(m[1]), 100) : 0;
@@ -556,12 +556,12 @@ function SectionCard({
                 {t(section.label)}
               </span>
               {isEmpty && (
-                <span className="text-[10px] text-muted-foreground rounded-full border border-border bg-background px-2 py-0.5 leading-none">
+                <span className="text-xxs text-muted-foreground rounded-full border border-border bg-background px-2 py-0.5 leading-none">
                   No data configured
                 </span>
               )}
             </div>
-            <p className="mt-0.5 text-[11px] text-muted-foreground truncate max-w-xl hidden sm:block">
+            <p className="mt-0.5 text-xxs text-muted-foreground truncate max-w-xl hidden sm:block">
               {section.description}
             </p>
           </div>
@@ -572,12 +572,12 @@ function SectionCard({
           {!isEmpty && (
             <div className="hidden sm:flex items-center gap-1.5">
               {displayKpis.length > 0 && (
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${theme.badge}`}>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xxs font-medium ${theme.badge}`}>
                   {displayKpis.length} KPI{displayKpis.length !== 1 ? "s" : ""}
                 </span>
               )}
               {charts.length > 0 && (
-                <span className="inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                <span className="inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-xxs font-medium text-muted-foreground">
                   {charts.length} chart{charts.length !== 1 ? "s" : ""}
                 </span>
               )}
@@ -603,13 +603,13 @@ function SectionCard({
               className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 shadow-sm"
             >
               <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: theme.accent }} />
-              <span className="text-[11px] text-muted-foreground">{t(kpi.name)}</span>
+              <span className="text-xxs text-muted-foreground">{t(kpi.name)}</span>
               {kpi.scope === "global" && (
-                <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-700">
+                <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-xxs font-bold uppercase tracking-wide text-sky-700">
                   Global
                 </span>
               )}
-              <span className="text-[11px] font-bold text-foreground">{t(kpi.value)}</span>
+              <span className="text-xxs font-bold text-foreground">{t(kpi.value)}</span>
             </div>
           ))}
         </div>
@@ -634,17 +634,17 @@ function SectionCard({
                   />
                   {/* Index dot */}
                   <div
-                    className="mb-3 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                    className="mb-3 flex h-6 w-6 items-center justify-center rounded-full text-xxs font-bold text-white"
                     style={{ backgroundColor: theme.accent + "cc" }}
                   >
                     {i + 1}
                   </div>
                   <div className="flex items-center gap-2">
-                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground leading-snug font-medium">
+                    <p className="text-xxs uppercase tracking-widest text-muted-foreground leading-snug font-medium">
                       {t(kpi.name)}
                     </p>
                     {kpi.scope === "global" && (
-                      <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-700">
+                      <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-xxs font-bold uppercase tracking-wide text-sky-700">
                         Global
                       </span>
                     )}
@@ -673,7 +673,7 @@ function SectionCard({
               {/* Divider with label */}
               <div className="mt-6 mb-4 flex items-center gap-3">
                 <div className="h-px flex-1 bg-border" />
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                <span className="text-xxs font-semibold uppercase tracking-widest text-muted-foreground">
                   Charts
                 </span>
                 <div className="h-px flex-1 bg-border" />
@@ -699,12 +699,12 @@ function SectionCard({
                               {t(chart.title)}
                             </p>
                             {chart.scope === "global" && (
-                              <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-700">
+                              <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-xxs font-bold uppercase tracking-wide text-sky-700">
                                 Global
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">{t(chart.subtitle)}</p>
+                          <p className="text-xxs text-muted-foreground mt-0.5">{t(chart.subtitle)}</p>
                         </div>
                         <div className="shrink-0 ml-3">
                           {isApprovalChart && approvalRangeSelector}
@@ -987,16 +987,16 @@ export default function DashboardAdmin(): JSX.Element {
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* ── Page Header ── */}
       <div className="flex-shrink-0 border-b border-border bg-card">
-        <div className="px-8 py-5">
+        <div className="px-4 py-4 sm:px-6 md:px-8 md:py-5">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-foreground">{t("Dashboard")}</h1>
+              <h1 className="text-xl font-bold text-foreground md:text-2xl">{t("Dashboard")}</h1>
               <div className="mt-1.5 flex items-center gap-2">
-                <span className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <span className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
                   {headerSubtitle}
                 </span>
-                <span className="text-muted-foreground text-[11px]">·</span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-muted-foreground text-xxs">·</span>
+                <span className="text-xxs text-muted-foreground">
                   {sectionsToRender.length} section{sectionsToRender.length !== 1 ? "s" : ""}
                 </span>
               </div>
@@ -1006,7 +1006,7 @@ export default function DashboardAdmin(): JSX.Element {
       </div>
 
       {/* ── Section Stack ── */}
-      <div className="flex-1 overflow-auto bg-background px-8 py-6">
+      <div className="flex-1 overflow-auto bg-background px-4 py-4 sm:px-6 md:px-8 md:py-6">
         <div className="space-y-4">
           {sectionsToRender.map((section, i) => {
             const { kpis, charts } = resolveSection(section);

@@ -1073,7 +1073,7 @@ const KnowledgeBasesTab = ({
                           </span>
                         </div>
                         <div className="ml-3 flex shrink-0 items-center gap-2">
-                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xxs uppercase text-muted-foreground">
                             {fileType || "file"}
                           </span>
                           <span className="text-xs text-muted-foreground">

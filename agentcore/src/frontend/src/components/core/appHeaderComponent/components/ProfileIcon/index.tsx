@@ -9,7 +9,7 @@ export function ProfileIcon() {
 
   return (
     <div
-      className="h-6 w-6 shrink-0 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold flex items-center justify-center select-none focus-visible:outline-0"
+      className="h-6 w-6 shrink-0 rounded-full bg-primary text-primary-foreground text-xxs font-semibold flex items-center justify-center select-none focus-visible:outline-0"
       aria-label={username ? `${username} profile` : "User profile"}
       title={username || "User"}
     >

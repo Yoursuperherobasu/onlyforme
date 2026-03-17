@@ -592,7 +592,7 @@ export default function FolderCardsView({
                         </p>
                       )}
                       {showCreatedBy && (folder.created_by_email || folder.is_own_project) && (
-                        <p className="text-[11px] text-muted-foreground line-clamp-1">
+                        <p className="text-xxs text-muted-foreground line-clamp-1">
                           {folder.is_own_project ? (
                             <>Created by: <span className="font-semibold text-primary">You</span></>
                           ) : (
@@ -601,12 +601,12 @@ export default function FolderCardsView({
                         </p>
                       )}
                       {showDepartment && folder.department_name && (
-                        <p className="text-[11px] text-muted-foreground line-clamp-1">
+                        <p className="text-xxs text-muted-foreground line-clamp-1">
                           Department: {folder.department_name}
                         </p>
                       )}
                       {showOrganization && folder.organization_name && (
-                        <p className="text-[11px] text-muted-foreground line-clamp-1">
+                        <p className="text-xxs text-muted-foreground line-clamp-1">
                           Organization: {folder.organization_name}
                         </p>
                       )}

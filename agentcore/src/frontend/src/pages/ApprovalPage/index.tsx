@@ -191,10 +191,10 @@ export default function ApprovalPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-auto">
       {/* Header */}
-      <div className="flex items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{t("Review & Approval")}</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">{t("Review & Approval")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("Review and approve model, MCP, AI agent, and package requests")}
@@ -209,14 +209,14 @@ export default function ApprovalPage() {
               placeholder={t("Search agents...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring sm:w-64"
             />
           </div>
         </div>
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex items-center gap-3 border-b border-border px-8 py-4">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-4 sm:px-6 md:px-8">
         {visibleTabs.map((tab) => (
           <Button
             key={tab.id}
@@ -229,7 +229,7 @@ export default function ApprovalPage() {
       </div>
 
       {/* Status Tabs */}
-      <div className="flex items-center gap-3 border-b border-border px-8 py-4">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-4 sm:px-6 md:px-8">
         {(activeTab === "package"
           ? (["all", "pending", "approved", "rejected", "deployed", "cancelled"] as FilterType[])
           : (["all", "pending", "approved", "rejected"] as FilterType[])
