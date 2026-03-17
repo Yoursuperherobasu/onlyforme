@@ -366,7 +366,7 @@ function TriggersTable({
   onDelete,
 }: TableProps): JSX.Element {
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-background">
+    <div className="overflow-x-auto rounded-lg border border-border bg-background">
       <table className="w-full text-sm">
         <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
           <tr>
@@ -404,7 +404,7 @@ function TriggersTable({
                     disabled={deploymentStopped}
                   />
                   <span
-                    className={`text-[10px] font-medium leading-none ${
+                    className={`text-xxs font-medium leading-none ${
                       deploymentStopped
                         ? "text-destructive"
                         : t.is_active ? "text-green-600" : "text-muted-foreground"
@@ -639,7 +639,7 @@ function LogsSlideOver({
         </div>
 
         {/* Sub-header */}
-        <div className="border-b border-border bg-muted/30 px-5 py-1.5 text-[11px] text-muted-foreground">
+        <div className="border-b border-border bg-muted/30 px-5 py-1.5 text-xxs text-muted-foreground">
           Auto-refreshes every 2 s &nbsp;·&nbsp; {runs.length} run(s)
         </div>
 
@@ -731,7 +731,7 @@ function LogsSlideOver({
                             {/* ── Output ── */}
                             {run.completionPayload?.output && (
                               <div className="px-3 py-2 space-y-0.5">
-                                <p className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">Output</p>
+                                <p className="font-semibold text-muted-foreground uppercase tracking-wide text-xxs">Output</p>
                                 <pre className="whitespace-pre-wrap break-all text-foreground font-sans leading-relaxed">
                                   {run.completionPayload.output}
                                 </pre>
@@ -741,7 +741,7 @@ function LogsSlideOver({
                             {/* ── Error ── */}
                             {run.error_message && (
                               <div className="px-3 py-2 space-y-0.5">
-                                <p className="font-semibold text-red-600 uppercase tracking-wide text-[10px]">Error</p>
+                                <p className="font-semibold text-red-600 uppercase tracking-wide text-xxs">Error</p>
                                 <pre className="whitespace-pre-wrap break-all text-red-700 dark:text-red-300 font-sans leading-relaxed">
                                   {run.error_message}
                                 </pre>

@@ -174,12 +174,12 @@ export default function ObservabilityPage(): JSX.Element {
   return (
     <div className="flex h-full w-full flex-col overflow-auto bg-gray-50">
       {/* Header */}
-      <div className="border-b bg-white px-8 py-6 shadow-sm">
-        <div className="flex items-center justify-between">
+      <div className="border-b bg-white px-4 py-4 shadow-sm sm:px-6 md:px-8 md:py-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <BarChart3 className="h-7 w-7" style={{ color: THEME.primary }} />
+            <BarChart3 className="h-6 w-6 md:h-7 md:w-7" style={{ color: THEME.primary }} />
             <div>
-              <h1 className="text-2xl font-semibold" style={{ color: THEME.textMain }}>Observability</h1>
+              <h1 className="text-xl font-semibold md:text-2xl" style={{ color: THEME.textMain }}>Observability</h1>
               <p className="text-sm" style={{ color: THEME.textSecondary }}>Monitor your AI usage, costs, and performance metrics</p>
             </div>
           </div>
@@ -204,7 +204,7 @@ export default function ObservabilityPage(): JSX.Element {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto p-6 space-y-6">
+      <div className="flex-1 overflow-auto p-4 space-y-4 sm:p-6 sm:space-y-6">
         {!initialQueries.status.data?.connected && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />

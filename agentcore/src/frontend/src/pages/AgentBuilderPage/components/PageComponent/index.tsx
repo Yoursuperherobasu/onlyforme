@@ -817,8 +817,8 @@ export default function Page({
                     <span
                       className={
                         approvalDetails?.status === "approved"
-                          ? "rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-800"
-                          : "rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800"
+                          ? "rounded-full bg-green-100 px-2 py-0.5 text-xxs font-semibold text-green-800"
+                          : "rounded-full bg-red-100 px-2 py-0.5 text-xxs font-semibold text-red-800"
                       }
                     >
                       {approvalDetails?.status === "approved"
@@ -833,7 +833,7 @@ export default function Page({
                   )}
                   {!!approvalDetails?.adminAttachments?.length && (
                     <div>
-                      <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                      <p className="mb-1 text-xxs font-medium text-muted-foreground">
                         Attachments
                       </p>
                       <div className="max-h-36 space-y-1 overflow-auto pr-1">
@@ -845,7 +845,7 @@ export default function Page({
                             <p className="truncate text-xs font-medium">
                               {file.filename || "Attachment"}
                             </p>
-                            <p className="text-[11px] text-muted-foreground">
+                            <p className="text-xxs text-muted-foreground">
                               {(file.size ?? 0) > 0
                                 ? `${Math.max(
                                     1,

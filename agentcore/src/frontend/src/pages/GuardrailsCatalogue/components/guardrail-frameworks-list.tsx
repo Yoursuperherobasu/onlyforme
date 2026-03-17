@@ -23,14 +23,14 @@ export default function GuardrailFrameworksList({
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header Section */}
-      <div className="relative flex flex-shrink-0 items-center justify-between border-b border-border/50 px-8 py-8">
+      <div className="relative flex flex-shrink-0 items-center justify-between border-b border-border/50 px-4 py-6 sm:px-6 md:px-8 md:py-8">
         {/* Decorative line with red accent */}
         <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-red-500/30 to-transparent" />
         
         <div>
           <div className="mb-3 flex items-center gap-4">
             
-            <h1 className="text-3xl font-bold text-foreground">
+            <h1 className="text-2xl font-bold text-foreground md:text-3xl">
               Guardrails Catalogue
             </h1>
           </div>
@@ -41,7 +41,7 @@ export default function GuardrailFrameworksList({
       </div>
 
       {/* Content Section */}
-      <div className="flex-1 overflow-auto px-8 py-10">
+      <div className="flex-1 overflow-auto px-4 py-6 sm:px-6 md:px-8 md:py-10">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <div className="flex flex-col items-center gap-3">

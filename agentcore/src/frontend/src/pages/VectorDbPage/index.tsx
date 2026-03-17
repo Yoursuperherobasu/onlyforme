@@ -140,10 +140,10 @@ export default function VectorDBView(): JSX.Element {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{t("Vector Store Observatory")}</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">{t("Vector Store Observatory")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("View Pinecone namespaces across UAT and PROD environments")}
@@ -157,15 +157,15 @@ export default function VectorDBView(): JSX.Element {
               placeholder={t("Search by name, index, namespace, agent...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-80 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring sm:w-80"
             />
           </div>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="flex-shrink-0 border-b px-8 py-4">
-        <div className="grid grid-cols-4 gap-4">
+      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <div className="rounded-lg border bg-card p-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Database className="h-4 w-4" />
@@ -198,8 +198,8 @@ export default function VectorDBView(): JSX.Element {
       </div>
 
       {/* Filters */}
-      <div className="flex-shrink-0 border-b px-8 py-4">
-        <div className="flex items-end gap-4">
+      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
           <div className="min-w-[200px]">
             <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               {t("Environment")}
@@ -366,7 +366,7 @@ export default function VectorDBView(): JSX.Element {
                                   {t(db.migrationStatus.charAt(0).toUpperCase() + db.migrationStatus.slice(1))}
                                 </span>
                                 {db.migratedAt && (
-                                  <div className="mt-0.5 text-[10px] text-muted-foreground">
+                                  <div className="mt-0.5 text-xxs text-muted-foreground">
                                     {new Date(db.migratedAt).toLocaleDateString()}
                                   </div>
                                 )}

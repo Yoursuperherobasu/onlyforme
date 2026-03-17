@@ -318,10 +318,10 @@ export default function MCPServersPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header - Fixed */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{t("MCP Servers")}</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">{t("MCP Servers")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("Manage MCP Servers for use in your agents")}
@@ -336,7 +336,7 @@ export default function MCPServersPage() {
               placeholder={t("Search servers...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring sm:w-64"
             />
           </div>
 
@@ -449,7 +449,7 @@ export default function MCPServersPage() {
                               <div className="flex items-center gap-2">
                                 <div className="font-semibold">{server.server_name}</div>
                                 {server.approval_status !== "approved" && (
-                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${approvalBadge.cls}`}>
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-xxs font-medium ${approvalBadge.cls}`}>
                                     {approvalBadge.label}
                                   </span>
                                 )}

@@ -288,10 +288,10 @@ export default function ModelCatalogue(): JSX.Element {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between border-b px-8 py-6">
+      <div className="flex-shrink-0 flex flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">{t("Model Registry")}</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">{t("Model Registry")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("Onboard, browse, and manage AI models across environments")}
@@ -305,7 +305,7 @@ export default function ModelCatalogue(): JSX.Element {
               placeholder={t("Search models...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-64 rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
+              className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm sm:w-64"
             />
           </div>
 
@@ -340,7 +340,7 @@ export default function ModelCatalogue(): JSX.Element {
       </div>
 
       {/* Filters */}
-      <div className="flex-shrink-0 border-b px-8 py-4">
+      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <div className="min-w-0">
             <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">

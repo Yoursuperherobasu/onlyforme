@@ -566,9 +566,9 @@ export default function WorkflowsView({
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex-shrink-0 border-b px-8 py-6">
+      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8 md:py-6">
         <div className="mb-4 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">{t("Agent Control Panel")}</h1>
+          <h1 className="text-xl font-semibold md:text-2xl">{t("Agent Control Panel")}</h1>
         </div>
 
         <div className="mb-6 inline-flex rounded-lg border bg-muted/30 p-1">
@@ -609,7 +609,7 @@ export default function WorkflowsView({
       </div>
 
       <div className="flex-1 overflow-auto p-8">
-        <div className="overflow-hidden rounded-lg border bg-card">
+        <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full">
             <thead className="border-b bg-muted/50">
               <tr>
@@ -972,7 +972,7 @@ export default function WorkflowsView({
                           className="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
                           aria-label={`Remove ${email}`}
                         >
-                          <span className="text-[11px] leading-none">x</span>
+                          <span className="text-xxs leading-none">x</span>
                         </button>
                       </span>
                     ))}

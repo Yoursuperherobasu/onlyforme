@@ -277,7 +277,7 @@ const ListComponent = ({
                 >
                   <span
                     className={cn(
-                      "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      "rounded-full px-2 py-0.5 text-xxs font-semibold",
                       workflowLocked && "bg-yellow-100 text-yellow-800",
                       !workflowLocked &&
                         latestProdStatus === "PUBLISHED" &&

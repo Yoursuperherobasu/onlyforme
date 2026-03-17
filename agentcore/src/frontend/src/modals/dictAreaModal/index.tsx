@@ -103,7 +103,7 @@ export default function DictAreaModal({
 
   const renderContent = () => (
     <BaseModal.Content overflowHidden>
-      <div className="flex h-[500px] w-full flex-col transition-all">
+      <div className="flex h-[min(500px,70vh)] w-full flex-col transition-all">
         <JsonEditor
           data={{ json: value }}
           jsonRef={jsonEditorRef}
@@ -122,7 +122,7 @@ export default function DictAreaModal({
       open={open}
       disable={disabled}
       setOpen={setOpen}
-      className="h-auto min-h-[500px] overflow-visible"
+      className="h-auto min-h-[min(500px,70vh)] overflow-visible"
       onSubmit={onChange ? handleSubmit : undefined}
     >
       <BaseModal.Trigger className="h-full" asChild>

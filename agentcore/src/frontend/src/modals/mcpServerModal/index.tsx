@@ -630,7 +630,7 @@ export default function AddMcpServerModal({
                       </button>
                     ))}
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xxs text-muted-foreground">
                     Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.
                   </p>
                 </div>

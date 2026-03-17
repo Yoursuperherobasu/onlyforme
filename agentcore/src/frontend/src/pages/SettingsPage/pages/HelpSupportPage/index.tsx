@@ -163,10 +163,10 @@ export default function HelpSupportPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* ── Fixed Header ─────────────────────────────────────────── */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b px-8 py-6">
+      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold">
+            <h1 className="text-xl font-semibold md:text-2xl">
               {t("Help & Support")}
             </h1>
             <HelpCircle className="h-5 w-5 text-primary" />
@@ -229,7 +229,7 @@ export default function HelpSupportPage() {
                 {t("Frequently Asked Questions")}
               </p>
               {searchValue && (
-                <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
                   {filteredQuestions.length} {t("result")}{filteredQuestions.length !== 1 ? "s" : ""}
                 </span>
               )}
@@ -309,7 +309,7 @@ export default function HelpSupportPage() {
           </DialogHeader>
           <div className="grid gap-3 py-1">
             <div className="space-y-1.5">
-              <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <label className="text-xxs font-medium uppercase tracking-wider text-muted-foreground">
                 {t("Question")}
               </label>
               <Input
@@ -320,7 +320,7 @@ export default function HelpSupportPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <label className="text-xxs font-medium uppercase tracking-wider text-muted-foreground">
                 {t("Answer")}
               </label>
               <textarea
@@ -378,7 +378,7 @@ export default function HelpSupportPage() {
           </DialogHeader>
           <div className="grid gap-3 py-1">
             <div className="space-y-1.5">
-              <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <label className="text-xxs font-medium uppercase tracking-wider text-muted-foreground">
                 {t("Question")}
               </label>
               <Input
@@ -389,7 +389,7 @@ export default function HelpSupportPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <label className="text-xxs font-medium uppercase tracking-wider text-muted-foreground">
                 {t("Answer")}
               </label>
               <textarea

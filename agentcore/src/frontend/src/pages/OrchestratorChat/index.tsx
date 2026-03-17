@@ -328,14 +328,14 @@ export default function AgentOrchestrator() {
   };
 
   const versionBadge = (version: number) => (
-    <span className="ml-2 inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-muted-foreground">
+    <span className="ml-2 inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-xxs font-semibold uppercase leading-none text-muted-foreground">
       v{version}
     </span>
   );
 
   const uatBadge = (environment: string) =>
     String(environment).toLowerCase() === "uat" ? (
-      <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-amber-700">
+      <span className="ml-1.5 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-xxs font-semibold uppercase leading-none text-amber-700">
         UAT
       </span>
     ) : null;
@@ -751,13 +751,13 @@ export default function AgentOrchestrator() {
 
         {/* Chat History */}
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="shrink-0 px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="shrink-0 px-4 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
             {t("Conversations")}
           </div>
           <div className="flex-1 overflow-y-auto scroll-smooth px-2" style={{ scrollbarWidth: "thin" }}>
             {Object.entries(grouped).map(([date, chats]) => (
               <div key={date} className="mb-4">
-                <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="px-2 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
                   {date}
                 </div>
                 {chats.map((chat) => (
@@ -794,7 +794,7 @@ export default function AgentOrchestrator() {
 
         {/* Agents Panel */}
         <div className="flex min-h-0 flex-1 flex-col border-t border-border">
-          <div className="shrink-0 px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="shrink-0 px-4 pb-2 pt-3 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
             {t("Agents")}
           </div>
           <div className="flex-1 overflow-y-auto scroll-smooth px-2 pb-2" style={{ scrollbarWidth: "thin" }}>

@@ -47,7 +47,7 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
         <PopoverContent
           ref={notificationRef}
           data-testid="notification-dropdown-content"
-          className="noflow nowheel nopan nodelete nodrag z-50 flex h-[500px] w-[500px] flex-col"
+          className="noflow nowheel nopan nodelete nodrag z-50 flex h-[min(500px,80vh)] w-[min(500px,calc(100vw-2rem))] flex-col"
         >
           <div className="text-md flex flex-row justify-between pl-3 font-medium text-foreground">
             Notifications

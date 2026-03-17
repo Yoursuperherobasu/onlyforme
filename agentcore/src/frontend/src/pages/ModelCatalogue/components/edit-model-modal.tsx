@@ -626,7 +626,7 @@ export default function EditModelModal({
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                 />
-                <p className="mt-1 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-xxs text-muted-foreground">
                   Encrypted before storage. Never exposed in responses.
                 </p>
               </div>
@@ -710,7 +710,7 @@ export default function EditModelModal({
                 </button>
               ))}
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xxs text-muted-foreground">
               {isEditMode
                 ? "Changing environment here will submit a promotion request when applicable."
                 : <>Models default to <strong>UAT</strong>. Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.</>}
@@ -803,7 +803,7 @@ export default function EditModelModal({
               )}
             </div>
             {isEditMode && (
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xxs text-muted-foreground">
                 Visibility changes here will submit approval requests when required.
               </p>
             )}
@@ -858,7 +858,7 @@ export default function EditModelModal({
                       setDimensions(e.target.value ? Number(e.target.value) : "")
                     }
                   />
-                  <p className="mt-1 text-[11px] text-muted-foreground">
+                  <p className="mt-1 text-xxs text-muted-foreground">
                     Leave empty to use the model's default dimension.
                   </p>
                 </div>
@@ -880,7 +880,7 @@ export default function EditModelModal({
               />
               Active
             </label>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xxs text-muted-foreground">
               Inactive models won't appear in the agent builder component
               dropdown.
             </p>
