@@ -997,6 +997,7 @@ async def orch_chat_stream(
                                 "hitl": True,
                                 "thread_id": chat_session_id,
                                 "actions": actions,
+                                "is_deployed_run": True,
                             },
                             category="message",
                             content_blocks=[],

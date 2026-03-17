@@ -79,8 +79,33 @@ deployments:
   version_number: v4
   environment: prod
   deployment_id: 69deff6b-fc45-4c8c-ab41-096392a2ea1c
-- agent_id: 72e01775-f2b8-41e4-b870-9ad0677b3a9e
-  agent_name: hitl2
+- agent_id: dbc9800c-c49c-4723-8362-241f933847eb
+  agent_name: sch
   version_number: v1
   environment: uat
-  deployment_id: 86d8236b-3e98-4d9c-8580-2864bdd62927
+  deployment_id: 35e00137-25f2-443e-b8e2-3f9fe605542a
+- agent_id: dbc9800c-c49c-4723-8362-241f933847eb
+  agent_name: sch
+  version_number: v1
+  environment: prod
+  deployment_id: 43cb994a-e4a5-4d76-b612-940ac877f240
+- agent_id: 72e01775-f2b8-41e4-b870-9ad0677b3a9e
+  agent_name: hitl3
+  version_number: v2
+  environment: uat
+  deployment_id: 36eddc7b-5aca-426d-ab2f-10a6f7c91dbe
+- agent_id: 72e01775-f2b8-41e4-b870-9ad0677b3a9e
+  agent_name: hitl3
+  version_number: v1
+  environment: prod
+  deployment_id: 0d8839cb-de14-4cf8-bbfe-d0a52886ff17
+- agent_id: 72e01775-f2b8-41e4-b870-9ad0677b3a9e
+  agent_name: hitl4
+  version_number: v3
+  environment: uat
+  deployment_id: cc4dd000-c820-4ebf-a98b-79d209262d44
+- agent_id: 72e01775-f2b8-41e4-b870-9ad0677b3a9e
+  agent_name: hitl4
+  version_number: v2
+  environment: prod
+  deployment_id: 7837c3f2-5b03-4651-9b41-03043c8cb785
