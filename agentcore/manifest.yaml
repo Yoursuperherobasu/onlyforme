@@ -1,6 +1,11 @@
 deployments:
-- agent_id: 59ea65bb-5063-429d-b09e-260169337480
-  agent_name: assignee check
+- agent_id: 27205072-6fca-4d12-9f4f-58a276b0b0c3
+  agent_name: test
   version_number: v1
   environment: uat
-  deployment_id: 2edaba7c-e369-4eef-a396-7488f99a8832
+  deployment_id: 149425de-30cf-4107-a7b6-d8cb4f26f387
+- agent_id: 27205072-6fca-4d12-9f4f-58a276b0b0c3
+  agent_name: test
+  version_number: v1
+  environment: prod
+  deployment_id: f3c51da1-f7a4-4dc3-a7dc-ddae8b307230

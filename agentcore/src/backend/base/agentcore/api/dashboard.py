@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime, timezone, date, time, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+import httpx
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+
+logger = logging.getLogger(__name__)
+
+# Region config — read from env vars
+_DEPLOYMENT_ROLE = os.getenv("DEPLOYMENT_ROLE", "hub").lower()
+_REGION_CODE = os.getenv("REGION_CODE", "")
+_REGION_GATEWAY_URL = os.getenv("REGION_GATEWAY_URL", "http://localhost:8006")
 from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.database.models.agent_bundle.model import AgentBundle, BundleTypeEnum
 from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
@@ -24,6 +34,82 @@ from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+# ---------------------------------------------------------------------------
+# Region-aware proxy: if X-Region-Code header is present and user is root,
+# forward the request to the region-gateway instead of querying local DB.
+# ---------------------------------------------------------------------------
+
+async def _maybe_proxy_to_region(
+    request: Request,
+    current_user: CurrentActiveUser,
+    section_path: str,
+) -> dict | None:
+    """If this is a cross-region request, proxy it and return the response.
+
+    Returns None if this is a local request (no proxy needed).
+    Raises HTTPException if the user is not root or the proxy fails.
+    """
+    region_code = request.headers.get("X-Region-Code", "").strip()
+    if not region_code:
+        return None
+
+    # Same region as this deployment — no proxy needed
+    if region_code.upper() == _REGION_CODE.upper():
+        return None
+
+    # Only root can access cross-region data
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "root":
+        raise HTTPException(status_code=403, detail="Cross-region access requires root role")
+
+    # Only hub deployment can proxy
+    if _DEPLOYMENT_ROLE != "hub":
+        raise HTTPException(status_code=400, detail="Cross-region proxy only available on hub")
+
+    # Forward to region-gateway
+    gateway_url = f"{_REGION_GATEWAY_URL}/api/regions/{region_code}/dashboard/{section_path}"
+    query_params = dict(request.query_params)
+    query_params["caller"] = str(current_user.id)
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(gateway_url, params=query_params)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("Region gateway returned %d for %s: %s", e.response.status_code, region_code, e)
+        raise HTTPException(status_code=e.response.status_code, detail=f"Region '{region_code}' error")
+    except Exception as e:
+        logger.error("Region gateway error for %s: %s", region_code, e)
+        raise HTTPException(status_code=502, detail=f"Cannot reach region '{region_code}'")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/dashboard/regions — list available regions (root only)
+# ---------------------------------------------------------------------------
+
+@router.get("/regions")
+async def list_regions(current_user: CurrentActiveUser):
+    """Return available regions for the region dropdown. Root admin only."""
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "root":
+        raise HTTPException(status_code=403, detail="Region listing requires root role")
+
+    if _DEPLOYMENT_ROLE != "hub":
+        # Spoke deployments only know about themselves
+        return [{"code": _REGION_CODE, "name": _REGION_CODE, "is_hub": False}]
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{_REGION_GATEWAY_URL}/api/regions")
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error("Failed to fetch regions from gateway: %s", e)
+        # Fallback: return just the local region
+        return [{"code": _REGION_CODE, "name": _REGION_CODE, "is_hub": True}]
 
 
 class DashboardKpi(BaseModel):
@@ -119,10 +205,16 @@ async def _department_admin_dept_ids(
 @router.get("/sections/environment-lifecycle", response_model=DashboardSectionResponse, status_code=200)
 async def get_lifecycle_kpis(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
     org_id: UUID | None = Query(default=None, description="Optional org filter for super admin"),
 ):
+    # Cross-region proxy check
+    proxied = await _maybe_proxy_to_region(request, current_user, "environment-lifecycle")
+    if proxied is not None:
+        return proxied
+
     role = str(getattr(current_user, "role", "")).lower()
     if role not in {"super_admin", "root"}:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -195,10 +287,16 @@ async def get_lifecycle_kpis(
 @router.get("/sections/governance-guardrail", response_model=DashboardSectionResponse, status_code=200)
 async def get_governance_guardrail_kpis(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
     org_id: UUID | None = Query(default=None, description="Optional org filter for super admin"),
 ):
+    # Cross-region proxy check
+    proxied = await _maybe_proxy_to_region(request, current_user, "governance-guardrail")
+    if proxied is not None:
+        return proxied
+
     role = str(getattr(current_user, "role", "")).lower()
     if role not in {"super_admin", "root"}:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -1035,9 +1133,15 @@ async def get_business_experience_kpis(
 @router.get("/sections/root-maturity", response_model=DashboardSectionResponse, status_code=200)
 async def get_root_maturity_kpis(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
 ):
+    # Cross-region proxy check
+    proxied = await _maybe_proxy_to_region(request, current_user, "root-maturity")
+    if proxied is not None:
+        return proxied
+
     role = str(getattr(current_user, "role", "")).lower()
     if role != "root":
         raise HTTPException(status_code=403, detail="Insufficient permissions")

@@ -208,3 +208,4 @@ src/frontend/temp
 member_servers.json
 src/backend/knowledge_base_storage/
 pii_masking_templates/
+manifest.yaml
