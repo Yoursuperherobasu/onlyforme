@@ -12,6 +12,7 @@ export interface KnowledgeBaseInfo {
   name: string;
   org_id?: string | null;
   dept_id?: string | null;
+  public_dept_ids?: string[] | null;
   embedding_provider?: string;
   embedding_model?: string;
   size: number;
@@ -46,7 +47,6 @@ export const useGetKnowledgeBases: useQueryFunctionType<
     ["useGetKnowledgeBases", userId ?? "anonymous"],
     getKnowledgeBasesFn,
     {
-      refetchOnWindowFocus: false,
       ...options,
     },
   );

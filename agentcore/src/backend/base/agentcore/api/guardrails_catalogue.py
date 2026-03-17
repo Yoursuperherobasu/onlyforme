@@ -244,6 +244,98 @@ def _can_access_guardrail(
     return False
 
 
+def _guardrail_dept_candidates(row: dict[str, Any]) -> set[str]:
+    dept_candidates = set(row.get("public_dept_ids") or [])
+    if row.get("dept_id"):
+        dept_candidates.add(str(row.get("dept_id")))
+    return dept_candidates
+
+
+def _is_multi_dept_guardrail(row: dict[str, Any]) -> bool:
+    return (
+        (row.get("visibility") or "private").strip().lower() == "public"
+        and row.get("public_scope") == "department"
+        and len(_guardrail_dept_candidates(row)) > 1
+    )
+
+
+def _can_edit_guardrail(
+    row: dict[str, Any],
+    current_user: CurrentActiveUser,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(row.get("created_by")) == str(current_user.id)
+            and row.get("org_id") is None
+            and row.get("dept_id") is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
+
+    if role == "super_admin":
+        return bool(row_org_id and row_org_id in org_ids)
+
+    if role == "department_admin":
+        if _is_multi_dept_guardrail(row):
+            return False
+        if (row.get("visibility") or "private").strip().lower() == "public" and row.get("public_scope") == "organization":
+            return False
+        dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
+        dept_candidates = _guardrail_dept_candidates(row)
+        if (row.get("visibility") or "private").strip().lower() == "private":
+            return bool(dept_candidates.intersection(dept_id_set))
+        if row.get("public_scope") == "department":
+            return bool(dept_candidates.intersection(dept_id_set))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return (row.get("visibility") or "private").strip().lower() == "private" and str(row.get("created_by")) == str(current_user.id)
+
+    return False
+
+
+def _can_delete_guardrail(
+    row: dict[str, Any],
+    current_user: CurrentActiveUser,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(row.get("created_by")) == str(current_user.id)
+            and row.get("org_id") is None
+            and row.get("dept_id") is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    user_id = str(current_user.id)
+    row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
+
+    if role == "super_admin":
+        return bool(row_org_id and row_org_id in org_ids)
+
+    if role == "department_admin":
+        if _is_multi_dept_guardrail(row):
+            return False
+        if (row.get("visibility") or "private").strip().lower() == "public" and row.get("public_scope") == "organization":
+            return False
+        dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
+        dept_candidates = _guardrail_dept_candidates(row)
+        if (row.get("visibility") or "private").strip().lower() == "private":
+            return bool(dept_candidates.intersection(dept_id_set))
+        if row.get("public_scope") == "department":
+            return bool(dept_candidates.intersection(dept_id_set))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return (row.get("visibility") or "private").strip().lower() == "private" and str(row.get("created_by")) == user_id
+
+    return False
+
+
 def _validate_runtime_config_shape(payload: GuardrailPayload) -> None:
     runtime_config = payload.runtimeConfig
     if runtime_config is None:
@@ -583,8 +675,8 @@ async def update_guardrail_catalogue(
         raise HTTPException(status_code=404, detail="Guardrail not found") from exc
 
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
+    if not _can_edit_guardrail(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this guardrail")
 
     if payload.org_id is None:
         payload.org_id = UUID(row["org_id"]) if row.get("org_id") else None
@@ -663,8 +755,8 @@ async def delete_guardrail_catalogue(
         raise HTTPException(status_code=404, detail="Guardrail not found") from exc
 
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    if not _can_access_guardrail(row, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Guardrail is outside your visibility scope")
+    if not _can_delete_guardrail(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this guardrail")
 
     # ── Guard: prevent deletion of guardrails used in production ──
     try:

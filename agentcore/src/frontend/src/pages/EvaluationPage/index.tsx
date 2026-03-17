@@ -113,6 +113,8 @@ export default function EvaluationPage() {
   const isDepartmentAdmin = userRole === "department_admin";
   const isSuperAdmin = userRole === "super_admin";
   const canMultiDept = userRole === "super_admin" || userRole === "root";
+  const userId = userData?.id ?? null;
+  const userDeptId = userData?.department_id ?? null;
   const isMembershipLockedRole =
     userRole === "developer" ||
     userRole === "business_user" ||
@@ -147,6 +149,11 @@ export default function EvaluationPage() {
   const [runDetailLoading, setRunDetailLoading] = useState<boolean>(false);
   const [selectedRunDetail, setSelectedRunDetail] =
     useState<EvaluationDatasetRunDetail | null>(null);
+  const selectedDataset = useMemo(
+    () => datasets.find((dataset) => dataset.name === selectedDatasetName) || null,
+    [datasets, selectedDatasetName],
+  );
+  const canManageSelectedDataset = canDeleteDataset(selectedDataset);
   const [datasetForm, setDatasetForm] = useState({
     name: "",
     description: "",
@@ -284,6 +291,95 @@ export default function EvaluationPage() {
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   }, [visibilityOptions.departments]);
+
+  const getScopeDeptIds = useCallback((item: {
+    dept_id?: string | null;
+    public_dept_ids?: string[] | null;
+  }) => {
+    const ids = new Set<string>();
+    (item.public_dept_ids || []).forEach((id) => ids.add(id));
+    if (item.dept_id) ids.add(item.dept_id);
+    return Array.from(ids);
+  }, []);
+
+  const isMultiDeptScope = useCallback((item: {
+    visibility?: "private" | "public";
+    public_scope?: "organization" | "department" | null;
+    dept_id?: string | null;
+    public_dept_ids?: string[] | null;
+  }) => {
+    return (
+      item.visibility === "public" &&
+      item.public_scope === "department" &&
+      getScopeDeptIds(item).length > 1
+    );
+  }, [getScopeDeptIds]);
+
+  const isDeptScopedForUser = useCallback((item: {
+    dept_id?: string | null;
+    public_dept_ids?: string[] | null;
+  }) => {
+    return Boolean(userDeptId && getScopeDeptIds(item).includes(userDeptId));
+  }, [getScopeDeptIds, userDeptId]);
+
+  const getEvaluatorOwnerId = useCallback((ev: any) => {
+    return ev?.created_by_id || ev?.user_id || null;
+  }, []);
+
+  const canEditEvaluator = useCallback((ev: any) => {
+    if (userRole === "root") {
+      return getEvaluatorOwnerId(ev) === userId && !ev?.org_id && !ev?.dept_id;
+    }
+    if (userRole === "super_admin") return true;
+    if (userRole === "department_admin") {
+      if (isMultiDeptScope(ev)) return false;
+      if (ev?.visibility === "public" && ev?.public_scope === "organization") return false;
+      if (ev?.visibility === "public" && ev?.public_scope === "department") {
+        return isDeptScopedForUser(ev);
+      }
+      if (ev?.visibility === "private") return isDeptScopedForUser(ev);
+      return false;
+    }
+    if (userRole === "developer" || userRole === "business_user") {
+      return ev?.visibility === "private" && getEvaluatorOwnerId(ev) === userId;
+    }
+    return false;
+  }, [getEvaluatorOwnerId, isDeptScopedForUser, isMultiDeptScope, userId, userRole]);
+
+  const canDeleteEvaluator = useCallback((ev: any) => {
+    return canEditEvaluator(ev);
+  }, [canEditEvaluator]);
+
+  const getDatasetOwnerId = useCallback((ds: EvaluationDataset | null) => {
+    return (
+      ds?.created_by_id ||
+      ds?.owner_user_id ||
+      ds?.metadata?.app_user_id ||
+      ds?.metadata?.created_by_user_id ||
+      null
+    );
+  }, []);
+
+  const canDeleteDataset = useCallback((ds: EvaluationDataset | null) => {
+    if (!ds) return false;
+    if (userRole === "root") {
+      return getDatasetOwnerId(ds) === userId && !ds.org_id && !ds.dept_id;
+    }
+    if (userRole === "super_admin") return true;
+    if (userRole === "department_admin") {
+      if (isMultiDeptScope(ds)) return false;
+      if (ds.visibility === "public" && ds.public_scope === "organization") return false;
+      if (ds.visibility === "public" && ds.public_scope === "department") {
+        return isDeptScopedForUser(ds);
+      }
+      if (ds.visibility === "private") return isDeptScopedForUser(ds);
+      return false;
+    }
+    if (userRole === "developer" || userRole === "business_user") {
+      return ds.visibility === "private" && getDatasetOwnerId(ds) === userId;
+    }
+    return false;
+  }, [getDatasetOwnerId, isDeptScopedForUser, isMultiDeptScope, userId, userRole]);
   const datasetVisibilityScope = toVisibilityScope(datasetForm.visibility, datasetForm.public_scope);
   const judgeVisibilityScope = toVisibilityScope(judgeForm.visibility, judgeForm.public_scope);
   const datasetDepartmentsForSelectedOrg = useMemo(
@@ -594,7 +690,9 @@ export default function EvaluationPage() {
 
   useEffect(() => {
     if (!isMembershipLockedRole) return;
-    const firstDept = visibilityOptions.departments[0];
+    const firstDept =
+      visibilityOptions.departments.find((dept) => dept.id === userDeptId) ||
+      visibilityOptions.departments[0];
     if (!firstDept) return;
     setJudgeForm((prev) => ({
       ...prev,
@@ -608,7 +706,7 @@ export default function EvaluationPage() {
       dept_id: prev.visibility === "public" && prev.public_scope === "organization" ? prev.dept_id : firstDept.id,
       public_dept_ids: prev.visibility === "public" && prev.public_scope === "department" ? [firstDept.id] : prev.public_dept_ids,
     }));
-  }, [isMembershipLockedRole, visibilityOptions.departments]);
+  }, [isMembershipLockedRole, visibilityOptions.departments, userDeptId]);
 
   // Lazy-load scores data only when the Scores tab becomes active or environment changes
   useEffect(() => {
@@ -1442,15 +1540,15 @@ export default function EvaluationPage() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-medium">Dataset Management</h3>
             <div className="flex items-center gap-2">
-              {selectedDatasetName ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleDeleteDataset}
-                >
-                  Delete Dataset
-                </Button>
-              ) : null}
+                {selectedDatasetName && canManageSelectedDataset ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleDeleteDataset}
+                  >
+                    Delete Dataset
+                  </Button>
+                ) : null}
               <Button
                 size="sm"
                 variant="outline"
@@ -2054,16 +2152,18 @@ export default function EvaluationPage() {
                         >
                           View
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteDatasetRun(run);
-                          }}
-                        >
-                          Delete
-                        </Button>
+                          {canManageSelectedDataset && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteDatasetRun(run);
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          )}
                       </div>
                     </td>
                   </tr>
@@ -2276,43 +2376,47 @@ export default function EvaluationPage() {
                                   >
                                     {ev.criteria}
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <div className="flex items-center gap-2">
-                                      <Button
-                                        size="sm"
-                                        onClick={() =>
-                                          handleEditEvaluator(ev.id)
-                                        }
-                                      >
-                                        Edit
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() =>
-                                          handleRunSavedEvaluator(ev.id)
-                                        }
-                                        disabled={runningEvaluatorId === ev.id}
-                                      >
-                                        {runningEvaluatorId === ev.id
-                                          ? "Running..."
-                                          : "Run"}
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={async () => {
-                                          try {
-                                            await handleDeleteEvaluator(ev.id);
-                                          } catch {}
-                                        }}
-                                      >
-                                        Delete
-                                      </Button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
+                                    <td className="px-4 py-3">
+                                      <div className="flex items-center gap-2">
+                                        {canEditEvaluator(ev) && (
+                                          <Button
+                                            size="sm"
+                                            onClick={() =>
+                                              handleEditEvaluator(ev.id)
+                                            }
+                                          >
+                                            Edit
+                                          </Button>
+                                        )}
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() =>
+                                            handleRunSavedEvaluator(ev.id)
+                                          }
+                                          disabled={runningEvaluatorId === ev.id}
+                                        >
+                                          {runningEvaluatorId === ev.id
+                                            ? "Running..."
+                                            : "Run"}
+                                        </Button>
+                                        {canDeleteEvaluator(ev) && (
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            onClick={async () => {
+                                              try {
+                                                await handleDeleteEvaluator(ev.id);
+                                              } catch {}
+                                            }}
+                                          >
+                                            Delete
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
                             </tbody>
                           </table>
                         )}
@@ -2918,15 +3022,17 @@ export default function EvaluationPage() {
                             {stringifyCompact(item.metadata)}
                           </td>
                           <td className="px-4 py-3">{item.status || "-"}</td>
-                          <td className="px-4 py-3">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleDeleteDatasetItem(item.id)}
-                            >
-                              Delete
-                            </Button>
-                          </td>
+                            <td className="px-4 py-3">
+                              {canManageSelectedDataset && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleDeleteDatasetItem(item.id)}
+                                >
+                                  Delete
+                                </Button>
+                              )}
+                            </td>
                         </tr>
                       ))}
                       {datasetItems.length === 0 && (

@@ -498,6 +498,98 @@ def _can_access_connector(
     return False
 
 
+def _connector_dept_candidates(row: ConnectorCatalogue) -> set[str]:
+    dept_candidates = set(row.public_dept_ids or [])
+    if row.dept_id:
+        dept_candidates.add(str(row.dept_id))
+    return dept_candidates
+
+
+def _is_multi_dept_connector(row: ConnectorCatalogue) -> bool:
+    return (
+        _normalize_visibility(getattr(row, "visibility", "private")) == "public"
+        and getattr(row, "public_scope", None) == "department"
+        and len(_connector_dept_candidates(row)) > 1
+    )
+
+
+def _can_edit_connector(
+    row: ConnectorCatalogue,
+    current_user: CurrentActiveUser,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(getattr(row, "created_by", "")) == str(current_user.id)
+            and row.org_id is None
+            and row.dept_id is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    if role == "super_admin":
+        return bool(row.org_id and row.org_id in org_ids)
+
+    if role == "department_admin":
+        if _is_multi_dept_connector(row):
+            return False
+        if _normalize_visibility(getattr(row, "visibility", "private")) == "public" and getattr(row, "public_scope", None) == "organization":
+            return False
+        dept_ids = {str(dept_id) for _, dept_id in dept_pairs}
+        dept_candidates = _connector_dept_candidates(row)
+        if _normalize_visibility(getattr(row, "visibility", "private")) == "private":
+            return bool(dept_candidates.intersection(dept_ids))
+        if getattr(row, "public_scope", None) == "department":
+            return bool(dept_candidates.intersection(dept_ids))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return (
+            _normalize_visibility(getattr(row, "visibility", "private")) == "private"
+            and str(getattr(row, "created_by", "")) == str(current_user.id)
+        )
+
+    return False
+
+
+def _can_delete_connector(
+    row: ConnectorCatalogue,
+    current_user: CurrentActiveUser,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(getattr(row, "created_by", "")) == str(current_user.id)
+            and row.org_id is None
+            and row.dept_id is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    user_id = str(current_user.id)
+
+    if role == "super_admin":
+        return bool(row.org_id and row.org_id in org_ids)
+
+    if role == "department_admin":
+        if _is_multi_dept_connector(row):
+            return False
+        if _normalize_visibility(getattr(row, "visibility", "private")) == "public" and getattr(row, "public_scope", None) == "organization":
+            return False
+        dept_ids = {str(dept_id) for _, dept_id in dept_pairs}
+        dept_candidates = _connector_dept_candidates(row)
+        if _normalize_visibility(getattr(row, "visibility", "private")) == "private":
+            return bool(dept_candidates.intersection(dept_ids))
+        if getattr(row, "public_scope", None) == "department":
+            return bool(dept_candidates.intersection(dept_ids))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return _normalize_visibility(getattr(row, "visibility", "private")) == "private" and str(getattr(row, "created_by", "")) == user_id
+
+    return False
+
+
 def _test_connector_payload_or_raise(payload: TestConnectionPayload) -> dict:
     provider = (payload.provider or "").strip().lower()
     if not provider:
@@ -1027,8 +1119,8 @@ async def update_connector(
     if not row:
         raise HTTPException(status_code=404, detail="Connector not found")
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    if not _can_access_connector(row, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Connector is outside your visibility scope")
+    if not _can_edit_connector(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this connector")
 
     if payload.org_id is None:
         payload.org_id = row.org_id
@@ -1162,8 +1254,8 @@ async def delete_connector(
     if not row:
         raise HTTPException(status_code=404, detail="Connector not found")
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
-    if not _can_access_connector(row, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Connector is outside your visibility scope")
+    if not _can_delete_connector(row, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this connector")
 
     await session.delete(row)
     await session.commit()

@@ -69,7 +69,7 @@ export default function GuardrailsView({
     setSelectedEnvironment(env);
   }, []);
 
-  const { permissions, role } = useContext(AuthContext);
+  const { permissions, role, userData } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
   const isProdView = selectedEnvironment === "prod";
   const canCreateOrEdit = can("add_guardrails") && !isProdView;
@@ -77,6 +77,8 @@ export default function GuardrailsView({
   const canManage = canCreateOrEdit || canDelete;
   const isDepartmentAdmin = role === "department_admin";
   const isSuperAdmin = role === "super_admin";
+  const userDeptId = userData?.department_id ?? null;
+  const userId = userData?.id ?? null;
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -189,6 +191,71 @@ export default function GuardrailsView({
     const names = deptIds.map((id) => deptNameById.get(id) || id);
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  };
+
+  const getGuardrailDeptIds = (guardrail: GuardrailInfo) => {
+    const ids = new Set<string>();
+    (guardrail.public_dept_ids || []).forEach((id) => ids.add(id));
+    if (guardrail.dept_id) ids.add(guardrail.dept_id);
+    return Array.from(ids);
+  };
+
+  const isMultiDeptGuardrail = (guardrail: GuardrailInfo) =>
+    guardrail.visibility === "public" &&
+    guardrail.public_scope === "department" &&
+    getGuardrailDeptIds(guardrail).length > 1;
+
+  const isDeptScopedForUser = (guardrail: GuardrailInfo) =>
+    Boolean(userDeptId && getGuardrailDeptIds(guardrail).includes(userDeptId));
+
+  const canEditGuardrail = (guardrail: GuardrailInfo) => {
+    if (!canCreateOrEdit) return false;
+    if (role === "root") {
+      return (
+        guardrail.created_by_id === userId &&
+        !guardrail.org_id &&
+        !guardrail.dept_id
+      );
+    }
+    if (role === "super_admin") return true;
+    if (role === "department_admin") {
+      if (isMultiDeptGuardrail(guardrail)) return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "organization") return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "department") {
+        return isDeptScopedForUser(guardrail);
+      }
+      if (guardrail.visibility === "private") return isDeptScopedForUser(guardrail);
+      return false;
+    }
+    if (role === "developer" || role === "business_user") {
+      return guardrail.visibility === "private" && guardrail.created_by_id === userId;
+    }
+    return false;
+  };
+
+  const canDeleteGuardrail = (guardrail: GuardrailInfo) => {
+    if (!canDelete) return false;
+    if (role === "root") {
+      return (
+        guardrail.created_by_id === userId &&
+        !guardrail.org_id &&
+        !guardrail.dept_id
+      );
+    }
+    if (role === "super_admin") return true;
+    if (role === "department_admin") {
+      if (isMultiDeptGuardrail(guardrail)) return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "organization") return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "department") {
+        return isDeptScopedForUser(guardrail);
+      }
+      if (guardrail.visibility === "private") return isDeptScopedForUser(guardrail);
+      return false;
+    }
+    if (role === "developer" || role === "business_user") {
+      return guardrail.visibility === "private" && guardrail.created_by_id === userId;
+    }
+    return false;
   };
 
   const handleCreateGuardrail = () => {
@@ -464,36 +531,43 @@ export default function GuardrailsView({
                             )}
                             {canManage && !isProdView && (
                               <td className="px-6 py-4">
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button className="rounded p-1 hover:bg-muted">
-                                      <MoreVertical className="h-4 w-4" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    {canCreateOrEdit && (
-                                      <DropdownMenuItem
-                                        onClick={() =>
-                                          handleEditGuardrail(guardrail)
-                                        }
-                                      >
-                                        <Edit2 className="mr-2 h-4 w-4" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                    )}
-                                    {canDelete && (
-                                      <DropdownMenuItem
-                                        onClick={() =>
-                                          handleDeleteGuardrail(guardrail)
-                                        }
-                                        className="text-destructive"
-                                      >
-                                        <Trash2 className="mr-2 h-4 w-4" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    )}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                {canEditGuardrail(guardrail) ||
+                                canDeleteGuardrail(guardrail) ? (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button className="rounded p-1 hover:bg-muted">
+                                        <MoreVertical className="h-4 w-4" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      {canEditGuardrail(guardrail) && (
+                                        <DropdownMenuItem
+                                          onClick={() =>
+                                            handleEditGuardrail(guardrail)
+                                          }
+                                        >
+                                          <Edit2 className="mr-2 h-4 w-4" />
+                                          Edit
+                                        </DropdownMenuItem>
+                                      )}
+                                      {canDeleteGuardrail(guardrail) && (
+                                        <DropdownMenuItem
+                                          onClick={() =>
+                                            handleDeleteGuardrail(guardrail)
+                                          }
+                                          className="text-destructive"
+                                        >
+                                          <Trash2 className="mr-2 h-4 w-4" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    -
+                                  </span>
+                                )}
                               </td>
                             )}
                           </tr>

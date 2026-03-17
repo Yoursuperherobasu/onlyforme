@@ -182,7 +182,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { role, permissions } = useContext(AuthContext);
+  const { role, permissions, userData } = useContext(AuthContext);
   const canViewConnectorPage =
     permissions?.includes("connectore_page") ||
     permissions?.includes("view_connectors_page") ||
@@ -192,11 +192,83 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   const canSeeVisibilityColumn = true;
   const isDepartmentAdmin = role === "department_admin";
   const isSuperAdmin = role === "super_admin";
+  const userDeptId = userData?.department_id ?? null;
+  const userId = userData?.id ?? null;
+
+  const getConnectorDeptIds = (connector: ConnectorInfo) => {
+    const ids = new Set<string>();
+    (connector.public_dept_ids || []).forEach((id) => ids.add(id));
+    if (connector.dept_id) ids.add(connector.dept_id);
+    return Array.from(ids);
+  };
+
+  const isMultiDeptConnector = (connector: ConnectorInfo) =>
+    connector.visibility === "public" &&
+    connector.public_scope === "department" &&
+    getConnectorDeptIds(connector).length > 1;
+
+  const isDeptScopedForUser = (connector: ConnectorInfo) =>
+    Boolean(userDeptId && getConnectorDeptIds(connector).includes(userDeptId));
+
+  const canEditConnector = (connector: ConnectorInfo) => {
+    if (role === "root") {
+      return (
+        connector.created_by_id === userId &&
+        !connector.org_id &&
+        !connector.dept_id
+      );
+    }
+    if (role === "super_admin") return true;
+    if (role === "department_admin") {
+      if (isMultiDeptConnector(connector)) return false;
+      if (connector.visibility === "public" && connector.public_scope === "organization") return false;
+      if (connector.visibility === "public" && connector.public_scope === "department") {
+        return isDeptScopedForUser(connector);
+      }
+      if (connector.visibility === "private") return isDeptScopedForUser(connector);
+      return false;
+    }
+    if (role === "developer" || role === "business_user") {
+      return connector.visibility === "private" && connector.created_by_id === userId;
+    }
+    return false;
+  };
+
+  const canDeleteConnector = (connector: ConnectorInfo) => {
+    if (role === "root") {
+      return (
+        connector.created_by_id === userId &&
+        !connector.org_id &&
+        !connector.dept_id
+      );
+    }
+    if (role === "super_admin") return true;
+    if (role === "department_admin") {
+      if (isMultiDeptConnector(connector)) return false;
+      if (connector.visibility === "public" && connector.public_scope === "organization") return false;
+      if (connector.visibility === "public" && connector.public_scope === "department") {
+        return isDeptScopedForUser(connector);
+      }
+      if (connector.visibility === "private") return isDeptScopedForUser(connector);
+      return false;
+    }
+    if (role === "developer" || role === "business_user") {
+      return connector.visibility === "private" && connector.created_by_id === userId;
+    }
+    return false;
+  };
 
   const [visibilityOptions, setVisibilityOptions] = useState<{
     organizations: { id: string; name: string }[];
     departments: { id: string; name: string; org_id: string }[];
   }>({ organizations: [], departments: [] });
+  const userDeptOrgId = useMemo(() => {
+    if (!userDeptId) return null;
+    return (
+      visibilityOptions.departments.find((dept) => dept.id === userDeptId)
+        ?.org_id ?? null
+    );
+  }, [userDeptId, visibilityOptions.departments]);
 
   const [form, setForm] = useState<FormState>({ ...BLANK_FORM });
 
@@ -298,7 +370,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             deptId = null;
           }
         } else {
-          deptId = deptId || visibilityOptions.departments[0]?.id || null;
+          deptId = deptId || userDeptId || visibilityOptions.departments[0]?.id || null;
         }
         if (!orgId) {
           const selectedDept =
@@ -308,7 +380,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         }
       }
     } else if (role === "developer" || role === "department_admin") {
-      const defaultDept = visibilityOptions.departments[0];
+      const defaultDept =
+        visibilityOptions.departments.find((d) => d.id === userDeptId) ||
+        visibilityOptions.departments[0];
       if (defaultDept) {
         orgId = orgId || defaultDept.org_id;
         deptId = deptId || defaultDept.id;
@@ -325,6 +399,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     role,
     visibilityOptions.departments,
     visibilityOptions.organizations,
+    userDeptId,
   ]);
   const connectorNameAvailability = useNameAvailability({
     entity: "connector",
@@ -337,15 +412,32 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
   useEffect(() => {
     if (form.visibility !== "public") return;
-    const isOrgLockedRole = role === "developer" || role === "department_admin";
-    if (form.public_scope === "organization" && isOrgLockedRole && !form.org_id && visibilityOptions.organizations.length > 0) {
-      setForm((prev) => ({ ...prev, org_id: visibilityOptions.organizations[0].id }));
+    const isOrgLockedRole =
+      role === "developer" || role === "department_admin" || role === "business_user";
+    if (
+      form.public_scope === "organization" &&
+      isOrgLockedRole &&
+      !form.org_id
+    ) {
+      const fallbackOrgId =
+        userDeptOrgId || visibilityOptions.organizations[0]?.id;
+      if (fallbackOrgId) {
+        setForm((prev) => ({ ...prev, org_id: fallbackOrgId }));
+      }
       return;
     }
     const canMultiDept = role === "super_admin" || role === "root";
-    if (form.public_scope === "department" && !canMultiDept && !form.dept_id && visibilityOptions.departments.length > 0) {
-      const firstDept = visibilityOptions.departments[0];
-      setForm((prev) => ({ ...prev, dept_id: firstDept.id, org_id: prev.org_id || firstDept.org_id }));
+    if (form.public_scope === "department" && !canMultiDept && !form.dept_id) {
+      const firstDept =
+        visibilityOptions.departments.find((d) => d.id === userDeptId) ||
+        visibilityOptions.departments[0];
+      if (firstDept) {
+        setForm((prev) => ({
+          ...prev,
+          dept_id: firstDept.id,
+          org_id: prev.org_id || firstDept.org_id,
+        }));
+      }
     }
   }, [
     form.visibility,
@@ -355,6 +447,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     role,
     visibilityOptions.organizations,
     visibilityOptions.departments,
+    userDeptId,
+    userDeptOrgId,
   ]);
 
   const resetForm = () => {
@@ -432,13 +526,18 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       public_scope: form.visibility === "public" ? form.public_scope : null,
       org_id:
         form.org_id ||
-        ((role === "developer" || role === "department_admin") && form.visibility === "public" && form.public_scope === "organization"
-          ? visibilityOptions.organizations[0]?.id
+        ((role === "developer" || role === "department_admin" || role === "business_user") &&
+        form.visibility === "public" &&
+        form.public_scope === "organization"
+          ? userDeptOrgId || visibilityOptions.organizations[0]?.id
           : undefined),
       dept_id:
         form.dept_id ||
-        ((form.visibility === "public" && form.public_scope === "department" && role !== "super_admin" && role !== "root")
-          ? visibilityOptions.departments[0]?.id
+        ((form.visibility === "public" &&
+          form.public_scope === "department" &&
+          role !== "super_admin" &&
+          role !== "root")
+          ? userDeptId || visibilityOptions.departments[0]?.id
           : undefined),
       public_dept_ids:
         form.visibility === "public" && form.public_scope === "department"
@@ -528,13 +627,18 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       if (!form.public_scope) return true;
       if (form.public_scope === "organization") {
         const effectiveOrgId =
-          form.org_id || ((role === "developer" || role === "department_admin") ? visibilityOptions.organizations[0]?.id : "");
+          form.org_id ||
+          ((role === "developer" || role === "department_admin" || role === "business_user")
+            ? userDeptOrgId || visibilityOptions.organizations[0]?.id
+            : "");
         if (!effectiveOrgId) return true;
       }
       if (form.public_scope === "department") {
         const canMultiDept = role === "super_admin" || role === "root";
         if (canMultiDept && form.public_dept_ids.length === 0) return true;
-        const effectiveDeptId = form.dept_id || (!canMultiDept ? visibilityOptions.departments[0]?.id : "");
+        const effectiveDeptId =
+          form.dept_id ||
+          (!canMultiDept ? userDeptId || visibilityOptions.departments[0]?.id : "");
         if (!canMultiDept && !effectiveDeptId) return true;
       }
     }
@@ -1078,20 +1182,24 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                   )}
                                 </button>
                               )}
-                              <button
-                                onClick={() => openEditModal(c)}
-                                className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                                title="Edit"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={() => setDeleteConfirm(c.id)}
-                                className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              {canEditConnector(c) && (
+                                <button
+                                  onClick={() => openEditModal(c)}
+                                  className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                                  title="Edit"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                              )}
+                              {canDeleteConnector(c) && (
+                                <button
+                                  onClick={() => setDeleteConfirm(c.id)}
+                                  className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         )}

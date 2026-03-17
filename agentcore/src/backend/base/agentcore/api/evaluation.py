@@ -319,6 +319,66 @@ def _can_access_evaluator(
     return False
 
 
+def _evaluator_dept_candidates(evaluator: Evaluator) -> set[str]:
+    dept_candidates = set(evaluator.public_dept_ids or [])
+    if evaluator.dept_id:
+        dept_candidates.add(str(evaluator.dept_id))
+    return dept_candidates
+
+
+def _is_multi_dept_evaluator(evaluator: Evaluator) -> bool:
+    return (
+        (evaluator.visibility or "private").strip().lower() == "public"
+        and evaluator.public_scope == "department"
+        and len(_evaluator_dept_candidates(evaluator)) > 1
+    )
+
+
+def _can_edit_evaluator(
+    evaluator: Evaluator,
+    current_user,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user):
+        return (
+            str(evaluator.user_id) == str(current_user.id)
+            and evaluator.org_id is None
+            and evaluator.dept_id is None
+        )
+
+    role = normalize_role(str(current_user.role))
+    if role == "super_admin":
+        return bool(evaluator.org_id and evaluator.org_id in org_ids)
+
+    if role == "department_admin":
+        if _is_multi_dept_evaluator(evaluator):
+            return False
+        if (evaluator.visibility or "private").strip().lower() == "public" and evaluator.public_scope == "organization":
+            return False
+        dept_id_set = {str(dept_id) for _, dept_id in dept_pairs}
+        dept_candidates = _evaluator_dept_candidates(evaluator)
+        if (evaluator.visibility or "private").strip().lower() == "private":
+            return bool(dept_candidates.intersection(dept_id_set))
+        if evaluator.public_scope == "department":
+            return bool(dept_candidates.intersection(dept_id_set))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return (evaluator.visibility or "private").strip().lower() == "private" and str(evaluator.user_id) == str(current_user.id)
+
+    return False
+
+
+def _can_delete_evaluator(
+    evaluator: Evaluator,
+    current_user,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    return _can_edit_evaluator(evaluator, current_user, org_ids, dept_pairs)
+
+
 async def _get_scoped_langfuse_for_evaluation(
     session,
     current_user,
@@ -918,6 +978,77 @@ def _dataset_item_accessible_by_users(item_obj: Any, allowed_user_ids: set[str])
     if owner is None:
         return True
     return str(owner) in allowed_user_ids
+
+
+def _dataset_dept_candidates(metadata: dict[str, Any]) -> set[str]:
+    dept_candidates = set(metadata.get("public_dept_ids") or [])
+    if metadata.get("dept_id"):
+        dept_candidates.add(str(metadata.get("dept_id")))
+    return dept_candidates
+
+
+def _is_multi_dept_dataset(metadata: dict[str, Any]) -> bool:
+    return (
+        (metadata.get("visibility") or "private") == "public"
+        and metadata.get("public_scope") == "department"
+        and len(_dataset_dept_candidates(metadata)) > 1
+    )
+
+
+def _dataset_owner_id(metadata: dict[str, Any]) -> str | None:
+    return (
+        metadata.get("app_user_id")
+        or metadata.get("user_id")
+        or metadata.get("owner_user_id")
+        or metadata.get("created_by_user_id")
+    )
+
+
+def _can_manage_dataset(
+    dataset_obj: Any,
+    current_user,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    metadata = get_attr(dataset_obj, "metadata", default=None)
+    if not isinstance(metadata, dict):
+        return False
+
+    owner = _dataset_owner_id(metadata)
+    ds_org_id = metadata.get("org_id")
+    ds_dept_id = metadata.get("dept_id")
+    visibility = metadata.get("visibility", "private")
+    public_scope = metadata.get("public_scope")
+
+    if current_user and _is_root_user(current_user):
+        return bool(
+            owner is not None
+            and str(owner) == str(current_user.id)
+            and ds_org_id is None
+            and ds_dept_id is None
+        )
+
+    role = normalize_role(str(getattr(current_user, "role", "")))
+    if role == "super_admin" and ds_org_id and org_ids:
+        return UUID(str(ds_org_id)) in org_ids
+
+    if role == "department_admin":
+        if _is_multi_dept_dataset(metadata):
+            return False
+        if visibility == "public" and public_scope == "organization":
+            return False
+        dept_id_set = {str(d) for _, d in dept_pairs}
+        dept_candidates = _dataset_dept_candidates(metadata)
+        if visibility == "private":
+            return bool(dept_candidates.intersection(dept_id_set))
+        if public_scope == "department":
+            return bool(dept_candidates.intersection(dept_id_set))
+        return False
+
+    if role in {"developer", "business_user"}:
+        return visibility == "private" and owner is not None and str(owner) == str(current_user.id)
+
+    return False
 
 
 async def _check_dataset_access(
@@ -4563,6 +4694,7 @@ async def create_dataset(
     if visibility == "public":
         role = normalize_role(current_user.role)
         org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+        user_dept_ids = {d for _, d in dept_pairs}
 
         if public_scope == "organization":
             if payload.org_id:
@@ -4573,18 +4705,30 @@ async def create_dataset(
                 resolved_org_id = str(sorted(org_ids, key=str)[0])
         elif public_scope == "department":
             if payload.org_id:
+                if not _is_root_user(current_user) and payload.org_id not in org_ids:
+                    raise HTTPException(status_code=403, detail="Organization not in your scope.")
                 resolved_org_id = str(payload.org_id)
             elif org_ids:
                 resolved_org_id = str(sorted(org_ids, key=str)[0])
 
             if payload.public_dept_ids:
                 if not _is_root_user(current_user) and role != "super_admin":
-                    user_dept_ids = {d for _, d in dept_pairs}
                     for did in payload.public_dept_ids:
                         if did not in user_dept_ids:
                             raise HTTPException(status_code=403, detail=f"Department {did} is not in your scope.")
+                if resolved_org_id:
+                    await _validate_departments_exist_for_org(
+                        session, UUID(resolved_org_id), payload.public_dept_ids
+                    )
                 resolved_public_dept_ids = [str(d) for d in payload.public_dept_ids]
             elif payload.dept_id:
+                if not _is_root_user(current_user) and role != "super_admin":
+                    if payload.dept_id not in user_dept_ids:
+                        raise HTTPException(status_code=403, detail="Department is not in your scope.")
+                if resolved_org_id:
+                    await _validate_departments_exist_for_org(
+                        session, UUID(resolved_org_id), [payload.dept_id]
+                    )
                 resolved_dept_id = str(payload.dept_id)
                 resolved_public_dept_ids = [str(payload.dept_id)]
             elif dept_pairs:
@@ -4644,6 +4788,9 @@ async def delete_dataset(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete dataset")
 
     runs_deleted = 0
     items_deleted = 0
@@ -4726,6 +4873,9 @@ async def list_dataset_items(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete dataset items")
 
     try:
         rows, total = _fetch_dataset_items_page(client, dataset_name, page, limit)
@@ -4769,6 +4919,9 @@ async def create_dataset_item(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete dataset runs")
 
     try:
         return _create_dataset_item_for_user(
@@ -6078,10 +6231,9 @@ async def update_evaluator_config(
             if not eval_obj:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
-            # Connector-style: any in-scope user can manage accessible evaluators
             org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-            if not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
-                raise HTTPException(status_code=404, detail="Evaluator not found")
+            if not _can_edit_evaluator(eval_obj, current_user, org_ids, dept_pairs):
+                raise HTTPException(status_code=403, detail="Not authorized to edit evaluator")
 
             # Resolve model from registry
             effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
@@ -6146,10 +6298,9 @@ async def delete_evaluator_config(
             if not eval_obj:
                 raise HTTPException(status_code=404, detail="Evaluator not found")
 
-            # Connector-style: any in-scope user can delete accessible evaluators
             org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-            if not _can_access_evaluator(eval_obj, current_user, org_ids, dept_pairs):
-                raise HTTPException(status_code=404, detail="Evaluator not found")
+            if not _can_delete_evaluator(eval_obj, current_user, org_ids, dept_pairs):
+                raise HTTPException(status_code=403, detail="Not authorized to delete evaluator")
 
             await session.delete(eval_obj)
             await session.commit()
