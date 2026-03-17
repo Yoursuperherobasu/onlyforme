@@ -284,56 +284,68 @@ export default function ObservabilityPage(): JSX.Element {
             </TabsList>
 
             <TabsContent value="overview">
-              <OverviewTab
-                metrics={metrics.data}
-                metricsLoading={metrics.isLoading}
-                agentsData={agentsData.data}
-                sessionsData={sessionsData.data}
-                fetchAllMode={fetchAllMode}
-                onLoadAll={() => setFetchAllMode(true)}
-                onSelectSession={setSelectedSession}
-              />
+              {activeTab === "overview" && (
+                <OverviewTab
+                  metrics={metrics.data}
+                  metricsLoading={metrics.isLoading}
+                  agentsData={agentsData.data}
+                  sessionsData={sessionsData.data}
+                  fetchAllMode={fetchAllMode}
+                  onLoadAll={() => setFetchAllMode(true)}
+                  onSelectSession={setSelectedSession}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="agents">
-              <AgentsTab
-                agentsData={agentsData.data}
-                agentsLoading={agentsData.isLoading}
-                agentsFetching={agentsData.isFetching}
-                fetchAllMode={fetchAllMode}
-                onLoadAll={() => setFetchAllMode(true)}
-                onSelectAgent={setSelectedAgent}
-              />
+              {activeTab === "agents" && (
+                <AgentsTab
+                  agentsData={agentsData.data}
+                  agentsLoading={agentsData.isLoading}
+                  agentsFetching={agentsData.isFetching}
+                  fetchAllMode={fetchAllMode}
+                  onLoadAll={() => setFetchAllMode(true)}
+                  onSelectAgent={setSelectedAgent}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="projects">
-              <ProjectsTab
-                projectsData={projectsData.data}
-                projectsLoading={projectsData.isLoading}
-                projectsFetching={projectsData.isFetching}
-                fetchAllMode={fetchAllMode}
-                onLoadAll={() => setFetchAllMode(true)}
-                onSelectProject={setSelectedProject}
-              />
+              {activeTab === "projects" && (
+                <ProjectsTab
+                  projectsData={projectsData.data}
+                  projectsLoading={projectsData.isLoading}
+                  projectsFetching={projectsData.isFetching}
+                  fetchAllMode={fetchAllMode}
+                  onLoadAll={() => setFetchAllMode(true)}
+                  onSelectProject={setSelectedProject}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="sessions">
-              <SessionsTab
-                sessionsData={sessionsData.data}
-                sessionsLoading={sessionsData.isLoading}
-                sessionsFetching={sessionsData.isFetching}
-                fetchAllMode={fetchAllMode}
-                onLoadAll={() => setFetchAllMode(true)}
-                onSelectSession={setSelectedSession}
-              />
+              {activeTab === "sessions" && (
+                <SessionsTab
+                  sessionsData={sessionsData.data}
+                  sessionsLoading={sessionsData.isLoading}
+                  sessionsFetching={sessionsData.isFetching}
+                  fetchAllMode={fetchAllMode}
+                  onLoadAll={() => setFetchAllMode(true)}
+                  onSelectSession={setSelectedSession}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="models">
-              <ModelsTab metrics={metrics.data} metricsLoading={metrics.isLoading} />
+              {activeTab === "models" && (
+                <ModelsTab metrics={metrics.data} metricsLoading={metrics.isLoading} />
+              )}
             </TabsContent>
 
             <TabsContent value="usage">
-              <UsageTab metrics={metrics.data} metricsLoading={metrics.isLoading} />
+              {activeTab === "usage" && (
+                <UsageTab metrics={metrics.data} metricsLoading={metrics.isLoading} />
+              )}
             </TabsContent>
           </Tabs>
         )}

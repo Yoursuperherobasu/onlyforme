@@ -24,6 +24,7 @@ export const CategoryGroup = memo(function CategoryGroup({
   sensitiveSort,
   showConfig,
   setShowConfig,
+  readOnly = false,
 }: CategoryGroupProps) {
   const { t } = useTranslation();
   return (
@@ -83,6 +84,7 @@ export const CategoryGroup = memo(function CategoryGroup({
                   nodeColors={nodeColors}
                   onDragStart={onDragStart}
                   sensitiveSort={sensitiveSort}
+                  readOnly={readOnly}
                 />
               );
             })}

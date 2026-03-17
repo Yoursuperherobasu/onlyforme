@@ -20,6 +20,7 @@ export const BundleItem = memo(
     onDragStart,
     sensitiveSort,
     handleKeyDownInput,
+    readOnly = false,
   }: BundleItemProps) => {
     const isOpen = openCategories.includes(item.name);
     const { t } = useTranslation();
@@ -68,6 +69,7 @@ export const BundleItem = memo(
               nodeColors={nodeColors}
               onDragStart={onDragStart}
               sensitiveSort={sensitiveSort}
+              readOnly={readOnly}
             />
           </DisclosureContent>
         </SidebarMenuItem>

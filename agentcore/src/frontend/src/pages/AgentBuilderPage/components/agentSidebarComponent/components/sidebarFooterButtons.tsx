@@ -11,6 +11,7 @@ const SidebarMenuButtons = ({
   customComponent,
   addComponent,
   isLoading = false,
+  readOnly = false,
 }) => {
   const { activeSection } = useSidebar();
   const [addMcpOpen, setAddMcpOpen] = useState(false);
@@ -25,8 +26,11 @@ const SidebarMenuButtons = ({
       <SidebarMenuButton asChild>
         <Button
           unstyled
-          disabled={isLoading}
-          onClick={handleAddMcpServerClick}
+          disabled={isLoading || readOnly}
+          onClick={() => {
+            if (readOnly) return;
+            handleAddMcpServerClick();
+          }}
           data-testid="sidebar-add-mcp-server-button"
           className="flex items-center w-full h-full gap-3 hover:bg-muted"
         >
@@ -42,8 +46,9 @@ const SidebarMenuButtons = ({
       <SidebarMenuButton asChild>
         <Button
           unstyled
-          disabled={isLoading}
+          disabled={isLoading || readOnly}
           onClick={() => {
+            if (readOnly) return;
             navigate("/settings/mcp-servers");
           }}
           data-testid="sidebar-manage-servers-button"
@@ -64,8 +69,9 @@ const SidebarMenuButtons = ({
     <SidebarMenuButton asChild className="group">
       <Button
         unstyled
-        disabled={isLoading}
+        disabled={isLoading || readOnly}
         onClick={() => {
+          if (readOnly) return;
           if (customComponent) {
             addComponent(customComponent, "CustomComponent");
           }

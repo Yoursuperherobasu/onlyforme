@@ -27,6 +27,7 @@ type McpSidebarGroupProps = {
   showSearchConfigTrigger: boolean;
   showConfig: boolean;
   setShowConfig: React.Dispatch<React.SetStateAction<boolean>>;
+  readOnly?: boolean;
 };
 
 const McpSidebarGroup = ({
@@ -41,6 +42,7 @@ const McpSidebarGroup = ({
   showSearchConfigTrigger,
   showConfig,
   setShowConfig,
+  readOnly = false,
 }: McpSidebarGroupProps) => {
   const isLoading = mcpLoading;
   const isSuccess = mcpSuccess;
@@ -100,6 +102,7 @@ const McpSidebarGroup = ({
                   legacy={mcpComponent.legacy ?? false}
                   disabled={false}
                   disabledTooltip={""}
+                  readOnly={readOnly}
                 />
               </ShadTooltip>
             ))}

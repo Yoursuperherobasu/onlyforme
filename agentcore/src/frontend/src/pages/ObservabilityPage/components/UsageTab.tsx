@@ -4,9 +4,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis,
+  BarChart, Bar, AreaChart, Area, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend,
 } from "recharts";
+import { SafeResponsiveContainer } from "@/components/charts/SafeResponsiveContainer";
 import { Activity, Layers, Calendar, Search } from "lucide-react";
 import { THEME } from "../theme";
 import { formatCost, formatTokens } from "../utils";
@@ -42,7 +43,7 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
               <CardDescription style={{ color: THEME.textSecondary }}>Daily activity breakdown</CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={280}>
+              <SafeResponsiveContainer width="100%" height={280}>
                 <BarChart data={metrics.by_date}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="date" tick={{ fontSize: 12, fill: THEME.textSecondary }} tickFormatter={(v) => v.slice(5)} axisLine={{ stroke: '#e5e7eb' }} />
@@ -52,7 +53,7 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
                   <Bar dataKey="trace_count" fill={THEME.primary} name="Traces" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="observation_count" fill={THEME.chartColors[1]} name="Observations" radius={[4, 4, 0, 0]} />
                 </BarChart>
-              </ResponsiveContainer>
+              </SafeResponsiveContainer>
             </CardContent>
           </Card>
 
@@ -65,7 +66,7 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
               <CardDescription style={{ color: THEME.textSecondary }}>Token breakdown over time</CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={280}>
+              <SafeResponsiveContainer width="100%" height={280}>
                 <AreaChart data={metrics.by_date}>
                   <defs>
                     <linearGradient id="usageTokenGradient" x1="0" y1="0" x2="0" y2="1">
@@ -80,7 +81,7 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
                   <Legend />
                   <Area type="monotone" dataKey="total_tokens" stroke={THEME.chartColors[2]} strokeWidth={2} fill="url(#usageTokenGradient)" name="Total Tokens" />
                 </AreaChart>
-              </ResponsiveContainer>
+              </SafeResponsiveContainer>
             </CardContent>
           </Card>
         </div>
@@ -134,3 +135,5 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
     </div>
   );
 }
+
+

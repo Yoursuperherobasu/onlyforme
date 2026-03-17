@@ -117,7 +117,13 @@ export default function CollectionPage(): JSX.Element {
     folders.length === 0 &&
     !new URLSearchParams(location.search).has("openCreateProject");
 
-  const showSidebar = true;
+  const isRegistryPreviewRoute = /^\/agent-catalogue\/[^/]+\/view\/?$/.test(
+    location.pathname,
+  );
+  const isReadOnlyAgentRoute =
+    location.pathname.startsWith("/agent/") &&
+    new URLSearchParams(location.search).get("readonly") === "1";
+  const showSidebar = !(isRegistryPreviewRoute || isReadOnlyAgentRoute);
 
   /* ================= SHARED SIDEBAR ================= */
 

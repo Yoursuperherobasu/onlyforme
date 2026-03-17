@@ -18,6 +18,7 @@ export const CategoryGroup = memo(function CategoryGroup({
   nodeColors,
   onDragStart,
   sensitiveSort,
+  readOnly = false,
 }: CategoryGroupProps) {
   return (
     <SidebarGroup className="p-3">
@@ -66,6 +67,7 @@ export const CategoryGroup = memo(function CategoryGroup({
                   nodeColors={nodeColors}
                   onDragStart={onDragStart}
                   sensitiveSort={sensitiveSort}
+                  readOnly={readOnly}
                 />
               );
             })}

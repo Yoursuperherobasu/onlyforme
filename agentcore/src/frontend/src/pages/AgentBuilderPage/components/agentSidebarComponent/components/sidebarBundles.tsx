@@ -26,6 +26,7 @@ export const MemoizedSidebarGroup = memo(
     showSearchConfigTrigger,
     showConfig,
     setShowConfig,
+    readOnly = false,
   }: SidebarGroupProps) => {
     const sortedBundles = useMemo(() => {
       return BUNDLES.toSorted((a, b) => {
@@ -66,6 +67,7 @@ export const MemoizedSidebarGroup = memo(
                 onDragStart={onDragStart}
                 sensitiveSort={sensitiveSort}
                 handleKeyDownInput={handleKeyDownInput}
+                readOnly={readOnly}
               />
             ))}
           </SidebarMenu>

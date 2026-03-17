@@ -4,8 +4,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Area, AreaChart, PieChart, Pie, Cell, Legend, ComposedChart,
+  Area, AreaChart, PieChart, Pie, Cell, Legend, ComposedChart,
 } from "recharts";
+import { SafeResponsiveContainer } from "@/components/charts/SafeResponsiveContainer";
 import {
   Activity, Layers, DollarSign, Clock, TrendingUp, Timer, Cpu,
   PieChart as PieChartIcon, ChevronRight, XCircle,
@@ -71,7 +72,7 @@ export function OverviewTab({
                 <CardDescription style={{ color: THEME.textSecondary }}>Daily cost trend with activity correlation</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={220}>
+                <SafeResponsiveContainer width="100%" height={220}>
                   <ComposedChart data={metrics.by_date}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="date" tick={{ fontSize: 12, fill: THEME.textSecondary }} tickFormatter={(v) => v.slice(5)} axisLine={{ stroke: '#e5e7eb' }} />
@@ -82,7 +83,7 @@ export function OverviewTab({
                     <Bar yAxisId="right" dataKey="trace_count" fill={THEME.chartColors[1]} opacity={0.3} radius={[4, 4, 0, 0]} name="Traces" />
                     <Line yAxisId="left" type="monotone" dataKey="total_cost" stroke={THEME.chartColors[2]} strokeWidth={2} dot={{ r: 4, fill: THEME.chartColors[2] }} activeDot={{ r: 6 }} name="Cost" />
                   </ComposedChart>
-                </ResponsiveContainer>
+                </SafeResponsiveContainer>
               </CardContent>
             </Card>
           )}
@@ -167,7 +168,7 @@ export function OverviewTab({
                   <CardDescription style={{ color: THEME.textSecondary }}>Daily token consumption over time</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={280}>
+                  <SafeResponsiveContainer width="100%" height={280}>
                     <AreaChart data={metrics.by_date}>
                       <defs>
                         <linearGradient id="tokenGradient" x1="0" y1="0" x2="0" y2="1">
@@ -181,7 +182,7 @@ export function OverviewTab({
                       <Tooltip content={<CustomTooltip />} />
                       <Area type="monotone" dataKey="total_tokens" stroke={THEME.primary} strokeWidth={2} fill="url(#tokenGradient)" name="Tokens" />
                     </AreaChart>
-                  </ResponsiveContainer>
+                  </SafeResponsiveContainer>
                 </CardContent>
               </Card>
             )}
@@ -196,7 +197,7 @@ export function OverviewTab({
                   <CardDescription style={{ color: THEME.textSecondary }}>Token usage breakdown by model</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={280}>
+                  <SafeResponsiveContainer width="100%" height={280}>
                     <PieChart>
                       <Pie data={metrics.by_model.slice(0, 5)} cx="50%" cy="50%" innerRadius={70} outerRadius={100} paddingAngle={3} dataKey="total_tokens" nameKey="model">
                         {metrics.by_model.slice(0, 5).map((_, index) => (
@@ -206,7 +207,7 @@ export function OverviewTab({
                       <Tooltip formatter={((value: number | string) => formatTokens(Number(value))) as any} contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
                       <Legend formatter={(value) => <span style={{ color: THEME.textMain, fontSize: '12px' }}>{(value as string).split("/").pop() || value}</span>} />
                     </PieChart>
-                  </ResponsiveContainer>
+                  </SafeResponsiveContainer>
                 </CardContent>
               </Card>
             )}
@@ -303,3 +304,5 @@ export function OverviewTab({
     </div>
   );
 }
+
+

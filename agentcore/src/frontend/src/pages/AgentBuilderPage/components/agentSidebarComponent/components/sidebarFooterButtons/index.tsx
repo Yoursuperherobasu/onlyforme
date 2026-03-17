@@ -10,6 +10,7 @@ const SidebarMenuButtons = ({
   customComponent,
   addComponent,
   isLoading = false,
+  readOnly = false,
 }) => {
   const { t } = useTranslation();
   return (
@@ -42,8 +43,9 @@ const SidebarMenuButtons = ({
       <SidebarMenuButton asChild>
         <Button
           unstyled
-          disabled={isLoading}
+          disabled={isLoading || readOnly}
           onClick={() => {
+            if (readOnly) return;
             if (customComponent) {
               addComponent(customComponent, "CustomComponent");
             }

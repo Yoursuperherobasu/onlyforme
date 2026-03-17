@@ -1,7 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ResponsiveContainer, AreaChart, Area } from "recharts";
+import { AreaChart, Area } from "recharts";
+import { SafeResponsiveContainer } from "@/components/charts/SafeResponsiveContainer";
 import { ArrowUpRight, ArrowDownRight, AlertCircle } from "lucide-react";
 import { THEME } from "../theme";
 
@@ -13,7 +14,7 @@ function Sparkline({ data, dataKey, color = THEME.primary, height = 40 }: {
 }) {
   if (!data || data.length === 0) return null;
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <SafeResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id={`sparkGradient-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
@@ -23,7 +24,7 @@ function Sparkline({ data, dataKey, color = THEME.primary, height = 40 }: {
         </defs>
         <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} fill={`url(#sparkGradient-${dataKey})`} />
       </AreaChart>
-    </ResponsiveContainer>
+    </SafeResponsiveContainer>
   );
 }
 
@@ -148,3 +149,5 @@ export function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
     </Alert>
   );
 }
+
+

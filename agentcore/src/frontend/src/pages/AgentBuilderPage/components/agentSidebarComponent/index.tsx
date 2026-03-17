@@ -143,9 +143,10 @@ interface AgentSidebarComponentProps {
   isLoading?: boolean;
   showLegacy?: boolean;
   setShowLegacy?: (value: boolean) => void;
+  readOnly?: boolean;
 }
 
-export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps) {
+export function AgentSidebarComponent({ isLoading, readOnly = false }: AgentSidebarComponentProps) {
   const data = useTypesStore((state) => state.data);
   const { t } = useTranslation();
   const {
@@ -166,6 +167,7 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
 
   const { activeSection, setOpen, setActiveSection } = useSidebar();
   const addComponent = useAddComponent();
+  const addComponentSafe = readOnly ? undefined : addComponent;
 
   // Get MCP servers for search functionality (only when new sidebar is enabled)
   const {
@@ -487,6 +489,7 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
       event: React.DragEvent<any>,
       data: { type: string; node?: APIClassType },
     ) => {
+      if (readOnly) return;
       var crt = event.currentTarget.cloneNode(true);
       crt.style.position = "absolute";
       crt.style.width = "215px";
@@ -496,9 +499,7 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
       document.body.appendChild(crt);
       event.dataTransfer.setDragImage(crt, 0, 0);
       event.dataTransfer.setData("genericNode", JSON.stringify(data));
-    },
-    [],
-  );
+    }, [readOnly]);
 
   const hasCoreComponents = useMemo(() => {
     const categoriesWithItems = CATEGORIES.filter(
@@ -590,8 +591,9 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
             filterDescription={filterDescription}
             resetFilters={resetFilters}
             customComponent={customComponent}
-            addComponent={addComponent}
+            addComponent={addComponentSafe}
             isLoading={Boolean(isLoading)}
+            readOnly={readOnly}
           />
 
           <SidebarContent
@@ -625,6 +627,7 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
                         sensitiveSort={sensitiveSort}
                         showConfig={showConfig}
                         setShowConfig={setShowConfig}
+                        readOnly={readOnly}
                       />
                     )}
                     {showMcp && (
@@ -648,6 +651,7 @@ export function AgentSidebarComponent({ isLoading }: AgentSidebarComponentProps)
                         }
                         showConfig={showConfig}
                         setShowConfig={setShowConfig}
+                        readOnly={readOnly}
                       />
                     )}
                     
@@ -679,7 +683,11 @@ export default memo(
   ) => {
     return (
       prevProps.showLegacy === nextProps.showLegacy &&
-      prevProps.setShowLegacy === nextProps.setShowLegacy
+      prevProps.setShowLegacy === nextProps.setShowLegacy &&
+      prevProps.readOnly === nextProps.readOnly
     );
   },
 );
+
+
+

@@ -15,6 +15,7 @@ const SidebarItemsList = ({
   nodeColors,
   onDragStart,
   sensitiveSort,
+  readOnly = false,
 }) => {
   const accentColor = getCategoryAccentColor(item.name, nodeColors);
   return (
@@ -50,6 +51,7 @@ const SidebarItemsList = ({
                 idx={idx}
                 onDragStart={onDragStart}
                 nodeColors={nodeColors}
+                readOnly={readOnly}
               />
             );
           }
@@ -78,6 +80,7 @@ const SidebarItemsList = ({
                 legacy={currentItem.legacy ?? false}
                 disabled={false}
                 disabledTooltip={""}
+                readOnly={readOnly}
               />
             </ShadTooltip>
           );
@@ -95,6 +98,7 @@ const UniqueInputsDraggableComponent = ({
   idx,
   onDragStart,
   nodeColors,
+  readOnly = false,
 }) => {
   const accentColor = getCategoryAccentColor(item.name, nodeColors);
   const nodes = useAgentStore((state) => state.nodes);
@@ -128,6 +132,7 @@ const UniqueInputsDraggableComponent = ({
         legacy={currentItem.legacy ?? false}
         disabled={disableItem(SBItemName, uniqueInputsComponents)}
         disabledTooltip={getDisabledTooltip(SBItemName, uniqueInputsComponents)}
+        readOnly={readOnly}
       />
     </ShadTooltip>
   );

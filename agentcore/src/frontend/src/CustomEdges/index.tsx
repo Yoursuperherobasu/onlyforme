@@ -61,7 +61,13 @@ export function DefaultEdge({
     targetY: targetYNew,
   });
 
-  const { animated, selectable, deletable, selected, ...domSafeProps } = props;
+  const { animated, selectable, deletable, selected } = props;
+  const domSafeProps = { ...props } as Record<string, unknown>;
+  delete domSafeProps.animated;
+  delete domSafeProps.selectable;
+  delete domSafeProps.deletable;
+  delete domSafeProps.selected;
+  delete domSafeProps.pathOptions;
   
   return (
     <BaseEdge

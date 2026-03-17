@@ -19,6 +19,7 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
   nodeColors,
   onDragStart,
   sensitiveSort,
+  readOnly = false,
 }: {
   item: any;
   openCategories: string[];
@@ -30,6 +31,7 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
     data: { type: string; node?: APIClassType },
   ) => void;
   sensitiveSort: (a: any, b: any) => number;
+  readOnly?: boolean;
 }) {
   const handleKeyDownInput = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -97,6 +99,7 @@ export const CategoryDisclosure = memo(function CategoryDisclosure({
             nodeColors={nodeColors}
             onDragStart={onDragStart}
             sensitiveSort={sensitiveSort}
+            readOnly={readOnly}
           />
         </DisclosureContent>
       </SidebarMenuItem>

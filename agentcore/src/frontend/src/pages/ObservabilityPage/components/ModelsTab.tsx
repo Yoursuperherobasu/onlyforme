@@ -3,7 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import { SafeResponsiveContainer } from "@/components/charts/SafeResponsiveContainer";
 import { Cpu, Search, TrendingUp } from "lucide-react";
 import { THEME } from "../theme";
 import { formatCost, formatTokens, formatLatency } from "../utils";
@@ -92,7 +93,7 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
             <CardDescription style={{ color: THEME.textSecondary }}>agent execution count and token usage</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={Math.max(250, metrics.top_agents.length * 50)}>
+            <SafeResponsiveContainer width="100%" height={Math.max(250, metrics.top_agents.length * 50)}>
               <BarChart
                 data={metrics.top_agents.slice(0, 10).map(agent => ({ ...agent, shortName: agent.name.length > 25 ? agent.name.slice(0, 25) + '...' : agent.name }))}
                 layout="vertical"
@@ -130,10 +131,12 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
                 <Bar dataKey="count" fill={THEME.primary} name="Execution Count" radius={[0, 4, 4, 0]} />
                 <Bar dataKey="tokens" fill={THEME.chartColors[1]} name="Tokens" radius={[0, 4, 4, 0]} />
               </BarChart>
-            </ResponsiveContainer>
+            </SafeResponsiveContainer>
           </CardContent>
         </Card>
       )}
     </div>
   );
 }
+
+

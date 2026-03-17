@@ -42,6 +42,7 @@ export const SidebarDraggableComponent = forwardRef(
       legacy,
       disabled,
       disabledTooltip,
+      readOnly = false,
     }: {
       sectionName: string;
       apiClass: APIClassType;
@@ -57,6 +58,7 @@ export const SidebarDraggableComponent = forwardRef(
       legacy: boolean;
       disabled?: boolean;
       disabledTooltip?: string;
+      readOnly?: boolean;
     },
     ref,
   ) => {
@@ -92,6 +94,9 @@ export const SidebarDraggableComponent = forwardRef(
           break;
         }
         case "delete": {
+          if (readOnly) {
+            break;
+          }
           if (onDelete) {
             onDelete();
             break;
@@ -104,6 +109,7 @@ export const SidebarDraggableComponent = forwardRef(
     }
 
     const handleKeyDown = (e) => {
+      if (readOnly) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         e.stopPropagation();
@@ -139,19 +145,23 @@ export const SidebarDraggableComponent = forwardRef(
               data-testid={sectionName + display_name}
               id={sectionName + display_name}
               className={cn(
-                "group/draggable flex cursor-grab items-center gap-2 rounded-md bg-muted p-1 px-2 hover:bg-secondary-hover/75",
+                "group/draggable flex items-center gap-2 rounded-md bg-muted p-1 px-2 hover:bg-secondary-hover/75",
                 error && "cursor-not-allowed select-none",
+                readOnly ? "cursor-default" : "cursor-grab",
                 disabled
                   ? "pointer-events-none bg-accent text-placeholder-foreground h-8"
                   : "bg-muted text-foreground",
               )}
-              draggable={!error}
+              draggable={!error && !readOnly && !disabled}
               style={{
                 borderLeftColor: color,
               }}
-              onDragStart={onDragStart}
+              onDragStart={(e) => {
+                if (readOnly || disabled) return;
+                onDragStart(e);
+              }}
               onDoubleClick={() => {
-                if (!disabled) {
+                if (!disabled && !readOnly) {
                   addComponent(apiClass, itemName);
                 }
               }}
@@ -200,7 +210,7 @@ export const SidebarDraggableComponent = forwardRef(
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                {!disabled && (
+                {!disabled && !readOnly && (
                   <Button
                     data-testid={`add-component-button-${convertTestName(
                       display_name,
@@ -242,7 +252,7 @@ export const SidebarDraggableComponent = forwardRef(
                         {t("Download")}{" "}
                       </div>{" "}
                     </SelectItem>
-                    {(!official || onDelete) && (
+                    {(!official || onDelete) && !readOnly && (
                       <SelectItem
                         value={"delete"}
                         data-testid="draggable-component-menu-delete"

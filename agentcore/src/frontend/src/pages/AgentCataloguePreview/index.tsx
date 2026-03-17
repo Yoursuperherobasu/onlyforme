@@ -9,6 +9,9 @@ import CustomLoader from "@/customization/components/custom-loader";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useTypesStore } from "@/stores/typesStore";
 import Page from "../AgentBuilderPage/components/PageComponent";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { AgentSearchProvider, AgentSidebarComponent } from "../AgentBuilderPage/components/agentSidebarComponent";
+import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 
 export default function AgentCataloguePreviewPage(): JSX.Element {
   const { t } = useTranslation();
@@ -60,11 +63,26 @@ export default function AgentCataloguePreviewPage(): JSX.Element {
             <CustomLoader />
           </div>
         ) : (
-          <Page
-            view
-            enableViewportInteractions
-            setIsLoading={() => undefined}
-          />
+          <SidebarProvider
+            width="17.5rem"
+            defaultOpen
+            segmentedSidebar={ENABLE_NEW_SIDEBAR}
+          >
+            <AgentSearchProvider>
+              <AgentSidebarComponent readOnly />
+              <main className="flex w-full overflow-hidden">
+                <div className="h-full w-full">
+                  <Page
+                    view
+                    enableViewportInteractions
+                    showToolbarInView
+                    toolbarReadOnly
+                    setIsLoading={() => undefined}
+                  />
+                </div>
+              </main>
+            </AgentSearchProvider>
+          </SidebarProvider>
         )}
       </div>
     </div>

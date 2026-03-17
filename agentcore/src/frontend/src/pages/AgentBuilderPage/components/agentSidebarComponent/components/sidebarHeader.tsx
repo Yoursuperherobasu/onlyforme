@@ -34,6 +34,7 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
   customComponent,
   addComponent,
   isLoading = false,
+  readOnly = false,
 }: SidebarHeaderComponentProps) {
   const { t } = useTranslation();
   return (
@@ -71,8 +72,9 @@ export const SidebarHeaderComponent = memo(function SidebarHeaderComponent({
       />
       <Button
         unstyled
-        disabled={isLoading}
+        disabled={isLoading || readOnly}
         onClick={() => {
+          if (readOnly) return;
           if (customComponent && addComponent) {
             addComponent(customComponent, "CustomComponent");
           }

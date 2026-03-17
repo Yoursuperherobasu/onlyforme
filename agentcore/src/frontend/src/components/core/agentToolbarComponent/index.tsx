@@ -19,7 +19,7 @@ import AgentToolbarOptions from "./components/agent-toolbar-options";
 import { useContext } from "react";
 import { AuthContext } from "@/contexts/authContext"; 
 
-const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
+const AgentToolbar = memo(function AgentToolbar({ readOnly = false }: { readOnly?: boolean }): JSX.Element {
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const preventDefault = true;
@@ -43,11 +43,13 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
   const reactFlowInstance = useAgentStore((state) => state.reactFlowInstance);
   
   const handleAPIWShortcut = (e: KeyboardEvent) => {
+    if (readOnly) return;
     if (isThereModal() && !openApiModal) return;
     setOpenApiModal((oldOpen) => !oldOpen);
   };
 
   const handleChatWShortcut = (e: KeyboardEvent) => {
+    if (readOnly) return;
     if (isThereModal() && !open) return;
     if (!can("edit_agents")) return;
     if (useAgentStore.getState().hasIO) {
@@ -56,6 +58,7 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
   };
 
   const handleShareWShortcut = (e: KeyboardEvent) => {
+    if (readOnly) return;
     if (isThereModal() && !openExportModal) return;
     setOpenExportModal((oldState) => !oldState);
   };
@@ -75,6 +78,7 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
   }, [open]);
 
   const handleSave = () => {
+    if (readOnly) return;
     saveAgent();
   };
 
@@ -99,6 +103,7 @@ const AgentToolbar = memo(function AgentToolbar(): JSX.Element {
         <div
           className={cn(
             "flex h-11 w-full items-center justify-between border-b bg-background px-2",
+            readOnly && "pointer-events-none opacity-60",
           )}
         >
           <div className="flex items-center gap-2">

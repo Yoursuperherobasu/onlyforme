@@ -13,7 +13,7 @@ yarn-error.log*
 lerna-debug.log*
 qdrant_storage
 a2a_logs
-
+manifest.yaml
 # VSCode
 .vscode/settings.json
 .chroma

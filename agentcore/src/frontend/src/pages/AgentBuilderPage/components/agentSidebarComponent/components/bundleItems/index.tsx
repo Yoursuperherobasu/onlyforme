@@ -21,6 +21,7 @@ export const BundleItem = memo(
     onDragStart,
     sensitiveSort,
     handleKeyDownInput,
+    readOnly = false,
   }: BundleItemProps) => {
     if (
       !dataFilter[item.name] ||
@@ -74,6 +75,7 @@ export const BundleItem = memo(
               nodeColors={nodeColors}
               onDragStart={onDragStart}
               sensitiveSort={sensitiveSort}
+              readOnly={readOnly}
             />
           </DisclosureContent>
         </SidebarMenuItem>

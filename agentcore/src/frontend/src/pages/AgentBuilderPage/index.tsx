@@ -1,6 +1,5 @@
 import { useContext, useEffect, useState } from "react";
 import { useBlocker, useParams, useSearchParams } from "react-router-dom";
-import SideBarFoldersButtonsComponent from "@/components/core/folderSidebarComponent/components/sideBarFolderButtons";
 import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useGetAgent } from "@/controllers/API/queries/agents/use-get-agent";
@@ -44,7 +43,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const setOnAgentBuilderPage = useAgentStore((state) => state.setOnAgentBuilderPage);
   const stopBuilding = useAgentStore((state) => state.stopBuilding);
   const { id, folderId } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useCustomNavigate();
   const saveAgent = useSaveAgent();
   const { userData, role } = useContext(AuthContext);
@@ -62,6 +61,14 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
     !!currentAgent &&
     (!!currentAgent.user_id ? String(currentAgent.user_id) !== currentUserId : true);
   const isReadOnlyMode = requestedReadOnlyMode || forceReadOnlyByOwnership;
+
+  useEffect(() => {
+    if (!isReadOnlyMode) return;
+    if (searchParams.get("readonly") === "1") return;
+    const next = new URLSearchParams(searchParams);
+    next.set("readonly", "1");
+    setSearchParams(next, { replace: true });
+  }, [isReadOnlyMode, searchParams, setSearchParams]);
 
   const changesNotSaved =
     !isReadOnlyMode &&
@@ -233,32 +240,35 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
         {currentAgent && (
           <div className="flex h-full overflow-hidden">
             {isReadOnlyMode ? (
-              <SidebarProvider width="280px">
-                <SideBarFoldersButtonsComponent
-                  handleChangeFolder={(projectId: string) =>
-                    navigate(`/agents/folder/${projectId}`)
-                  }
-                  handleFilesClick={() => navigate("/assets/files")}
-                />
-                <main className="flex h-full w-full overflow-hidden">
-                  <div className="flex h-full w-full flex-col overflow-hidden">
-                    <div className="flex items-center gap-2 border-b bg-background px-3 py-2">
-                      <Button variant="outline" size="sm" onClick={handleBackToProject}>
-                        Back to Project
-                      </Button>
-                      <span className="truncate text-sm text-muted-foreground">
-                        {currentAgent.name}
-                      </span>
+              <SidebarProvider
+                width="17.5rem"
+                defaultOpen={!isMobile}
+                segmentedSidebar={ENABLE_NEW_SIDEBAR}
+              >
+                <AgentSearchProvider>
+                  <AgentSidebarComponent isLoading={isLoading} readOnly />
+                  <main className="flex w-full overflow-hidden">
+                    <div className="flex h-full w-full flex-col overflow-hidden">
+                      <div className="flex items-center gap-2 border-b bg-background px-3 py-2">
+                        <Button variant="outline" size="sm" onClick={handleBackToProject}>
+                          Back to Project
+                        </Button>
+                        <span className="truncate text-sm text-muted-foreground">
+                          {currentAgent.name}
+                        </span>
+                      </div>
+                      <div className="h-full w-full">
+                        <Page
+                          view
+                          enableViewportInteractions
+                          showToolbarInView
+                          toolbarReadOnly
+                          setIsLoading={setIsLoading}
+                        />
+                      </div>
                     </div>
-                    <div className="h-full w-full">
-                      <Page
-                        view
-                        enableViewportInteractions
-                        setIsLoading={setIsLoading}
-                      />
-                    </div>
-                  </div>
-                </main>
+                  </main>
+                </AgentSearchProvider>
               </SidebarProvider>
             ) : (
               <SidebarProvider

@@ -24,6 +24,7 @@ export interface CategoryGroupProps {
   sensitiveSort: (a: string, b: string) => number;
   showConfig: boolean;
   setShowConfig: (show: boolean) => void;
+  readOnly?: boolean;
 }
 
 export interface SidebarGroupProps {
@@ -46,6 +47,7 @@ export interface SidebarGroupProps {
   showSearchConfigTrigger: boolean;
   showConfig: boolean;
   setShowConfig: (show: boolean) => void;
+  readOnly?: boolean;
 }
 
 export interface BundleItemProps {
@@ -64,6 +66,7 @@ export interface BundleItemProps {
   ) => void;
   sensitiveSort: (a: string, b: string) => number;
   handleKeyDownInput: (event: React.KeyboardEvent<any>, name: string) => void;
+  readOnly?: boolean;
 }
 
 export interface SidebarHeaderComponentProps {
@@ -85,6 +88,7 @@ export interface SidebarHeaderComponentProps {
   customComponent?: APIClassType | null;
   addComponent?: (component: APIClassType, name: string) => void;
   isLoading?: boolean;
+  readOnly?: boolean;
 }
 
 export interface UniqueInputsComponents {

@@ -1,4 +1,4 @@
-﻿import {
+import {
   Activity,
   BarChart3,
   LineChart,
@@ -20,9 +20,8 @@
   BarChart2,
   AlertTriangle,
 } from "lucide-react";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ResponsiveContainer,
   LineChart as ReLineChart,
   Line,
   XAxis,
@@ -37,6 +36,7 @@ import {
   Area,
   AreaChart,
 } from "recharts";
+
 import {
   Select,
   SelectContent,
@@ -128,7 +128,7 @@ type HitlSeriesResponse = {
   series: PendingSeriesPoint[];
 };
 
-// ─── Section Definitions (data unchanged from original) ───────────────────
+// --- Section Definitions (data unchanged from original) -------------------
 
 const sections: SectionConfig[] = [
   {
@@ -277,7 +277,7 @@ const developerSections: SectionConfig[] = [
     id: "quality",
     label: "Agent Quality",
     headline: "Agent Quality KPIs (Langfuse Evaluations)",
-    description: "LLM evaluation scores — hallucination rates and RAG relevance from Langfuse.",
+    description: "LLM evaluation scores � hallucination rates and RAG relevance from Langfuse.",
     kpis: [
       { name: "Hallucination Score", value: "2.1%" },
       { name: "RAG Relevance Score", value: "0.84" },
@@ -289,7 +289,7 @@ const developerSections: SectionConfig[] = [
     id: "performance",
     label: "Performance",
     headline: "Performance KPIs",
-    description: "Agent response latency profiles — average, P95, and P99 percentiles to surface tail latency regressions.",
+    description: "Agent response latency profiles � average, P95, and P99 percentiles to surface tail latency regressions.",
     kpis: [
       { name: "Avg Agent Latency", value: "--", scope: "global" },
       { name: "Latency P95", value: "--", scope: "global" },
@@ -318,7 +318,7 @@ const businessSections: SectionConfig[] = [
     id: "experience",
     label: "Experience",
     headline: "Experience KPIs",
-    description: "End-user experience signals — response speed, satisfaction scores, and escalation frequency to human agents.",
+    description: "End-user experience signals � response speed, satisfaction scores, and escalation frequency to human agents.",
     kpis: [
       { name: "Avg Response Time", value: "--", scope: "global" },
       { name: "User Satisfaction Score", value: "--" },
@@ -336,7 +336,7 @@ const rootSections: SectionConfig[] = [
     id: "maturity",
     label: "AI Maturity Indicators",
     headline: "AI Maturity Indicators",
-    description: "Governance capability adoption — guardrails, RAG, and HITL coverage as signals of enterprise AI maturity.",
+    description: "Governance capability adoption � guardrails, RAG, and HITL coverage as signals of enterprise AI maturity.",
     kpis: [
       { name: "% Agents with Guardrails", value: "88%" },
       { name: "% Agents with RAG", value: "64%" },
@@ -347,7 +347,7 @@ const rootSections: SectionConfig[] = [
   
 ];
 
-// ─── Style constants ───────────────────────────────────────────────────────
+// --- Style constants -------------------------------------------------------
 
 const chartColors = ["#2563eb", "#14b8a6", "#f97316", "#a855f7"];
 
@@ -370,7 +370,7 @@ const sectionThemes: Record<SectionId, { badge: string; accent: string; border: 
   risk:        { badge: "bg-rose-100 text-rose-700",       accent: "#f43f5e", border: "border-l-rose-500",    headerBg: "bg-rose-50/60 dark:bg-rose-950/20",     iconBg: "bg-rose-100 dark:bg-rose-900/30",     icon: <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400" /> },
 };
 
-// ─── Tooltips ─────────────────────────────────────────────────────────────
+// --- Tooltips -------------------------------------------------------------
 
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name?: string; dataKey?: string }[]; label?: string }) {
   if (!active || !payload?.length) return null;
@@ -396,7 +396,46 @@ function DonutTooltip({ active, payload }: { active?: boolean; payload?: { name:
   );
 }
 
-// ─── Chart Block ───────────────────────────────────────────────────────────
+// --- Chart Size Helper ------------------------------------------------------
+
+function ChartSize({
+  className,
+  children,
+}: {
+  className?: string;
+  children: (size: { width: number; height: number }) => React.ReactNode;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      const next = {
+        width: Math.floor(rect.width),
+        height: Math.floor(rect.height),
+      };
+      setSize((prev) =>
+        prev.width === next.width && prev.height === next.height ? prev : next,
+      );
+    };
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div ref={containerRef} className={className}>
+      {size.width > 0 && size.height > 0 ? children(size) : null}
+    </div>
+  );
+}
+// --- Chart Block -----------------------------------------------------------
 
 function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: string }) {
   if (chart.type === "area") {
@@ -405,8 +444,8 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
     const gradId = `grad-${chart.title.replace(/\W/g, "")}`;
     return (
       <div className="h-44">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+        <ChartSize className="h-full w-full">{({ width, height }) => (
+          <AreaChart width={width} height={height} data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <defs>
               <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor={accentColor} stopOpacity={0.15} />
@@ -419,7 +458,7 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
             <Tooltip content={<ChartTooltip />} labelFormatter={xType === "number" && chart.xTickFormatter ? chart.xTickFormatter : undefined} />
             <Area type="monotone" dataKey="value" stroke={accentColor} strokeWidth={2} fill={`url(#${gradId})`} dot={false} connectNulls />
           </AreaChart>
-        </ResponsiveContainer>
+        )}</ChartSize>
       </div>
     );
   }
@@ -429,8 +468,8 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
     const xType = chart.xType ?? "category";
     return (
       <div className="h-44">
-        <ResponsiveContainer width="100%" height="100%">
-          <ReLineChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+        <ChartSize className="h-full w-full">{({ width, height }) => (
+          <ReLineChart width={width} height={height} data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis dataKey={xKey} type={xType} domain={xType === "number" ? ["dataMin", "dataMax"] : undefined} tickFormatter={xType === "number" ? chart.xTickFormatter : undefined} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
@@ -439,7 +478,7 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
               ? chart.lines.map((l) => <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.color} strokeWidth={2} dot={false} connectNulls />)
               : <Line type="monotone" dataKey="value" stroke={accentColor} strokeWidth={2} dot={false} connectNulls />}
           </ReLineChart>
-        </ResponsiveContainer>
+        )}</ChartSize>
       </div>
     );
   }
@@ -447,8 +486,8 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
   if (chart.type === "bar") {
     return (
       <div className="h-44">
-        <ResponsiveContainer width="100%" height="100%">
-          <ReBarChart data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+        <ChartSize className="h-full w-full">{({ width, height }) => (
+          <ReBarChart width={width} height={height} data={chart.data} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
             <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
@@ -457,21 +496,21 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
               {chart.data.map((e, i) => <Cell key={String(e.label)} fill={chartColors[i % chartColors.length]} />)}
             </Bar>
           </ReBarChart>
-        </ResponsiveContainer>
+        )}</ChartSize>
       </div>
     );
   }
 
   return (
     <div className="flex h-44 items-center gap-4">
-      <ResponsiveContainer width="50%" height="100%">
-        <RePieChart>
+      <ChartSize className="h-full w-1/2">{({ width, height }) => (
+        <RePieChart width={width} height={height}>
           <Pie data={chart.data} dataKey="value" nameKey="label" innerRadius={38} outerRadius={62} paddingAngle={2}>
             {chart.data.map((e, i) => <Cell key={String(e.label)} fill={chartColors[i % chartColors.length]} />)}
           </Pie>
           <Tooltip content={<DonutTooltip />} />
         </RePieChart>
-      </ResponsiveContainer>
+      )}</ChartSize>
       <div className="space-y-2">
         {chart.data.map((slice, i) => (
           <div key={String(slice.label)} className="flex items-center gap-2 text-xs">
@@ -485,7 +524,7 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
   );
 }
 
-// ─── Maturity Progress (only shown for maturity section, existing KPIs) ────
+// --- Maturity Progress (only shown for maturity section, existing KPIs) ----
 
 function MaturityProgressBars({ kpis, accent }: { kpis: SectionKpi[]; accent: string }) {
   return (
@@ -510,7 +549,7 @@ function MaturityProgressBars({ kpis, accent }: { kpis: SectionKpi[]; accent: st
   );
 }
 
-// ─── Section Card ──────────────────────────────────────────────────────────
+// --- Section Card ----------------------------------------------------------
 
 function SectionCard({
   section,
@@ -537,7 +576,7 @@ function SectionCard({
     <div
       className={`overflow-hidden rounded-2xl border border-border border-l-4 ${theme.border} bg-card shadow-sm transition-shadow duration-200 ${expanded ? "shadow-md" : "hover:shadow-md"}`}
     >
-      {/* ── Clickable Header ── */}
+      {/* -- Clickable Header -- */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -591,7 +630,7 @@ function SectionCard({
         </div>
       </button>
 
-      {/* ── Collapsed Preview — KPI chips visible when closed ── */}
+      {/* -- Collapsed Preview � KPI chips visible when closed -- */}
       {!expanded && !isEmpty && displayKpis.length > 0 && (
         <div
           className="border-t border-border px-5 py-3 flex flex-wrap gap-2"
@@ -615,11 +654,11 @@ function SectionCard({
         </div>
       )}
 
-      {/* ── Expanded Body ── */}
+      {/* -- Expanded Body -- */}
       {expanded && !isEmpty && (
         <div className="border-t border-border bg-card px-6 pb-6">
 
-          {/* KPI grid — uses section accent color consistently */}
+          {/* KPI grid � uses section accent color consistently */}
           {displayKpis.length > 0 && (
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
               {displayKpis.map((kpi, i) => (
@@ -739,7 +778,7 @@ function SectionCard({
   );
 }
 
-// ─── Main Component ────────────────────────────────────────────────────────
+// --- Main Component --------------------------------------------------------
 
 export default function DashboardAdmin(): JSX.Element {
   const { t } = useTranslation();
@@ -792,7 +831,7 @@ export default function DashboardAdmin(): JSX.Element {
 
   useEffect(() => { const id = setInterval(() => setRefreshTick((t) => t + 1), 15000); return () => clearInterval(id); }, []);
 
-  // ── All API calls preserved exactly from original ──────────────────────
+  // -- All API calls preserved exactly from original ----------------------
   useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/environment-lifecycle", p).then((r) => setLifecycleKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? lifecycleKpiFallback)).catch(() => setLifecycleKpis(lifecycleKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
   useEffect(() => {
     if (!isSuperAdmin) return;
@@ -885,7 +924,7 @@ export default function DashboardAdmin(): JSX.Element {
   }, [hitlRange, isDepartmentAdmin, refreshTick, tzOffsetMinutes]);
   useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", p).then((r) => setGovernanceKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? governanceKpiFallback)).catch(() => setGovernanceKpis(governanceKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
 
-  // ── Chart data helpers ────────────────────────────────────────────────
+  // -- Chart data helpers ------------------------------------------------
 
   const mkDateSeries = (series: PendingSeriesPoint[] | null, days: number) => {
     const fb = Array.from({ length: days }, (_, i) => {
@@ -915,7 +954,7 @@ export default function DashboardAdmin(): JSX.Element {
   const platCpuMemData   = useMemo(() => platformCpuMemSeries?.length ? platformCpuMemSeries : mkTsSeries(8).map((p) => ({ ...p, cpu: 0, memory: 0 })), [platformCpuMemSeries]);
   const devLatData       = useMemo(() => devLatencySeries ?? [], [devLatencySeries]);
 
-  // ── Resolve KPIs + charts for each section ────────────────────────────
+  // -- Resolve KPIs + charts for each section ----------------------------
 
   const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : isRootAdmin ? rootSections : sections;
 
@@ -961,14 +1000,14 @@ export default function DashboardAdmin(): JSX.Element {
   };
 
   const headerSubtitle = isDepartmentAdmin
-    ? "Department Admin — Operational Governance"
+    ? "Department Admin � Operational Governance"
     : isDeveloper
-      ? "Developer — Build & Optimize"
+      ? "Developer � Build & Optimize"
       : isBusinessUser
-        ? "Business User — Productivity & Experience"
+        ? "Business User � Productivity & Experience"
         : isRootAdmin
-          ? "Executive — Strategic Oversight"
-          : "Super Admin — Full Platform View";
+          ? "Executive � Strategic Oversight"
+          : "Super Admin � Full Platform View";
 
   const approvalRangeSelector = (
     <Select value={approvalRange} onValueChange={(v) => setApprovalRange(v as "7d" | "30d" | "12w")}>
@@ -985,7 +1024,7 @@ export default function DashboardAdmin(): JSX.Element {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* ── Page Header ── */}
+      {/* -- Page Header -- */}
       <div className="flex-shrink-0 border-b border-border bg-card">
         <div className="px-4 py-4 sm:px-6 md:px-8 md:py-5">
           <div className="flex items-start justify-between gap-4">
@@ -995,7 +1034,7 @@ export default function DashboardAdmin(): JSX.Element {
                 <span className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
                   {headerSubtitle}
                 </span>
-                <span className="text-muted-foreground text-xxs">·</span>
+                <span className="text-muted-foreground text-xxs">�</span>
                 <span className="text-xxs text-muted-foreground">
                   {sectionsToRender.length} section{sectionsToRender.length !== 1 ? "s" : ""}
                 </span>
@@ -1005,7 +1044,7 @@ export default function DashboardAdmin(): JSX.Element {
         </div>
       </div>
 
-      {/* ── Section Stack ── */}
+      {/* -- Section Stack -- */}
       <div className="flex-1 overflow-auto bg-background px-4 py-4 sm:px-6 md:px-8 md:py-6">
         <div className="space-y-4">
           {sectionsToRender.map((section, i) => {
@@ -1027,3 +1066,9 @@ export default function DashboardAdmin(): JSX.Element {
     </div>
   );
 }
+
+
+
+
+
+

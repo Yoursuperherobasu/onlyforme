@@ -143,10 +143,14 @@ export default function Page({
   view,
   enableViewportInteractions,
   setIsLoading,
+  showToolbarInView,
+  toolbarReadOnly,
 }: {
   view?: boolean;
   enableViewportInteractions?: boolean;
   setIsLoading: (isLoading: boolean) => void;
+  showToolbarInView?: boolean;
+  toolbarReadOnly?: boolean;
 }): JSX.Element {
   const uploadAgent = useUploadAgent();
   const autoSaveAgent = useAutoSaveAgent();
@@ -776,6 +780,7 @@ export default function Page({
     maxZoom: MAX_ZOOM,
   };
   const allowViewportInteractions = !view || !!enableViewportInteractions;
+  const shouldShowToolbar = !view || !!showToolbarInView;
 
   return (
     <div className="h-full w-full bg-canvas" ref={reactFlowWrapper}>
@@ -790,9 +795,9 @@ export default function Page({
                   shadowBoxWidth={shadowBoxWidth}
                   shadowBoxHeight={shadowBoxHeight}
                 />
-                <AgentToolbar />
               </>
             )}
+            {shouldShowToolbar && <AgentToolbar readOnly={!!toolbarReadOnly || !!view} />}
             {!view && <MemoizedSidebarTrigger />}
             {!isReadOnlyCanvas && (
               <SelectionMenu
