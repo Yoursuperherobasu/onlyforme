@@ -44,9 +44,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Globe } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
+import useRegionStore from "@/stores/regionStore";
 
 type SectionId =
   | "platform"
@@ -751,6 +753,35 @@ export default function DashboardAdmin(): JSX.Element {
   const isRootAdmin       = normalizedRole === "root";
   const isSuperAdmin      = normalizedRole === "super_admin";
 
+  // ── Region selector (root admin only) ──────────────────────────────────
+  const regions = useRegionStore((s) => s.regions);
+  const selectedRegionCode = useRegionStore((s) => s.selectedRegionCode);
+  const setSelectedRegion = useRegionStore((s) => s.setSelectedRegion);
+  const fetchRegions = useRegionStore((s) => s.fetchRegions);
+
+  useEffect(() => {
+    if (isRootAdmin) {
+      fetchRegions();
+    }
+  }, [isRootAdmin]);
+
+  // Helper: build axios config with region header
+  const regionHeaders = useMemo(() => {
+    if (!isRootAdmin || !selectedRegionCode) return {};
+    return { "X-Region-Code": selectedRegionCode };
+  }, [isRootAdmin, selectedRegionCode]);
+
+  const regionConfig = useMemo(() => {
+    if (!isRootAdmin || !selectedRegionCode) return undefined;
+    return { headers: regionHeaders };
+  }, [isRootAdmin, selectedRegionCode, regionHeaders]);
+
+  const isRemoteRegion = useMemo(() => {
+    if (!selectedRegionCode || !regions.length) return false;
+    const hub = regions.find((r) => r.is_hub);
+    return hub ? hub.code !== selectedRegionCode : false;
+  }, [selectedRegionCode, regions]);
+
   const [lifecycleKpis, setLifecycleKpis]         = useState<SectionKpi[] | null>(null);
   const [governanceKpis, setGovernanceKpis]         = useState<SectionKpi[] | null>(null);
   const [deptUsageKpis, setDeptUsageKpis]           = useState<SectionKpi[] | null>(null);
@@ -793,7 +824,7 @@ export default function DashboardAdmin(): JSX.Element {
   useEffect(() => { const id = setInterval(() => setRefreshTick((t) => t + 1), 15000); return () => clearInterval(id); }, []);
 
   // ── All API calls preserved exactly from original ──────────────────────
-  useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/environment-lifecycle", p).then((r) => setLifecycleKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? lifecycleKpiFallback)).catch(() => setLifecycleKpis(lifecycleKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
+  useEffect(() => { if (!isSuperAdmin && !isRootAdmin) return; const orgId = userData?.organization_id || null; const p: any = { ...(regionConfig || {}), params: orgId ? { org_id: orgId } : undefined }; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/environment-lifecycle", p).then((r) => setLifecycleKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? lifecycleKpiFallback)).catch(() => setLifecycleKpis(lifecycleKpiFallback)); }, [isSuperAdmin, isRootAdmin, refreshTick, userData?.organization_id, selectedRegionCode]);
   useEffect(() => {
     if (!isSuperAdmin) return;
     const gv = (p: any) => { const r = p?.data?.result; const v = Array.isArray(r) && r.length > 0 ? r[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; return Number.isFinite(n) ? n : null; };
@@ -846,7 +877,7 @@ export default function DashboardAdmin(): JSX.Element {
   useEffect(() => { if (!isBusinessUser) return; api.get(`/api/metrics-dashboard/query-preset/avg_response_time`).then((r) => { const res = r?.data?.prometheus?.data?.result; const v = Array.isArray(res) && res.length > 0 ? res[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; if (!Number.isFinite(n)) { setBusinessExperienceKpis((p) => p ?? businessExperienceFallback); return; } setBusinessExperienceKpis((prev) => { const next = prev ? [...prev] : [...businessExperienceFallback]; const idx = next.findIndex((k) => k.name === "Avg Response Time"); if (idx >= 0) next[idx] = { ...next[idx], value: `${Math.round(n!)}ms` }; else next.push({ name: "Avg Response Time", value: `${Math.round(n!)}ms` }); return next; }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; const now = Math.floor(Date.now() / 1000); api.get(`/api/metrics-dashboard/query-preset-range/response_time_trend`, { params: { start: now - 604800, end: now, step: "3600s" } }).then((r) => setBusinessResponseTimeSeries((r?.data?.series?.[0]?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => ({ date: new Date(Number(v?.[0] ?? 0) * 1000).toISOString().slice(0, 10), value: Number.isFinite(Number(v?.[1] ?? 0)) ? Number(v[1]) : 0 })))).catch(() => setBusinessResponseTimeSeries([])); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/business-experience").then((r) => { const next = r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? []; setBusinessExperienceKpis((prev) => { const m = new Map((prev ?? businessExperienceFallback).map((k) => [k.name, k.value])); for (const k of next) m.set(k.name, k.value); return Array.from(m.entries()).map(([name, value]) => ({ name, value })); }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
-  useEffect(() => { if (!isRootAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity").then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, refreshTick]);
+  useEffect(() => { if (!isRootAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity", regionConfig).then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, refreshTick, selectedRegionCode]);
   useEffect(() => {
     if (!isDepartmentAdmin) return;
     api
@@ -883,7 +914,7 @@ export default function DashboardAdmin(): JSX.Element {
       })
       .catch(() => setHitlResponseSeries([]));
   }, [hitlRange, isDepartmentAdmin, refreshTick, tzOffsetMinutes]);
-  useEffect(() => { if (!isSuperAdmin) return; const orgId = userData?.organization_id || null; const p = orgId ? { params: { org_id: orgId } } : undefined; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", p).then((r) => setGovernanceKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? governanceKpiFallback)).catch(() => setGovernanceKpis(governanceKpiFallback)); }, [isSuperAdmin, refreshTick, userData?.organization_id]);
+  useEffect(() => { if (!isSuperAdmin && !isRootAdmin) return; const orgId = userData?.organization_id || null; const p: any = { ...(regionConfig || {}), params: orgId ? { org_id: orgId } : undefined }; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", p).then((r) => setGovernanceKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? governanceKpiFallback)).catch(() => setGovernanceKpis(governanceKpiFallback)); }, [isSuperAdmin, isRootAdmin, refreshTick, userData?.organization_id, selectedRegionCode]);
 
   // ── Chart data helpers ────────────────────────────────────────────────
 
@@ -1001,9 +1032,49 @@ export default function DashboardAdmin(): JSX.Element {
                 </span>
               </div>
             </div>
+
+            {/* Region selector — root admin only */}
+            {isRootAdmin && regions.length > 1 && (
+              <div className="flex items-center gap-2">
+                <Globe className="h-4 w-4 text-muted-foreground" />
+                <Select value={selectedRegionCode ?? ""} onValueChange={setSelectedRegion}>
+                  <SelectTrigger className="h-8 w-[160px] text-xs">
+                    <SelectValue placeholder="Select Region" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {regions.map((r) => (
+                      <SelectItem key={r.code} value={r.code}>
+                        {r.name}{r.is_hub ? " (Hub)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* ── Remote region banner ── */}
+      {isRootAdmin && isRemoteRegion && selectedRegionCode && (
+        <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 px-8 py-2.5">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-amber-800 dark:text-amber-200">
+              Viewing dashboard data for <span className="font-semibold">{regions.find((r) => r.code === selectedRegionCode)?.name ?? selectedRegionCode}</span>. Data is read-only.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const hub = regions.find((r) => r.is_hub);
+                if (hub) setSelectedRegion(hub.code);
+              }}
+              className="text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
+            >
+              Back to Home
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Section Stack ── */}
       <div className="flex-1 overflow-auto bg-background px-8 py-6">
