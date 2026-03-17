@@ -5,7 +5,7 @@ from loguru import logger
 
 from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
-from agentcore.inputs.inputs import DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
+from agentcore.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput
 from agentcore.memory import aget_messages, astore_message
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame
@@ -17,6 +17,8 @@ from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI,
 
 # STM Redis cache settings
 STM_CACHE_PREFIX = "stm:history:"
+# LTM Redis cache settings
+LTM_CACHE_PREFIX = "ltm:context:"
 
 
 class MemoryNode(Node):
@@ -28,16 +30,16 @@ class MemoryNode(Node):
     mode_config = {
         "Store": ["message", "sender", "sender_name", "session_id"],
         "Retrieve": ["order", "template", "n_messages"],
-        "Short Term Memory": ["input_value", "n_messages", "session_id", "template"],
+        "Short Term Memory": ["input_value", "n_messages", "session_id", "enable_ltm", "ltm_retrieval_mode", "template"],
     }
 
     inputs = [
-        TabInput(
+        DropdownInput(
             name="mode",
             display_name="Mode",
             options=["Retrieve", "Store", "Short Term Memory"],
             value="Retrieve",
-            info="Operation mode: Store messages, Retrieve messages, or Short Term Memory (fetch recent conversation and concat with current input).",
+            info="Operation mode: Store, Retrieve, or Short Term Memory (with optional LTM for cross-session context).",
             real_time_refresh=True,
         ),
         HandleInput(
@@ -63,6 +65,21 @@ class MemoryNode(Node):
             info="Retrieve messages from an external memory. If empty, it will use the Agentcore tables.",
             advanced=True,
             show=True,
+        ),
+        BoolInput(
+            name="enable_ltm",
+            display_name="Enable Long Term Memory",
+            value=False,
+            info="When enabled, cross-session memory from Pinecone/Neo4j is also included alongside session history.",
+            show=False,
+        ),
+        HandleInput(
+            name="llm",
+            display_name="Language Model",
+            input_types=["LanguageModel"],
+            info="LLM for LTM summarization and fact extraction. Connect the same LLM used in your agent flow.",
+            required=False,
+            show=False,
         ),
         DropdownInput(
             name="sender_type",
@@ -115,6 +132,14 @@ class MemoryNode(Node):
             tool_mode=True,
             required=True,
             show=True,
+        ),
+        DropdownInput(
+            name="ltm_retrieval_mode",
+            display_name="LTM Retrieval Mode",
+            options=["Both", "Pinecone Only", "Neo4j Only"],
+            value="Both",
+            info="How to retrieve long-term memory: semantic search (Pinecone), graph search (Neo4j), or both.",
+            show=False,
         ),
         MultilineInput(
             name="template",
@@ -238,6 +263,12 @@ class MemoryNode(Node):
             return self._session_id
         if hasattr(self, "graph") and getattr(self.graph, "session_id", None):
             return self.graph.session_id
+        return None
+
+    def _effective_agent_id(self) -> str | None:
+        """Return the agent_id to use: graph agent_id → None."""
+        if hasattr(self, "graph") and getattr(self.graph, "agent_id", None):
+            return str(self.graph.agent_id)
         return None
 
     async def store_message(self) -> Message:
@@ -460,14 +491,41 @@ class MemoryNode(Node):
         else:
             conversation_history = ""
 
-        # Build the enriched text: history + current input
+        # Build the enriched text: LTM context (if enabled) + history + current input
+        ltm_context = ""
+        enable_ltm = getattr(self, "enable_ltm", False)
+        connected_llm = getattr(self, "llm", None)
+        agent_id = self._effective_agent_id()
+
+        if enable_ltm and agent_id and current_text:
+            try:
+                from agentcore.services.deps import get_ltm_service
+                ltm_svc = get_ltm_service()
+                should = await ltm_svc.should_process(agent_id)
+                logger.info(f"[LTM] should_process={should} for agent={agent_id}")
+                if should:
+                    await ltm_svc.process_with_llm(agent_id)
+            except Exception as e:
+                logger.warning(f"[LTM] Inline processing failed: {e}")
+
+            try:
+                retrieval_mode = getattr(self, "ltm_retrieval_mode", "Both") or "Both"
+                from agentcore.services.ltm.retriever import retrieve
+                ltm_context = await retrieve(
+                    query=current_text, agent_id=agent_id, mode=retrieval_mode, top_k=n_messages,
+                )
+                if ltm_context:
+                    logger.info(f"[LTM] Retrieved {len(ltm_context)} chars of cross-session context")
+            except Exception as e:
+                logger.error(f"[LTM] Retrieval failed: {e}")
+
+        parts = []
+        if ltm_context:
+            parts.append(f"Long Term Memory (Cross-Session Context):\n{ltm_context}")
         if conversation_history:
-            enriched_text = (
-                f"Conversation History:\n{conversation_history}\n\n"
-                f"Current Message:\n{current_text}"
-            )
-        else:
-            enriched_text = current_text
+            parts.append(f"Conversation History:\n{conversation_history}")
+        parts.append(f"Current Message:\n{current_text}")
+        enriched_text = "\n\n".join(parts)
 
         # Create a new message with the enriched text, preserving original message properties
         enriched_message = Message(text=enriched_text)

@@ -229,3 +229,11 @@ def get_trigger_service() -> TriggerService:
     from agentcore.services.trigger.factory import TriggerServiceFactory
 
     return get_service(ServiceType.TRIGGER_SERVICE, TriggerServiceFactory())
+
+
+def get_ltm_service():
+    """Retrieves the LTMService instance from the service manager."""
+    from agentcore.services.ltm.factory import LTMServiceFactory
+    from agentcore.services.ltm.service import LTMService
+
+    return get_service(ServiceType.LTM_SERVICE, LTMServiceFactory())

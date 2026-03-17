@@ -182,6 +182,14 @@ def get_lifespan(*, fix_migration=True, version=None):
             except Exception as e:
                 logger.warning(f"Failed to start trigger services: {e}")
 
+            # Start LTM service if enabled
+            try:
+                from agentcore.services.deps import get_ltm_service
+                ltm_service = get_ltm_service()
+                ltm_service.start()
+            except Exception as e:
+                logger.debug(f"LTM service not started: {e}")
+
             total_time = asyncio.get_event_loop().time() - start_time
             logger.debug(f"Total initialization time: {total_time:.2f}s")
 
