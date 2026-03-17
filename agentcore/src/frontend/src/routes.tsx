@@ -108,6 +108,7 @@ function DefaultLandingRedirect() {
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const AccessControlPage = lazy(() => import("./pages/AccessControlPage"));
+const CostLimitsPage = lazy(() => import("./pages/CostLimitsPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
 const DeleteAccountPage = lazy(() => import("./pages/DeleteAccountPage"));
 
@@ -383,6 +384,10 @@ const router = createBrowserRouter(
                       <AdminPage />
                     </ProtectedAdminRoute>
                   }
+                />
+                <Route
+                  path="cost-limits"
+                  element={<CostLimitsPage />}
                 />
                 <Route
                   path="access-control"
