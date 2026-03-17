@@ -93,8 +93,6 @@ export default function AgentCatalogueView({
     "root",
     "super_admin",
     "department_admin",
-    "admin",
-    "root_admin",
   ].includes(normalizedRole);
   const currentUserEmail = String(userData?.email ?? "").toLowerCase();
 

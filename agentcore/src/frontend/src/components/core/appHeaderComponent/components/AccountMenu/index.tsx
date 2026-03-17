@@ -41,9 +41,12 @@ export const AccountMenu = () => {
   const fallbackName = username.includes("@") ? username.split("@")[0] : username;
   const displayName = (fallbackName || t("User")).trim();
   const email = (userData?.email || (username.includes("@") ? username : "")).trim();
-  const organizationName = userData?.organization_name || userData?.department_name || t("N/A");
+  const organizationName = userData?.organization_name || t("N/A");
+  const departmentName = userData?.department_name || t("N/A");
+  const normalizedRole = (role ?? "").toLowerCase();
   const displayRole = role ? role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : t("N/A");
   const showOrganization = role !== "root";
+  const showDepartment = ["department_admin", "developer", "business_user"].includes(normalizedRole);
   const initialsSource = displayName.replace(/\s+/g, "");
   const initials = (initialsSource.slice(0, 2) || t("US")).toUpperCase();
 
@@ -121,6 +124,12 @@ export const AccountMenu = () => {
                 <>
                   <span className="text-muted-foreground">{t("Organization")}</span>
                   <span className="truncate text-foreground">{organizationName}</span>
+                </>
+              ) : null}
+              {showDepartment ? (
+                <>
+                  <span className="text-muted-foreground">{t("Department")}</span>
+                  <span className="truncate text-foreground">{departmentName}</span>
                 </>
               ) : null}
               <span className="text-muted-foreground">{t("Role")}</span>

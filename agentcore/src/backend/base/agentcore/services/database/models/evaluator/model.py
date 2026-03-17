@@ -66,6 +66,5 @@ class Evaluator(EvaluatorBase, table=True):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "visibility": self.visibility or "private",
             "public_scope": self.public_scope,
-            "shared_user_ids": self.shared_user_ids,
             "public_dept_ids": self.public_dept_ids,
         }

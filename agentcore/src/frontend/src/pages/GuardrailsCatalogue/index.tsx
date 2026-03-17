@@ -15,6 +15,8 @@ import {
   useDeleteGuardrailCatalogue,
   useGetGuardrailsCatalogue,
 } from "@/controllers/API/queries/guardrails";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import useAlertStore from "@/stores/alertStore";
 import NvidiaLogo from "@/assets/nvidia_logo.svg?react";
 import EditGuardrailModal from "./components/edit-guardrail-modal";
@@ -67,12 +69,16 @@ export default function GuardrailsView({
     setSelectedEnvironment(env);
   }, []);
 
-  const { permissions } = useContext(AuthContext);
+  const { permissions, role, userData } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
   const isProdView = selectedEnvironment === "prod";
   const canCreateOrEdit = can("add_guardrails") && !isProdView;
   const canDelete = can("retire_guardrails") && !isProdView;
   const canManage = canCreateOrEdit || canDelete;
+  const isDepartmentAdmin = role === "department_admin";
+  const isSuperAdmin = role === "super_admin";
+  const userDeptId = userData?.department_id ?? null;
+  const userId = userData?.id ?? null;
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -87,6 +93,9 @@ export default function GuardrailsView({
     { framework: selectedFrameworkId, environment: selectedEnvironment },
   );
   const deleteMutation = useDeleteGuardrailCatalogue();
+  const [visibilityOptions, setVisibilityOptions] = useState<{
+    departments: { id: string; name: string; org_id: string }[];
+  }>({ departments: [] });
 
   const displayGuardrails = guardrails?.length
     ? guardrails
@@ -108,6 +117,18 @@ export default function GuardrailsView({
     const timer = setTimeout(() => setSearch(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery, setSearch]);
+
+  useEffect(() => {
+    if (!selectedFramework || (!isDepartmentAdmin && !isSuperAdmin)) return;
+    api
+      .get(`${getURL("GUARDRAILS_CATALOGUE")}/visibility-options`)
+      .then((res) => {
+        setVisibilityOptions({ departments: res.data?.departments || [] });
+      })
+      .catch(() => {
+        setVisibilityOptions({ departments: [] });
+      });
+  }, [selectedFramework, isDepartmentAdmin, isSuperAdmin]);
 
   const getCategoryLabel = (category: string) => {
     const labels: Record<string, string> = {
@@ -134,6 +155,107 @@ export default function GuardrailsView({
       colors[category] ||
       "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400"
     );
+  };
+  const getVisibilityLabel = (guardrail: GuardrailInfo) => {
+    if (guardrail.visibility === "public") {
+      return guardrail.public_scope === "organization" ? "Organization" : "Department";
+    }
+    return "Private";
+  };
+  const getVisibilityBadgeClass = (guardrail: GuardrailInfo) => {
+    if (guardrail.visibility === "public") {
+      return guardrail.public_scope === "organization"
+        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+        : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+    }
+    return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+  };
+  const getDepartmentScopeLabel = (guardrail: GuardrailInfo) => {
+    const deptNameById = new Map(
+      visibilityOptions.departments.map((dept) => [dept.id, dept.name]),
+    );
+    if (guardrail.visibility === "public" && guardrail.public_scope === "organization") {
+      return "All departments";
+    }
+    const deptIds =
+      guardrail.visibility === "public" && guardrail.public_scope === "department"
+        ? guardrail.public_dept_ids?.length
+          ? guardrail.public_dept_ids
+          : guardrail.dept_id
+            ? [guardrail.dept_id]
+            : []
+        : guardrail.dept_id
+          ? [guardrail.dept_id]
+          : [];
+    if (deptIds.length === 0) return "-";
+    const names = deptIds.map((id) => deptNameById.get(id) || id);
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  };
+
+  const getGuardrailDeptIds = (guardrail: GuardrailInfo) => {
+    const ids = new Set<string>();
+    (guardrail.public_dept_ids || []).forEach((id) => ids.add(id));
+    if (guardrail.dept_id) ids.add(guardrail.dept_id);
+    return Array.from(ids);
+  };
+
+  const isMultiDeptGuardrail = (guardrail: GuardrailInfo) =>
+    guardrail.visibility === "public" &&
+    guardrail.public_scope === "department" &&
+    getGuardrailDeptIds(guardrail).length > 1;
+
+  const isDeptScopedForUser = (guardrail: GuardrailInfo) =>
+    Boolean(userDeptId && getGuardrailDeptIds(guardrail).includes(userDeptId));
+
+  const canEditGuardrail = (guardrail: GuardrailInfo) => {
+    if (!canCreateOrEdit) return false;
+    if (role === "root") {
+      return (
+        guardrail.created_by_id === userId &&
+        !guardrail.org_id &&
+        !guardrail.dept_id
+      );
+    }
+    if (role === "super_admin") return true;
+    if (role === "department_admin") {
+      if (isMultiDeptGuardrail(guardrail)) return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "organization") return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "department") {
+        return isDeptScopedForUser(guardrail);
+      }
+      if (guardrail.visibility === "private") return isDeptScopedForUser(guardrail);
+      return false;
+    }
+    if (role === "developer" || role === "business_user") {
+      return guardrail.visibility === "private" && guardrail.created_by_id === userId;
+    }
+    return false;
+  };
+
+  const canDeleteGuardrail = (guardrail: GuardrailInfo) => {
+    if (!canDelete) return false;
+    if (role === "root") {
+      return (
+        guardrail.created_by_id === userId &&
+        !guardrail.org_id &&
+        !guardrail.dept_id
+      );
+    }
+    if (role === "super_admin") return true;
+    if (role === "department_admin") {
+      if (isMultiDeptGuardrail(guardrail)) return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "organization") return false;
+      if (guardrail.visibility === "public" && guardrail.public_scope === "department") {
+        return isDeptScopedForUser(guardrail);
+      }
+      if (guardrail.visibility === "private") return isDeptScopedForUser(guardrail);
+      return false;
+    }
+    if (role === "developer" || role === "business_user") {
+      return guardrail.visibility === "private" && guardrail.created_by_id === userId;
+    }
+    return false;
   };
 
   const handleCreateGuardrail = () => {
@@ -258,6 +380,9 @@ export default function GuardrailsView({
                         {[
                           "Guardrail Name",
                           "Model",
+                          "Visibility",
+                          ...(isDepartmentAdmin ? ["Created By"] : []),
+                          ...(isSuperAdmin ? ["Department Scope"] : []),
                           "Category",
                           "Status",
                           ...(canManage || isProdView ? ["Actions"] : []),
@@ -276,7 +401,7 @@ export default function GuardrailsView({
                       {filteredGuardrails.length === 0 ? (
                         <tr>
                           <td
-                            colSpan={canManage || isProdView ? 5 : 4}
+                            colSpan={5 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canManage || isProdView ? 1 : 0)}
                             className="px-6 py-12 text-center text-muted-foreground"
                           >
                             No guardrails found matching your criteria
@@ -351,6 +476,31 @@ export default function GuardrailsView({
 
                             <td className="px-6 py-4">
                               <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(guardrail)}`}
+                              >
+                                {getVisibilityLabel(guardrail)}
+                              </span>
+                            </td>
+
+                            {isDepartmentAdmin && (
+                              <td className="px-6 py-4 text-sm text-muted-foreground">
+                                <div
+                                  className="max-w-[170px] truncate"
+                                  title={guardrail.created_by || "-"}
+                                >
+                                  {guardrail.created_by || "-"}
+                                </div>
+                              </td>
+                            )}
+
+                            {isSuperAdmin && (
+                              <td className="px-6 py-4 text-sm text-muted-foreground">
+                                {getDepartmentScopeLabel(guardrail)}
+                              </td>
+                            )}
+
+                            <td className="px-6 py-4">
+                              <span
                                 className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getCategoryBadgeColor(guardrail.category)}`}
                               >
                                 {getCategoryLabel(guardrail.category)}
@@ -381,36 +531,43 @@ export default function GuardrailsView({
                             )}
                             {canManage && !isProdView && (
                               <td className="px-6 py-4">
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button className="rounded p-1 hover:bg-muted">
-                                      <MoreVertical className="h-4 w-4" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    {canCreateOrEdit && (
-                                      <DropdownMenuItem
-                                        onClick={() =>
-                                          handleEditGuardrail(guardrail)
-                                        }
-                                      >
-                                        <Edit2 className="mr-2 h-4 w-4" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                    )}
-                                    {canDelete && (
-                                      <DropdownMenuItem
-                                        onClick={() =>
-                                          handleDeleteGuardrail(guardrail)
-                                        }
-                                        className="text-destructive"
-                                      >
-                                        <Trash2 className="mr-2 h-4 w-4" />
-                                        Delete
-                                      </DropdownMenuItem>
-                                    )}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                {canEditGuardrail(guardrail) ||
+                                canDeleteGuardrail(guardrail) ? (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button className="rounded p-1 hover:bg-muted">
+                                        <MoreVertical className="h-4 w-4" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      {canEditGuardrail(guardrail) && (
+                                        <DropdownMenuItem
+                                          onClick={() =>
+                                            handleEditGuardrail(guardrail)
+                                          }
+                                        >
+                                          <Edit2 className="mr-2 h-4 w-4" />
+                                          Edit
+                                        </DropdownMenuItem>
+                                      )}
+                                      {canDeleteGuardrail(guardrail) && (
+                                        <DropdownMenuItem
+                                          onClick={() =>
+                                            handleDeleteGuardrail(guardrail)
+                                          }
+                                          className="text-destructive"
+                                        >
+                                          <Trash2 className="mr-2 h-4 w-4" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      )}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    -
+                                  </span>
+                                )}
                               </td>
                             )}
                           </tr>

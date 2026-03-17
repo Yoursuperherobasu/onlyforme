@@ -111,11 +111,22 @@ function ApiInterceptor() {
         return response;
       },
       async (error: AxiosError) => {
-        const isAuthenticationError =
-          error?.response?.status === 403 || error?.response?.status === 401;
+        const statusCode = error?.response?.status;
+        const isAuthenticationError = statusCode === 401;
 
         const shouldRetryRefresh =
           isAuthenticationError && !isAuthEndpoint(error?.config?.url);
+
+        if (statusCode === 403 && !isAuthEndpoint(error?.config?.url)) {
+          const detail =
+            (error?.response?.data as { detail?: string })?.detail ||
+            "You don't have permission to perform this action.";
+          setErrorData({
+            title: "Access denied",
+            list: [detail],
+          });
+          return Promise.reject(error);
+        }
 
         if (shouldRetryRefresh) {
           if (

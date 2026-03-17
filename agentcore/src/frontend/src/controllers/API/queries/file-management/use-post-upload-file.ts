@@ -13,6 +13,7 @@ interface IPostUploadFile {
   public_scope?: "organization" | "department";
   org_id?: string;
   dept_id?: string;
+  public_dept_ids?: string[];
 }
 
 export const usePostUploadFileV2: useMutationFunctionType<
@@ -41,6 +42,11 @@ export const usePostUploadFileV2: useMutationFunctionType<
     }
     if (payload.dept_id) {
       formData.append("dept_id", payload.dept_id);
+    }
+    if (payload.public_dept_ids && payload.public_dept_ids.length > 0) {
+      payload.public_dept_ids.forEach((deptId) => {
+        formData.append("public_dept_ids", deptId);
+      });
     }
     const data = new Date().toISOString().split("Z")[0];
 

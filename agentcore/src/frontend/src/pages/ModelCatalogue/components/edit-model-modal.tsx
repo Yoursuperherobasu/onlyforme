@@ -66,6 +66,7 @@ export default function EditModelModal({
   const { role } = useContext(AuthContext);
   const normalizedRole = String(role || "").toLowerCase();
   const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
+  const isDeptAdmin = normalizedRole === "department_admin";
   const isEditMode = !!model;
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -85,7 +86,7 @@ export default function EditModelModal({
   const [description, setDescription] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [environment, setEnvironment] = useState<ModelEnvironment>("uat");
+  const [environmentSelection, setEnvironmentSelection] = useState<"uat" | "prod" | "both">("uat");
   const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">("private");
   const [orgId, setOrgId] = useState("");
   const [deptId, setDeptId] = useState("");
@@ -107,6 +108,12 @@ export default function EditModelModal({
 
   // Embedding-specific
   const [dimensions, setDimensions] = useState<number | "">("");
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    latency_ms?: number | null;
+  } | null>(null);
+  const [testPayloadKey, setTestPayloadKey] = useState<string | null>(null);
 
   const departmentsForSelectedOrg = useMemo(
     () => visibilityOptions.departments.filter((d) => !orgId || d.org_id === orgId),
@@ -122,6 +129,8 @@ export default function EditModelModal({
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   }, [departmentsForSelectedOrg, publicDeptIds]);
 
+  const isEmbedding = modelType === "embedding" || model?.model_type === "embedding";
+
   /* ---------------------------------- Populate form on edit ---------------------------------- */
 
   useEffect(() => {
@@ -134,7 +143,14 @@ export default function EditModelModal({
       setDescription(model.description ?? "");
       setApiKey(""); // never pre-fill
       setBaseUrl(model.base_url ?? "");
-      setEnvironment(model.environment ?? "uat");
+      const normalizeEnv = (env: string) => (env === "test" ? "uat" : env);
+      const modelEnvs = (model.environments ?? []).map((env) => normalizeEnv(String(env).toLowerCase()));
+      if (modelEnvs.includes("uat") && modelEnvs.includes("prod")) {
+        setEnvironmentSelection("both");
+      } else {
+        const fallbackEnv = normalizeEnv(String(model.environment ?? "uat").toLowerCase());
+        setEnvironmentSelection((fallbackEnv || "uat") as "uat" | "prod");
+      }
       setVisibilityScope(model.visibility_scope ?? "private");
       setOrgId(model.org_id ?? "");
       setDeptId(model.dept_id ?? "");
@@ -164,7 +180,7 @@ export default function EditModelModal({
       setDescription("");
       setApiKey("");
       setBaseUrl("");
-      setEnvironment("uat");
+      setEnvironmentSelection("uat");
       setVisibilityScope("private");
       setOrgId("");
       setDeptId("");
@@ -177,11 +193,13 @@ export default function EditModelModal({
       setMaxTokens("");
       setDimensions("");
     }
+    setTestResult(null);
+    setTestPayloadKey(null);
   }, [model, open]);
 
   useEffect(() => {
     if (!open) return;
-    api.get("api/mcp/registry/visibility-options").then((res) => {
+    api.get("api/models/registry/visibility-options").then((res) => {
       const options: VisibilityOptions = res.data || {
         organizations: [],
         departments: [],
@@ -202,6 +220,26 @@ export default function EditModelModal({
     }
   }, [open, normalizedRole, visibilityOptions, deptId, orgId, publicDeptIds]);
 
+  useEffect(() => {
+    if (!open) return;
+    const key = buildTestKey();
+    if (testPayloadKey && key !== testPayloadKey) {
+      setTestResult(null);
+      setTestPayloadKey(null);
+    }
+  }, [
+    open,
+    provider,
+    modelName,
+    baseUrl,
+    apiKey,
+    azureDeployment,
+    azureApiVersion,
+    customHeaders,
+    isEmbedding,
+    testPayloadKey,
+  ]);
+
   /* ---------------------------------- Build payload ---------------------------------- */
 
   const buildProviderConfig = (): Record<string, any> | undefined => {
@@ -220,8 +258,6 @@ export default function EditModelModal({
     return Object.keys(config).length ? config : undefined;
   };
 
-  const isEmbedding = modelType === "embedding" || model?.model_type === "embedding";
-
   const buildDefaultParams = () => {
     const params: Record<string, any> = {};
     if (!isEmbedding) {
@@ -234,6 +270,42 @@ export default function EditModelModal({
     return Object.keys(params).length ? params : undefined;
   };
 
+  const buildTestPayload = () => ({
+    provider,
+    model_name: modelName,
+    base_url: baseUrl || null,
+    api_key: apiKey || null,
+    provider_config: buildProviderConfig() ?? null,
+    isEmbedding,
+  });
+
+  const buildTestKey = () => JSON.stringify(buildTestPayload());
+
+  const sortObjectKeys = (value: any): any => {
+    if (Array.isArray(value)) {
+      return value.map(sortObjectKeys);
+    }
+    if (value && typeof value === "object") {
+      return Object.keys(value)
+        .sort()
+        .reduce((acc, key) => {
+          acc[key] = sortObjectKeys(value[key]);
+          return acc;
+        }, {} as Record<string, any>);
+    }
+    return value;
+  };
+
+  const isSameValue = (a: any, b: any) => {
+    const normalize = (v: any) => (v === undefined ? null : v);
+    const left = normalize(a);
+    const right = normalize(b);
+    if (typeof left === "object" || typeof right === "object") {
+      return JSON.stringify(sortObjectKeys(left)) === JSON.stringify(sortObjectKeys(right));
+    }
+    return left === right;
+  };
+
   /* ---------------------------------- Handlers ---------------------------------- */
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -241,8 +313,18 @@ export default function EditModelModal({
 
     try {
       if (isEditMode && model) {
-        const originalEnvironment = model.environment ?? "uat";
+        const normalizeEnv = (env: string) => (env === "test" ? "uat" : env);
+        const originalEnvs = (model.environments ?? []).map((env) => normalizeEnv(String(env).toLowerCase()));
+        const effectiveOriginalEnvs = originalEnvs.length
+          ? originalEnvs
+          : [normalizeEnv(String(model.environment ?? "uat").toLowerCase())];
+        const originalEnvironment = effectiveOriginalEnvs[0] ?? "uat";
         const originalVisibility = model.visibility_scope ?? "private";
+        const originalProviderConfig = model.provider_config ?? null;
+        const originalDefaultParams = model.default_params ?? null;
+        const desiredEnvs =
+          environmentSelection === "both" ? ["uat", "prod"] : [environmentSelection];
+        const desiredEnvironment = desiredEnvs[0];
 
         const payload: ModelUpdateRequest = {
           display_name: displayName,
@@ -257,35 +339,121 @@ export default function EditModelModal({
         };
         if (apiKey) payload.api_key = apiKey;
 
+        const desiredProviderConfig = buildProviderConfig() ?? null;
+        const desiredDefaultParams = buildDefaultParams() ?? null;
+        const basePayloadChanged =
+          !isSameValue(payload.display_name, model.display_name) ||
+          !isSameValue(payload.description, model.description ?? null) ||
+          !isSameValue(payload.provider, model.provider) ||
+          !isSameValue(payload.model_name, model.model_name) ||
+          !isSameValue(payload.model_type, model.model_type) ||
+          !isSameValue(payload.base_url, model.base_url ?? null) ||
+          !isSameValue(payload.provider_config ?? null, originalProviderConfig) ||
+          !isSameValue(payload.default_params ?? null, originalDefaultParams) ||
+          !isSameValue(payload.is_active, model.is_active);
+
+        const normalizedOriginal = Array.from(new Set(effectiveOriginalEnvs)).sort();
+        const normalizedDesired = Array.from(new Set(desiredEnvs)).sort();
+        const environmentChanged =
+          normalizedOriginal.length !== normalizedDesired.length ||
+          normalizedOriginal.some((env, idx) => env !== normalizedDesired[idx]);
+
+        const desiredPublicDeptIds =
+          visibilityScope === "department"
+            ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
+            : [];
+        const normalizedOriginalPublicDeptIds = (model.public_dept_ids || []).map(String).sort();
+        const normalizedDesiredPublicDeptIds = desiredPublicDeptIds.map(String).sort();
+        const publicDeptsChanged =
+          normalizedOriginalPublicDeptIds.length !== normalizedDesiredPublicDeptIds.length ||
+          normalizedOriginalPublicDeptIds.some((id, idx) => id !== normalizedDesiredPublicDeptIds[idx]);
+        const desiredOrgId = orgId || null;
+        const desiredDeptId =
+          visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null;
+        const scopeChanged =
+          visibilityScope !== originalVisibility ||
+          (model.org_id || null) !== desiredOrgId ||
+          (model.dept_id || null) !== desiredDeptId ||
+          publicDeptsChanged;
+
+        const hasChanges =
+          basePayloadChanged ||
+          environmentChanged ||
+          scopeChanged ||
+          Boolean(apiKey);
+
+        if (!hasChanges) {
+          setErrorData({
+            title: "No changes detected",
+            list: ["Update at least one field before saving."],
+          });
+          return;
+        }
+
         await updateMutation.mutateAsync({ id: model.id, data: payload });
 
-        if (environment !== originalEnvironment) {
+        if (environmentChanged) {
+          const isPromotion = !normalizedOriginal.includes("prod") && normalizedDesired.includes("prod");
+          if (!isPromotion) {
+            setErrorData({
+              title: "Environment change not allowed",
+              list: ["Removing environments is not supported. Only UAT → PROD promotion is allowed."],
+            });
+            return;
+          }
           await promoteMutation.mutateAsync({
             id: model.id,
-            target_environment: environment,
+            target_environment: "prod",
           });
         }
 
-        if (visibilityScope !== originalVisibility) {
+        if (scopeChanged) {
           await visibilityMutation.mutateAsync({
             id: model.id,
             visibility_scope: visibilityScope,
-            org_id: visibilityScope === "organization" ? orgId || null : orgId || null,
-            dept_id: visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null,
-            public_dept_ids:
-              visibilityScope === "department"
-                ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
-                : [],
+            org_id: desiredOrgId,
+            dept_id: desiredDeptId,
+            public_dept_ids: desiredPublicDeptIds,
           });
         }
 
         setSuccessData({
-          title:
-            environment !== originalEnvironment || visibilityScope !== originalVisibility
-              ? `Model "${displayName}" updated. Related approval request(s) submitted.`
-              : `Model "${displayName}" updated.`,
+          title: `Model "${displayName}" updated.`,
+          list:
+            environmentChanged || scopeChanged
+              ? [
+                  "Changes that affect environment or visibility may require approval. Check Review & Approval for status.",
+                ]
+              : undefined,
         });
       } else {
+        const currentTestKey = buildTestKey();
+        let connectionResult =
+          testResult && testPayloadKey === currentTestKey ? testResult : null;
+        let autoTestRan = false;
+        if (!connectionResult) {
+          connectionResult = await testMutation.mutateAsync(buildTestPayload());
+          setTestResult(connectionResult);
+          setTestPayloadKey(currentTestKey);
+          autoTestRan = true;
+        }
+        if (!connectionResult.success) {
+          const message = connectionResult.message || "Connection test failed.";
+          setErrorData({
+            title: "Connection test failed",
+            list: [message],
+          });
+          return;
+        }
+        if (autoTestRan) {
+          setSuccessData({
+            title: `Connection successful${connectionResult.latency_ms ? ` (${connectionResult.latency_ms}ms)` : ""}`,
+          });
+        }
+
+        const desiredEnvs =
+          environmentSelection === "both" ? ["uat", "prod"] : [environmentSelection];
+        const desiredEnvironment = desiredEnvs[0];
         const payload: ModelCreateRequest = {
           display_name: displayName,
           description: description || null,
@@ -294,7 +462,8 @@ export default function EditModelModal({
           model_type: isEmbedding ? "embedding" : "llm",
           base_url: baseUrl || null,
           api_key: apiKey || null,
-          environment,
+          environment: desiredEnvironment,
+          environments: desiredEnvs,
           visibility_scope: visibilityScope,
           org_id: visibilityScope === "organization" ? orgId || null : null,
           dept_id: visibilityScope === "department" ? (canMultiDept ? null : deptId || null) : null,
@@ -308,12 +477,20 @@ export default function EditModelModal({
         };
 
         await createMutation.mutateAsync(payload);
-        setSuccessData({ title: `${isEmbedding ? "Embedding" : "Model"} "${displayName}" added to ${environment} environment.` });
+        const envLabel =
+          environmentSelection === "both" ? "UAT + PROD" : environmentSelection.toUpperCase();
+        setSuccessData({
+          title: `${isEmbedding ? "Embedding" : "Model"} "${displayName}" created.`,
+          list: [
+            `Target environment: ${envLabel}.`,
+            "If approval is required, you'll see it in Review & Approval.",
+          ],
+        });
       }
       onOpenChange(false);
     } catch (err: any) {
       setErrorData({
-        title: isEditMode ? "Failed to update model" : "Failed to create model",
+        title: isEditMode ? "Model update failed" : "Model creation failed",
         list: [err?.message ?? String(err)],
       });
     }
@@ -321,15 +498,9 @@ export default function EditModelModal({
 
   const handleTestConnection = async () => {
     try {
-      const testPayload = {
-        provider,
-        model_name: modelName,
-        base_url: baseUrl || null,
-        api_key: apiKey || null,
-        provider_config: buildProviderConfig() ?? null,
-        isEmbedding,
-      };
-      const result = await testMutation.mutateAsync(testPayload);
+      const result = await testMutation.mutateAsync(buildTestPayload());
+      setTestResult(result);
+      setTestPayloadKey(buildTestKey());
       if (result.success) {
         setSuccessData({
           title: `Connection successful${result.latency_ms ? ` (${result.latency_ms}ms)` : ""}`,
@@ -338,8 +509,10 @@ export default function EditModelModal({
         setErrorData({ title: "Connection failed", list: [result.message] });
       }
     } catch (err: any) {
+      setTestResult({ success: false, message: err?.message ?? String(err) });
+      setTestPayloadKey(buildTestKey());
       setErrorData({
-        title: "Test connection error",
+        title: "Connection test failed",
         list: [err?.message ?? String(err)],
       });
     }
@@ -522,13 +695,13 @@ export default function EditModelModal({
               Environment & Tenancy
             </legend>
             <div className="flex gap-3">
-              {ENVIRONMENTS.map((env) => (
+              {[...ENVIRONMENTS, { value: "both" as const, label: "UAT + PROD" }].map((env) => (
                 <button
                   key={env.value}
                   type="button"
-                  onClick={() => setEnvironment(env.value)}
+                  onClick={() => setEnvironmentSelection(env.value as "uat" | "prod" | "both")}
                   className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-                    environment === env.value
+                    environmentSelection === env.value
                       ? "border-[var(--button-primary)] bg-[var(--button-primary)] text-[var(--button-primary-foreground)]"
                       : "border-input bg-background hover:bg-muted"
                   }`}
@@ -540,7 +713,7 @@ export default function EditModelModal({
             <p className="text-[11px] text-muted-foreground">
               {isEditMode
                 ? "Changing environment here will submit a promotion request when applicable."
-                : <>Models default to <strong>UAT</strong>. Promote to <strong>PROD</strong> when ready.</>}
+                : <>Models default to <strong>UAT</strong>. Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.</>}
             </p>
 
             <div className="grid grid-cols-2 gap-4">

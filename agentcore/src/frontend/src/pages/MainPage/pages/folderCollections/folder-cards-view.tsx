@@ -63,11 +63,9 @@ export default function FolderCardsView({
 
   // Mirror backend ROLE_ALIASES so every role variant resolves identically.
   const ROLE_ALIASES: Record<string, string> = {
-    admin: "super_admin",
     super_admin: "super_admin",
     department_admin: "department_admin",
     business_user: "business_user",
-    root_admin: "root",
     root: "root",
   };
   const rawNormalized = (role || "").toLowerCase().trim().replace(/\s+/g, "_");

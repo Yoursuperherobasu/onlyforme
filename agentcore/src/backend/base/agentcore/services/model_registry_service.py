@@ -36,6 +36,9 @@ async def create_model(
 ) -> ModelRegistryRead:
     """Insert a new model into the registry."""
     enc_key = _encryption_key()
+    environments = [str(v).lower() for v in (getattr(data, "environments", None) or []) if v]
+    if not environments:
+        environments = [str(data.environment).lower()]
     row = ModelRegistry(
         display_name=data.display_name,
         description=data.description,
@@ -44,6 +47,7 @@ async def create_model(
         model_type=data.model_type,
         base_url=data.base_url,
         environment=data.environment,
+        environments=environments,
         source_model_id=getattr(data, "source_model_id", None),
         org_id=getattr(data, "org_id", None),
         dept_id=getattr(data, "dept_id", None),
@@ -88,14 +92,24 @@ async def get_models(
         stmt = stmt.where(ModelRegistry.is_active.is_(True))
     if provider:
         stmt = stmt.where(ModelRegistry.provider == provider)
-    if environment:
-        stmt = stmt.where(ModelRegistry.environment == environment)
     if model_type:
         stmt = stmt.where(ModelRegistry.model_type == model_type)
     stmt = stmt.order_by(ModelRegistry.provider, ModelRegistry.display_name)
 
     result = await session.execute(stmt)
     rows = result.scalars().all()
+    if environment:
+        env_lower = str(environment).lower()
+        filtered = []
+        for row in rows:
+            row_envs = [str(v).lower() for v in (getattr(row, "environments", None) or []) if v]
+            if row_envs:
+                if env_lower not in row_envs:
+                    continue
+            elif str(getattr(row, "environment", "") or "").lower() != env_lower:
+                continue
+            filtered.append(row)
+        rows = filtered
     return [ModelRegistryRead.from_orm_model(r) for r in rows]
 
 
@@ -121,6 +135,8 @@ async def update_model(
     update_fields = data.model_dump(exclude_unset=True)
     if "public_dept_ids" in update_fields:
         update_fields["public_dept_ids"] = [str(v) for v in (update_fields.get("public_dept_ids") or [])] or None
+    if "environments" in update_fields:
+        update_fields["environments"] = [str(v).lower() for v in (update_fields.get("environments") or [])] or None
 
     # Handle API key separately
     plain_key = update_fields.pop("api_key", None)

@@ -58,6 +58,27 @@ def _normalize_environment(value: str | None) -> str:
     return normalized
 
 
+def _normalize_environment_list(values: list[str] | None, fallback: str | None = None) -> list[str]:
+    normalized = [_normalize_environment(v) for v in (values or []) if v is not None]
+    if not normalized and fallback is not None:
+        normalized = [_normalize_environment(fallback)]
+    ordered: list[str] = []
+    for env in (ModelEnvironment.UAT.value, ModelEnvironment.PROD.value):
+        if env in normalized and env not in ordered:
+            ordered.append(env)
+    for env in normalized:
+        if env not in ordered:
+            ordered.append(env)
+    return ordered
+
+
+def _resolve_model_environments(row: ModelRegistry) -> list[str]:
+    envs = [str(v).lower() for v in (getattr(row, "environments", None) or []) if v]
+    if envs:
+        return _normalize_environment_list(envs)
+    return [_normalize_environment(getattr(row, "environment", None))]
+
+
 def _normalize_visibility_scope(value: str | None) -> str:
     normalized = (value or ModelVisibilityScope.PRIVATE.value).strip().lower()
     if normalized not in {
@@ -67,6 +88,29 @@ def _normalize_visibility_scope(value: str | None) -> str:
     }:
         raise HTTPException(status_code=400, detail=f"Unsupported visibility_scope '{value}'")
     return normalized
+
+
+async def _validate_model_connection_before_create(body: ModelRegistryCreate) -> None:
+    if not str(body.api_key or "").strip():
+        raise HTTPException(status_code=400, detail="API key is required to create a model")
+
+    payload = TestConnectionRequest(
+        provider=body.provider,
+        model_name=body.model_name,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        provider_config=body.provider_config,
+    )
+    if str(body.model_type or "").strip().lower() == "embedding":
+        result = await test_embedding_connection_via_service(payload.model_dump())
+    else:
+        result = await test_connection_via_service(payload.model_dump(mode="json"))
+
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("message") or "Model connection test failed",
+        )
 
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
@@ -102,13 +146,8 @@ def _can_self_approve(current_user: CurrentActiveUser) -> bool:
         normalized.intersection(
             {
                 "root",
-                "root_admin",
                 "super_admin",
-                "superadmin",
                 "department_admin",
-                "departmentadmin",
-                "dept_admin",
-                "deptadmin",
             }
         )
     )
@@ -139,6 +178,27 @@ async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set
     ).all()
     org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
     return org_ids, [(row[0], row[1]) for row in dept_rows]
+
+
+async def _resolve_user_primary_dept(
+    session: DbSession, user_id: UUID | None
+) -> tuple[UUID | None, UUID | None]:
+    if not user_id:
+        return None, None
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.org_id, UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    if not dept_rows:
+        return None, None
+    org_id, dept_id = sorted(
+        [(row[0], row[1]) for row in dept_rows], key=lambda x: (str(x[0]), str(x[1]))
+    )[0]
+    return org_id, dept_id
 
 
 async def _validate_scope_refs(session: DbSession, org_id: UUID | None, dept_id: UUID | None) -> None:
@@ -280,6 +340,9 @@ def _can_access_model(
 
     visibility_scope = _normalize_visibility_scope(getattr(row, "visibility_scope", None))
     if visibility_scope == ModelVisibilityScope.PRIVATE.value:
+        if role == "department_admin":
+            dept_ids = {str(d) for _, d in dept_pairs}
+            return bool(row.dept_id and str(row.dept_id) in dept_ids)
         return (
             str(row.created_by_id or "") == user_id
             or str(row.requested_by or "") == user_id
@@ -324,8 +387,21 @@ def _can_delete_model(
         return False
 
     # Department Admin: can delete only models approved by self.
-    if normalized_roles.intersection({"department_admin", "dept_admin", "departmentadmin", "deptadmin"}):
+    if normalized_roles.intersection({"department_admin"}):
+        if len(list(getattr(row, "public_dept_ids", None) or [])) > 1:
+            return False
         reviewed_by = str(getattr(row, "reviewed_by", "") or "")
+        visibility_scope = _normalize_visibility_scope(getattr(row, "visibility_scope", None))
+        dept_ids = {str(d) for _, d in dept_pairs}
+        scoped_public_depts = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+        if visibility_scope == ModelVisibilityScope.DEPARTMENT.value:
+            if row.dept_id and str(row.dept_id) in dept_ids:
+                return True
+            if scoped_public_depts.intersection(dept_ids):
+                return True
+        if visibility_scope == ModelVisibilityScope.PRIVATE.value:
+            if row.dept_id and str(row.dept_id) in dept_ids:
+                return True
         if reviewed_by == user_id:
             return True
         if not reviewed_by:
@@ -342,6 +418,41 @@ def _can_delete_model(
     return False
 
 
+def _can_edit_model(
+    row: ModelRegistry,
+    current_user: CurrentActiveUser,
+    *,
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> bool:
+    if _is_root_user(current_user) or _is_super_admin_user(current_user):
+        return True
+    normalized_roles = _normalize_role_variants(getattr(current_user, "role", ""))
+    user_id = str(current_user.id)
+    visibility_scope = _normalize_visibility_scope(getattr(row, "visibility_scope", None))
+    dept_ids = {str(d) for _, d in dept_pairs}
+    scoped_public_depts = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
+
+    if normalized_roles.intersection({"department_admin"}):
+        if len(list(getattr(row, "public_dept_ids", None) or [])) > 1:
+            return False
+        if visibility_scope == ModelVisibilityScope.ORGANIZATION.value:
+            return False
+        if visibility_scope == ModelVisibilityScope.DEPARTMENT.value:
+            if row.dept_id and str(row.dept_id) in dept_ids:
+                return True
+            if scoped_public_depts.intersection(dept_ids):
+                return True
+        if visibility_scope == ModelVisibilityScope.PRIVATE.value:
+            if row.dept_id and str(row.dept_id) in dept_ids:
+                return True
+        return (
+            str(getattr(row, "reviewed_by", "") or "") == user_id
+            or str(getattr(row, "created_by_id", "") or "") == user_id
+        )
+
+    return False
+
 async def _create_model_approval_request(
     session: DbSession,
     *,
@@ -351,7 +462,7 @@ async def _create_model_approval_request(
     request_type: ModelApprovalRequestType,
     source_environment: str,
     target_environment: str,
-    final_target_environment: str | None,
+    requested_environments: list[str] | None,
     visibility_requested: str,
     requested_by: UUID,
     request_to: UUID,
@@ -364,7 +475,7 @@ async def _create_model_approval_request(
         request_type=request_type,
         source_environment=source_environment,
         target_environment=target_environment,
-        final_target_environment=final_target_environment,
+        requested_environments=[str(v).lower() for v in (requested_environments or [])] or None,
         visibility_requested=visibility_requested,
         requested_by=requested_by,
         request_to=request_to,
@@ -391,9 +502,9 @@ async def _has_pending_model_request(
     return existing is not None
 
 
-def _next_environment(current_env: str) -> str | None:
-    normalized = _normalize_environment(current_env)
-    if normalized == ModelEnvironment.UAT.value:
+def _next_environment(current_envs: list[str]) -> str | None:
+    normalized = _normalize_environment_list(current_envs)
+    if ModelEnvironment.UAT.value in normalized and ModelEnvironment.PROD.value not in normalized:
         return ModelEnvironment.PROD.value
     return None
 
@@ -431,6 +542,71 @@ class ModelVisibilityChangePayload(ModelRegistryUpdate):
     public_dept_ids: list[UUID] | None = None
 
 
+@router.get("/visibility-options")
+async def get_model_visibility_options(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict:
+    await _require_any_permission(current_user, {"view_model_catalogue_page", "view_models"})
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+    role = normalize_role(str(current_user.role))
+
+    organizations = []
+    if role == "root":
+        org_rows = (
+            await session.exec(
+                select(Organization.id, Organization.name).where(Organization.status == "active")
+            )
+        ).all()
+        organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
+    elif org_ids:
+        org_rows = (
+            await session.exec(
+                select(Organization.id, Organization.name).where(
+                    Organization.id.in_(list(org_ids)),
+                    Organization.status == "active",
+                )
+            )
+        ).all()
+        organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
+
+    dept_ids = {dept_id for _, dept_id in dept_pairs}
+    departments = []
+    if role == "root":
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(Department.status == "active")
+            )
+        ).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+    elif role == "super_admin" and org_ids:
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(
+                    Department.org_id.in_(list(org_ids)),
+                    Department.status == "active",
+                )
+            )
+        ).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+    elif dept_ids:
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(
+                    Department.id.in_(list(dept_ids)),
+                    Department.status == "active",
+                )
+            )
+        ).all()
+        departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
+
+    return {
+        "organizations": organizations,
+        "departments": departments,
+        "role": role,
+    }
+
+
 @router.get("/", response_model=list[ModelRegistryRead])
 async def list_registry_models(
     session: DbSession,
@@ -442,9 +618,10 @@ async def list_registry_models(
 ):
     """List visible models only (tenant + visibility aware)."""
     await _require_any_permission(current_user, {"view_model_catalogue_page", "view_models"})
+    normalized_env = _normalize_environment(environment) if environment else None
     raw_rows = await fetch_registry_models_async(
         provider=provider,
-        environment=_normalize_environment(environment) if environment else None,
+        environment=normalized_env,
         model_type=model_type,
         active_only=active_only,
     )
@@ -459,6 +636,20 @@ async def list_registry_models(
         return []
     db_rows = (await session.exec(select(ModelRegistry).where(ModelRegistry.id.in_(model_ids)))).all()
     db_by_id = {row.id: row for row in db_rows}
+    pending_reqs = (
+        await session.exec(
+            select(ModelApprovalRequest)
+            .where(
+                ModelApprovalRequest.model_id.in_(model_ids),
+                ModelApprovalRequest.decision == None,  # noqa: E711
+            )
+            .order_by(ModelApprovalRequest.requested_at.desc())
+        )
+    ).all()
+    pending_by_model: dict[UUID, ModelApprovalRequest] = {}
+    for req in pending_reqs:
+        if req.model_id not in pending_by_model:
+            pending_by_model[req.model_id] = req
 
     visible: list[ModelRegistryRead] = []
     for raw in raw_rows:
@@ -469,8 +660,25 @@ async def list_registry_models(
         row = db_by_id.get(model_id)
         if not row:
             continue
-        if _can_access_model(row, current_user, org_ids, dept_pairs):
-            visible.append(ModelRegistryRead.from_orm_model(row))
+        if not _can_access_model(row, current_user, org_ids, dept_pairs):
+            continue
+        envs = _resolve_model_environments(row)
+        if not envs:
+            pending_req = pending_by_model.get(model_id)
+            if pending_req:
+                requested_envs = [str(v).lower() for v in (getattr(pending_req, "requested_environments", None) or []) if v]
+                if requested_envs:
+                    envs = _normalize_environment_list(requested_envs)
+                elif pending_req.target_environment:
+                    envs = _normalize_environment_list([pending_req.target_environment])
+        if normalized_env:
+            if normalized_env not in envs:
+                continue
+        obj = ModelRegistryRead.from_orm_model(row)
+        if envs:
+            obj.environments = envs
+            obj.environment = envs[0]
+        visible.append(obj)
     return visible
 
 
@@ -483,6 +691,8 @@ async def create_registry_model(
     """Create model through approval-safe flow."""
     await _require_any_permission(current_user, {"add_new_model", "request_new_model"})
     desired_environment = _normalize_environment(body.environment)
+    normalized_envs = _normalize_environment_list(getattr(body, "environments", None), desired_environment)
+    normalized_final_env: str | None = None
     visibility_scope = _normalize_visibility_scope(getattr(body, "visibility_scope", None))
     requested_public_dept_ids = list(getattr(body, "public_dept_ids", None) or [])
     now = datetime.now(timezone.utc)
@@ -540,14 +750,19 @@ async def create_registry_model(
         body.org_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0][0]
     if not body.dept_id and dept_pairs:
         body.dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0][1]
+    if not body.org_id and org_ids:
+        body.org_id = sorted(org_ids, key=lambda x: str(x))[0]
     if not body.org_id:
         raise HTTPException(status_code=400, detail="org_id is required to create a model")
 
     await _validate_scope_refs(session, body.org_id, body.dept_id)
 
-    body.environment = desired_environment
+    body.environment = normalized_envs[0] if normalized_envs else desired_environment
+    body.environments = normalized_envs or [desired_environment]
     body.requested_by = current_user.id
     body.requested_at = now
+
+    await _validate_model_connection_before_create(body)
 
     is_super_admin_creator = user_role in {"root", "super_admin"}
     is_department_admin_creator = user_role == "department_admin"
@@ -569,6 +784,13 @@ async def create_registry_model(
     created_row = await session.get(ModelRegistry, created_id)
     if created_row is None:
         raise HTTPException(status_code=500, detail="Created model not found")
+    if normalized_envs:
+        current_envs = [str(v).lower() for v in (getattr(created_row, "environments", None) or []) if v]
+        desired_envs = _normalize_environment_list(normalized_envs)
+        if current_envs != desired_envs:
+            created_row.environments = desired_envs
+            created_row.environment = desired_envs[0]
+            session.add(created_row)
 
     await _append_audit(
         session,
@@ -585,7 +807,6 @@ async def create_registry_model(
 
     if not auto_approve:
         # Approver policy:
-        # - PROD target (any visibility): super admin
         # - ORGANIZATION visibility (any env): super admin
         # - otherwise: department admin
         request_to = await _resolve_approver_for_model_request(
@@ -630,7 +851,7 @@ async def create_registry_model(
                 request_type=ModelApprovalRequestType.CREATE,
                 source_environment=desired_environment,
                 target_environment=desired_environment,
-                final_target_environment=None,
+                requested_environments=normalized_envs,
                 visibility_requested=visibility_scope,
                 requested_by=current_user.id,
                 request_to=request_to,
@@ -670,14 +891,25 @@ async def request_model_promotion(
     row = await session.get(ModelRegistry, model_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Model not found")
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+    if not _can_edit_model(row, current_user, org_ids=org_ids, dept_pairs=dept_pairs):
+        raise HTTPException(status_code=403, detail="Model is outside your edit scope")
 
     target_environment = _normalize_environment(body.target_environment)
-    current_environment = _normalize_environment(row.environment)
-    allowed_next = _next_environment(current_environment)
+    current_envs = _resolve_model_environments(row)
+    allowed_next = _next_environment(current_envs)
     if not allowed_next or target_environment != allowed_next:
         raise HTTPException(status_code=400, detail="Invalid promotion path. Use UAT->PROD only")
     if await _has_pending_model_request(session, model_id=row.id, request_type=ModelApprovalRequestType.PROMOTE):
         raise HTTPException(status_code=400, detail="A promotion request is already pending for this model")
+
+    current_role = normalize_role(str(current_user.role))
+    if current_role == "department_admin":
+        if len(list(getattr(row, "public_dept_ids", None) or [])) > 1:
+            raise HTTPException(
+                status_code=403,
+                detail="Promotion for multi-department models requires super admin",
+            )
 
     if _is_root_user(current_user) or _is_super_admin_user(current_user):
         approver_id = current_user.id
@@ -694,7 +926,8 @@ async def request_model_promotion(
         approver_id == current_user.id and _can_self_approve(current_user)
     ):
         now = datetime.now(timezone.utc)
-        row.environment = target_environment
+        row.environments = _normalize_environment_list([*current_envs, target_environment])
+        row.environment = row.environments[0] if row.environments else target_environment
         row.approval_status = ModelApprovalStatus.APPROVED.value
         row.requested_by = current_user.id
         row.request_to = None
@@ -710,8 +943,8 @@ async def request_model_promotion(
             action="model.promotion.auto_approved",
             org_id=row.org_id,
             dept_id=row.dept_id,
-            from_environment=current_environment,
-            to_environment=target_environment,
+            from_environment=",".join(current_envs),
+            to_environment=",".join(row.environments or []),
             details={"auto_approved": True, "reason": "requester_is_admin_approver"},
             message="Promotion auto-approved by admin requester",
         )
@@ -735,9 +968,9 @@ async def request_model_promotion(
         org_id=row.org_id,
         dept_id=row.dept_id,
         request_type=ModelApprovalRequestType.PROMOTE,
-        source_environment=current_environment,
+        source_environment=current_envs[0] if current_envs else ModelEnvironment.UAT.value,
         target_environment=target_environment,
-        final_target_environment=None,
+        requested_environments=[*current_envs, target_environment] if current_envs else [target_environment],
         visibility_requested=row.visibility_scope,
         requested_by=current_user.id,
         request_to=approver_id,
@@ -749,7 +982,7 @@ async def request_model_promotion(
         action="model.promotion.requested",
         org_id=row.org_id,
         dept_id=row.dept_id,
-        from_environment=current_environment,
+        from_environment=",".join(current_envs),
         to_environment=target_environment,
         message="Promotion request created",
     )
@@ -769,15 +1002,62 @@ async def request_model_visibility_change(
     row = await session.get(ModelRegistry, model_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Model not found")
+    org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
+    if not _can_edit_model(row, current_user, org_ids=org_ids, dept_pairs=dept_pairs):
+        raise HTTPException(status_code=403, detail="Model is outside your edit scope")
     if await _has_pending_model_request(session, model_id=row.id, request_type=ModelApprovalRequestType.VISIBILITY):
         raise HTTPException(status_code=400, detail="A visibility change request is already pending for this model")
     target_visibility = _normalize_visibility_scope(body.visibility_scope)
-    if target_visibility == row.visibility_scope:
-        return ModelRegistryRead.from_orm_model(row)
 
     requested_public_dept_ids = list(getattr(body, "public_dept_ids", None) or [])
     requested_dept_id = getattr(body, "dept_id", None)
     requested_org_id = getattr(body, "org_id", None) or row.org_id
+    current_role = normalize_role(str(current_user.role))
+    dept_ids = {str(d) for _, d in dept_pairs}
+    if current_role == "department_admin":
+        if len(list(getattr(row, "public_dept_ids", None) or [])) > 1:
+            raise HTTPException(
+                status_code=403,
+                detail="Multi-department visibility changes require super admin",
+            )
+        if target_visibility == ModelVisibilityScope.DEPARTMENT.value and len(requested_public_dept_ids) > 1:
+            raise HTTPException(
+                status_code=403,
+                detail="Multi-department visibility changes require super admin",
+            )
+        if target_visibility == ModelVisibilityScope.DEPARTMENT.value and requested_public_dept_ids:
+            if any(str(d) not in dept_ids for d in requested_public_dept_ids):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Department admins can only target their own department",
+                )
+        if target_visibility == ModelVisibilityScope.PRIVATE.value and requested_dept_id:
+            if str(requested_dept_id) not in dept_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Department admins can only target their own department",
+                )
+    if target_visibility == row.visibility_scope:
+        current_public = [str(v) for v in (row.public_dept_ids or [])]
+        desired_public = [str(v) for v in (requested_public_dept_ids or [])]
+        current_public.sort()
+        desired_public.sort()
+        scope_changed = False
+        if target_visibility == ModelVisibilityScope.DEPARTMENT.value:
+            scope_changed = (
+                (row.org_id != requested_org_id)
+                or (str(row.dept_id) if row.dept_id else None) != (str(requested_dept_id) if requested_dept_id else None)
+                or current_public != desired_public
+            )
+        elif target_visibility == ModelVisibilityScope.PRIVATE.value:
+            scope_changed = (
+                (row.org_id != requested_org_id)
+                or (str(row.dept_id) if row.dept_id else None) != (str(requested_dept_id) if requested_dept_id else None)
+            )
+        elif target_visibility == ModelVisibilityScope.ORGANIZATION.value:
+            scope_changed = row.org_id != requested_org_id
+        if not scope_changed:
+            raise HTTPException(status_code=400, detail="No visibility changes detected")
 
     if target_visibility == ModelVisibilityScope.DEPARTMENT.value:
         if requested_public_dept_ids:
@@ -792,7 +1072,38 @@ async def request_model_visibility_change(
         requested_dept_id = requested_public_dept_ids[0]
     else:
         requested_public_dept_ids = []
-        requested_dept_id = None
+        if target_visibility == ModelVisibilityScope.PRIVATE.value:
+            requested_org_id = requested_org_id or row.org_id
+            if not requested_dept_id:
+                if current_role in {"department_admin", "developer", "business_user"} and dept_pairs:
+                    current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+                    requested_org_id = requested_org_id or current_org_id
+                    requested_dept_id = current_dept_id
+                else:
+                    owner_id = row.created_by_id or row.requested_by
+                    owner_org_id, owner_dept_id = await _resolve_user_primary_dept(session, owner_id)
+                    if owner_org_id and not requested_org_id:
+                        requested_org_id = owner_org_id
+                    if owner_dept_id:
+                        requested_dept_id = owner_dept_id
+            requested_dept_id = requested_dept_id or row.dept_id
+            if not requested_dept_id and not (_is_root_user(current_user) or _is_super_admin_user(current_user)):
+                raise HTTPException(status_code=400, detail="dept_id is required for private visibility")
+        else:
+            requested_dept_id = None
+    if current_role == "department_admin":
+        if target_visibility == ModelVisibilityScope.DEPARTMENT.value:
+            if any(str(d) not in dept_ids for d in requested_public_dept_ids):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Department admins can only target their own department",
+                )
+        if target_visibility == ModelVisibilityScope.PRIVATE.value and requested_dept_id:
+            if str(requested_dept_id) not in dept_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Department admins can only target their own department",
+                )
 
     if _is_root_user(current_user) or _is_super_admin_user(current_user):
         approver_id = current_user.id
@@ -820,7 +1131,8 @@ async def request_model_visibility_change(
             row.public_dept_ids = None
         else:
             row.org_id = requested_org_id
-            row.dept_id = None
+            if requested_dept_id:
+                row.dept_id = requested_dept_id
             row.public_dept_ids = None
         row.approval_status = ModelApprovalStatus.APPROVED.value
         row.requested_by = current_user.id
@@ -863,7 +1175,7 @@ async def request_model_visibility_change(
         request_type=ModelApprovalRequestType.VISIBILITY,
         source_environment=_normalize_environment(row.environment),
         target_environment=_normalize_environment(row.environment),
-        final_target_environment=None,
+        requested_environments=_resolve_model_environments(row),
         visibility_requested=target_visibility,
         requested_by=current_user.id,
         request_to=approver_id,
@@ -918,9 +1230,16 @@ async def update_registry_model(
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_model(existing, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="Model is outside your visibility scope")
+    if not _can_edit_model(existing, current_user, org_ids=org_ids, dept_pairs=dept_pairs):
+        raise HTTPException(status_code=403, detail="Model is outside your edit scope")
 
     if body.environment and _normalize_environment(body.environment) != _normalize_environment(existing.environment):
         raise HTTPException(status_code=400, detail="Direct environment change is blocked. Use /promote flow")
+    if body.environments is not None:
+        desired_envs = _normalize_environment_list(body.environments)
+        current_envs = _resolve_model_environments(existing)
+        if desired_envs != current_envs:
+            raise HTTPException(status_code=400, detail="Direct environment change is blocked. Use /promote flow")
 
     if body.visibility_scope and _normalize_visibility_scope(body.visibility_scope) != _normalize_visibility_scope(existing.visibility_scope):
         raise HTTPException(status_code=400, detail="Direct visibility change is blocked. Use /visibility flow")

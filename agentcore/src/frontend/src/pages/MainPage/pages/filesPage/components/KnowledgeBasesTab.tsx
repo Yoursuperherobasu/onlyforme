@@ -1,6 +1,7 @@
 import type { ColDef, SelectionChangedEvent } from "ag-grid-community";
 import type { AgGridReact } from "ag-grid-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, Edit2 } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -16,6 +17,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useDeleteKnowledgeBase } from "@/controllers/API/queries/knowledge-bases/use-delete-knowledge-base";
 import { useUpdateKBVisibility } from "@/controllers/API/queries/knowledge-bases/use-update-kb-visibility";
 import {
@@ -66,6 +73,7 @@ type DisplayRow = {
   can_edit?: boolean;
   org_id?: string | null;
   dept_id?: string | null;
+  public_dept_ids?: string[] | null;
   // File fields
   path?: string;
   updated_at?: string;
@@ -75,8 +83,7 @@ type DisplayRow = {
   kbName?: string;
 };
 
-type KBVisibilityMode = "private" | "public";
-type KBPublicScope = "department" | "organization";
+type VisibilityScope = "private" | "department" | "organization";
 
 const KnowledgeBasesTab = ({
   quickFilterText,
@@ -97,14 +104,59 @@ const KnowledgeBasesTab = ({
   const normalizedRole = (role || userData?.role || "")
     .toLowerCase()
     .replace(/\s+/g, "_");
-  const isAdminRole = ["root", "super_admin", "department_admin"].includes(
-    normalizedRole,
-  );
-  const showCreatedBy = ["department_admin", "super_admin", "root"].includes(
-    normalizedRole,
-  );
-  const showDepartment = ["super_admin", "root"].includes(normalizedRole);
-  const showOrganization = normalizedRole === "root";
+  const showCreatedBy = normalizedRole === "department_admin";
+  const showDepartment = normalizedRole === "super_admin";
+  const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
+  const userDeptId = userData?.department_id ?? null;
+
+  const getKbDeptIds = (kb: KnowledgeBaseInfo) => {
+    const ids = new Set<string>();
+    (kb.public_dept_ids || []).forEach((id) => ids.add(id));
+    if (kb.dept_id) ids.add(kb.dept_id);
+    return Array.from(ids);
+  };
+
+  const isMultiDeptKB = (kb: KnowledgeBaseInfo) =>
+    kb.visibility === "DEPARTMENT" && getKbDeptIds(kb).length > 1;
+
+  const isDeptScopedForUser = (kb: KnowledgeBaseInfo) =>
+    Boolean(userDeptId && getKbDeptIds(kb).includes(userDeptId));
+
+  const canEditKB = (kb: KnowledgeBaseInfo) => {
+    if (normalizedRole === "root") {
+      return kb.created_by === userData?.id && !kb.org_id && !kb.dept_id;
+    }
+    if (normalizedRole === "super_admin") return true;
+    if (normalizedRole === "department_admin") {
+      if (isMultiDeptKB(kb)) return false;
+      if (kb.visibility === "ORGANIZATION") return false;
+      if (kb.visibility === "DEPARTMENT") return isDeptScopedForUser(kb);
+      if (kb.visibility === "PRIVATE") return isDeptScopedForUser(kb);
+      return false;
+    }
+    if (normalizedRole === "developer" || normalizedRole === "business_user") {
+      return kb.visibility === "PRIVATE" && kb.created_by === userData?.id;
+    }
+    return false;
+  };
+
+  const canDeleteKB = (kb: KnowledgeBaseInfo) => {
+    if (normalizedRole === "root") {
+      return kb.created_by === userData?.id && !kb.org_id && !kb.dept_id;
+    }
+    if (normalizedRole === "super_admin") return true;
+    if (normalizedRole === "department_admin") {
+      if (isMultiDeptKB(kb)) return false;
+      if (kb.visibility === "ORGANIZATION") return false;
+      if (kb.visibility === "DEPARTMENT") return isDeptScopedForUser(kb);
+      if (kb.visibility === "PRIVATE") return isDeptScopedForUser(kb);
+      return false;
+    }
+    if (normalizedRole === "developer" || normalizedRole === "business_user") {
+      return kb.visibility === "PRIVATE" && kb.created_by === userData?.id;
+    }
+    return false;
+  };
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [knowledgeBaseToDelete, setKnowledgeBaseToDelete] =
@@ -118,15 +170,43 @@ const KnowledgeBasesTab = ({
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [knowledgeBaseName, setKnowledgeBaseName] = useState("");
   const [isExistingKB, setIsExistingKB] = useState(false);
-  const [visibilityMode, setVisibilityMode] = useState<KBVisibilityMode>("private");
-  const [publicScope, setPublicScope] = useState<KBPublicScope>("department");
+  const [visibilityScope, setVisibilityScope] =
+    useState<VisibilityScope>("private");
   const [selectedVisibility, setSelectedVisibility] = useState<KBVisibility>("PRIVATE");
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [selectedDeptId, setSelectedDeptId] = useState("");
+  const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([]);
   const [visibilityOptions, setVisibilityOptions] = useState<{
     organizations: { id: string; name: string }[];
     departments: { id: string; name: string; org_id: string }[];
   }>({ organizations: [], departments: [] });
+  const departmentsForSelectedOrg = useMemo(
+    () =>
+      visibilityOptions.departments.filter(
+        (dept) => !selectedOrgId || dept.org_id === selectedOrgId,
+      ),
+    [visibilityOptions.departments, selectedOrgId],
+  );
+  const deptNameMap = useMemo(
+    () => new Map(visibilityOptions.departments.map((dept) => [dept.id, dept.name])),
+    [visibilityOptions.departments],
+  );
+  const selectedDeptLabel = useMemo(() => {
+    const selectedIds = canMultiDept
+      ? selectedDeptIds
+      : selectedDeptId
+        ? [selectedDeptId]
+        : [];
+    if (selectedIds.length === 0) return "Select departments";
+    const names = selectedIds.map((id) => deptNameMap.get(id)).filter(Boolean) as string[];
+    if (names.length === 0) {
+      return selectedIds.length > 1
+        ? `${selectedIds.length} departments`
+        : "Select departments";
+    }
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  }, [canMultiDept, deptNameMap, selectedDeptId, selectedDeptIds]);
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   const { validateFileSize } = useFileSizeValidator();
   const uploadFile = useUploadFile({ multiple: true });
@@ -138,6 +218,7 @@ const KnowledgeBasesTab = ({
   const { data: knowledgeBases, isLoading, error } = useGetKnowledgeBases();
   const { data: files } = useGetFilesV2();
   const [isDeletingFile, setIsDeletingFile] = useState(false);
+  const showActions = (knowledgeBases ?? []).some((kb) => canEditKB(kb));
   const updateVisibilityMutation = useUpdateKBVisibility(
     { kb_id: knowledgeBaseToEdit?.id || "" },
     {
@@ -213,10 +294,21 @@ const KnowledgeBasesTab = ({
     setKnowledgeBaseToEdit(kb);
     const kbVisibility = (kb.visibility as KBVisibility) || "PRIVATE";
     setSelectedVisibility(kbVisibility);
-    setVisibilityMode(kbVisibility === "PRIVATE" ? "private" : "public");
-    setPublicScope(kbVisibility === "ORGANIZATION" ? "organization" : "department");
+    setVisibilityScope(
+      kbVisibility === "PRIVATE"
+        ? "private"
+        : kbVisibility === "ORGANIZATION"
+          ? "organization"
+          : "department",
+    );
     setSelectedOrgId(kb.org_id || "");
     setSelectedDeptId(kb.dept_id || "");
+    const deptIds = kb.public_dept_ids?.length
+      ? kb.public_dept_ids
+      : kb.dept_id
+        ? [kb.dept_id]
+        : [];
+    setSelectedDeptIds(deptIds);
     setIsEditVisibilityModalOpen(true);
   };
 
@@ -264,14 +356,23 @@ const KnowledgeBasesTab = ({
     if (!isUploadModalOpen) {
       setPendingUploadFiles([]);
       setKnowledgeBaseName("");
-      setVisibilityMode("private");
-      setPublicScope("department");
+      setVisibilityScope("private");
       setSelectedVisibility("PRIVATE");
       setSelectedOrgId("");
       setSelectedDeptId("");
+      setSelectedDeptIds([]);
       setIsExistingKB(false);
     }
   }, [isUploadModalOpen]);
+
+  useEffect(() => {
+    if (!showDepartment && !canMultiDept) return;
+    if (visibilityOptions.organizations.length || visibilityOptions.departments.length) return;
+    api.get(`${getURL("KNOWLEDGE_BASES")}/visibility-options`).then((res) => {
+      const options = res.data || { organizations: [], departments: [] };
+      setVisibilityOptions(options);
+    });
+  }, [showDepartment, canMultiDept, visibilityOptions.organizations.length, visibilityOptions.departments.length]);
 
   useEffect(() => {
     if ((!isUploadModalOpen || isExistingKB) && !isEditVisibilityModalOpen) return;
@@ -280,47 +381,58 @@ const KnowledgeBasesTab = ({
       setVisibilityOptions(options);
       setSelectedOrgId((prev) => prev || options.organizations?.[0]?.id || "");
       setSelectedDeptId((prev) => prev || options.departments?.[0]?.id || "");
+      setSelectedDeptIds((prev) => (prev.length > 0 ? prev : options.departments?.[0]?.id ? [options.departments[0].id] : []));
     });
   }, [isUploadModalOpen, isExistingKB, isEditVisibilityModalOpen]);
 
   useEffect(() => {
     setSelectedVisibility(
-      visibilityMode === "private"
+      visibilityScope === "private"
         ? "PRIVATE"
-        : publicScope === "organization"
+        : visibilityScope === "organization"
           ? "ORGANIZATION"
           : "DEPARTMENT",
     );
-  }, [visibilityMode, publicScope]);
+  }, [visibilityScope]);
 
   useEffect(() => {
-    if (visibilityMode !== "public") return;
-    if (
-      publicScope === "organization" &&
-      (normalizedRole === "developer" || normalizedRole === "department_admin") &&
-      !selectedOrgId &&
-      visibilityOptions.organizations.length > 0
-    ) {
-      setSelectedOrgId(visibilityOptions.organizations[0].id);
+    if (visibilityScope === "organization") {
+      if (!selectedOrgId && visibilityOptions.organizations.length > 0) {
+        setSelectedOrgId(visibilityOptions.organizations[0].id);
+      }
       return;
     }
-    if (
-      publicScope === "department" &&
-      normalizedRole !== "super_admin" &&
-      normalizedRole !== "root" &&
-      !selectedDeptId &&
-      visibilityOptions.departments.length > 0
-    ) {
-      const dept = visibilityOptions.departments[0];
-      setSelectedDeptId(dept.id);
-      if (!selectedOrgId) setSelectedOrgId(dept.org_id);
+    if (visibilityScope === "department") {
+      if (normalizedRole === "super_admin" || normalizedRole === "root") {
+        if (!selectedOrgId && visibilityOptions.organizations.length > 0) {
+          setSelectedOrgId(visibilityOptions.organizations[0].id);
+        }
+        if (selectedDeptIds.length === 0 && visibilityOptions.departments.length > 0) {
+          const dept =
+            visibilityOptions.departments.find(
+              (d) => !selectedOrgId || d.org_id === selectedOrgId,
+            ) ?? visibilityOptions.departments[0];
+          if (dept) {
+            setSelectedDeptIds([dept.id]);
+            setSelectedDeptId(dept.id);
+            if (!selectedOrgId) setSelectedOrgId(dept.org_id);
+          }
+        }
+        return;
+      }
+      if (!selectedDeptId && visibilityOptions.departments.length > 0) {
+        const dept = visibilityOptions.departments[0];
+        setSelectedDeptId(dept.id);
+        setSelectedDeptIds([dept.id]);
+        if (!selectedOrgId) setSelectedOrgId(dept.org_id);
+      }
     }
   }, [
-    visibilityMode,
-    publicScope,
+    visibilityScope,
     normalizedRole,
     selectedOrgId,
     selectedDeptId,
+    selectedDeptIds.length,
     visibilityOptions.organizations,
     visibilityOptions.departments,
   ]);
@@ -330,9 +442,9 @@ const KnowledgeBasesTab = ({
     kbName?: string,
     visibility?: string,
     scope?: {
-      public_scope?: "organization" | "department";
       org_id?: string;
       dept_id?: string;
+      public_dept_ids?: string[];
     },
   ) => {
     try {
@@ -340,9 +452,9 @@ const KnowledgeBasesTab = ({
         files: uploadFiles,
         knowledgeBaseName: kbName,
         visibility,
-        public_scope: scope?.public_scope,
         org_id: scope?.org_id,
         dept_id: scope?.dept_id,
+        public_dept_ids: scope?.public_dept_ids,
       });
       setSuccessData({
         title: `File${filesIds.length > 1 ? "s" : ""} uploaded successfully`,
@@ -358,11 +470,11 @@ const KnowledgeBasesTab = ({
   const handleOpenUploadModal = () => {
     setIsExistingKB(false);
     setKnowledgeBaseName("");
-    setVisibilityMode("private");
-    setPublicScope("department");
+    setVisibilityScope("private");
     setSelectedVisibility("PRIVATE");
     setSelectedOrgId("");
     setSelectedDeptId("");
+    setSelectedDeptIds([]);
     setIsUploadModalOpen(true);
   };
 
@@ -437,8 +549,8 @@ const KnowledgeBasesTab = ({
 
     const rows: DisplayRow[] = [];
     knowledgeBases.forEach((kb) => {
-      const canDelete = isAdminRole || kb.created_by === userData?.id;
-      const canEdit = isAdminRole || kb.created_by === userData?.id;
+      const canDelete = canDeleteKB(kb);
+      const canEdit = canEditKB(kb);
       rows.push({
         id: kb.id,
         name: kb.name,
@@ -450,6 +562,7 @@ const KnowledgeBasesTab = ({
         organization_name: kb.organization_name,
         org_id: kb.org_id,
         dept_id: kb.dept_id,
+        public_dept_ids: kb.public_dept_ids,
         size: kb.size,
         file_count: kb.file_count,
         last_activity: kb.last_activity ?? kb.updated_at ?? null,
@@ -477,7 +590,19 @@ const KnowledgeBasesTab = ({
     });
 
     return rows;
-  }, [knowledgeBases, files, expandedKBs, isAdminRole, userData?.id]);
+  }, [knowledgeBases, files, expandedKBs, userData?.id]);
+
+  const formatDepartmentScope = (row: DisplayRow) => {
+    if (row.rowType !== "kb") return "";
+    if (row.visibility === "ORGANIZATION") return "All departments";
+    const deptIds = new Set<string>();
+    (row.public_dept_ids || []).forEach((id) => deptIds.add(id));
+    if (row.dept_id) deptIds.add(row.dept_id);
+    if (deptIds.size === 0) return "-";
+    const names = Array.from(deptIds).map((id) => deptNameMap.get(id) || id);
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  };
 
   // Column definitions with expandable KB rows
   const columnDefs: ColDef[] = useMemo(() => {
@@ -606,32 +731,6 @@ const KnowledgeBasesTab = ({
         },
       },
       {
-        headerName: "Actions",
-        field: "actions",
-        flex: 0.8,
-        sortable: false,
-        filter: false,
-        editable: false,
-        cellClass: baseCellClass,
-        cellRenderer: (params: any) => {
-          if (params.data?.rowType !== "kb" || !params.data?.can_edit) return "";
-          return (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                const kb = knowledgeBases?.find((k) => k.id === params.data.id);
-                if (kb) openEditVisibilityModal(kb);
-              }}
-            >
-              Edit Visibility
-            </Button>
-          );
-        },
-      },
-      {
         headerName: "Size",
         field: "size",
         flex: 1,
@@ -669,41 +768,84 @@ const KnowledgeBasesTab = ({
               sortable: false,
               editable: false,
               cellClass: baseCellClass,
-              valueGetter: (params: any) =>
-                params.data?.rowType === "kb" ? (params.data?.created_by_email || "--") : "",
+              cellRenderer: (params: any) => {
+                if (params.data?.rowType !== "kb") return "";
+                const value = params.data?.created_by_email || "-";
+                return (
+                  <div className="max-w-[170px] truncate" title={value}>
+                    {value}
+                  </div>
+                );
+              },
             } as ColDef,
           ]
         : []),
       ...(showDepartment
         ? [
             {
-              headerName: "Department",
+              headerName: "Department Scope",
               field: "department_name",
               flex: 1.2,
               sortable: false,
               editable: false,
               cellClass: baseCellClass,
-              valueGetter: (params: any) =>
-                params.data?.rowType === "kb" ? (params.data?.department_name || "--") : "",
+              valueGetter: (params: any) => {
+                if (params.data?.rowType !== "kb") return "";
+                return formatDepartmentScope(params.data);
+              },
             } as ColDef,
           ]
         : []),
-      ...(showOrganization
+      ...(showActions
         ? [
             {
-              headerName: "Organization",
-              field: "organization_name",
-              flex: 1.2,
+              headerName: "Actions",
+              field: "actions",
+              flex: 0.8,
               sortable: false,
+              filter: false,
               editable: false,
               cellClass: baseCellClass,
-              valueGetter: (params: any) =>
-                params.data?.rowType === "kb" ? (params.data?.organization_name || "--") : "",
+              cellRenderer: (params: any) => {
+                if (params.data?.rowType !== "kb") return "";
+                const kb = knowledgeBases?.find((k) => k.id === params.data.id);
+                if (!kb) return "";
+                if (!params.data?.can_edit) {
+                  return (
+                    <div className="flex h-full items-center">
+                      <span className="text-xs text-muted-foreground">-</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="flex h-full items-center">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditVisibilityModal(kb);
+                      }}
+                    >
+                      <Edit2 className="mr-2 h-4 w-4" />
+                      Edit
+                    </Button>
+                  </div>
+                );
+              },
             } as ColDef,
           ]
         : []),
     ];
-  }, [expandedKBs, knowledgeBases, showCreatedBy, showDepartment, showOrganization]);
+  }, [
+    expandedKBs,
+    knowledgeBases,
+    showActions,
+    showCreatedBy,
+    showDepartment,
+    deptNameMap,
+  ]);
 
   if (isLoading || !knowledgeBases || !Array.isArray(knowledgeBases)) {
     return (
@@ -728,7 +870,7 @@ const KnowledgeBasesTab = ({
       >
         {isExistingKB ? "Add Files" : "Upload Knowledge Base"}
       </BaseModal.Header>
-      <BaseModal.Content>
+      <BaseModal.Content className="min-h-0 max-h-[70vh] overflow-y-auto">
         <div className="flex flex-col gap-4 px-1">
           {/* KB Name */}
           <div className="space-y-1.5">
@@ -747,47 +889,61 @@ const KnowledgeBasesTab = ({
           {/* Visibility */}
           {!isExistingKB && (
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Visibility</Label>
+              <Label className="text-sm font-medium">Visibility Scope</Label>
               <Select
-                value={visibilityMode}
-                onValueChange={(value) => setVisibilityMode(value as KBVisibilityMode)}
+                value={visibilityScope}
+                onValueChange={(value) => setVisibilityScope(value as VisibilityScope)}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select visibility" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="private">Private</SelectItem>
-                  <SelectItem value="public">Public</SelectItem>
+                  <SelectItem value="department">Department</SelectItem>
+                  <SelectItem value="organization">Organization</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           )}
 
-          {!isExistingKB && visibilityMode === "public" && (
-            <>
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">Public To</Label>
-                <Select
-                  value={publicScope}
-                  onValueChange={(value) => setPublicScope(value as KBPublicScope)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select scope" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="department">Department</SelectItem>
-                    <SelectItem value="organization">Organization</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          {!isExistingKB && visibilityScope === "organization" && (
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Organization</Label>
+              <Select
+                value={selectedOrgId}
+                onValueChange={setSelectedOrgId}
+                disabled={
+                  normalizedRole === "developer" ||
+                  normalizedRole === "department_admin" ||
+                  normalizedRole === "business_user"
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select organization" />
+                </SelectTrigger>
+                <SelectContent>
+                  {visibilityOptions.organizations.map((org) => (
+                    <SelectItem key={org.id} value={org.id}>
+                      {org.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
-              {publicScope === "organization" && (
+          {!isExistingKB && visibilityScope === "department" && (
+            <>
+              {canMultiDept && (
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium">Organization</Label>
                   <Select
                     value={selectedOrgId}
-                    onValueChange={setSelectedOrgId}
-                    disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
+                    onValueChange={(value) => {
+                      setSelectedOrgId(value);
+                      setSelectedDeptId("");
+                      setSelectedDeptIds([]);
+                    }}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select organization" />
@@ -802,34 +958,65 @@ const KnowledgeBasesTab = ({
                   </Select>
                 </div>
               )}
-
-              {publicScope === "department" && (
-                <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">Department</Label>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">
+                  Department{canMultiDept ? "s" : ""}
+                </Label>
+                {canMultiDept ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full justify-between font-normal"
+                      >
+                        <span className="truncate text-left">{selectedDeptLabel}</span>
+                        <ChevronDown className="ml-2 h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="max-h-64 w-[340px] overflow-auto">
+                      {departmentsForSelectedOrg.map((dept) => (
+                        <DropdownMenuCheckboxItem
+                          key={dept.id}
+                          checked={selectedDeptIds.includes(dept.id)}
+                          onSelect={(event) => event.preventDefault()}
+                          onCheckedChange={(checked) => {
+                            setSelectedDeptIds((prev) =>
+                              checked
+                                ? Array.from(new Set([...prev, dept.id]))
+                                : prev.filter((id) => id !== dept.id),
+                            );
+                          }}
+                        >
+                          {dept.name}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
                   <Select
                     value={selectedDeptId}
                     onValueChange={(value) => {
                       setSelectedDeptId(value);
+                      setSelectedDeptIds(value ? [value] : []);
                       const dept = visibilityOptions.departments.find((d) => d.id === value);
                       if (dept) setSelectedOrgId(dept.org_id);
                     }}
-                    disabled={normalizedRole !== "super_admin" && normalizedRole !== "root"}
+                    disabled
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select department" />
                     </SelectTrigger>
                     <SelectContent>
-                      {visibilityOptions.departments
-                        .filter((dept) => !selectedOrgId || dept.org_id === selectedOrgId)
-                        .map((dept) => (
-                          <SelectItem key={dept.id} value={dept.id}>
-                            {dept.name}
-                          </SelectItem>
-                        ))}
+                      {visibilityOptions.departments.map((dept) => (
+                        <SelectItem key={dept.id} value={dept.id}>
+                          {dept.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                </div>
-              )}
+                )}
+              </div>
             </>
           )}
 
@@ -930,9 +1117,10 @@ const KnowledgeBasesTab = ({
           disabled:
             pendingUploadFiles.length === 0 ||
             !knowledgeBaseName.trim() ||
-            (visibilityMode === "public" &&
-              ((publicScope === "organization" && !selectedOrgId) ||
-                (publicScope === "department" && !selectedDeptId))),
+            (visibilityScope === "organization" && !selectedOrgId) ||
+            (visibilityScope === "department" &&
+              ((canMultiDept && selectedDeptIds.length === 0) ||
+                (!canMultiDept && !selectedDeptId))),
           onClick: async () => {
             const kbName = knowledgeBaseName.trim();
             if (!kbName) {
@@ -941,14 +1129,18 @@ const KnowledgeBasesTab = ({
               });
               return;
             }
+            const deptIds = canMultiDept
+              ? selectedDeptIds
+              : selectedDeptId
+                ? [selectedDeptId]
+                : [];
+            const deptId = deptIds.length === 1 ? deptIds[0] : undefined;
             const uploadScope =
-              visibilityMode === "public"
-                ? {
-                    public_scope: publicScope,
-                    org_id: publicScope === "organization" ? selectedOrgId : undefined,
-                    dept_id: publicScope === "department" ? selectedDeptId : undefined,
-                  }
-                : undefined;
+              visibilityScope === "organization"
+                ? { org_id: selectedOrgId }
+                : visibilityScope === "department"
+                  ? { org_id: selectedOrgId, dept_id: deptId, public_dept_ids: deptIds }
+                  : undefined;
             await handleUpload(pendingUploadFiles, kbName, selectedVisibility, uploadScope);
             setIsUploadModalOpen(false);
           },
@@ -1058,49 +1250,63 @@ const KnowledgeBasesTab = ({
         <BaseModal.Header description="Update visibility scope for this knowledge base.">
           Edit Visibility
         </BaseModal.Header>
-        <BaseModal.Content>
+        <BaseModal.Content className="min-h-0 max-h-[70vh] overflow-y-auto">
           <div className="flex flex-col gap-4 px-1">
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Visibility</Label>
+              <Label className="text-sm font-medium">Visibility Scope</Label>
               <Select
-                value={visibilityMode}
-                onValueChange={(value) => setVisibilityMode(value as KBVisibilityMode)}
+                value={visibilityScope}
+                onValueChange={(value) => setVisibilityScope(value as VisibilityScope)}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select visibility" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="private">Private</SelectItem>
-                  <SelectItem value="public">Public</SelectItem>
+                  <SelectItem value="department">Department</SelectItem>
+                  <SelectItem value="organization">Organization</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {visibilityMode === "public" && (
-              <>
-                <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">Public To</Label>
-                  <Select
-                    value={publicScope}
-                    onValueChange={(value) => setPublicScope(value as KBPublicScope)}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select scope" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="department">Department</SelectItem>
-                      <SelectItem value="organization">Organization</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+            {visibilityScope === "organization" && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Organization</Label>
+                <Select
+                  value={selectedOrgId}
+                  onValueChange={setSelectedOrgId}
+                  disabled={
+                    normalizedRole === "developer" ||
+                    normalizedRole === "department_admin" ||
+                    normalizedRole === "business_user"
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select organization" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {visibilityOptions.organizations.map((org) => (
+                      <SelectItem key={org.id} value={org.id}>
+                        {org.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
-                {publicScope === "organization" && (
+            {visibilityScope === "department" && (
+              <>
+                {canMultiDept && (
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium">Organization</Label>
                     <Select
                       value={selectedOrgId}
-                      onValueChange={setSelectedOrgId}
-                      disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
+                      onValueChange={(value) => {
+                        setSelectedOrgId(value);
+                        setSelectedDeptId("");
+                        setSelectedDeptIds([]);
+                      }}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select organization" />
@@ -1115,34 +1321,65 @@ const KnowledgeBasesTab = ({
                     </Select>
                   </div>
                 )}
-
-                {publicScope === "department" && (
-                  <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">Department</Label>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">
+                    Department{canMultiDept ? "s" : ""}
+                  </Label>
+                  {canMultiDept ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full justify-between font-normal"
+                        >
+                          <span className="truncate text-left">{selectedDeptLabel}</span>
+                          <ChevronDown className="ml-2 h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="max-h-64 w-[340px] overflow-auto">
+                        {departmentsForSelectedOrg.map((dept) => (
+                          <DropdownMenuCheckboxItem
+                            key={dept.id}
+                            checked={selectedDeptIds.includes(dept.id)}
+                            onSelect={(event) => event.preventDefault()}
+                            onCheckedChange={(checked) => {
+                              setSelectedDeptIds((prev) =>
+                                checked
+                                  ? Array.from(new Set([...prev, dept.id]))
+                                  : prev.filter((id) => id !== dept.id),
+                              );
+                            }}
+                          >
+                            {dept.name}
+                          </DropdownMenuCheckboxItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
                     <Select
                       value={selectedDeptId}
                       onValueChange={(value) => {
                         setSelectedDeptId(value);
+                        setSelectedDeptIds(value ? [value] : []);
                         const dept = visibilityOptions.departments.find((d) => d.id === value);
                         if (dept) setSelectedOrgId(dept.org_id);
                       }}
-                      disabled={normalizedRole !== "super_admin" && normalizedRole !== "root"}
+                      disabled
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select department" />
                       </SelectTrigger>
                       <SelectContent>
-                        {visibilityOptions.departments
-                          .filter((dept) => !selectedOrgId || dept.org_id === selectedOrgId)
-                          .map((dept) => (
-                            <SelectItem key={dept.id} value={dept.id}>
-                              {dept.name}
-                            </SelectItem>
-                          ))}
+                        {visibilityOptions.departments.map((dept) => (
+                          <SelectItem key={dept.id} value={dept.id}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
-                  </div>
-                )}
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -1152,22 +1389,30 @@ const KnowledgeBasesTab = ({
             label: "Save",
             disabled:
               updateVisibilityMutation.isPending ||
-              (visibilityMode === "public" &&
-                ((publicScope === "organization" && !selectedOrgId) ||
-                  (publicScope === "department" && !selectedDeptId))),
+              (visibilityScope === "organization" && !selectedOrgId) ||
+              (visibilityScope === "department" &&
+                ((canMultiDept && selectedDeptIds.length === 0) ||
+                  (!canMultiDept && !selectedDeptId))),
             onClick: async () => {
               if (!knowledgeBaseToEdit) return;
+              const deptIds = canMultiDept
+                ? selectedDeptIds
+                : selectedDeptId
+                  ? [selectedDeptId]
+                  : [];
+              const deptId = deptIds.length === 1 ? deptIds[0] : undefined;
               await updateVisibilityMutation.mutateAsync({
                 visibility: selectedVisibility,
-                public_scope: visibilityMode === "public" ? publicScope : undefined,
                 org_id:
-                  visibilityMode === "public" && publicScope === "organization"
+                  visibilityScope === "organization"
                     ? selectedOrgId
-                    : undefined,
+                    : visibilityScope === "department"
+                      ? selectedOrgId
+                      : undefined,
                 dept_id:
-                  visibilityMode === "public" && publicScope === "department"
-                    ? selectedDeptId
-                    : undefined,
+                  visibilityScope === "department" ? deptId : undefined,
+                public_dept_ids:
+                  visibilityScope === "department" ? deptIds : undefined,
               });
             },
           }}

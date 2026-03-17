@@ -3,6 +3,7 @@ from enum import Enum
 from uuid import UUID, uuid4
 
 from sqlalchemy import Column, DateTime, Index, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import text
 from sqlmodel import Field, SQLModel
@@ -23,6 +24,7 @@ class KnowledgeBase(SQLModel, table=True):  # type: ignore[call-arg]
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
     created_by: UUID = Field(foreign_key="user.id", nullable=False)
+    public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     visibility: KBVisibilityEnum = Field(
         default=KBVisibilityEnum.PRIVATE,
         sa_column=Column(

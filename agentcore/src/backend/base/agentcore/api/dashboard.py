@@ -14,8 +14,10 @@ from agentcore.services.database.models.agent_bundle.model import AgentBundle, B
 from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
 from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
 from agentcore.services.database.models.approval_request.model import ApprovalRequest
+from agentcore.services.database.models.agent_registry.model import AgentRegistryRating
 from agentcore.services.database.models.hitl_request.model import HITLRequest
 from agentcore.services.database.models.department.model import Department
+from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
 from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
@@ -343,6 +345,7 @@ async def get_department_approval_kpis(
             kpis=[
                 DashboardKpi(id="pending_approvals", label="Pending Approvals", value=0),
                 DashboardKpi(id="rejection_rate", label="Rejection Rate", value=0, unit="%"),
+                DashboardKpi(id="avg_approval_time", label="Avg Approval Time", value=0, unit="min"),
             ],
         )
 
@@ -373,9 +376,26 @@ async def get_department_approval_kpis(
             )
         )
     ).one()
+    avg_seconds = (
+        await session.exec(
+            select(
+                func.avg(
+                    func.extract(
+                        "epoch",
+                        ApprovalRequest.reviewed_at - ApprovalRequest.requested_at,
+                    )
+                )
+            )
+            .where(
+                ApprovalRequest.reviewed_at.is_not(None),
+                ApprovalRequest.dept_id.in_(list(dept_ids)),
+            )
+        )
+    ).one()
     decided = int(decided_count or 0)
     rejected = int(rejected_count or 0)
     rejection_rate = round((rejected / decided) * 100, 2) if decided else 0
+    avg_minutes = round((float(avg_seconds) / 60), 2) if avg_seconds is not None else 0
 
     return DashboardSectionResponse(
         section="department_approval",
@@ -391,6 +411,12 @@ async def get_department_approval_kpis(
                 value=rejection_rate,
                 unit="%",
             ),
+            DashboardKpi(
+                id="avg_approval_time",
+                label="Avg Approval Time",
+                value=avg_minutes,
+                unit="min",
+            ),
         ],
     )
 
@@ -405,12 +431,40 @@ def _range_to_days(range_key: str) -> int:
     raise HTTPException(status_code=400, detail="Unsupported range")
 
 
-def _normalize_day(value: date | datetime | str) -> date:
+def _coerce_tz_offset_minutes(tz_offset_minutes: int | None) -> int:
+    if tz_offset_minutes is None:
+        return 0
+    if tz_offset_minutes > 840:
+        return 840
+    if tz_offset_minutes < -840:
+        return -840
+    return int(tz_offset_minutes)
+
+
+def _apply_tz_offset(dt: datetime, tz_offset_minutes: int) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt + timedelta(minutes=tz_offset_minutes)
+
+
+def _normalize_day(value: date | datetime | str, tz_offset_minutes: int) -> date:
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
     if isinstance(value, datetime):
-        return value.date()
-    return datetime.fromisoformat(str(value)).date()
+        return _apply_tz_offset(value, tz_offset_minutes).date()
+    parsed = datetime.fromisoformat(str(value))
+    return _apply_tz_offset(parsed, tz_offset_minutes).date()
+
+
+def _local_range_window(days: int, tz_offset_minutes: int) -> tuple[date, datetime, datetime]:
+    now_utc = datetime.now(timezone.utc)
+    local_now = _apply_tz_offset(now_utc, tz_offset_minutes)
+    today_local = local_now.date()
+    start_day = today_local - timedelta(days=days - 1)
+    # Convert local day bounds back to UTC naive for DB comparisons.
+    start_dt = (datetime.combine(start_day, time.min) - timedelta(minutes=tz_offset_minutes)).replace(tzinfo=None)
+    end_dt = (datetime.combine(today_local + timedelta(days=1), time.min) - timedelta(minutes=tz_offset_minutes)).replace(tzinfo=None)
+    return start_day, start_dt, end_dt
 
 
 @router.get("/sections/department-approval/pending-series", response_model=PendingSeriesResponse, status_code=200)
@@ -419,6 +473,7 @@ async def get_department_approval_pending_series(
     session: DbSession,
     current_user: CurrentActiveUser,
     range_key: str = Query(default="7d", alias="range"),
+    tz_offset_minutes: int | None = Query(default=None),
 ):
     role = str(getattr(current_user, "role", "")).lower()
     if role != "department_admin":
@@ -426,11 +481,8 @@ async def get_department_approval_pending_series(
 
     dept_ids = await _department_admin_dept_ids(session, current_user)
     days = _range_to_days(range_key)
-    today = datetime.now(timezone.utc).date()
-    start_day = today - timedelta(days=days - 1)
-    # Use naive datetimes for DB compatibility (requested_at/reviewed_at are stored without tzinfo).
-    start_dt = datetime.combine(start_day, time.min).replace(tzinfo=None)
-    end_dt = datetime.combine(today + timedelta(days=1), time.min).replace(tzinfo=None)
+    tz_minutes = _coerce_tz_offset_minutes(tz_offset_minutes)
+    start_day, start_dt, end_dt = _local_range_window(days, tz_minutes)
 
     if not dept_ids:
         series = [
@@ -479,13 +531,13 @@ async def get_department_approval_pending_series(
     created_by_day: dict[date, int] = {}
     for row in created_rows:
         value = row[0] if isinstance(row, (list, tuple)) else row
-        day = _normalize_day(value)
+        day = _normalize_day(value, tz_minutes)
         created_by_day[day] = created_by_day.get(day, 0) + 1
 
     decided_by_day: dict[date, int] = {}
     for row in decided_rows:
         value = row[0] if isinstance(row, (list, tuple)) else row
-        day = _normalize_day(value)
+        day = _normalize_day(value, tz_minutes)
         decided_by_day[day] = decided_by_day.get(day, 0) + 1
 
     pending = int(baseline_pending or 0)
@@ -586,6 +638,7 @@ async def get_department_hitl_invocation_series(
     session: DbSession,
     current_user: CurrentActiveUser,
     range_key: str = Query(default="7d", alias="range"),
+    tz_offset_minutes: int | None = Query(default=None),
 ):
     role = str(getattr(current_user, "role", "")).lower()
     if role != "department_admin":
@@ -593,10 +646,8 @@ async def get_department_hitl_invocation_series(
 
     dept_ids = await _department_admin_dept_ids(session, current_user)
     days = _range_to_days(range_key)
-    today = datetime.now(timezone.utc).date()
-    start_day = today - timedelta(days=days - 1)
-    start_dt = datetime.combine(start_day, time.min).replace(tzinfo=None)
-    end_dt = datetime.combine(today + timedelta(days=1), time.min).replace(tzinfo=None)
+    tz_minutes = _coerce_tz_offset_minutes(tz_offset_minutes)
+    start_day, start_dt, end_dt = _local_range_window(days, tz_minutes)
 
     if not dept_ids:
         series = [
@@ -628,7 +679,7 @@ async def get_department_hitl_invocation_series(
     counts_by_day: dict[date, int] = {}
     for row in rows:
         value = row[0] if isinstance(row, (list, tuple)) else row
-        day = _normalize_day(value)
+        day = _normalize_day(value, tz_minutes)
         counts_by_day[day] = counts_by_day.get(day, 0) + 1
 
     series: list[TimeseriesPoint] = []
@@ -647,6 +698,7 @@ async def get_department_hitl_response_time_series(
     session: DbSession,
     current_user: CurrentActiveUser,
     range_key: str = Query(default="7d", alias="range"),
+    tz_offset_minutes: int | None = Query(default=None),
 ):
     role = str(getattr(current_user, "role", "")).lower()
     if role != "department_admin":
@@ -654,10 +706,8 @@ async def get_department_hitl_response_time_series(
 
     dept_ids = await _department_admin_dept_ids(session, current_user)
     days = _range_to_days(range_key)
-    today = datetime.now(timezone.utc).date()
-    start_day = today - timedelta(days=days - 1)
-    start_dt = datetime.combine(start_day, time.min).replace(tzinfo=None)
-    end_dt = datetime.combine(today + timedelta(days=1), time.min).replace(tzinfo=None)
+    tz_minutes = _coerce_tz_offset_minutes(tz_offset_minutes)
+    start_day, start_dt, end_dt = _local_range_window(days, tz_minutes)
 
     if not dept_ids:
         series = [
@@ -685,7 +735,7 @@ async def get_department_hitl_response_time_series(
         decided_at = row[1] if isinstance(row, (list, tuple)) else row.decided_at
         if not requested_at or not decided_at:
             continue
-        day = _normalize_day(requested_at)
+        day = _normalize_day(requested_at, tz_minutes)
         delta = decided_at - requested_at
         minutes = max(delta.total_seconds(), 0) / 60.0
         totals[day] = totals.get(day, 0.0) + minutes
@@ -806,6 +856,62 @@ async def get_business_maturity_kpis(
             DashboardKpi(id="agents_with_guardrails_pct", label="% Agents with Guardrails", value=guardrail_pct, unit="%"),
             DashboardKpi(id="agents_with_rag_pct", label="% Agents with RAG", value=rag_pct, unit="%"),
             DashboardKpi(id="agents_with_hitl_pct", label="% Agents with HITL", value=hitl_pct, unit="%"),
+        ],
+    )
+
+
+@router.get("/sections/business-experience", response_model=DashboardSectionResponse, status_code=200)
+async def get_business_experience_kpis(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "business_user":
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    total_sessions = (
+        await session.exec(
+            select(func.count(func.distinct(OrchConversationTable.session_id))).where(
+                OrchConversationTable.user_id == current_user.id,
+            )
+        )
+    ).one()
+    total_sessions_count = int(total_sessions or 0)
+
+    hitl_sessions = (
+        await session.exec(
+            select(func.count(func.distinct(HITLRequest.session_id))).where(
+                HITLRequest.user_id == current_user.id,
+                HITLRequest.session_id.is_not(None),
+            )
+        )
+    ).one()
+    hitl_sessions_count = int(hitl_sessions or 0)
+    escalation_pct = round((hitl_sessions_count / total_sessions_count) * 100, 2) if total_sessions_count else 0
+
+    avg_rating = (
+        await session.exec(
+            select(func.avg(AgentRegistryRating.score))
+        )
+    ).one()
+    avg_rating_value = round(float(avg_rating), 2) if avg_rating is not None else 0
+
+    return DashboardSectionResponse(
+        section="business_experience",
+        kpis=[
+            DashboardKpi(
+                id="escalation_to_human",
+                label="Escalation to Human",
+                value=escalation_pct,
+                unit="%",
+            ),
+            DashboardKpi(
+                id="user_satisfaction_score",
+                label="User Satisfaction Score",
+                value=avg_rating_value,
+                unit="/5",
+            ),
         ],
     )
 

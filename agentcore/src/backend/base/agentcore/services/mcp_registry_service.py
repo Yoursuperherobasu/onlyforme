@@ -19,7 +19,12 @@ from agentcore.services.database.models.mcp_registry.model import (
 )
 from agentcore.utils.crypto import decrypt_api_key_with_fallback, derive_fernet_key, encrypt_api_key
 
+from agentcore.services.settings.key_vault import KeyVaultConfig, KeyVaultSecretStore
+
 logger = logging.getLogger(__name__)
+
+
+_kv_store_cache: dict[str, KeyVaultSecretStore | None] = {}
 
 
 def _encryption_key() -> str:
@@ -41,6 +46,102 @@ def _decrypt_json(encrypted: str, enc_key: str) -> dict:
     return json.loads(decrypt_api_key_with_fallback(encrypted, enc_key))
 
 
+def _is_fernet_token(value: str) -> bool:
+    """Heuristic: Fernet tokens are base64-encoded and start with 'gAAAAA'."""
+    return value.startswith("gAAAAA")
+
+
+def _secret_prefix() -> str:
+    prefix = os.getenv("AGENTCORE_KEY_VAULT_SECRET_PREFIX", "agentcore").strip()
+    return prefix or "agentcore"
+
+
+def _get_kv_store() -> KeyVaultSecretStore | None:
+    vault_url = os.getenv("AGENTCORE_KEY_VAULT_URL", "").strip()
+    if not vault_url:
+        return None
+    if vault_url in _kv_store_cache:
+        return _kv_store_cache[vault_url]
+    store = KeyVaultSecretStore.from_config(
+        KeyVaultConfig(
+            vault_url=vault_url,
+            secret_prefix=_secret_prefix(),
+            tenant_id=os.getenv("AGENTCORE_KEY_VAULT_TENANT_ID", "").strip() or None,
+            client_id=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_ID", "").strip() or None,
+            client_secret=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_SECRET", "").strip() or None,
+        )
+    )
+    _kv_store_cache[vault_url] = store
+    return store
+
+
+def _build_secret_name(prefix: str, mcp_id: UUID, key: str) -> str:
+    return f"{prefix}-mcp-{mcp_id}-{key}"
+
+
+def _store_kv_json(name: str, value: dict) -> None:
+    store = _get_kv_store()
+    if store is None:
+        return
+    store.set_secret(name=name, value=json.dumps(value))
+
+
+def _resolve_kv_json(secret_name: str) -> dict | None:
+    store = _get_kv_store()
+    if store is None:
+        return None
+    raw = store.get_secret(secret_name)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Key Vault secret %s is not valid JSON", secret_name)
+        return None
+
+
+def apply_mcp_secret_refs(
+    row: McpRegistry,
+    *,
+    env_vars: dict | None,
+    headers: dict | None,
+) -> None:
+    """Persist env_vars/headers as secret refs (KV if configured, else Fernet)."""
+    enc_key = _encryption_key()
+    kv_store = _get_kv_store()
+    prefix = _secret_prefix()
+
+    if env_vars is not None:
+        if not env_vars:
+            row.env_vars_secret_ref = None
+        elif kv_store is not None:
+            existing = row.env_vars_secret_ref
+            secret_name = (
+                existing
+                if existing and not _is_fernet_token(existing)
+                else _build_secret_name(prefix, row.id, "env-vars")
+            )
+            _store_kv_json(secret_name, env_vars)
+            row.env_vars_secret_ref = secret_name
+        elif enc_key:
+            row.env_vars_secret_ref = _encrypt_json(env_vars, enc_key)
+
+    if headers is not None:
+        if not headers:
+            row.headers_secret_ref = None
+        elif kv_store is not None:
+            existing = row.headers_secret_ref
+            secret_name = (
+                existing
+                if existing and not _is_fernet_token(existing)
+                else _build_secret_name(prefix, row.id, "headers")
+            )
+            _store_kv_json(secret_name, headers)
+            row.headers_secret_ref = secret_name
+        elif enc_key:
+            row.headers_secret_ref = _encrypt_json(headers, enc_key)
+
+
 async def create_server(
     session: AsyncSession,
     data: McpRegistryCreate,
@@ -51,7 +152,8 @@ async def create_server(
         server_name=data.server_name,
         description=data.description,
         mode=data.mode,
-        deployment_env=(data.deployment_env or "PROD").upper(),
+        deployment_env=(data.deployment_env or "UAT").upper(),
+        environments=data.environments,
         url=data.url,
         command=data.command,
         args=data.args,
@@ -75,10 +177,7 @@ async def create_server(
         created_by_id=data.created_by_id,
     )
 
-    if data.env_vars and enc_key:
-        row.env_vars_secret_ref = _encrypt_json(data.env_vars, enc_key)
-    if data.headers and enc_key:
-        row.headers_secret_ref = _encrypt_json(data.headers, enc_key)
+    apply_mcp_secret_refs(row, env_vars=data.env_vars, headers=data.headers)
 
     session.add(row)
     await session.commit()
@@ -126,7 +225,6 @@ async def update_server(
     data: McpRegistryUpdate,
 ) -> McpRegistryRead | None:
     """Update an existing MCP server."""
-    enc_key = _encryption_key()
     row = await session.get(McpRegistry, server_id)
     if row is None:
         return None
@@ -139,12 +237,9 @@ async def update_server(
 
     # Handle secrets separately
     plain_env_vars = update_fields.pop("env_vars", None)
-    if plain_env_vars is not None and enc_key:
-        row.env_vars_secret_ref = _encrypt_json(plain_env_vars, enc_key) if plain_env_vars else None
-
     plain_headers = update_fields.pop("headers", None)
-    if plain_headers is not None and enc_key:
-        row.headers_secret_ref = _encrypt_json(plain_headers, enc_key) if plain_headers else None
+    if plain_env_vars is not None or plain_headers is not None:
+        apply_mcp_secret_refs(row, env_vars=plain_env_vars, headers=plain_headers)
 
     for field, value in update_fields.items():
         setattr(row, field, value)
@@ -183,16 +278,22 @@ async def get_decrypted_config_by_id(
     if row.mode == "sse":
         if row.url:
             config["url"] = row.url
-        if row.headers_secret_ref and enc_key:
-            config["headers"] = _decrypt_json(row.headers_secret_ref, enc_key)
+        if row.headers_secret_ref:
+            if _is_fernet_token(row.headers_secret_ref):
+                config["headers"] = _decrypt_json(row.headers_secret_ref, enc_key)
+            else:
+                config["headers"] = _resolve_kv_json(row.headers_secret_ref) or {}
     elif row.mode == "stdio":
         if row.command:
             config["command"] = row.command
         if row.args:
             config["args"] = row.args
 
-    if row.env_vars_secret_ref and enc_key:
-        config["env"] = _decrypt_json(row.env_vars_secret_ref, enc_key)
+    if row.env_vars_secret_ref:
+        if _is_fernet_token(row.env_vars_secret_ref):
+            config["env"] = _decrypt_json(row.env_vars_secret_ref, enc_key)
+        else:
+            config["env"] = _resolve_kv_json(row.env_vars_secret_ref) or {}
 
     return row.server_name, config
 
@@ -216,8 +317,11 @@ async def get_decrypted_config(
     if row.mode == "sse":
         if row.url:
             config["url"] = row.url
-        if row.headers_secret_ref and enc_key:
-            config["headers"] = _decrypt_json(row.headers_secret_ref, enc_key)
+        if row.headers_secret_ref:
+            if _is_fernet_token(row.headers_secret_ref):
+                config["headers"] = _decrypt_json(row.headers_secret_ref, enc_key)
+            else:
+                config["headers"] = _resolve_kv_json(row.headers_secret_ref) or {}
     elif row.mode == "stdio":
         if row.command:
             config["command"] = row.command
@@ -225,7 +329,10 @@ async def get_decrypted_config(
             config["args"] = row.args
 
     # Env vars apply to both modes
-    if row.env_vars_secret_ref and enc_key:
-        config["env"] = _decrypt_json(row.env_vars_secret_ref, enc_key)
+    if row.env_vars_secret_ref:
+        if _is_fernet_token(row.env_vars_secret_ref):
+            config["env"] = _decrypt_json(row.env_vars_secret_ref, enc_key)
+        else:
+            config["env"] = _resolve_kv_json(row.env_vars_secret_ref) or {}
 
     return config

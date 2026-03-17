@@ -494,7 +494,15 @@ async def get_observability_scope_options(
     org_rows: list[tuple[UUID, str]] = []
     dept_rows: list[tuple[UUID, str, UUID]] = []
 
-    if role == "root":
+    if role in {"business_user", "developer", "consumer"}:
+        # These roles only see their own traces — no org/dept selection needed.
+        return ScopeOptionsResponse(
+            role=role,
+            requires_filter_first=False,
+            organizations=[],
+            departments=[],
+        )
+    elif role == "root":
         org_rows = (await session.exec(select(Organization.id, Organization.name).order_by(Organization.name))).all()
         dept_rows = (
             await session.exec(
@@ -504,15 +512,10 @@ async def get_observability_scope_options(
             )
         ).all()
     elif role == "super_admin":
+        # Super admins belong to a single org — no org selection needed.
+        # Keep departments for "Dept Traces" mode.
         org_ids = await _admin_org_ids_for_user(session, current_user)
         if org_ids:
-            org_rows = (
-                await session.exec(
-                    select(Organization.id, Organization.name).where(
-                        Organization.id.in_(list(org_ids))
-                    ).order_by(Organization.name)
-                )
-            ).all()
             dept_rows = (
                 await session.exec(
                     select(Department.id, Department.name, Department.org_id).where(
@@ -521,6 +524,9 @@ async def get_observability_scope_options(
                     ).order_by(Department.name)
                 )
             ).all()
+    elif role == "department_admin":
+        # Dept admins belong to a single department — no org/dept selection needed.
+        pass
     else:
         org_rows = (
             await session.exec(
@@ -553,7 +559,7 @@ async def get_observability_scope_options(
 
     return ScopeOptionsResponse(
         role=role,
-        requires_filter_first=role in {"root", "super_admin"},
+        requires_filter_first=role == "root",
         organizations=[ScopeOptionItem(id=row[0], name=row[1]) for row in org_rows],
         departments=[DepartmentScopeOption(id=row[0], name=row[1], org_id=row[2]) for row in dept_rows],
     )

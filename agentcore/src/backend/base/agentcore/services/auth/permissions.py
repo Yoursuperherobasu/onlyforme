@@ -9,14 +9,7 @@ from agentcore.services.database.models.role_permission import RolePermission
 from sqlmodel import select, text
 
 
-ROLE_ALIASES = {
-    "admin": "super_admin",
-    "super admin": "super_admin",
-    "department admin": "department_admin",
-    "business user": "business_user",
-    "root admin": "root",
-    "root_admin": "root",
-}
+ROLE_ALIASES: dict[str, str] = {}
 
 PERMISSION_ALIASES = {
     # Keep old permission checks working while roles move to assets-based keys.
@@ -39,6 +32,8 @@ PERMISSION_ALIASES = {
     "view_vectorDb_page": ["view_vectordb_page"],
     "view_mcp_page": ["view_mcp"],
     "add_mcp": ["add_new_mcp"],
+    "edit_mcp_registry": ["edit_mcp", "edit_mcp_server"],
+    "delete_mcp_registry": ["delete_mcp", "delete_mcp_server"],
     "view_knowledge_base_management": ["view_knowledge_base"],
     "approve_reject_page": ["prod_publish_approval_required"],
     "view_approval_page": ["approve_reject_page", "prod_publish_approval_required", "view_hitl_approvals_page"],
@@ -59,7 +54,7 @@ PERMISSION_ALIASES = {
 
 
 def _normalize_role(role: str) -> str:
-    normalized = role.strip().lower().replace(" ", "_")
+    normalized = role.strip().lower().replace(" ", "_").replace("-", "_")
     return ROLE_ALIASES.get(normalized, normalized)
 
 
@@ -97,6 +92,8 @@ ACTIONS = {
     "VIEW_SETTINGS_SHORTCUTS_TAB": "view_settings_shortcuts_tab",
     "VIEW_SETTINGS_MESSAGES_TAB": "view_settings_messages_tab",
     "VIEW_MCP_SERVERS_PAGE": "view_mcp_page",
+    "EDIT_MCP_REGISTRY": "edit_mcp_registry",
+    "DELETE_MCP_REGISTRY": "delete_mcp_registry",
     "VIEW_MODEL_CATALOGUE_PAGE": "view_model_catalogue_page",
     "VIEW_AGENT_CATALOGUE_PAGE": "view_agent_catalogue_page",
     "VIEW_ORCHESTRATOR_PAGE": "view_orchastration_page",
@@ -145,6 +142,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_SETTINGS_SHORTCUTS_TAB"],
         ACTIONS["VIEW_SETTINGS_MESSAGES_TAB"],
         ACTIONS["VIEW_MCP_SERVERS_PAGE"],
+        ACTIONS["EDIT_MCP_REGISTRY"],
+        ACTIONS["DELETE_MCP_REGISTRY"],
         ACTIONS["VIEW_MODEL_CATALOGUE_PAGE"],
         ACTIONS["VIEW_AGENT_CATALOGUE_PAGE"],
         ACTIONS["VIEW_ORCHESTRATOR_PAGE"],
@@ -191,6 +190,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_SETTINGS_SHORTCUTS_TAB"],
         ACTIONS["VIEW_SETTINGS_MESSAGES_TAB"],
         ACTIONS["VIEW_MCP_SERVERS_PAGE"],
+        ACTIONS["EDIT_MCP_REGISTRY"],
+        ACTIONS["DELETE_MCP_REGISTRY"],
         ACTIONS["VIEW_MODEL_CATALOGUE_PAGE"],
         ACTIONS["VIEW_AGENT_CATALOGUE_PAGE"],
         ACTIONS["VIEW_ORCHESTRATOR_PAGE"],
@@ -242,6 +243,8 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         ACTIONS["VIEW_SETTINGS_MESSAGES_TAB"],
         ACTIONS["VIEW_AGENT_EDITOR"],
         ACTIONS["VIEW_MCP_SERVERS_PAGE"],
+        ACTIONS["EDIT_MCP_REGISTRY"],
+        ACTIONS["DELETE_MCP_REGISTRY"],
         ACTIONS["VIEW_MODEL_CATALOGUE_PAGE"],
         ACTIONS["VIEW_APPROVAL_PAGE"],
         ACTIONS["VIEW_HITL_APPROVALS_PAGE"],
@@ -298,7 +301,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v11"  # bump when permissions change
+PERMISSION_VERSION = "v12"  # bump when permissions change
 
 
 class PermissionCacheService:

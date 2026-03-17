@@ -1,5 +1,8 @@
+import { useDarkStore } from "@/stores/darkStore";
+
 const SvgPineconeLogo = (props) => {
-  const color = props.isDark ? "#fff" : "#000";
+  const isDark = useDarkStore((state) => state.dark);
+  const color = isDark ? "#fff" : "#000";
 
   return (
     <svg

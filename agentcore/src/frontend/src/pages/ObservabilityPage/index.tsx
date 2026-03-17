@@ -51,10 +51,13 @@ export default function ObservabilityPage(): JSX.Element {
   const {
     filters, setFilters, searchInput, setSearchInput,
     selectedEnvironment, selectedOrgId, selectedDeptId,
-    fetchAllMode, setFetchAllMode, dateParams, scopeParams,
+    fetchAllMode, setFetchAllMode,
+    traceScope, hasTraceScopeToggle, isDeptAdmin, isSuperAdmin, showDeptFilter,
+    dateParams, scopeParams,
     roleKnown, requiresFilterFirst, scopeReady,
     isProvisioningAdminSessionRole, availableScopeDepartments,
     handleDateRangeChange, handleSearch, handleEnvironmentChange,
+    handleTraceScopeChange,
     handleOrgChange, handleDeptChange, clearFilters, clearScope,
   } = filtersHook;
 
@@ -74,6 +77,7 @@ export default function ObservabilityPage(): JSX.Element {
     selectedOrgId,
     selectedDeptId,
     selectedEnvironment,
+    traceScope,
   });
 
   const {
@@ -219,11 +223,17 @@ export default function ObservabilityPage(): JSX.Element {
           scopeOptions={scopeOptions.data}
           availableScopeDepartments={availableScopeDepartments}
           metrics={metrics.data}
+          traceScope={traceScope}
+          hasTraceScopeToggle={hasTraceScopeToggle}
+          isDeptAdmin={isDeptAdmin}
+          isSuperAdmin={isSuperAdmin}
+          showDeptFilter={showDeptFilter}
           onDateRangeChange={handleDateRangeChange}
           onSearch={handleSearch}
           onModelChange={(models) => setFilters(prev => ({ ...prev, models }))}
           onOrgChange={handleOrgChangeWithClear}
           onDeptChange={handleDeptChangeWithClear}
+          onTraceScopeChange={handleTraceScopeChange}
           onClearFilters={clearFilters}
           onClearScope={handleClearScopeWithClear}
           onRefresh={() => void handleManualRefresh()}

@@ -25,10 +25,16 @@ class McpApprovalRequestBase(SQLModel):
     justification: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     file_path: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     deployment_env: str = Field(
-        default="DEV",
-        sa_column=Column(String(10), nullable=False, server_default=text("'DEV'")),
-        description="Environment discriminator: DEV, UAT, or PROD",
+        default="UAT",
+        sa_column=Column(String(10), nullable=False, server_default=text("'UAT'")),
+        description="Environment discriminator: UAT or PROD",
     )
+    requested_environments: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    requested_visibility: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))
+    requested_public_scope: str | None = Field(default=None, sa_column=Column(String(20), nullable=True))
+    requested_org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True)
+    requested_dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True)
+    requested_public_dept_ids: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
@@ -59,7 +65,13 @@ class McpApprovalRequestCreate(SQLModel):
     request_to: UUID
     org_id: UUID | None = None
     dept_id: UUID | None = None
-    deployment_env: str = "DEV"
+    deployment_env: str = "UAT"
+    requested_environments: list[str] | None = None
+    requested_visibility: str | None = None
+    requested_public_scope: str | None = None
+    requested_org_id: UUID | None = None
+    requested_dept_id: UUID | None = None
+    requested_public_dept_ids: list[str] | None = None
 
 
 class McpApprovalRequestRead(BaseModel):
@@ -76,6 +88,12 @@ class McpApprovalRequestRead(BaseModel):
     justification: str | None = None
     file_path: dict | None = None
     deployment_env: str
+    requested_environments: list[str] | None = None
+    requested_visibility: str | None = None
+    requested_public_scope: str | None = None
+    requested_org_id: UUID | None = None
+    requested_dept_id: UUID | None = None
+    requested_public_dept_ids: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 

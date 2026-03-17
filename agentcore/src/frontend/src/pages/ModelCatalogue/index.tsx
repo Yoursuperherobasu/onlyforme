@@ -65,6 +65,7 @@ const ENV_LABELS: Record<string, string> = {
 const ENV_BADGE_CLASSES: Record<string, string> = {
   uat: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
   prod: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+  both: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
 };
 
 const VISIBILITY_LABELS: Record<string, string> = {
@@ -103,7 +104,7 @@ export default function ModelCatalogue(): JSX.Element {
   const { permissions, role, userData } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const normalizedRole = (role ?? "").toLowerCase().replace(" ", "_");
-  const isRoot = normalizedRole === "root" || normalizedRole === "root_admin";
+  const isRoot = normalizedRole === "root";
   const isModelAdmin =
     isRoot || normalizedRole === "super_admin" || normalizedRole === "department_admin";
   const canAddModel = isModelAdmin && can("add_new_model");
@@ -111,6 +112,7 @@ export default function ModelCatalogue(): JSX.Element {
   const isDepartmentAdmin = normalizedRole === "department_admin";
   const isSuperAdmin = normalizedRole === "super_admin";
   const currentUserId = userData?.id;
+  const userDeptId = userData?.department_id ?? null;
   const canSeeActions = isModelAdmin && (can("edit_model_registry") || can("delete_model_registry"));
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -125,7 +127,7 @@ export default function ModelCatalogue(): JSX.Element {
 
   useEffect(() => {
     api
-      .get("api/mcp/registry/visibility-options")
+      .get("api/models/registry/visibility-options")
       .then((res) => {
         const options: VisibilityOptions = res.data || {
           organizations: [],
@@ -161,8 +163,12 @@ export default function ModelCatalogue(): JSX.Element {
     const matchesType = model.model_type === modelTypeFilter;
     const matchesProvider =
       providerFilter === "all" || model.provider === providerFilter;
+    const normalizeEnv = (env: string) => (env === "test" ? "uat" : env);
+    const modelEnvs = (model.environments ?? []).map((env) => normalizeEnv(String(env).toLowerCase()));
+    const fallbackEnv = normalizeEnv(String(model.environment ?? "").toLowerCase());
+    const effectiveEnvs = modelEnvs.length ? modelEnvs : fallbackEnv ? [fallbackEnv] : [];
     const matchesEnv =
-      envFilter === "all" || model.environment === envFilter;
+      envFilter === "all" || effectiveEnvs.includes(envFilter);
     const matchesSearch =
       !searchQuery ||
       model.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -188,14 +194,56 @@ export default function ModelCatalogue(): JSX.Element {
   const getProviderName = (provider: string) =>
     PROVIDER_LABELS[provider] ?? provider;
 
+  const userDeptIds = useMemo(() => {
+    if (userDeptId) return [userDeptId];
+    return visibilityOptions.departments.map((d) => d.id);
+  }, [userDeptId, visibilityOptions.departments]);
+
+  const isDeptScopedForUser = (model: ModelType) => {
+    if (userDeptIds.length === 0) return false;
+    const deptIdSet = new Set(userDeptIds);
+    if (model.visibility_scope === "department") {
+      if (model.public_dept_ids?.some((id) => deptIdSet.has(id))) return true;
+      if (model.dept_id && deptIdSet.has(model.dept_id)) return true;
+    }
+    if (model.visibility_scope === "private") {
+      if (model.dept_id && deptIdSet.has(model.dept_id)) return true;
+    }
+    return false;
+  };
+
+  const isMultiDeptModel = (model: ModelType) => (model.public_dept_ids?.length ?? 0) > 1;
+
+  const getEnvironmentLabel = (model: ModelType) => {
+    const normalizeEnv = (env: string) => (env === "test" ? "uat" : env);
+    const modelEnvs = (model.environments ?? []).map((env) => normalizeEnv(String(env).toLowerCase()));
+    const fallbackEnv = normalizeEnv(String(model.environment ?? "").toLowerCase());
+    const effectiveEnvs = modelEnvs.length ? modelEnvs : fallbackEnv ? [fallbackEnv] : [];
+    const sorted = Array.from(new Set(effectiveEnvs)).sort();
+    if (sorted.length > 1) return "UAT + PROD";
+    return ENV_LABELS[sorted[0]] ?? sorted[0]?.toUpperCase() ?? "-";
+  };
+
+  const getEnvironmentBadgeClass = (model: ModelType) => {
+    const normalizeEnv = (env: string) => (env === "test" ? "uat" : env);
+    const modelEnvs = (model.environments ?? []).map((env) => normalizeEnv(String(env).toLowerCase()));
+    const fallbackEnv = normalizeEnv(String(model.environment ?? "").toLowerCase());
+    const effectiveEnvs = modelEnvs.length ? modelEnvs : fallbackEnv ? [fallbackEnv] : [];
+    const sorted = Array.from(new Set(effectiveEnvs)).sort();
+    if (sorted.length > 1) return ENV_BADGE_CLASSES.both;
+    return ENV_BADGE_CLASSES[sorted[0]] ?? "bg-gray-100 text-gray-700";
+  };
+
   const canEditModel = (model: ModelType) => {
     if (!isModelAdmin || !can("edit_model_registry")) return false;
     if (model.approval_status === "pending") return false;
     if (isRoot || isSuperAdmin) return true;
     if (isDepartmentAdmin) {
+      if (isMultiDeptModel(model)) return false;
       return Boolean(
         currentUserId &&
-          (model.reviewed_by === currentUserId ||
+          (isDeptScopedForUser(model) ||
+            model.reviewed_by === currentUserId ||
             (model.created_by_id === currentUserId && model.approval_status === "approved")),
       );
     }
@@ -207,9 +255,11 @@ export default function ModelCatalogue(): JSX.Element {
     if (model.approval_status === "pending") return false;
     if (isRoot || isSuperAdmin) return true;
     if (isDepartmentAdmin) {
+      if (isMultiDeptModel(model)) return false;
       return Boolean(
         currentUserId &&
-          (model.reviewed_by === currentUserId ||
+          (isDeptScopedForUser(model) ||
+            model.reviewed_by === currentUserId ||
             (model.created_by_id === currentUserId && model.approval_status === "approved")),
       );
     }
@@ -283,7 +333,7 @@ export default function ModelCatalogue(): JSX.Element {
           ) : canRequestModel ? (
             <Button onClick={() => setIsRequestModalOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
-              {modelTypeFilter === "embedding" ? t("Add / Request Embedding") : t("Add / Request Model")}
+              {modelTypeFilter === "embedding" ? t("Request Embedding") : t("Request Model")}
             </Button>
           ) : null}
         </div>
@@ -455,16 +505,10 @@ export default function ModelCatalogue(): JSX.Element {
                         <td className="px-6 py-4">
                           <span
                             className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium uppercase ${
-                              model.environment === "test"
-                                ? ENV_BADGE_CLASSES.uat
-                                : ENV_BADGE_CLASSES[model.environment] ?? "bg-gray-100 text-gray-700"
+                              getEnvironmentBadgeClass(model)
                             }`}
                           >
-                            {t(
-                              model.environment === "test"
-                                ? "UAT"
-                                : ENV_LABELS[model.environment] ?? model.environment,
-                            )}
+                            {t(getEnvironmentLabel(model))}
                           </span>
                         </td>
 

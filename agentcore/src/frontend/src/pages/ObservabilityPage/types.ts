@@ -254,4 +254,5 @@ export interface FetchMetricsParams {
   org_id?: string;
   dept_id?: string;
   environment?: LangfuseEnvironment;
+  trace_scope?: string;
 }
