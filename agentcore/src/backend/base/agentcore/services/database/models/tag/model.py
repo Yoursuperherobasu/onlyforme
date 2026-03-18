@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
+import sqlalchemy as sa
 from sqlalchemy import DateTime, String, UniqueConstraint
 from sqlmodel import Column, Field, SQLModel
 
@@ -47,24 +49,47 @@ PREDEFINED_TAGS: list[dict] = [
 # ── Tag table ────────────────────────────────────────────────────────────
 class TagBase(SQLModel):
     name: str = Field(sa_column=Column(String(60), nullable=False))
-    category: TagCategoryEnum = Field(default=TagCategoryEnum.CUSTOM)
+    category: TagCategoryEnum = Field(
+        default=TagCategoryEnum.CUSTOM,
+        sa_column=Column(String(30), nullable=False, server_default="custom"),
+    )
     description: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
-    is_predefined: bool = Field(default=False)
+    is_predefined: bool = Field(
+        default=False,
+        sa_column=Column(sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    )
 
 
 class Tag(TagBase, table=True):  # type: ignore[call-arg]
     __tablename__ = "tag"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
-    created_by: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
+    org_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(),
+            sa.ForeignKey("organization.id", name="fk_tag_org_id"),
+            nullable=True,
+            index=True,
+        ),
+    )
+    created_by: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid(),
+            sa.ForeignKey("user.id", name="fk_tag_created_by"),
+            nullable=True,
+        ),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
 
     __table_args__ = (
         UniqueConstraint("name", "org_id", name="uq_tag_name_org"),
+        sa.Index("ix_tag_name", "name"),
+        sa.Index("ix_tag_category", "category"),
     )
 
 
@@ -85,11 +110,27 @@ class TagRead(TagBase):
 class ProjectTag(SQLModel, table=True):  # type: ignore[call-arg]
     __tablename__ = "project_tag"
 
-    project_id: UUID = Field(foreign_key="project.id", primary_key=True)
-    tag_id: UUID = Field(foreign_key="tag.id", primary_key=True)
+    project_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            sa.ForeignKey("project.id", name="fk_project_tag_project_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+    )
+    tag_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            sa.ForeignKey("tag.id", name="fk_project_tag_tag_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+    )
+    __table_args__ = (
+        sa.Index("ix_project_tag_project_id", "project_id"),
+        sa.Index("ix_project_tag_tag_id", "tag_id"),
     )
 
 
@@ -97,9 +138,25 @@ class ProjectTag(SQLModel, table=True):  # type: ignore[call-arg]
 class AgentTag(SQLModel, table=True):  # type: ignore[call-arg]
     __tablename__ = "agent_tag"
 
-    agent_id: UUID = Field(foreign_key="agent.id", primary_key=True)
-    tag_id: UUID = Field(foreign_key="tag.id", primary_key=True)
+    agent_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            sa.ForeignKey("agent.id", name="fk_agent_tag_agent_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+    )
+    tag_id: UUID = Field(
+        sa_column=Column(
+            sa.Uuid(),
+            sa.ForeignKey("tag.id", name="fk_agent_tag_tag_id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+    )
+    __table_args__ = (
+        sa.Index("ix_agent_tag_agent_id", "agent_id"),
+        sa.Index("ix_agent_tag_tag_id", "tag_id"),
     )
