@@ -93,6 +93,27 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
             "that implements embed_documents() and embed_query()."
         )
 
+    def _validate_embedding_dimension(self, embedder) -> None:
+        """Verify the embedding model's actual output dimension matches the configured Pinecone dimension.
+
+        Embeds a tiny probe string and compares vector length to self.embedding_dimension.
+        Raises ValueError with a clear fix message on mismatch.
+        """
+        try:
+            probe = embedder.embed_query("dim")
+            actual_dim = len(probe)
+        except Exception as e:
+            logger.warning(f"[Pinecone] Could not probe embedding dimension: {e}")
+            return  # skip validation if probe fails — let the real call surface the error
+
+        configured_dim = int(self.embedding_dimension)
+        if actual_dim != configured_dim:
+            raise ValueError(
+                f"Dimension mismatch: your embedding model produces {actual_dim}-dim vectors "
+                f"but the Pinecone component 'Embedding Dimension' is set to {configured_dim}. "
+                f"Update 'Embedding Dimension' to {actual_dim}, or change your embedding model."
+            )
+        logger.info(f"[Pinecone] Embedding dimension validated: {actual_dim}")
 
     def _ingest_documents(self, documents, embedder):
         texts = [doc.page_content for doc in documents]
@@ -158,6 +179,8 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
         real_embedding = self._get_embedding_model()
         wrapped = Float32Embeddings(real_embedding)
 
+        self._validate_embedding_dimension(wrapped)
+
         try:
             count = self._ingest_if_needed(wrapped)
             if count > 0:
@@ -185,6 +208,8 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
 
         real_embedding = self._get_embedding_model()
         wrapped = Float32Embeddings(real_embedding)
+
+        self._validate_embedding_dimension(wrapped)
 
         count = 0
         try:
