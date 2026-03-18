@@ -88,9 +88,11 @@ export default function UserManagementModal({
         onSuccess: (roleNames) => {
           const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user"];
           const merged = (roleNames || []).length > 0 ? (roleNames || []) : fallbackRoles;
-          const withSelected = merged.includes(selectedRole)
-            ? merged
-            : [...merged, selectedRole];
+          const filtered = merged.filter((role) => role !== "consumer");
+          const withSelected =
+            selectedRole && selectedRole !== "consumer" && !filtered.includes(selectedRole)
+              ? [...filtered, selectedRole]
+              : filtered;
           setAvailableRoles(withSelected);
         },
         onError: () => {
@@ -185,7 +187,9 @@ export default function UserManagementModal({
     if (isRootAdmin) {
       return ["super_admin"];
     }
-    return Array.from(new Set([...baseRoles, effectiveRole].filter(Boolean)));
+    return Array.from(
+      new Set([...baseRoles, effectiveRole].filter((role) => Boolean(role) && role !== "consumer")),
+    );
   })();
 
   function validateDepartmentAdminSelection(): boolean {
