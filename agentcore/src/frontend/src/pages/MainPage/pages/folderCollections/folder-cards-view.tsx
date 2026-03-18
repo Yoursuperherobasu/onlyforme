@@ -580,7 +580,7 @@ export default function FolderCardsView({
                     </button>
                     )}
 
-                    {(can("edit_projects_page") || can("delete_project")) && (
+                    {(can("edit_project") || can("delete_project")) && (
                     <div className="z-20">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -592,7 +592,7 @@ export default function FolderCardsView({
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {can("edit_projects_page") && (
+                          {can("edit_project") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -925,7 +925,7 @@ export default function FolderCardsView({
 
                         {/* Actions Column */}
                         <div className="w-[40px] flex-shrink-0 flex items-center justify-end">
-                          {(can("edit_projects_page") || can("delete_project")) && (
+                          {(can("edit_project") || can("delete_project")) && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <button
@@ -936,7 +936,7 @@ export default function FolderCardsView({
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              {can("edit_projects_page") && (
+                              {can("edit_project") && (
                               <DropdownMenuItem
                                 onClick={(e) => {
                                   e.stopPropagation();

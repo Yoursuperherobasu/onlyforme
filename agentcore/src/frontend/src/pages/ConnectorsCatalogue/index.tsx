@@ -184,6 +184,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
   const { role, permissions, userData } = useContext(AuthContext);
   const canViewConnectorPage =
+    permissions?.includes("view_connector_page") ||
     permissions?.includes("connectore_page") ||
     permissions?.includes("view_connectors_page") ||
     permissions?.includes("connector_page");
