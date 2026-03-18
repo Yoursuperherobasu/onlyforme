@@ -1838,6 +1838,105 @@ async def delete_prod_deployment(
         is_active=record.is_active,
         version_number=f"v{record.version_number}",
     )
+async def _track_pinecone_for_uat(
+    session,
+    snapshot: dict,
+    agent_id: UUID,
+    agent_name: str,
+    org_id: UUID | None,
+    dept_id: UUID | None,
+) -> None:
+    """Scan snapshot for Pinecone nodes and create/update VectorDBCatalogue UAT entries.
+
+    Called once when an agent is published to UAT. Records the index/namespace
+    in the catalogue so it's visible in the Vector Store Observatory.
+    """
+    from sqlmodel import select
+    from agentcore.services.database.models.vector_db_catalogue.model import VectorDBCatalogue
+
+    nodes = snapshot.get("nodes", [])
+    now = datetime.now(timezone.utc)
+
+    for node in nodes:
+        node_data = node.get("data", {})
+        if node_data.get("type", "") != "Pinecone":
+            continue
+
+        template = node_data.get("node", {}).get("template", {})
+        index_name_field = template.get("index_name", {})
+        namespace_field = template.get("namespace", {})
+
+        index_name = index_name_field.get("value", "") if isinstance(index_name_field, dict) else str(index_name_field)
+        namespace = namespace_field.get("value", "") if isinstance(namespace_field, dict) else str(namespace_field)
+
+        if not index_name:
+            continue
+
+        # Fetch live vector count from Pinecone
+        live_vector_count = "0"
+        live_dimensions = ""
+        try:
+            from agentcore.services.pinecone_service_client import (
+                async_namespace_stats_via_service,
+                is_service_configured,
+            )
+            if is_service_configured():
+                stats = await async_namespace_stats_via_service(index_name, namespace)
+                live_vector_count = str(stats.get("vector_count", 0))
+                live_dimensions = str(stats.get("dimension", ""))
+        except Exception as stats_err:
+            logger.warning(
+                "[VDB_UAT_TRACK] Failed to fetch live stats for index=%s ns=%s: %s",
+                index_name, namespace, stats_err,
+            )
+
+        # Check if a UAT catalogue entry already exists for this index/namespace
+        existing = (
+            await session.exec(
+                select(VectorDBCatalogue).where(
+                    VectorDBCatalogue.index_name == index_name,
+                    VectorDBCatalogue.namespace == namespace,
+                    VectorDBCatalogue.environment == "uat",
+                ).limit(1)
+            )
+        ).first()
+
+        if existing:
+            existing.agent_id = agent_id
+            existing.agent_name = agent_name
+            existing.org_id = org_id
+            existing.dept_id = dept_id
+            existing.vector_count = live_vector_count
+            if live_dimensions:
+                existing.dimensions = live_dimensions
+            existing.updated_at = now
+            session.add(existing)
+            logger.info("[VDB_UAT_TRACK] Updated UAT entry: index=%s ns=%s vectors=%s", index_name, namespace, live_vector_count)
+        else:
+            entry = VectorDBCatalogue(
+                name=f"{index_name}/{namespace}" if namespace else index_name,
+                description=f"UAT namespace for agent '{agent_name}'",
+                provider="Pinecone",
+                deployment="SaaS",
+                dimensions=live_dimensions,
+                index_type="serverless",
+                status="connected",
+                vector_count=live_vector_count,
+                is_custom=False,
+                environment="uat",
+                index_name=index_name,
+                namespace=namespace,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                org_id=org_id,
+                dept_id=dept_id,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(entry)
+            logger.info("[VDB_UAT_TRACK] Created UAT entry: index=%s ns=%s vectors=%s", index_name, namespace, live_vector_count)
+
+    await session.flush()
 
 
 # UNIFIED PUBLISH ENDPOINT
@@ -2020,6 +2119,21 @@ async def publish_agent(
                     logger.info(f"Created {len(bundles)} bundle(s) for UAT deploy {new_record.id}")
             except Exception as bundle_err:
                 logger.warning(f"Bundle extraction failed for UAT deploy of {agent_id}: {bundle_err}")
+
+
+            # ─── Track Pinecone indexes in vector catalogue ──
+            try:
+                await _track_pinecone_for_uat(
+                    session=session,
+                    snapshot=snapshot,
+                    agent_id=agent_id,
+                    agent_name=agent.name,
+                    org_id=agent.org_id,
+                    dept_id=resolved_department_id,
+                )
+                await session.commit()
+            except Exception as vdb_err:
+                logger.warning(f"Vector catalogue tracking failed for UAT deploy of {agent_id}: {vdb_err}")
 
             # Sync FileTrigger nodes → auto-create trigger_config entries
             try:

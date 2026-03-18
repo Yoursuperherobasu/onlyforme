@@ -352,7 +352,7 @@ export default function VectorDBView(): JSX.Element {
                               <span className="text-sm font-medium">
                                 {db.environment === "prod" && db.vectorsCopied > 0
                                   ? db.vectorsCopied.toLocaleString()
-                                  : db.vectorCount}
+                                  : Number(db.vectorCount || 0).toLocaleString()}
                               </span>
                             </div>
                           </td>

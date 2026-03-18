@@ -417,6 +417,16 @@ class LangGraphVertex:
                 )
                 continue
 
+            # Skip if already resolved by _resolve_vertex_dependencies in nodes.py
+            current_value = resolved_params.get(field_name)
+            if current_value is not None and not isinstance(current_value, str):
+                # Already populated with real data (not a string reference), skip to avoid duplication
+                logger.debug(
+                    f"[_resolve_params] {self.id}.{field_name}: "
+                    f"already resolved (type={type(current_value).__name__}), skipping"
+                )
+                continue
+
             logger.debug(
                 f"[_resolve_params] {self.id}.{field_name} ← "
                 f"{source_id}.{source_output} (type={type(result_value).__name__})"
