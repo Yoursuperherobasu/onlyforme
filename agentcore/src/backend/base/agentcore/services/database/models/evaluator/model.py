@@ -17,8 +17,6 @@ class EvaluatorBase(SQLModel):
     trace_id: Optional[str] = None
     agent_id: Optional[str] = None
     agent_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
-    agent_id: Optional[str] = None  # Alias for agent_id (agents are agents)
-    agent_ids: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))  # Alias for agent_ids
     agent_name: Optional[str] = None
     session_id: Optional[str] = None
     project_name: Optional[str] = None
@@ -51,13 +49,11 @@ class Evaluator(EvaluatorBase, table=True):
             "org_id": str(self.org_id) if self.org_id else None,
             "dept_id": str(self.dept_id) if self.dept_id else None,
             "preset_id": self.preset_id,
-            "agent_ids": self.agent_ids,
             "agent_id": self.agent_id,
             "agent_ids": self.agent_ids,
             "target": self.target,
             "ground_truth": self.ground_truth,
             "trace_id": self.trace_id,
-            "agent_id": self.agent_id,
             "agent_name": self.agent_name,
             "session_id": self.session_id,
             "project_name": self.project_name,

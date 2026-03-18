@@ -1,6 +1,7 @@
 """GET /traces and /traces/{trace_id} endpoints."""
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
@@ -241,14 +242,14 @@ async def get_trace_detail(
             raw_observations = list(_embedded_obs)
             _cache_and_return_observations(resolved_trace_id, raw_observations, cache_key=observation_cache_key(trace_client, resolved_trace_id))
             fetched_scores = await asyncio.to_thread(
-                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=200)
+                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=100)
             )
         else:
             obs_task = asyncio.create_task(asyncio.to_thread(
                 lambda: fetch_observations_for_trace(trace_client, resolved_trace_id)
             ))
             scores_task = asyncio.create_task(asyncio.to_thread(
-                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=200)
+                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=100)
             ))
             raw_observations, fetched_scores = await asyncio.gather(obs_task, scores_task, return_exceptions=True)
             if isinstance(raw_observations, Exception):
@@ -306,23 +307,56 @@ async def get_trace_detail(
         scores: list[ScoreItem] = []
         try:
             embedded_scores = get_attr(trace, "scores", default=[]) or []
-            for idx, score in enumerate(embedded_scores):
-                source = get_attr(score, "source")
+            logger.info(f"Trace {resolved_trace_id}: {len(embedded_scores)} embedded scores, {len(fetched_scores or [])} fetched scores")
+            for idx, raw_score in enumerate(embedded_scores):
+                # Skip string entries (score IDs, not actual score objects)
+                if isinstance(raw_score, str):
+                    # Try parsing as JSON
+                    try:
+                        parsed = json.loads(raw_score)
+                        if isinstance(parsed, dict):
+                            raw_score = parsed
+                        else:
+                            logger.debug(f"  embedded score[{idx}]: skipping string score: {raw_score[:100]}")
+                            continue
+                    except (json.JSONDecodeError, ValueError):
+                        logger.debug(f"  embedded score[{idx}]: skipping non-parseable string score: {raw_score[:100]}")
+                        continue
+
+                # Unwrap nested score object (v3 API may wrap in a 'score' key)
+                score_obj = raw_score
+                if hasattr(raw_score, "score") and raw_score.score is not None:
+                    score_obj = raw_score.score
+                elif isinstance(raw_score, dict) and "score" in raw_score and isinstance(raw_score["score"], dict):
+                    score_obj = raw_score["score"]
+
+                source = get_attr(score_obj, "source") or get_attr(raw_score, "source")
                 if hasattr(source, "value"):
                     source = source.value
+
+                score_name = str(get_attr(score_obj, "name", default="") or get_attr(raw_score, "name", default="Score") or "Score")
+                score_value = get_attr(score_obj, "value", default=None)
+                if score_value is None:
+                    score_value = get_attr(raw_score, "value", default=0.0)
+                score_value = float(score_value if score_value is not None else 0.0)
+
+                logger.info(f"  embedded score[{idx}]: type={type(raw_score).__name__}, name={score_name}, value={score_value}")
+
                 scores.append(ScoreItem(
-                    id=str(get_attr(score, "id", default=str(idx + 1))),
-                    name=str(get_attr(score, "name", default="Score") or "Score"),
-                    value=float(get_attr(score, "value", default=0.0) or 0.0),
+                    id=str(get_attr(score_obj, "id", default="") or get_attr(raw_score, "id", default=str(idx + 1))),
+                    name=score_name,
+                    value=score_value,
                     source=str(source) if source is not None else None,
-                    comment=get_attr(score, "comment"),
-                    created_at=parse_datetime(get_attr(score, "created_at", "createdAt", "timestamp")),
+                    comment=get_attr(score_obj, "comment") or get_attr(raw_score, "comment"),
+                    created_at=parse_datetime(get_attr(score_obj, "created_at", "createdAt", "timestamp") or get_attr(raw_score, "created_at", "createdAt", "timestamp")),
                 ))
             merged = {s.id: s for s in scores if s.id}
             for score in (fetched_scores or []):
                 merged[score.id] = score
             scores = sorted(merged.values(), key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-        except Exception:
+            logger.info(f"  Final scores for trace {resolved_trace_id}: {[(s.name, s.value) for s in scores]}")
+        except Exception as e:
+            logger.warning(f"Error merging scores for trace {resolved_trace_id}: {e}")
             pass
 
         return TraceDetailResponse(

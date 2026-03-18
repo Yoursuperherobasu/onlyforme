@@ -565,9 +565,11 @@ def fetch_observations_for_trace(client: Any, trace_id: str) -> list:
                 rows = _response_to_list(call_with_rate_limit_retry(method, **kwargs))
                 if rows:
                     return rows
-            except TypeError:
+            except TypeError as te:
+                logger.debug("_try_call: TypeError with kwargs={}: {}", kwargs, te)
                 continue
-            except Exception:
+            except Exception as exc:
+                logger.debug("_try_call: Exception with kwargs={}: {} ({})", kwargs, exc, type(exc).__name__)
                 continue
         return []
 
@@ -671,6 +673,8 @@ def fetch_trace_by_id(client: Any, trace_id: str) -> Any | None:
 
 
 def fetch_scores_for_trace(client: Any, trace_id: str, user_id: str | None = None, limit: int = 100) -> list:
+    # Langfuse API max limit is 100
+    limit = min(limit, 100)
     """Fetch evaluation scores for a trace across Langfuse SDK variants."""
     from .models import ScoreItem
 
@@ -698,45 +702,76 @@ def fetch_scores_for_trace(client: Any, trace_id: str, user_id: str | None = Non
             source = get_attr(score, "source")
             if hasattr(source, "value"):
                 source = source.value
+
+            # Debug: log raw score object to understand structure
+            logger.info(
+                f"fetch_scores_for_trace: raw score type={type(score).__name__}, "
+                f"dir={[a for a in dir(score) if not a.startswith('_')]}, "
+                f"repr={repr(score)[:500]}"
+            )
+
+            # Handle nested score objects (v3 API wraps score in a 'score' key)
+            score_obj = score
+            if hasattr(score, "score") and score.score is not None:
+                score_obj = score.score
+                logger.info(f"  Unwrapped nested score: type={type(score_obj).__name__}, repr={repr(score_obj)[:300]}")
+            elif isinstance(score, dict) and "score" in score and isinstance(score["score"], dict):
+                score_obj = score["score"]
+                logger.info(f"  Unwrapped nested dict score: {score_obj}")
+
+            score_name = str(get_attr(score_obj, "name", default="") or get_attr(score, "name", default="Score") or "Score")
+            score_value = get_attr(score_obj, "value", default=None)
+            if score_value is None:
+                score_value = get_attr(score, "value", default=0.0)
+            score_value = float(score_value if score_value is not None else 0.0)
+            logger.info(f"  Parsed: name={score_name}, value={score_value}")
+
             scores.append(ScoreItem(
                 id=score_id or str(len(scores) + 1),
-                name=str(get_attr(score, "name", default="Score") or "Score"),
-                value=float(get_attr(score, "value", default=0.0) or 0.0),
+                name=score_name,
+                value=score_value,
                 source=str(source) if source is not None else None,
-                comment=get_attr(score, "comment"),
-                created_at=parse_datetime(get_attr(score, "created_at", "createdAt", "timestamp")),
+                comment=get_attr(score_obj, "comment") or get_attr(score, "comment"),
+                created_at=parse_datetime(get_attr(score_obj, "created_at", "createdAt", "timestamp") or get_attr(score, "created_at", "createdAt", "timestamp")),
             ))
             added += 1
         return added
+
+    logger.info(f"fetch_scores_for_trace: trace_id={trace_id}, has_api={hasattr(client, 'api')}")
 
     # v3 API: score_v_2.get
     if hasattr(client, "api") and hasattr(client.api, "score_v_2"):
         try:
             kwargs: dict[str, Any] = {"trace_id": trace_id, "limit": limit}
-            if user_id:
-                kwargs["user_id"] = user_id
             try:
                 kwargs["fields"] = "score,trace"
                 payload = call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
             except TypeError:
                 kwargs.pop("fields", None)
                 payload = call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
+            logger.info(f"  score_v_2.get returned: type={type(payload).__name__}, repr={repr(payload)[:500]}")
             _append_scores(payload, already_filtered_by_trace=True)
             if scores:
+                logger.info(f"  score_v_2.get: found {len(scores)} scores")
                 scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
                 return scores
-        except Exception:
-            pass
+            logger.info(f"  score_v_2.get: 0 scores after parsing")
+        except Exception as e:
+            logger.info(f"  score_v_2.get failed: {e}")
 
     # Legacy: fetch_scores
     if hasattr(client, "fetch_scores"):
         try:
-            _append_scores(call_with_rate_limit_retry(client.fetch_scores, trace_id=trace_id))
+            payload = call_with_rate_limit_retry(client.fetch_scores, trace_id=trace_id)
+            logger.info(f"  fetch_scores returned: type={type(payload).__name__}, repr={repr(payload)[:500]}")
+            _append_scores(payload)
             if scores:
+                logger.info(f"  fetch_scores: found {len(scores)} scores")
                 scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
                 return scores
-        except Exception:
-            pass
+            logger.info(f"  fetch_scores: 0 scores after parsing")
+        except Exception as e:
+            logger.info(f"  fetch_scores failed: {e}")
 
     # Retry without user filter
     if not scores and user_id:

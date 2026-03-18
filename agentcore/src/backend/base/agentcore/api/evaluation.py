@@ -62,7 +62,7 @@ try:
 except ImportError:
     litellm = None
     LITELLM_AVAILABLE = False
-    logger.warning("LiteLLM not installed. LLM Judge features will be disabled.")
+    logger.debug("LiteLLM not installed. Judge will use Model Service or OpenAI SDK.")
 
 # Try importing OpenAI as a fallback for the judge when LiteLLM isn't present
 try:
@@ -2222,6 +2222,33 @@ def _delete_dataset_run(client: Any, *, dataset_name: str, run_name: str) -> Non
         return
     raise RuntimeError("Dataset run deletion is not supported by current Langfuse SDK")
 
+
+def _delete_dataset_container(client: Any, dataset_name: str) -> bool:
+    """Delete a dataset container across SDK variants."""
+    attempts: list[Any] = []
+
+    if hasattr(client, "delete_dataset"):
+        attempts.append(lambda: client.delete_dataset(dataset_name=dataset_name))
+
+    if hasattr(client, "api") and hasattr(client.api, "datasets"):
+        datasets_api = client.api.datasets
+        if hasattr(datasets_api, "delete"):
+            attempts.append(lambda: datasets_api.delete(dataset_name=dataset_name))
+        if hasattr(datasets_api, "delete_dataset"):
+            attempts.append(lambda: datasets_api.delete_dataset(dataset_name=dataset_name))
+
+    last_error: Exception | None = None
+    for attempt in attempts:
+        try:
+            attempt()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+
+    if last_error is not None:
+        logger.debug("Dataset container delete not available for '{}': {}", dataset_name, str(last_error))
+    return False
+
 _KNOWN_LITELLM_PROVIDERS = {
     "openai",
     "azure",
@@ -2685,6 +2712,7 @@ def _submit_score_to_langfuse(
     comment: str | None = None,
     observation_id: str | None = None,
     source: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Submit score using SDK-compatible method across Langfuse versions."""
     payload: Dict[str, Any] = {
@@ -2697,14 +2725,17 @@ def _submit_score_to_langfuse(
         payload["observation_id"] = observation_id
     if source:
         payload["source"] = source
+    if user_id:
+        payload["user_id"] = user_id
 
+    # Build payload variants to handle different SDK versions that may not accept
+    # all kwargs (e.g., older SDKs don't accept user_id, source, observation_id).
+    optional_keys = {"source", "observation_id", "user_id"}
+    present_optional = {k for k in optional_keys if k in payload}
     payload_variants = [payload]
-    if "source" in payload:
-        payload_variants.append({k: v for k, v in payload.items() if k != "source"})
-    if "observation_id" in payload:
-        payload_variants.append({k: v for k, v in payload.items() if k != "observation_id"})
-    if "source" in payload and "observation_id" in payload:
-        payload_variants.append({k: v for k, v in payload.items() if k not in {"source", "observation_id"}})
+    # Add a variant without optional keys for compatibility
+    if present_optional:
+        payload_variants.append({k: v for k, v in payload.items() if k not in present_optional})
 
     def _call_with_compatible_kwargs(func) -> bool:
         last_error: TypeError | None = None
@@ -2721,11 +2752,13 @@ def _submit_score_to_langfuse(
     # v2-style helper
     if hasattr(client, "score"):
         if _call_with_compatible_kwargs(client.score):
+            logger.info(f"Score submitted via client.score(): trace_id={trace_id}, name={name}, value={value}")
             return
 
     # v3-style helper
     if hasattr(client, "create_score"):
         if _call_with_compatible_kwargs(client.create_score):
+            logger.info(f"Score submitted via client.create_score(): trace_id={trace_id}, name={name}, value={value}")
             return
 
     # Direct API fallbacks (SDK internals)
@@ -2735,12 +2768,14 @@ def _submit_score_to_langfuse(
             score_api = getattr(api_obj, attr, None)
             if score_api and hasattr(score_api, "create"):
                 if _call_with_compatible_kwargs(score_api.create):
+                    logger.info(f"Score submitted via api.{attr}.create(): trace_id={trace_id}, name={name}, value={value}")
                     return
 
     if hasattr(client, "client") and hasattr(client.client, "scores"):
         scores_client = client.client.scores
         if hasattr(scores_client, "create"):
             if _call_with_compatible_kwargs(scores_client.create):
+                logger.info(f"Score submitted via client.client.scores.create(): trace_id={trace_id}, name={name}, value={value}")
                 return
 
     raise RuntimeError("No supported score submission method found on Langfuse client")
@@ -3203,7 +3238,7 @@ async def _resolve_trace_for_judge(
             except Exception as e:
                 logger.debug("Wide trace lookup failed for trace_ref={}: {}", trace_id, str(e))
 
-        await asyncio.sleep(min(0.5 * attempt, 3.0))
+        await asyncio.sleep(min(2.0 * attempt, 10.0))
 
     return None, None
 
@@ -3280,44 +3315,73 @@ async def run_llm_judge_task(
     agent_name: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
+    trace_input: Any | None = None,
+    trace_output: Any | None = None,
 ):
     """Background task to run LLM judge."""
-    if not LITELLM_AVAILABLE and not OPENAI_AVAILABLE:
-        logger.error("LiteLLM not installed and OpenAI SDK not available, cannot run judge")
+    # Model Service (via model_registry_id) is the primary path and doesn't need
+    # LiteLLM or OpenAI SDK. Only block if ALL backends are unavailable.
+    if not LITELLM_AVAILABLE and not OPENAI_AVAILABLE and not model_registry_id:
+        logger.error("No LLM backend available (Model Service, LiteLLM, or OpenAI SDK), cannot run judge")
         return
 
     try:
-        # 1. Resolve canonical trace id and fetch trace payload.
-        logger.info(
-            f"Resolving trace for evaluation: trace_ref={trace_id}, session_id={session_id}, agent_id={agent_id}"
-        )
-        resolved_trace_id, trace_dict = await _resolve_trace_for_judge(
-            client,
-            trace_id=str(trace_id),
-            user_id=str(user_id),
-            session_id=session_id,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            project_name=project_name,
-            timestamp=timestamp,
-            max_attempts=3,
-        )
-        if not resolved_trace_id or not trace_dict:
-            logger.error(
-                f"Judge failed: could not resolve trace for trace_ref={trace_id}, "
-                f"user_id={user_id}, session_id={session_id}, agent_id={agent_id}"
-            )
-            return
-        if resolved_trace_id != str(trace_id):
-            logger.info(f"Resolved trace_ref={trace_id} to canonical trace_id={resolved_trace_id}")
-        trace_input = trace_dict.get('input', '')
-        trace_output = trace_dict.get('output', '')
+        resolved_trace_id = str(trace_id)
 
-        # Convert to string if needed
-        if not isinstance(trace_input, str):
-            trace_input = json.dumps(trace_input)
-        if not isinstance(trace_output, str):
-            trace_output = json.dumps(trace_output)
+        # If trace input/output were passed directly (new-trace evaluations),
+        # use them immediately — no need to fetch from Langfuse.
+        if trace_input is not None or trace_output is not None:
+            logger.info(f"Using directly-provided trace data for evaluation: trace_ref={trace_id}")
+            trace_input = trace_input or ''
+            trace_output = trace_output or ''
+        else:
+            # Fetch from Langfuse (for manual/existing-trace evaluations)
+            await asyncio.sleep(5)
+            logger.info(
+                f"Resolving trace for evaluation: trace_ref={trace_id}, session_id={session_id}, agent_id={agent_id}"
+            )
+            _, trace_dict = await _resolve_trace_for_judge(
+                client,
+                trace_id=str(trace_id),
+                user_id=str(user_id),
+                session_id=session_id,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                project_name=project_name,
+                timestamp=timestamp,
+                max_attempts=6,
+            )
+            if not trace_dict:
+                logger.error(
+                    f"Judge failed: could not resolve trace for trace_ref={trace_id}, "
+                    f"user_id={user_id}, session_id={session_id}, agent_id={agent_id}"
+                )
+                return
+            resolved_trace_id = str(trace_dict.get("id") or trace_id)
+            if resolved_trace_id != str(trace_id):
+                logger.info(f"Resolved trace_ref={trace_id} to canonical trace_id={resolved_trace_id}")
+            trace_input = trace_dict.get('input', '')
+            trace_output = trace_dict.get('output', '')
+
+        # Convert to string — trace data may be Message objects, dicts, lists, etc.
+        def _to_str(val: Any) -> str:
+            if val is None:
+                return ''
+            if isinstance(val, str):
+                return val
+            # Handle Message-like objects (LangChain, custom)
+            if hasattr(val, 'content'):
+                return str(val.content)
+            if hasattr(val, 'text'):
+                return str(val.text)
+            # Handle dicts/lists
+            try:
+                return json.dumps(val, default=str)
+            except Exception:
+                return str(val)
+
+        trace_input = _to_str(trace_input)
+        trace_output = _to_str(trace_output)
 
         # 2. Construct Prompt
         if ground_truth:
@@ -3461,6 +3525,9 @@ Respond ONLY with valid JSON, no markdown formatting."""
                 return
 
         # Clean up markdown code blocks if present
+        if not content:
+            logger.error(f"Judge failed: LLM returned empty response for trace_ref={trace_id}")
+            return
         content = content.strip()
         if content.startswith("```json"):
             content = content[7:]
@@ -3508,12 +3575,36 @@ Respond ONLY with valid JSON, no markdown formatting."""
             name=score_name,
             value=normalized_value,
             comment=score_comment,
+            user_id=str(user_id),
         )
         
         # Flush to ensure immediate send
         if hasattr(client, "flush"):
             client.flush()
-        
+
+        # Wait briefly for Langfuse to index the score, then verify
+        await asyncio.sleep(3)
+        try:
+            from agentcore.api.observability.parsing import fetch_scores_for_trace
+            verification_scores = fetch_scores_for_trace(client, str(resolved_trace_id), limit=50)
+            found = any(
+                getattr(s, 'name', '') == score_name or str(getattr(s, 'name', '')) == score_name
+                for s in (verification_scores or [])
+            )
+            logger.info(
+                f"Score verification for trace {resolved_trace_id}: "
+                f"found={found}, total_scores={len(verification_scores or [])}, "
+                f"score_names={[getattr(s, 'name', '') for s in (verification_scores or [])]}"
+            )
+        except Exception as verify_err:
+            logger.debug(f"Score verification failed: {verify_err}")
+
+        # Invalidate score cache so the UI picks up the new score immediately
+        for cache_key in [k for k in list(_SCORE_LIST_CACHE) if k.startswith(f"{user_id}|")]:
+            _SCORE_LIST_CACHE.pop(cache_key, None)
+        for cache_key in [k for k in list(_PENDING_REVIEWS_CACHE) if k.startswith(f"{user_id}|")]:
+            _PENDING_REVIEWS_CACHE.pop(cache_key, None)
+
         logger.info(
             f"Judge completed for trace_ref={trace_id}, trace_id={resolved_trace_id}: "
             f"{score_name}={normalized_value}"
@@ -3943,7 +4034,13 @@ async def get_scores(
         session, current_user, org_id=org_id, dept_id=dept_id
     )
     if not client:
+        client = get_langfuse_client()
+    if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    logger.info(
+        f"get_scores: user={current_user.id}, env={environment}, page={page}, limit={limit}, "
+        f"has_client_scores={hasattr(client, 'client') and hasattr(getattr(client, 'client', None) or object(), 'scores')}"
+    )
 
     try:
         user_id = str(current_user.id)
@@ -3969,40 +4066,6 @@ async def get_scores(
                     cached_score_payload = cached_payload
 
         trace_lookup: Dict[str, Dict[str, Any]] = {}
-        user_trace_ids: set[str] = set()
-        trace_owner_cache: Dict[str, bool] = {}
-        user_traces_prefetched = False
-
-        def _ensure_user_traces_prefetched() -> None:
-            nonlocal user_traces_prefetched
-            if user_traces_prefetched:
-                return
-            user_traces_prefetched = True
-            try:
-                prefetch_limit = 200 if not trace_id else 50
-                # Fetch traces for all allowed users in scope
-                for uid in allowed_user_ids:
-                    try:
-                        user_traces = fetch_traces_from_langfuse(
-                            client,
-                            user_id=uid,
-                            limit=prefetch_limit,
-                            environment=environment,
-                        )
-                        for raw_trace in user_traces or []:
-                            trace_dict = parse_trace_data(raw_trace)
-                            trace_key = str(trace_dict.get("id") or "")
-                            if not trace_key:
-                                continue
-                            trace_lookup[trace_key] = trace_dict
-                            user_trace_ids.add(trace_key)
-                    except Exception:
-                        continue
-            except Exception as trace_error:
-                logger.debug(
-                    "Failed to prefetch user traces for score listing: {}",
-                    str(trace_error),
-                )
 
         def _extract_scores_payload(response: Any) -> tuple[list[Any], int | None]:
             if response is None:
@@ -4032,9 +4095,39 @@ async def get_scores(
 
         def _list_scores_page(page_num: int, page_limit: int, *, include_user_filter: bool) -> tuple[list[Any], int | None]:
             if not (hasattr(client, "client") and hasattr(client.client, "scores")):
+                logger.warning("Langfuse client does not have client.scores attribute — trying alternative methods")
+                # Try alternative score list methods
+                if hasattr(client, "api"):
+                    api_obj = client.api
+                    for attr in ("score_v_2", "scores", "score"):
+                        score_api = getattr(api_obj, attr, None)
+                        if score_api and hasattr(score_api, "get"):
+                            try:
+                                kwargs: Dict[str, Any] = {"page": page_num, "limit": page_limit}
+                                if trace_id:
+                                    kwargs["trace_id"] = trace_id
+                                response = score_api.get(**kwargs)
+                                rows, total = _extract_scores_payload(response)
+                                logger.info(f"Score list via api.{attr}.get() returned {len(rows)} rows")
+                                return rows, total
+                            except Exception as e:
+                                logger.debug(f"api.{attr}.get() failed: {e}")
+                                continue
+                        if score_api and hasattr(score_api, "list"):
+                            try:
+                                kwargs = {"page": page_num, "limit": page_limit}
+                                if trace_id:
+                                    kwargs["trace_id"] = trace_id
+                                response = score_api.list(**kwargs)
+                                rows, total = _extract_scores_payload(response)
+                                logger.info(f"Score list via api.{attr}.list() returned {len(rows)} rows")
+                                return rows, total
+                            except Exception as e:
+                                logger.debug(f"api.{attr}.list() failed: {e}")
+                                continue
                 return [], None
 
-            kwargs: Dict[str, Any] = {
+            kwargs = {
                 "page": page_num,
                 "limit": page_limit,
             }
@@ -4050,131 +4143,9 @@ async def get_scores(
             except TypeError:
                 kwargs.pop("user_id", None)
                 response = client.client.scores.list(**kwargs)
-            return _extract_scores_payload(response)
-
-        def _list_global_scores(max_rows: int = 2000) -> list[Any]:
-            """Best-effort global score scan across SDK variants."""
-            rows_out: list[Any] = []
-            seen_keys: set[str] = set()
-            page_size = min(100, max_rows)
-            max_pages = max(1, (max_rows + page_size - 1) // page_size)
-
-            def _append(rows: list[Any]) -> None:
-                for row in rows or []:
-                    row_id = str(get_attr(row, "id", default="") or "")
-                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    row_name = str(get_attr(row, "name", default="score") or "score")
-                    row_ts = str(get_attr(row, "timestamp", "created_at", "createdAt", default="") or "")
-                    dedupe_key = row_id or f"{row_trace_id}::{row_name}::{row_ts}"
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-                    rows_out.append(row)
-
-            # Method 1: v3 score_v_2.get
-            if hasattr(client, "api") and hasattr(client.api, "score_v_2"):
-                for page_num in range(1, max_pages + 1):
-                    kwargs: Dict[str, Any] = {"limit": page_size, "page": page_num}
-                    try:
-                        payload = client.api.score_v_2.get(**kwargs)
-                    except Exception:
-                        break
-                    page_rows, _ = _extract_scores_payload(payload)
-                    if not page_rows:
-                        break
-                    _append(page_rows)
-                    if len(rows_out) >= max_rows or len(page_rows) < page_size:
-                        break
-
-            # Method 2: v3 api.scores.list/api.score.list
-            if len(rows_out) < max_rows and hasattr(client, "api"):
-                for attr in ("scores", "score"):
-                    score_api = getattr(client.api, attr, None)
-                    if not score_api or not hasattr(score_api, "list"):
-                        continue
-                    for page_num in range(1, max_pages + 1):
-                        kwargs = {"limit": page_size, "page": page_num}
-                        try:
-                            payload = score_api.list(**kwargs)
-                        except Exception:
-                            break
-                        page_rows, _ = _extract_scores_payload(payload)
-                        if not page_rows:
-                            break
-                        _append(page_rows)
-                        if len(rows_out) >= max_rows or len(page_rows) < page_size:
-                            break
-                    if len(rows_out) >= max_rows:
-                        break
-
-            # Method 3: direct scores client without user filter
-            if len(rows_out) < max_rows and hasattr(client, "client") and hasattr(client.client, "scores"):
-                for page_num in range(1, max_pages + 1):
-                    kwargs = {"limit": page_size, "page": page_num}
-                    try:
-                        payload = client.client.scores.list(**kwargs)
-                    except Exception:
-                        break
-                    page_rows, _ = _extract_scores_payload(payload)
-                    if not page_rows:
-                        break
-                    _append(page_rows)
-                    if len(rows_out) >= max_rows or len(page_rows) < page_size:
-                        break
-
-            return rows_out[:max_rows]
-
-        def _score_belongs_to_user(score_row: Any) -> bool:
-            score_user_id = get_attr(score_row, "user_id", "userId")
-            if score_user_id is not None:
-                return str(score_user_id) in allowed_user_ids
-
-            score_trace_id = str(get_attr(score_row, "trace_id", "traceId", default="") or "")
-            if not score_trace_id:
-                return False
-            if score_trace_id in trace_owner_cache:
-                return trace_owner_cache[score_trace_id]
-
-            _ensure_user_traces_prefetched()
-            if score_trace_id in user_trace_ids:
-                trace_owner_cache[score_trace_id] = True
-                return True
-
-            # Last-resort ownership check: resolve trace and compare trace user_id.
-            try:
-                trace_raw = _fetch_trace_by_id(client, score_trace_id)
-                if trace_raw:
-                    trace_dict = parse_trace_data(trace_raw)
-                    trace_lookup[score_trace_id] = trace_dict
-                    trace_user_id = str(_extract_trace_user_id(trace_dict) or "")
-                    if trace_user_id:
-                        is_owner = trace_user_id in allowed_user_ids
-                    else:
-                        # Some deployments don't populate user_id on traces/scores.
-                        # If we cannot establish ownership via user metadata at all,
-                        # allow the score as a best-effort fallback.
-                        is_owner = not user_trace_ids
-                    trace_owner_cache[score_trace_id] = is_owner
-                    if is_owner:
-                        user_trace_ids.add(score_trace_id)
-                    return is_owner
-            except Exception as owner_error:
-                logger.debug(
-                    "Could not verify trace ownership for score trace_id={}: {}",
-                    score_trace_id,
-                    str(owner_error),
-                )
-
-            if not user_trace_ids:
-                logger.debug(
-                    "Score ownership fallback: accepting trace_id={} without user metadata",
-                    score_trace_id,
-                )
-                trace_owner_cache[score_trace_id] = True
-                return True
-
-            trace_owner_cache[score_trace_id] = False
-            return False
+            rows, total = _extract_scores_payload(response)
+            logger.info(f"Score list via client.client.scores.list(user_filter={include_user_filter}) returned {len(rows)} rows, total={total}")
+            return rows, total
 
         def _score_matches_name(score_row: Any) -> bool:
             if not name:
@@ -4184,16 +4155,24 @@ async def get_scores(
 
         raw_scores: list[Any] = []
         total = 0
-        unscoped_collected: list[Any] = []
 
-        # Primary fetch with user filter.
-        # Langfuse already filters by user_id, so skip expensive ownership
-        # re-check (_score_belongs_to_user triggers 2000-trace prefetch).
-        primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=True)
+        # Primary fetch: scores in Langfuse are project-scoped, so fetch without
+        # user_id filter (scores typically don't carry user_id). This avoids
+        # the expensive fallback chain that was causing high latency.
+        primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=False)
         primary_rows = [
             row for row in primary_rows
             if _score_matches_name(row)
         ]
+
+        # If no results without user filter, try with user filter as secondary
+        if not primary_rows:
+            primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=True)
+            primary_rows = [
+                row for row in primary_rows
+                if _score_matches_name(row)
+            ]
+
         if primary_rows:
             raw_scores = primary_rows
             total = (
@@ -4201,261 +4180,6 @@ async def get_scores(
                 if primary_total is not None and len(primary_rows) > 0
                 else len(primary_rows)
             )
-        else:
-            # Fallback: some score records do not carry user_id; scan without user filter,
-            # then enforce user isolation with trace ownership checks.
-            collected: list[Any] = []
-            seen_keys: set[str] = set()
-            unscoped_seen_keys: set[str] = set()
-            target_count = page * limit
-            scan_limit = min(200, max(50, limit))
-            max_scan_pages = 3
-
-            for scan_page in range(1, max_scan_pages + 1):
-                scan_rows, _ = _list_scores_page(scan_page, scan_limit, include_user_filter=False)
-                if not scan_rows:
-                    break
-
-                for row in scan_rows:
-                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    if trace_id and row_trace_id != str(trace_id):
-                        continue
-                    if not _score_matches_name(row):
-                        continue
-
-                    # Keep an unscoped copy in case ownership metadata is completely absent.
-                    row_id_for_unscoped = str(get_attr(row, "id", default="") or "")
-                    unscoped_dedupe_key = row_id_for_unscoped or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if unscoped_dedupe_key not in unscoped_seen_keys:
-                        unscoped_seen_keys.add(unscoped_dedupe_key)
-                        unscoped_collected.append(row)
-
-                    if not _score_belongs_to_user(row):
-                        continue
-
-                    row_id = str(get_attr(row, "id", default="") or "")
-                    dedupe_key = row_id or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-                    collected.append(row)
-
-                if len(collected) >= target_count:
-                    break
-                if len(scan_rows) < scan_limit:
-                    break
-
-            # If the direct list endpoint is empty, try broader SDK-specific score APIs.
-            if not collected and not unscoped_collected:
-                global_scan_rows = _list_global_scores(max_rows=max(200, page * limit * 2))
-                logger.info(
-                    "Global score scan fallback collected {} row(s) for user_id={}",
-                    len(global_scan_rows),
-                    user_id,
-                )
-                for row in global_scan_rows:
-                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    if trace_id and row_trace_id != str(trace_id):
-                        continue
-                    if not _score_matches_name(row):
-                        continue
-
-                    row_id_for_unscoped = str(get_attr(row, "id", default="") or "")
-                    unscoped_dedupe_key = row_id_for_unscoped or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if unscoped_dedupe_key not in unscoped_seen_keys:
-                        unscoped_seen_keys.add(unscoped_dedupe_key)
-                        unscoped_collected.append(row)
-
-                    if not _score_belongs_to_user(row):
-                        continue
-
-                    row_id = str(get_attr(row, "id", default="") or "")
-                    dedupe_key = row_id or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-                    collected.append(row)
-
-            total = len(collected)
-            start = (page - 1) * limit
-            raw_scores = collected[start:start + limit]
-
-            # If ownership metadata is unavailable, fall back to unscoped rows so the
-            # UI remains usable in single-tenant/local deployments.
-            if not raw_scores and not user_trace_ids and unscoped_collected:
-                logger.warning(
-                    "Score ownership metadata unavailable for user_id={}; using unscoped score fallback",
-                    user_id,
-                )
-                total = len(unscoped_collected)
-                raw_scores = unscoped_collected[start:start + limit]
-
-        # Final fallback: collect scores per user-owned trace using observability's
-        # robust score fetcher when list-based score APIs are empty/incompatible.
-        if not raw_scores and not user_trace_ids and not trace_id and not unscoped_collected:
-            _ensure_user_traces_prefetched()
-
-        if not raw_scores and (user_trace_ids or trace_id or unscoped_collected):
-            logger.info(
-                "Score list API returned no rows for user_id={}; using per-trace score fallback",
-                user_id,
-            )
-            trace_candidates: list[str] = []
-            if trace_id:
-                trace_candidates = [str(trace_id)]
-            elif user_trace_ids:
-                trace_candidates = list(user_trace_ids)
-            else:
-                trace_candidates = list(
-                    dict.fromkeys(
-                        str(get_attr(row, "trace_id", "traceId", default="") or "")
-                        for row in unscoped_collected
-                        if str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    )
-                )
-
-            # Expand trace candidates with canonical ids and run_ids, as score writes may
-            # target a different id than the one returned by list endpoints.
-            expanded_trace_candidates: list[str] = []
-            for candidate_id in trace_candidates:
-                candidate_id = str(candidate_id or "").strip()
-                if not candidate_id:
-                    continue
-                if candidate_id not in expanded_trace_candidates:
-                    expanded_trace_candidates.append(candidate_id)
-
-                trace_dict = trace_lookup.get(candidate_id)
-                if not trace_dict:
-                    try:
-                        trace_raw = _fetch_trace_by_id(client, candidate_id)
-                        if trace_raw:
-                            trace_dict = parse_trace_data(trace_raw)
-                            resolved_id = str(trace_dict.get("id") or "")
-                            if resolved_id:
-                                trace_lookup[resolved_id] = trace_dict
-                            trace_lookup[candidate_id] = trace_dict
-                    except Exception as resolve_error:
-                        logger.debug(
-                            "Failed resolving canonical trace id for candidate {}: {}",
-                            candidate_id,
-                            str(resolve_error),
-                        )
-
-                if trace_dict:
-                    resolved_id = str(trace_dict.get("id") or "")
-                    if resolved_id and resolved_id not in expanded_trace_candidates:
-                        expanded_trace_candidates.append(resolved_id)
-                    run_id = _extract_trace_run_id(trace_dict)
-                    if run_id and run_id not in expanded_trace_candidates:
-                        expanded_trace_candidates.append(str(run_id))
-
-            if expanded_trace_candidates:
-                trace_candidates = expanded_trace_candidates
-                logger.info(
-                    "Expanded per-trace score fallback candidates to {} ids",
-                    len(trace_candidates),
-                )
-
-            collected_rows: list[dict[str, Any]] = []
-            seen_keys: set[str] = set()
-            max_traces_to_scan = 50
-
-            for trace_key in trace_candidates[:max_traces_to_scan]:
-                if not trace_key:
-                    continue
-                try:
-                    trace_scores = fetch_scores_for_trace(
-                        client,
-                        trace_id=trace_key,
-                        user_id=user_id,
-                        limit=200,
-                    )
-                except Exception as trace_score_error:
-                    logger.debug(
-                        "Per-trace score fetch failed for trace_id={}: {}",
-                        trace_key,
-                        str(trace_score_error),
-                    )
-                    continue
-
-                for trace_score in trace_scores:
-                    score_name = str(get_attr(trace_score, "name", default="") or "")
-                    if name and name.lower() not in score_name.lower():
-                        continue
-
-                    score_id = str(get_attr(trace_score, "id", default="") or "")
-                    created_at = get_attr(trace_score, "created_at", "timestamp", default=None)
-                    dedupe_key = score_id or f"{trace_key}::{score_name}::{created_at}"
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-
-                    source_value = get_attr(trace_score, "source", default=None)
-                    if hasattr(source_value, "value"):
-                        source_value = source_value.value
-
-                    collected_rows.append(
-                        {
-                            "id": score_id,
-                            "trace_id": trace_key,
-                            "name": score_name or "Score",
-                            "value": float(get_attr(trace_score, "value", default=0.0) or 0.0),
-                            "source": str(source_value) if source_value is not None else "API",
-                            "comment": get_attr(trace_score, "comment", default=None),
-                            "created_at": created_at,
-                            "observation_id": get_attr(trace_score, "observation_id", "observationId", default=None),
-                            "config_id": get_attr(trace_score, "config_id", "configId", default=None),
-                            "user_id": user_id,
-                        }
-                    )
-
-            def _score_sort_key(row: dict[str, Any]) -> datetime:
-                parsed = _parse_trace_timestamp(row.get("created_at"))
-                return parsed or datetime.min.replace(tzinfo=timezone.utc)
-
-            collected_rows.sort(key=_score_sort_key, reverse=True)
-            total = len(collected_rows)
-            start = (page - 1) * limit
-            raw_scores = collected_rows[start:start + limit]
-            logger.info(
-                "Per-trace score fallback produced {} row(s); returning {} row(s) for page={} limit={}",
-                total,
-                len(raw_scores),
-                page,
-                limit,
-            )
-
-        # Last-mile retry for intermittent first-load empties.
-        if not raw_scores and page == 1 and not trace_id and not name:
-            retry_rows, retry_total = _list_scores_page(page, limit, include_user_filter=True)
-            retry_rows = [
-                row for row in retry_rows
-                if _score_belongs_to_user(row) and _score_matches_name(row)
-            ]
-            if retry_rows:
-                logger.info(
-                    "Recovered transient empty score list on retry for user_id={} with {} row(s)",
-                    user_id,
-                    len(retry_rows),
-                )
-                raw_scores = retry_rows
-                total = (
-                    int(retry_total)
-                    if retry_total is not None and len(retry_rows) > 0
-                    else len(retry_rows)
-                )
 
         # Parse to response model (including agent/agent name).
         items: list[ScoreResponse] = []
@@ -4956,13 +4680,7 @@ async def delete_dataset(
 
     # Langfuse SDK currently exposes run/item deletion, but may not support deleting
     # the dataset container itself in every version.
-    dataset_deleted = False
-    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "delete"):
-        try:
-            client.api.datasets.delete(dataset_name=dataset_name)
-            dataset_deleted = True
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Dataset container delete not available for '{}': {}", dataset_name, str(exc))
+    dataset_deleted = _delete_dataset_container(client, dataset_name)
 
     if hasattr(client, "flush"):
         try:
@@ -5589,8 +5307,8 @@ EVALUATION_PRESETS = [
     {
         "id": "coherence",
         "name": "Coherence",
-        "description": "Evaluate if the response agents logically and makes sense.",
-        "criteria": "Evaluate the coherence and logical agent of the output on a scale 0-1. Consider:\n- Logical structure: Do ideas connect naturally?\n- Internal consistency: Are there contradictions?\n- Clarity of thought: Is the reasoning easy to follow?",
+        "description": "Evaluate if the response flows logically and makes sense.",
+        "criteria": "Evaluate the coherence and logical flow of the output on a scale 0-1. Consider:\n- Logical structure: Do ideas connect naturally?\n- Internal consistency: Are there contradictions?\n- Clarity of thought: Is the reasoning easy to follow?",
         "requires_ground_truth": False,
     },
     {
@@ -5632,16 +5350,17 @@ async def run_saved_evaluators_for_new_trace(
     session_id: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
+    trace_input: Any | None = None,
+    trace_output: Any | None = None,
 ) -> int:
     """Run all saved evaluators targeting new traces for a just-finished trace."""
     logger.info(
         f"EVALUATOR FUNCTION CALLED: trace={trace_id}, user={user_id}, "
-        f"agent_id={agent_id}, agent_id={agent_id}, agent_name={agent_name}"
+        f"agent_id={agent_id}, agent_name={agent_name}"
     )
     
-    if not (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
-        logger.warning("⚠️ LiteLLM/OpenAI not available, skipping evaluators")
-        return 0
+    # Model Service is the primary LLM backend — don't require LiteLLM/OpenAI
+    # to be installed. They're only needed as fallbacks.
 
     try:
         user_uuid = UUID(str(user_id))
@@ -5670,49 +5389,22 @@ async def run_saved_evaluators_for_new_trace(
 
     requested_timestamp = _parse_trace_timestamp(timestamp) or datetime.now(timezone.utc)
     trace_ref_id = str(trace_id)
-    
-    # Use agent_id or agent_id (they're aliases)
-    agent_id = agent_id or agent_id
+    normalized_caller_agent_id = _normalize_agent_id(agent_id)
 
+    # Build trace_dict from caller-provided data (authoritative source).
+    # No need to fetch from Langfuse — the tracing service provides all context.
     trace_dict: Dict[str, Any] = {
         "id": trace_ref_id,
         "session_id": session_id,
         "timestamp": requested_timestamp,
         "metadata": {
-            "agent_id": _normalize_agent_id(agent_id),
+            "agent_id": normalized_caller_agent_id,
             "agent_name": agent_name,
             "project_name": project_name,
             "run_id": trace_ref_id,
         },
     }
-
-    resolved_trace_id, resolved_trace_dict = await _resolve_trace_for_judge(
-        client,
-        trace_id=trace_ref_id,
-        user_id=str(user_id),
-        session_id=session_id,
-        agent_id=agent_id,
-        agent_name=agent_name,
-        project_name=project_name,
-        timestamp=requested_timestamp,
-        max_attempts=4,
-    )
-    if resolved_trace_dict:
-        trace_dict = resolved_trace_dict
-
-    # Ensure agent_id/agent_name from caller are present in trace metadata,
-    # as the Langfuse trace may not have them in its metadata.
-    trace_meta = trace_dict.get("metadata") or {}
-    if isinstance(trace_meta, str):
-        try:
-            trace_meta = json.loads(trace_meta)
-        except Exception:
-            trace_meta = {}
-    if agent_id and not trace_meta.get("agent_id"):
-        trace_meta["agent_id"] = _normalize_agent_id(agent_id)
-    if agent_name and not trace_meta.get("agent_name"):
-        trace_meta["agent_name"] = agent_name
-    trace_dict["metadata"] = trace_meta
+    resolved_trace_id = trace_ref_id
 
     try:
         async with session_scope() as session:
@@ -5803,6 +5495,8 @@ async def run_saved_evaluators_for_new_trace(
                 agent_name=agent_name,
                 project_name=project_name,
                 timestamp=requested_timestamp,
+                trace_input=trace_input,
+                trace_output=trace_output,
             )
         )
         scheduled += 1
@@ -5875,18 +5569,18 @@ async def list_evaluation_models(
                     "Deployed agent query ({}) returned {} agent(s) for user_id={}",
                     env, len(deployed_data), current_user.id,
                 )
-                # Merge: deployed agents first, then legacy agents not already present
-                seen_agent_ids = {
-                    item.get("metadata", {}).get("agent_id")
-                    for item in deployed_data
-                    if item.get("metadata", {}).get("agent_id")
-                }
-                for legacy_item in legacy_data:
-                    aid = legacy_item.get("metadata", {}).get("agent_id")
-                    if aid and aid not in seen_agent_ids:
-                        deployed_data.append(legacy_item)
-                        seen_agent_ids.add(aid)
-                agents_data = deployed_data
+                if env == "production":
+                    # Production: only deployed production agents
+                    agents_data = deployed_data
+                else:
+                    # UAT: deployed UAT agents + legacy (base table) agents, de-duplicated
+                    seen_agent_ids: set[str] = set()
+                    agents_data = []
+                    for item in deployed_data + legacy_data:
+                        aid = item.get("metadata", {}).get("agent_id", "") or item.get("id", "")
+                        if aid not in seen_agent_ids:
+                            seen_agent_ids.add(aid)
+                            agents_data.append(item)
             else:
                 agents_data = legacy_data
 
