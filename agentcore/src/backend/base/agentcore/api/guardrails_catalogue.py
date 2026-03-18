@@ -800,6 +800,7 @@ async def update_guardrail_catalogue(
         "public_scope": public_scope,
         "public_dept_ids": public_dept_ids,
         "shared_user_ids": [],
+        "created_by": str(current_user.id) if visibility == "private" else row.get("created_by"),
         "updated_by": str(current_user.id),
         "published_by": str(current_user.id) if payload.status == "active" else row.get("published_by"),
         "published_at": now.isoformat() if payload.status == "active" else row.get("published_at"),
