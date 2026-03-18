@@ -15,6 +15,7 @@ from agentcore.services.database.models.organization.model import Organization
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.vector_db_catalogue.model import VectorDBCatalogue
+from agentcore.services.auth.permissions import get_permissions_for_role
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,14 @@ class TrackMigrationPayload(BaseModel):
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "root"
+
+
+async def _require_vector_db_permission(current_user: CurrentActiveUser, permission: str) -> None:
+    if _is_root_user(current_user):
+        return
+    user_permissions = await get_permissions_for_role(str(current_user.role))
+    if permission not in user_permissions:
+        raise HTTPException(status_code=403, detail="Missing required permissions")
 
 
 async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set[UUID], list[tuple[UUID, UUID]]]:
@@ -260,6 +269,7 @@ async def delete_vector_db_catalogue(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
+    await _require_vector_db_permission(current_user, "delete_vector_db_catalogue")
     row = await session.get(VectorDBCatalogue, vector_db_id)
     if not row:
         raise HTTPException(status_code=404, detail="Vector DB entry not found")

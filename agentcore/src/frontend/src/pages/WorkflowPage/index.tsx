@@ -133,7 +133,7 @@ export default function WorkflowsView({
   const promoteMutation = usePostControlPanelPromote();
   const validatePublishEmail = useValidatePublishEmail();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const canViewScheduler = can("view_agent_scheduler_page");
+  const canViewScheduler = can("view_control_panel");
 
   const { data, isLoading } = useGetControlPanelAgents(
     {

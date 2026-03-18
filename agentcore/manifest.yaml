@@ -39,3 +39,8 @@ deployments:
   version_number: v1
   environment: uat
   deployment_id: d97747ca-3464-4c91-9bb8-255d50be012e
+- agent_id: d335b8ad-baaa-4244-b92c-547542207649
+  agent_name: New Agent
+  version_number: v1
+  environment: prod
+  deployment_id: 1867795f-0184-48e4-8301-2261111c3b8a
