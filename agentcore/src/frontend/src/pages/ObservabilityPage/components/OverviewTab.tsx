@@ -152,6 +152,18 @@ export function OverviewTab({
                     <span className="font-medium" style={{ color: THEME.textMain }}>{metrics?.total_observations ?? 0}</span>
                   </div>
                 </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span style={{ color: THEME.textSecondary }}>P95 Cost / Trace</span>
+                    <span className="font-medium" style={{ color: THEME.textMain }}>{metrics?.p95_cost_per_trace != null ? formatCost(metrics.p95_cost_per_trace) : "-"}</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span style={{ color: THEME.textSecondary }}>P99 Cost / Trace</span>
+                    <span className="font-medium" style={{ color: THEME.textMain }}>{metrics?.p99_cost_per_trace != null ? formatCost(metrics.p99_cost_per_trace) : "-"}</span>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
