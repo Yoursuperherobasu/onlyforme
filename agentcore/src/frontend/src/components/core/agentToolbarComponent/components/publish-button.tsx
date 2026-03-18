@@ -530,9 +530,9 @@ const PublishButton = ({}: PublishButtonProps) => {
           "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-100",
         )}
       >
-        <DialogHeader className="space-y-2 border-b bg-gradient-to-r from-slate-50 to-white px-6 py-5">
+        <DialogHeader className="space-y-2 border-b bg-gradient-to-r from-background to-muted/30 px-6 py-5">
           <DialogTitle className="text-base">Publish Agent</DialogTitle>
-          <div className="rounded-md border bg-white p-3 text-sm">
+          <div className="rounded-md border bg-background p-3 text-sm">
             <Label
               htmlFor="publish-agent-name"
               className="text-xs text-muted-foreground"

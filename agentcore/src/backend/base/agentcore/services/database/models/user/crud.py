@@ -75,6 +75,14 @@ async def update_user(user_db: User | None, user: UserUpdate, db: AsyncSession) 
     user_data = user.model_dump(exclude_unset=True)
     changed = False
     for attr, value in user_data.items():
+        if isinstance(value, str) and attr in {
+            "department_name",
+            "department_admin_email",
+            "organization_name",
+            "organization_description",
+        }:
+            if not value.strip():
+                continue
         if hasattr(user_db, attr) and value is not None:
             setattr(user_db, attr, value)
             changed = True
