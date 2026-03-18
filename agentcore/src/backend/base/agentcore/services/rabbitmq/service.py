@@ -22,13 +22,17 @@ class RabbitMQService(Service):
     """RabbitMQ service for durable job scheduling with rate limiting.
 
     Option A implementation: consumers run inside the same FastAPI process.
-    RabbitMQ provides durability, retry, rate-limiting (prefetch_count),
+    RabbitMQ provides durability, rate-limiting (prefetch_count),
     and visibility (management UI). The asyncio.Queue + EventManager + SSE
     streaming stays completely unchanged.
 
     Queues:
-        - agentcore.build : playground build jobs (POST /build/{id}/agent)
-        - agentcore.run   : run/webhook jobs    (POST /run/{id})
+        - agentcore.build        : playground build jobs
+        - agentcore.run          : run API + webhook jobs
+        - agentcore.schedule     : cron/interval scheduled jobs
+        - agentcore.trigger      : folder monitor + email monitor
+        - agentcore.evaluation   : LLM judge evaluation jobs
+        - agentcore.orchestrator : orchestrator streaming jobs
     """
 
     name = "rabbitmq_service"
@@ -37,21 +41,13 @@ class RabbitMQService(Service):
         self.config = RabbitMQConfig()
         self._connection: AbstractRobustConnection | None = None
         self._channel: Channel | None = None
-        self._build_queue: Queue | None = None
-        self._run_queue: Queue | None = None
+        self._queues: dict[str, Queue] = {}
         self._consumer_tags: list[str] = []
         self._started = False
         self.ready = False
 
         # Stats tracking
-        self._stats = {
-            "build_published": 0,
-            "build_completed": 0,
-            "build_failed": 0,
-            "run_published": 0,
-            "run_completed": 0,
-            "run_failed": 0,
-        }
+        self._stats: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -72,37 +68,31 @@ class RabbitMQService(Service):
             self._channel = await self._connection.channel()
             await self._channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-            # Declare durable queues (survive broker restart)
-            self._build_queue = await self._channel.declare_queue(
-                self.config.build_queue,
-                durable=True,
-                arguments={
-                    "x-dead-letter-exchange": "",
-                    "x-dead-letter-routing-key": f"{self.config.build_queue}.dlq",
-                },
-            )
-            self._run_queue = await self._channel.declare_queue(
-                self.config.run_queue,
-                durable=True,
-                arguments={
-                    "x-dead-letter-exchange": "",
-                    "x-dead-letter-routing-key": f"{self.config.run_queue}.dlq",
-                },
-            )
+            # All queues with their consumer handlers
+            queue_consumers = [
+                (self.config.build_queue, self._on_build_message),
+                (self.config.run_queue, self._on_run_message),
+                (self.config.schedule_queue, self._on_schedule_message),
+                (self.config.trigger_queue, self._on_trigger_message),
+                (self.config.orchestrator_queue, self._on_orchestrator_message),
+            ]
 
-            # Declare dead-letter queues
-            await self._channel.declare_queue(f"{self.config.build_queue}.dlq", durable=True)
-            await self._channel.declare_queue(f"{self.config.run_queue}.dlq", durable=True)
-
-            # Start consumers
-            tag1 = await self._build_queue.consume(self._on_build_message)
-            tag2 = await self._run_queue.consume(self._on_run_message)
-            self._consumer_tags = [tag1, tag2]
+            for queue_name, handler in queue_consumers:
+                q = await self._channel.declare_queue(queue_name, durable=True)
+                self._queues[queue_name] = q
+                tag = await q.consume(handler)
+                self._consumer_tags.append(tag)
+                # Init stats for each queue
+                short_name = queue_name.split(".")[-1]
+                self._stats[f"{short_name}_published"] = 0
+                self._stats[f"{short_name}_completed"] = 0
+                self._stats[f"{short_name}_failed"] = 0
 
             self._started = True
+            queue_names = ", ".join(self._queues.keys())
             logger.info(
-                f"RabbitMQ started: build_queue={self.config.build_queue}, "
-                f"run_queue={self.config.run_queue}, prefetch={self.config.prefetch_count}"
+                f"RabbitMQ started: queues=[{queue_names}], "
+                f"prefetch={self.config.prefetch_count}"
             )
         except Exception:
             logger.exception("Failed to start RabbitMQ service")
@@ -113,13 +103,12 @@ class RabbitMQService(Service):
         if not self._started:
             return
 
-        try:
-            if self._build_queue:
-                await self._build_queue.cancel(self._consumer_tags[0] if self._consumer_tags else "")
-            if self._run_queue and len(self._consumer_tags) > 1:
-                await self._run_queue.cancel(self._consumer_tags[1])
-        except Exception:
-            logger.debug("Error cancelling RabbitMQ consumers (may already be closed)")
+        for tag in self._consumer_tags:
+            try:
+                for q in self._queues.values():
+                    await q.cancel(tag)
+            except Exception:
+                pass
 
         try:
             if self._channel and not self._channel.is_closed:
@@ -139,7 +128,6 @@ class RabbitMQService(Service):
         return self.config.enabled and self._started
 
     def get_stats(self) -> dict[str, int]:
-        """Return message processing statistics."""
         return dict(self._stats)
 
     # ------------------------------------------------------------------
@@ -147,19 +135,21 @@ class RabbitMQService(Service):
     # ------------------------------------------------------------------
 
     async def publish_build_job(self, job_data: dict[str, Any]) -> str:
-        """Publish a build job to the build queue."""
-        result = await self._publish(self.config.build_queue, job_data)
-        self._stats["build_published"] += 1
-        return result
+        return await self._publish(self.config.build_queue, job_data)
 
     async def publish_run_job(self, job_data: dict[str, Any]) -> str:
-        """Publish a run job to the run queue."""
-        result = await self._publish(self.config.run_queue, job_data)
-        self._stats["run_published"] += 1
-        return result
+        return await self._publish(self.config.run_queue, job_data)
+
+    async def publish_schedule_job(self, job_data: dict[str, Any]) -> str:
+        return await self._publish(self.config.schedule_queue, job_data)
+
+    async def publish_trigger_job(self, job_data: dict[str, Any]) -> str:
+        return await self._publish(self.config.trigger_queue, job_data)
+
+    async def publish_orchestrator_job(self, job_data: dict[str, Any]) -> str:
+        return await self._publish(self.config.orchestrator_queue, job_data)
 
     async def _publish(self, queue_name: str, job_data: dict[str, Any]) -> str:
-        """Publish a persistent message to the given queue."""
         if not self._channel or self._channel.is_closed:
             msg = "RabbitMQ channel is not available"
             raise RuntimeError(msg)
@@ -172,163 +162,177 @@ class RabbitMQService(Service):
             message_id=message_id,
             content_type="application/json",
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-            headers={"retry_count": 0},
         )
 
-        await self._channel.default_exchange.publish(
-            message,
-            routing_key=queue_name,
-        )
+        await self._channel.default_exchange.publish(message, routing_key=queue_name)
+
+        short_name = queue_name.split(".")[-1]
+        self._stats[f"{short_name}_published"] = self._stats.get(f"{short_name}_published", 0) + 1
         logger.debug(f"Published job {message_id} to {queue_name}")
         return message_id
 
     # ------------------------------------------------------------------
-    # Consumers  (Option A: same process, access JobQueueService directly)
+    # Consumer helpers
     # ------------------------------------------------------------------
 
-    async def _retry_or_dlq(self, message: AbstractIncomingMessage, queue_name: str) -> None:
-        """Republish a failed message with incremented retry_count, or reject to DLQ.
+    def _track(self, queue_name: str, status: str) -> None:
+        short_name = queue_name.split(".")[-1]
+        key = f"{short_name}_{status}"
+        self._stats[key] = self._stats.get(key, 0) + 1
 
-        RabbitMQ's requeue redelivers the SAME message with the SAME headers,
-        so retry_count never increments. Instead, we ACK the original message
-        and publish a NEW message with retry_count + 1. When max retries are
-        exhausted, we REJECT the message (reject → dead-letter-exchange → DLQ).
-        """
-        retry_count = (message.headers or {}).get("retry_count", 0)
-        next_retry = retry_count + 1
-
-        # Use per-queue retry limit
-        if queue_name == self.config.build_queue:
-            max_retries = self.config.build_retry_max
-        elif queue_name == self.config.run_queue:
-            max_retries = self.config.run_retry_max
-        else:
-            max_retries = self.config.retry_max
-
-        if next_retry > max_retries:
-            # Exhausted retries — reject so it goes to DLQ
-            logger.error(
-                f"[RabbitMQ] Exhausted {max_retries} retries for {queue_name}, "
-                f"sending to DLQ: {message.message_id}"
-            )
-            await message.reject(requeue=False)
-            return
-
-        # ACK the original and republish with incremented retry_count
-        logger.warning(
-            f"[RabbitMQ] Retrying {message.message_id} "
-            f"(attempt {next_retry}/{self.config.retry_max})"
-        )
-        retry_message = aio_pika.Message(
-            body=message.body,
-            message_id=message.message_id,
-            content_type="application/json",
-            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-            headers={"retry_count": next_retry},
-        )
-        await message.ack()
-        await self._channel.default_exchange.publish(
-            retry_message,
-            routing_key=queue_name,
-        )
+    # ------------------------------------------------------------------
+    # Consumers
+    # ------------------------------------------------------------------
 
     async def _on_build_message(self, message: AbstractIncomingMessage) -> None:
-        """Process a build job message from RabbitMQ.
+        async with message.process():
+            job_id = None
+            start_time = time.time()
+            try:
+                job_data = json.loads(message.body.decode("utf-8"))
+                job_id = job_data["job_id"]
+                logger.info(f"[RabbitMQ] Processing build job: {job_id}")
 
-        Build jobs (playground) start a task and WAIT for it to complete
-        before ACKing. If the task fails, it is retried up to RETRY_MAX times.
-        """
-        job_id = None
-        start_time = time.time()
-        retry_count = (message.headers or {}).get("retry_count", 0)
-        try:
-            job_data = json.loads(message.body.decode("utf-8"))
-            job_id = job_data["job_id"]
-            logger.info(
-                f"[RabbitMQ] Processing build job: {job_id} "
-                f"(attempt {retry_count + 1})"
-            )
+                from agentcore.services.deps import get_queue_service
 
-            from agentcore.services.deps import get_queue_service
+                queue_service = get_queue_service()
+                _, event_manager, _, _ = queue_service.get_queue_data(job_id)
 
-            queue_service = get_queue_service()
-            _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+                await self._execute_build_job(job_data, event_manager, queue_service)
 
-            # Execute and WAIT for the job to finish
-            await self._execute_build_job(job_data, event_manager, queue_service)
+                _, _, task, _ = queue_service.get_queue_data(job_id)
+                if task and not task.done():
+                    await task
 
-            # Wait for the asyncio.Task to actually complete
-            _, _, task, _ = queue_service.get_queue_data(job_id)
-            if task and not task.done():
-                await task
-
-            elapsed = time.time() - start_time
-            self._stats["build_completed"] += 1
-            logger.info(
-                f"[RabbitMQ] Build job completed: {job_id} "
-                f"({elapsed:.2f}s)"
-            )
-            await message.ack()
-
-        except Exception:
-            elapsed = time.time() - start_time
-            self._stats["build_failed"] += 1
-            logger.exception(
-                f"[RabbitMQ] Build job failed: {job_id} "
-                f"(attempt {retry_count + 1}/{self.config.retry_max + 1}, "
-                f"{elapsed:.2f}s)"
-            )
-            await self._retry_or_dlq(message, self.config.build_queue)
+                self._track(self.config.build_queue, "completed")
+                logger.info(f"[RabbitMQ] Build job completed: {job_id} ({time.time() - start_time:.2f}s)")
+            except Exception:
+                self._track(self.config.build_queue, "failed")
+                logger.exception(f"[RabbitMQ] Build job failed: {job_id} ({time.time() - start_time:.2f}s)")
 
     async def _on_run_message(self, message: AbstractIncomingMessage) -> None:
-        """Process a run job message from RabbitMQ.
+        async with message.process():
+            job_id = None
+            start_time = time.time()
+            try:
+                job_data = json.loads(message.body.decode("utf-8"))
+                job_id = job_data["job_id"]
+                logger.info(f"[RabbitMQ] Processing run job: {job_id}")
 
-        Run jobs execute the agent and WAIT for completion before ACKing.
-        If the job fails, it is retried up to RETRY_MAX times.
-        """
-        job_id = None
-        start_time = time.time()
-        retry_count = (message.headers or {}).get("retry_count", 0)
-        try:
-            job_data = json.loads(message.body.decode("utf-8"))
-            job_id = job_data["job_id"]
-            logger.info(
-                f"[RabbitMQ] Processing run job: {job_id} "
-                f"(attempt {retry_count + 1})"
-            )
+                from agentcore.services.deps import get_queue_service
 
-            from agentcore.services.deps import get_queue_service
+                queue_service = get_queue_service()
+                _, event_manager, _, _ = queue_service.get_queue_data(job_id)
 
-            queue_service = get_queue_service()
-            _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+                await self._execute_run_job(job_data, event_manager, queue_service)
 
-            await self._execute_run_job(job_data, event_manager, queue_service)
+                self._track(self.config.run_queue, "completed")
+                logger.info(f"[RabbitMQ] Run job completed: {job_id} ({time.time() - start_time:.2f}s)")
+            except Exception:
+                self._track(self.config.run_queue, "failed")
+                logger.exception(f"[RabbitMQ] Run job failed: {job_id} ({time.time() - start_time:.2f}s)")
 
-            elapsed = time.time() - start_time
-            self._stats["run_completed"] += 1
-            logger.info(
-                f"[RabbitMQ] Run job completed: {job_id} "
-                f"({elapsed:.2f}s)"
-            )
-            await message.ack()
+    async def _on_schedule_message(self, message: AbstractIncomingMessage) -> None:
+        """Process a scheduled trigger job."""
+        async with message.process():
+            start_time = time.time()
+            job_data = None
+            try:
+                job_data = json.loads(message.body.decode("utf-8"))
+                logger.info(
+                    f"[RabbitMQ] Processing schedule job: agent={job_data['agent_id']} "
+                    f"trigger={job_data['trigger_config_id']}"
+                )
 
-        except Exception:
-            elapsed = time.time() - start_time
-            self._stats["run_failed"] += 1
-            logger.exception(
-                f"[RabbitMQ] Run job failed: {job_id} "
-                f"(attempt {retry_count + 1}/{self.config.retry_max + 1}, "
-                f"{elapsed:.2f}s)"
-            )
-            await self._retry_or_dlq(message, self.config.run_queue)
+                from agentcore.services.deps import get_scheduler_service
 
-    async def _execute_build_job(
-        self,
-        job_data: dict[str, Any],
-        event_manager: Any,
-        queue_service: Any,
-    ) -> None:
-        """Execute a build job using the same logic as start_agent_build."""
+                scheduler_service = get_scheduler_service()
+                await scheduler_service._execute_trigger_direct(
+                    trigger_config_id=uuid.UUID(job_data["trigger_config_id"]),
+                    agent_id=uuid.UUID(job_data["agent_id"]),
+                    environment=job_data.get("environment", "dev"),
+                    version=job_data.get("version"),
+                )
+
+                self._track(self.config.schedule_queue, "completed")
+                logger.info(
+                    f"[RabbitMQ] Schedule job completed: agent={job_data['agent_id']} "
+                    f"({time.time() - start_time:.2f}s)"
+                )
+            except Exception:
+                self._track(self.config.schedule_queue, "failed")
+                agent_id = job_data.get("agent_id") if job_data else "unknown"
+                logger.exception(
+                    f"[RabbitMQ] Schedule job failed: agent={agent_id} "
+                    f"({time.time() - start_time:.2f}s)"
+                )
+
+    async def _on_trigger_message(self, message: AbstractIncomingMessage) -> None:
+        """Process a folder/email trigger job."""
+        async with message.process():
+            start_time = time.time()
+            job_data = None
+            try:
+                job_data = json.loads(message.body.decode("utf-8"))
+                trigger_type = job_data.get("trigger_type", "unknown")
+                logger.info(
+                    f"[RabbitMQ] Processing {trigger_type} trigger: agent={job_data['agent_id']} "
+                    f"trigger={job_data['trigger_config_id']}"
+                )
+
+                from agentcore.services.deps import get_trigger_service
+
+                trigger_service = get_trigger_service()
+                await trigger_service._execute_trigger_direct(
+                    trigger_config_id=uuid.UUID(job_data["trigger_config_id"]),
+                    agent_id=uuid.UUID(job_data["agent_id"]),
+                    payload=job_data.get("payload", {}),
+                    environment=job_data.get("environment", "dev"),
+                    version=job_data.get("version"),
+                    trigger_config=job_data.get("trigger_config"),
+                )
+
+                self._track(self.config.trigger_queue, "completed")
+                logger.info(
+                    f"[RabbitMQ] {trigger_type} trigger completed: agent={job_data['agent_id']} "
+                    f"({time.time() - start_time:.2f}s)"
+                )
+            except Exception:
+                self._track(self.config.trigger_queue, "failed")
+                agent_id = job_data.get("agent_id") if job_data else "unknown"
+                logger.exception(
+                    f"[RabbitMQ] Trigger job failed: agent={agent_id} "
+                    f"({time.time() - start_time:.2f}s)"
+                )
+
+    async def _on_orchestrator_message(self, message: AbstractIncomingMessage) -> None:
+        """Process an orchestrator streaming job."""
+        async with message.process():
+            start_time = time.time()
+            job_id = None
+            try:
+                job_data = json.loads(message.body.decode("utf-8"))
+                job_id = job_data["job_id"]
+                logger.info(f"[RabbitMQ] Processing orchestrator job: {job_id}")
+
+                from agentcore.services.deps import get_queue_service
+
+                queue_service = get_queue_service()
+                _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+
+                await self._execute_orchestrator_job(job_data, event_manager)
+
+                self._track(self.config.orchestrator_queue, "completed")
+                logger.info(f"[RabbitMQ] Orchestrator job completed: {job_id} ({time.time() - start_time:.2f}s)")
+            except Exception:
+                self._track(self.config.orchestrator_queue, "failed")
+                logger.exception(f"[RabbitMQ] Orchestrator job failed: {job_id} ({time.time() - start_time:.2f}s)")
+
+    # ------------------------------------------------------------------
+    # Job executors
+    # ------------------------------------------------------------------
+
+    async def _execute_build_job(self, job_data: dict[str, Any], event_manager: Any, queue_service: Any) -> None:
         from fastapi import BackgroundTasks
 
         from agentcore.api.build import generate_agent_events
@@ -339,17 +343,9 @@ class RabbitMQService(Service):
         job_id = job_data["job_id"]
         agent_id = uuid.UUID(job_data["agent_id"])
 
-        # Reconstruct inputs
-        inputs = None
-        if job_data.get("inputs"):
-            inputs = InputValueRequest(**job_data["inputs"])
+        inputs = InputValueRequest(**job_data["inputs"]) if job_data.get("inputs") else None
+        data = AgentDataRequest(**job_data["data"]) if job_data.get("data") else None
 
-        # Reconstruct data
-        data = None
-        if job_data.get("data"):
-            data = AgentDataRequest(**job_data["data"])
-
-        # Reconstruct user
         user_id = job_data.get("user_id")
         async with session_scope() as session:
             current_user = await session.get(User, uuid.UUID(user_id)) if user_id else None
@@ -372,26 +368,19 @@ class RabbitMQService(Service):
             current_user=current_user,
             agent_name=job_data.get("agent_name"),
         )
-
-        # Start the job through JobQueueService (creates asyncio.Task)
         queue_service.start_job(job_id, task_coro)
 
-    async def _execute_run_job(
-        self,
-        job_data: dict[str, Any],
-        event_manager: Any,
-        queue_service: Any,
-    ) -> None:
-        """Execute a run job using the same logic as simplified_run_agent."""
-        from agentcore.api.endpoints import run_agent_generator
+    async def _execute_run_job(self, job_data: dict[str, Any], event_manager: Any, queue_service: Any) -> None:
+        """Execute a run job. Handles both streaming and non-streaming."""
+        from agentcore.api.endpoints import run_agent_generator, simple_run_agent
         from agentcore.api.v1_schemas import SimplifiedAPIRequest
         from agentcore.services.database.models.agent.model import Agent
         from agentcore.services.deps import session_scope
 
         job_id = job_data["job_id"]
         agent_id = uuid.UUID(job_data["agent_id"])
+        is_stream = job_data.get("stream", True)
 
-        # Load agent from database
         async with session_scope() as session:
             agent = await session.get(Agent, agent_id)
 
@@ -399,37 +388,82 @@ class RabbitMQService(Service):
             logger.error(f"[RabbitMQ] Agent not found for run job {job_id}")
             return
 
-        # Apply resolved data if provided
         if job_data.get("agent_data"):
             agent.data = job_data["agent_data"]
 
-        # Reconstruct input request
         input_request = SimplifiedAPIRequest(**job_data.get("input_request", {}))
 
-        # Reconstruct deployment records
         prod_deployment = None
         uat_deployment = None
         if job_data.get("prod_deployment_id"):
             from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
             async with session_scope() as session:
-                prod_deployment = await session.get(
-                    AgentDeploymentProd, uuid.UUID(job_data["prod_deployment_id"])
-                )
+                prod_deployment = await session.get(AgentDeploymentProd, uuid.UUID(job_data["prod_deployment_id"]))
         if job_data.get("uat_deployment_id"):
             from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
             async with session_scope() as session:
-                uat_deployment = await session.get(
-                    AgentDeploymentUAT, uuid.UUID(job_data["uat_deployment_id"])
+                uat_deployment = await session.get(AgentDeploymentUAT, uuid.UUID(job_data["uat_deployment_id"]))
+
+        if is_stream:
+            # Streaming: use run_agent_generator which sends tokens via event_manager
+            client_consumed_queue = asyncio.Queue()
+            await run_agent_generator(
+                agent=agent,
+                input_request=input_request,
+                api_key_user=None,
+                event_manager=event_manager,
+                client_consumed_queue=client_consumed_queue,
+                prod_deployment=prod_deployment,
+                uat_deployment=uat_deployment,
+            )
+        else:
+            # Non-streaming: run agent directly and send result back via queue
+            try:
+                result = await simple_run_agent(
+                    agent=agent,
+                    input_request=input_request,
+                    stream=False,
+                    api_key_user=None,
+                    prod_deployment=prod_deployment,
+                    uat_deployment=uat_deployment,
                 )
+                result_event = json.dumps({"event": "end", "data": {"result": result.model_dump()}}, default=str) + "\n\n"
+                event_manager.queue.put_nowait(("end", result_event.encode("utf-8"), time.time()))
+            except Exception as exc:
+                error_event = json.dumps({"event": "error", "data": {"error": str(exc)}}) + "\n\n"
+                event_manager.queue.put_nowait(("error", error_event.encode("utf-8"), time.time()))
+            finally:
+                event_manager.queue.put_nowait((None, None, time.time()))
 
-        client_consumed_queue = asyncio.Queue()
+    async def _execute_orchestrator_job(self, job_data: dict[str, Any], event_manager: Any) -> None:
+        from agentcore.api.orchestrator import _run_agent_from_snapshot
+        from agentcore.processing.process import run_graph_internal
 
-        await run_agent_generator(
-            agent=agent,
-            input_request=input_request,
-            api_key_user=None,
+        job_id = job_data["job_id"]
+
+        agent_text, _result_sid, was_interrupted, agent_content_blocks = await _run_agent_from_snapshot(
+            agent_id=job_data["agent_id"],
+            agent_name=job_data["agent_name"],
+            snapshot=job_data["snapshot"],
+            input_value=job_data["input_value"],
+            session_id=job_data["session_id"],
+            user_id=job_data["user_id"],
+            files=job_data.get("files"),
+            stream=True,
             event_manager=event_manager,
-            client_consumed_queue=client_consumed_queue,
-            prod_deployment=prod_deployment,
-            uat_deployment=uat_deployment,
+            deployment_id=job_data.get("deployment_id"),
+            org_id=job_data.get("org_id"),
+            dept_id=job_data.get("dept_id"),
+            is_prod_deployment=job_data.get("is_prod_deployment", False),
+            project_id=job_data.get("project_id"),
+            project_name=job_data.get("project_name"),
         )
+
+        if was_interrupted:
+            event_manager.on_end(data={})
+            return
+
+        if not agent_text or not agent_text.strip():
+            agent_text = "Agent did not produce a response."
+
+        event_manager.on_end(data={"agent_text": agent_text})

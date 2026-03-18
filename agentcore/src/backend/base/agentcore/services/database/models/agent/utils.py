@@ -3,22 +3,6 @@ from agentcore.utils.version import get_version_info
 from .model import Agent
 
 
-def get_webhook_component_in_agent(agent_data: dict):
-    """Get webhook component in agent data."""
-    if "nodes" in agent_data:
-        for node in agent_data.get("nodes", []):
-            if "Webhook" in node.get("id"):
-                return node
-    return None
-
-
-def get_all_webhook_components_in_agent(agent_data: dict | None):
-    """Get all webhook components in agent data."""
-    if not agent_data:
-        return []
-    return [node for node in agent_data.get("nodes", []) if "Webhook" in node.get("id")]
-
-
 def get_components_versions(agent: Agent):
     versions: dict[str, str] = {}
     if agent.data is None:

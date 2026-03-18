@@ -47,7 +47,6 @@ from agentcore.processing.process import process_tweaks, run_graph_internal
 from agentcore.services.auth.utils import api_key_security, get_current_active_user, validate_agent_api_key, generate_agent_api_key
 from agentcore.services.database.models.agent.model import Agent, AgentRead
 from agentcore.services.database.models.agent_api_key.model import AgentApiKey
-from agentcore.services.database.models.agent.utils import get_all_webhook_components_in_agent
 from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
 from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
 from agentcore.services.database.models.product_release.model import ProductRelease
@@ -640,6 +639,87 @@ async def simplified_run_agent(
             media_type="text/event-stream",
         )
 
+    # --- RabbitMQ path for non-streaming ---
+    from agentcore.services.deps import get_rabbitmq_service
+
+    rabbitmq_service_ns = get_rabbitmq_service()
+    if rabbitmq_service_ns.is_enabled():
+        from agentcore.services.deps import get_queue_service
+
+        queue_service = get_queue_service()
+        job_id = str(uuid.uuid4())
+
+        # Create a queue + event to receive the result back
+        asyncio_queue_ns: asyncio.Queue = asyncio.Queue()
+        event_manager_ns = create_stream_tokens_event_manager(queue=asyncio_queue_ns)
+        queue_service._queues[job_id] = (asyncio_queue_ns, event_manager_ns, None, None)
+
+        job_data = {
+            "job_id": job_id,
+            "stream": False,
+            "agent_id": str(agent.id),
+            "agent_data": agent.data,
+            "input_request": input_request.model_dump(),
+            "prod_deployment_id": str(prod_deployment.id) if prod_deployment else None,
+            "uat_deployment_id": str(uat_deployment.id) if uat_deployment else None,
+        }
+        await rabbitmq_service_ns.publish_run_job(job_data)
+        logger.info(f"Non-streaming run job {job_id} published to RabbitMQ")
+
+        # Wait for the result by consuming the queue until end/error
+        try:
+            result_data = None
+            while True:
+                event_id, value, _ = await asyncio_queue_ns.get()
+                if value is None:
+                    break
+                # Parse the event to check for end/error
+                import json as _json
+                try:
+                    event = _json.loads(value.decode("utf-8"))
+                    if event.get("event") == "end" and event.get("data", {}).get("result"):
+                        result_data = event["data"]["result"]
+                    elif event.get("event") == "error":
+                        error_msg = event.get("data", {}).get("error", "Unknown error")
+                        raise ValueError(error_msg)
+                except (ValueError, KeyError):
+                    if isinstance(value, bytes):
+                        continue
+                    raise
+
+            if result_data:
+                end_time = time.perf_counter()
+                background_tasks.add_task(
+                    telemetry_service.log_package_run,
+                    RunPayload(
+                        run_seconds=int(end_time - start_time),
+                        run_success=True,
+                        run_error_message="",
+                    ),
+                )
+                from agentcore.api.v1_schemas import RunResponse
+                return RunResponse(**result_data)
+
+            # Fallback: run completed but no structured result captured
+            raise ValueError("Agent completed but no result was captured from RabbitMQ consumer")
+
+        except Exception as exc:
+            background_tasks.add_task(
+                telemetry_service.log_package_run,
+                RunPayload(
+                        run_seconds=int(time.perf_counter() - start_time),
+                    run_success=False,
+                    run_error_message=str(exc),
+                ),
+            )
+            if isinstance(exc, ValueError):
+                raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, agent=agent) from exc
+            raise
+        finally:
+            # Cleanup the queue
+            queue_service._queues.pop(job_id, None)
+
+    # --- Direct path (no RabbitMQ) ---
     try:
         result = await simple_run_agent(
             agent=agent,
@@ -653,7 +733,6 @@ async def simplified_run_agent(
         background_tasks.add_task(
             telemetry_service.log_package_run,
             RunPayload(
-                run_is_webhook=False,
                 run_seconds=int(end_time - start_time),
                 run_success=True,
                 run_error_message="",
@@ -664,14 +743,12 @@ async def simplified_run_agent(
         background_tasks.add_task(
             telemetry_service.log_package_run,
             RunPayload(
-                run_is_webhook=False,
                 run_seconds=int(time.perf_counter() - start_time),
                 run_success=False,
                 run_error_message=str(exc),
             ),
         )
         if "badly formed hexadecimal UUID string" in str(exc):
-            # This means the agent ID is not a valid UUID which means it can't find the agent
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         if "not found" in str(exc):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -682,7 +759,6 @@ async def simplified_run_agent(
         background_tasks.add_task(
             telemetry_service.log_package_run,
             RunPayload(
-                run_is_webhook=False,
                 run_seconds=int(time.perf_counter() - start_time),
                 run_success=False,
                 run_error_message=str(exc),
@@ -692,104 +768,6 @@ async def simplified_run_agent(
 
     return result
 
-
-@router.post("/webhook/{agent_id_or_name}", response_model=dict, status_code=HTTPStatus.ACCEPTED)  # noqa: RUF100, FAST003
-async def webhook_run_agent(
-    agent: Annotated[Agent, Depends(get_agent_by_id_or_endpoint_name)],
-    user: Annotated[User, Depends(get_user_by_agent_id_or_endpoint_name)],
-    request: Request,
-    response: Response,
-    background_tasks: BackgroundTasks,
-    agent_api_key: Annotated[AgentApiKey | None, Depends(validate_agent_api_key)] = None,
-    env: Annotated[RunEnvironment, Depends(_parse_env)] = RunEnvironment.DEV,
-    version: str = Query(
-        description="Version to run (e.g. 'v1'). Ignored when env=dev.",
-    ),
-):
-    """Run a agent using a webhook request.
-
-    Args:
-        agent (agent, optional): The agent to be executed. Defaults to Depends(get_agent_by_id).
-        user (User): The agent user.
-        request (Request): The incoming HTTP request.
-        background_tasks (BackgroundTasks): The background tasks manager.
-
-    Returns:
-        dict: A dictionary containing the status of the task.
-
-    Raises:
-        HTTPException: If the agent is not found or if there is an error processing the request.
-    """
-    telemetry_service = get_telemetry_service()
-    start_time = time.perf_counter()
-    logger.debug("Received webhook request")
-    error_msg = ""
-
-    # Resolve flow data for the requested environment / version
-    agent.data, prod_deployment, uat_deployment = await _resolve_agent_data_for_env(
-        agent_id=agent.id, env=env, version=version
-    )
-
-    # --- Enforce API key auth for UAT/PROD (per-deployment/version) ---
-    deployment_id = (
-        prod_deployment.id if prod_deployment
-        else uat_deployment.id if uat_deployment
-        else None
-    )
-    auto_generated_key = await _enforce_agent_api_key(agent_api_key, agent.id, env, deployment_id, version)
-    if auto_generated_key:
-        response.headers["X-Generated-Api-Key"] = auto_generated_key
-
-    try:
-        try:
-            data = await request.body()
-        except Exception as exc:
-            error_msg = str(exc)
-            raise HTTPException(status_code=500, detail=error_msg) from exc
-
-        if not data:
-            error_msg = "Request body is empty. You should provide a JSON payload containing the agent ID."
-            raise HTTPException(status_code=400, detail=error_msg)
-
-        try:
-            # get all webhook components in the agent
-            webhook_components = get_all_webhook_components_in_agent(agent.data)
-            tweaks = {}
-
-            for component in webhook_components:
-                tweaks[component["id"]] = {"data": data.decode() if isinstance(data, bytes) else data}
-            input_request = SimplifiedAPIRequest(
-                input_value="",
-                input_type="chat",
-                output_type="chat",
-                tweaks=tweaks,
-                session_id=None,
-            )
-
-            logger.debug("Starting background task")
-            background_tasks.add_task(
-                simple_run_agent_task,
-                agent=agent,
-                input_request=input_request,
-                api_key_user=user,
-                prod_deployment=prod_deployment,
-                uat_deployment=uat_deployment,
-            )
-        except Exception as exc:
-            error_msg = str(exc)
-            raise HTTPException(status_code=500, detail=error_msg) from exc
-    finally:
-        background_tasks.add_task(
-            telemetry_service.log_package_run,
-            RunPayload(
-                run_is_webhook=True,
-                run_seconds=int(time.perf_counter() - start_time),
-                run_success=not error_msg,
-                run_error_message=error_msg,
-            ),
-        )
-
-    return {"message": "Task started in the background", "status": "in progress"}
 
 
 # get endpoint to return version of agentcore

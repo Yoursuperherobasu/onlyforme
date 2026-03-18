@@ -382,22 +382,20 @@ def has_output_vertex(vertices: dict[Any, int]) -> bool:
     return any(vertex.is_output for vertex in vertices)
 
 
-PRIORITY_LIST_OF_INPUTS = ["webhook", "chat"]
+PRIORITY_LIST_OF_INPUTS = ["chat"]
 MAX_CYCLE_APPEARANCES = 2
 
 
-def find_start_component_id(vertices, *, is_webhook: bool = False):
+def find_start_component_id(vertices):
     """Finds the component ID from a list of vertices based on a priority list of input types.
 
     Args:
         vertices (list): A list of vertex IDs.
-        is_webhook (bool, optional): Whether the agent is being run as a webhook. Defaults to False.
 
     Returns:
         str or None: The component ID that matches the highest priority input type, or None if no match is found.
     """
-    priority_inputs = ["webhook"] if is_webhook else PRIORITY_LIST_OF_INPUTS
-    for input_type_str in priority_inputs:
+    for input_type_str in PRIORITY_LIST_OF_INPUTS:
         component_id = next((vertex_id for vertex_id in vertices if input_type_str in vertex_id.lower()), None)
         if component_id:
             return component_id

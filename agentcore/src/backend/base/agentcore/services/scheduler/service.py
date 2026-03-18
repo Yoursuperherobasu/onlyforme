@@ -202,8 +202,39 @@ class SchedulerService(Service):
     ) -> None:
         """Execute the agent flow when the schedule fires.
 
-        Reuses the existing execution pipeline via simple_run_agent_task().
+        When RabbitMQ is enabled, publishes to the schedule queue for
+        rate-limited, durable execution. Otherwise runs directly.
         """
+        from agentcore.services.deps import get_rabbitmq_service
+
+        rabbitmq_service = get_rabbitmq_service()
+        if rabbitmq_service.is_enabled():
+            job_data = {
+                "job_id": str(trigger_config_id),
+                "trigger_config_id": str(trigger_config_id),
+                "agent_id": str(agent_id),
+                "environment": environment,
+                "version": version,
+            }
+            await rabbitmq_service.publish_schedule_job(job_data)
+            logger.info(f"Schedule job published to RabbitMQ: agent={agent_id} trigger={trigger_config_id}")
+            return
+
+        await self._execute_trigger_direct(
+            trigger_config_id=trigger_config_id,
+            agent_id=agent_id,
+            environment=environment,
+            version=version,
+        )
+
+    async def _execute_trigger_direct(
+        self,
+        trigger_config_id: UUID,
+        agent_id: UUID,
+        environment: str = "dev",
+        version: str | None = None,
+    ) -> None:
+        """Direct execution of the agent flow (no RabbitMQ)."""
         from agentcore.services.deps import get_db_service
 
         start_time = time.perf_counter()
