@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src -type f -name *constant* -o -name *style* -o -name *theme*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -name *.md -type f)"
+    ]
+  }
+}

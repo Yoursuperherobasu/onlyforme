@@ -593,6 +593,7 @@ const PublishButton = ({}: PublishButtonProps) => {
               selectedTags={publishTags}
               onChange={setPublishTags}
               placeholder="Add tags (e.g. rag, chatbot, hitl)..."
+              maxTags={10}
             />
             <span className="text-xs text-muted-foreground">
               Tags help categorize this agent in the Agent Registry.
