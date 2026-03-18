@@ -126,6 +126,7 @@ class GuardrailCatalogueUpdate(BaseModel):
     public_scope: str | None = None
     public_dept_ids: list[str] | None = None
     shared_user_ids: list[str] | None = None
+    created_by: UUID | None = None
     updated_by: UUID | None = None
     published_by: UUID | None = None
     published_at: datetime | None = None
