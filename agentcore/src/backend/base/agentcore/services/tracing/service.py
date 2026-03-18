@@ -125,7 +125,7 @@ class TracingService(Service):
     def __init__(self, settings_service: SettingsService):
         self.settings_service = settings_service
         self.deactivated = self.settings_service.settings.deactivate_tracing
-        logger.info(f"🔧 TracingService initialized: deactivated={self.deactivated}")
+        logger.info(f"TracingService initialized: deactivated={self.deactivated}")
 
     async def _trace_worker(self, trace_context: TraceContext) -> None:
         try:
@@ -169,7 +169,7 @@ class TracingService(Service):
                 trace_context.agent_id,
             )
             return
-        logger.info(f"🎯 Creating LangFuseTracer instance for agent={trace_context.agent_name}")
+        logger.info(f"Creating LangFuseTracer instance for agent={trace_context.agent_name}")
         langfuse_tracer = _get_langfuse_tracer()
         tracer_instance = langfuse_tracer(
             trace_name=trace_context.run_name,
@@ -188,7 +188,7 @@ class TracingService(Service):
             environment=trace_context.environment,
         )
         trace_context.tracers["langfuse"] = tracer_instance
-        logger.info(f"✅ LangFuseTracer created: ready={tracer_instance.ready}, agent={trace_context.agent_name}")
+        logger.info(f"LangFuseTracer created: ready={tracer_instance.ready}, agent={trace_context.agent_name}")
 
     async def _resolve_langfuse_credentials(self, trace_context: TraceContext) -> None:
         if not trace_context.user_id:
