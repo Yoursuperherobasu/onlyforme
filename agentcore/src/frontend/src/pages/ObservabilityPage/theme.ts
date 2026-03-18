@@ -1,8 +1,9 @@
 export const THEME = {
   primary: "#da2128",
   primaryHover: "#b81c22",
-  textMain: "#888888",
-  textSecondary: "#555555",
+  // Used only for Recharts SVG fills / inline chart styles (not for Tailwind classes)
+  textMain: "#6b7280",
+  textSecondary: "#9ca3af",
   success: "#10b981",
   warning: "#f59e0b",
   error: "#ef4444",

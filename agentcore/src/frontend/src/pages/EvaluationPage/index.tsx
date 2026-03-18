@@ -1394,8 +1394,8 @@ export default function EvaluationPage() {
 
   const renderScoresList = () => {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+      <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-border flex justify-between items-center bg-muted/50">
           <h3 className="font-medium">Recent Scores</h3>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => fetchData()}>
@@ -1410,7 +1410,7 @@ export default function EvaluationPage() {
             </Button>
           </div>
         </div>
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="p-4 border-b border-border bg-card">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Input
               placeholder="Filter by Trace ID"
@@ -1446,7 +1446,7 @@ export default function EvaluationPage() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+            <thead className="text-xs text-foreground uppercase bg-muted">
               <tr>
                 <th className="px-6 py-3">Timestamp</th>
                 <th className="px-6 py-3">Trace ID</th>
@@ -1464,7 +1464,7 @@ export default function EvaluationPage() {
                     score.id ??
                     `${score.trace_id}-${score.name}-${score.created_at ?? ""}`
                   }
-                  className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  className="border-b dark:border-border hover:bg-muted/50"
                 >
                   <td className="px-6 py-4">
                     {score.created_at
@@ -1493,12 +1493,12 @@ export default function EvaluationPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="px-2 py-1 rounded text-xs bg-gray-100 dark:bg-gray-700">
+                    <span className="px-2 py-1 rounded text-xs bg-muted">
                       {score.source}
                     </span>
                   </td>
                   <td
-                    className="px-6 py-4 text-gray-500 truncate max-w-xs"
+                    className="px-6 py-4 text-muted-foreground truncate max-w-xs"
                     title={score.comment}
                   >
                     {score.comment || "-"}
@@ -1509,7 +1509,7 @@ export default function EvaluationPage() {
                 <tr>
                   <td
                     colSpan={7}
-                    className="px-6 py-8 text-center text-gray-500"
+                    className="px-6 py-8 text-center text-muted-foreground"
                   >
                     No evaluation scores found.
                   </td>
@@ -1536,7 +1536,7 @@ export default function EvaluationPage() {
 
     return (
       <div className="flex flex-col gap-6">
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+        <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-medium">Dataset Management</h3>
             <div className="flex items-center gap-2">
@@ -1730,16 +1730,16 @@ export default function EvaluationPage() {
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <div className="p-4 border-b border-border flex items-center justify-between">
             <h3 className="font-medium">Dataset List</h3>
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-muted-foreground">
               {datasets.length} dataset{datasets.length === 1 ? "" : "s"}
             </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
-              <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+              <thead className="text-xs text-foreground uppercase bg-muted">
                 <tr>
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Description</th>
@@ -1756,7 +1756,7 @@ export default function EvaluationPage() {
                   return (
                     <tr
                       key={dataset.id || dataset.name}
-                      className={`border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${
+                      className={`border-b dark:border-border hover:bg-muted/50 cursor-pointer ${
                         isSelected ? "bg-red-50 dark:bg-red-950/30" : ""
                       }`}
                       onClick={() => void handleOpenDatasetItemsDialog(dataset.name)}
@@ -1810,7 +1810,7 @@ export default function EvaluationPage() {
                   <tr>
                     <td
                       colSpan={5 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0)}
-                      className="px-4 py-6 text-center text-gray-500"
+                      className="px-4 py-6 text-center text-muted-foreground"
                     >
                       No datasets found.
                     </td>
@@ -1821,8 +1821,8 @@ export default function EvaluationPage() {
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          <div className="p-4 border-b border-border flex items-center justify-between">
             <h3 className="font-medium">Run Experiment</h3>
             <Button
               size="sm"
@@ -1833,7 +1833,7 @@ export default function EvaluationPage() {
               Refresh Runs
             </Button>
           </div>
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="p-4 border-b border-border grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-2">
               <label className="text-sm font-medium">Experiment Name</label>
               <Input
@@ -2042,7 +2042,7 @@ export default function EvaluationPage() {
                   })
                 }
               />
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 Keep placeholders in prompt: <code>{"{{query}}"}</code>,{" "}
                 <code>{"{{generation}}"}</code>,{" "}
                 <code>{"{{ground_truth}}"}</code>.
@@ -2074,7 +2074,7 @@ export default function EvaluationPage() {
             </div>
           </div>
           {datasetExperimentJob && (
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700 text-sm">
+            <div className="p-4 border-b border-border text-sm">
               <span className="font-medium">Latest Job:</span>{" "}
               <span className="font-mono">{datasetExperimentJob.job_id}</span>{" "}
               <span className="ml-2">
@@ -2083,10 +2083,10 @@ export default function EvaluationPage() {
               {datasetExperimentJob.status === "queued" ||
               datasetExperimentJob.status === "running" ? (
                 <div className="mt-3">
-                  <div className="h-2 w-full rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                  <div className="h-2 w-full rounded bg-muted overflow-hidden">
                     <div className="h-full w-1/3 bg-[#da2128] animate-pulse" />
                   </div>
-                  <div className="mt-1 text-xs text-gray-500">
+                  <div className="mt-1 text-xs text-muted-foreground">
                     Experiment "{datasetExperimentJob.experiment_name}" is
                     running in background.
                   </div>
@@ -2106,7 +2106,7 @@ export default function EvaluationPage() {
           )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
-              <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+              <thead className="text-xs text-foreground uppercase bg-muted">
                 <tr>
                   <th className="px-4 py-3">Timestamp</th>
                   <th className="px-4 py-3">Run ID</th>
@@ -2119,7 +2119,7 @@ export default function EvaluationPage() {
                 {datasetRuns.map((run) => (
                   <tr
                     key={run.id}
-                    className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                    className="border-b dark:border-border hover:bg-muted/50 cursor-pointer"
                     onClick={() => handleOpenRunDetail(run)}
                   >
                     <td className="px-4 py-3">
@@ -2172,7 +2172,7 @@ export default function EvaluationPage() {
                   <tr>
                     <td
                       colSpan={5}
-                      className="px-4 py-6 text-center text-gray-500"
+                      className="px-4 py-6 text-center text-muted-foreground"
                     >
                       No experiment runs found.
                     </td>
@@ -2196,7 +2196,7 @@ export default function EvaluationPage() {
           </p>
         </div>
         {/* Environment Toggle */}
-        <div className="flex items-center rounded-lg border bg-gray-50 dark:bg-gray-800 p-1">
+        <div className="flex items-center rounded-lg border bg-muted/50 p-1">
           {([
             { value: "uat" as const, label: "UAT" },
             { value: "production" as const, label: "PROD" },
@@ -2204,8 +2204,8 @@ export default function EvaluationPage() {
             <button
               key={env.value}
               onClick={() => { if (selectedEnvironment !== env.value) handleEnvironmentChange(env.value); }}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${selectedEnvironment === env.value ? "shadow-sm" : "hover:bg-gray-100 dark:hover:bg-gray-700"}`}
-              style={selectedEnvironment === env.value ? { backgroundColor: "#da2128", color: "#fff" } : { color: "#6b7280" }}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${selectedEnvironment === env.value ? "shadow-sm text-white" : "text-muted-foreground hover:bg-muted"}`}
+              style={selectedEnvironment === env.value ? { backgroundColor: "#da2128" } : undefined}
             >
               {env.label}
             </button>
@@ -2215,12 +2215,12 @@ export default function EvaluationPage() {
       <div className="flex-1 overflow-hidden p-6">
         <div className="flex flex-col h-full w-full max-w-[1600px] mx-auto">
           {/* Tabs Header */}
-          <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
+          <div className="flex border-b border-border mb-6">
             <button
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "judges"
                   ? "border-[#da2128] text-[#da2128]"
-                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setActiveTab("judges")}
             >
@@ -2230,7 +2230,7 @@ export default function EvaluationPage() {
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "datasets"
                   ? "border-[#da2128] text-[#da2128]"
-                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setActiveTab("datasets")}
             >
@@ -2240,7 +2240,7 @@ export default function EvaluationPage() {
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "scores"
                   ? "border-[#da2128] text-[#da2128]"
-                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setActiveTab("scores")}
             >
@@ -2255,20 +2255,20 @@ export default function EvaluationPage() {
                 loading ? (
                   <div className="flex flex-col items-center justify-center h-64 gap-3">
                     <div
-                      className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                      className="animate-spin rounded-full h-8 w-8 border-2 border-border"
                       style={{ borderTopColor: "#da2128" }}
                     />
-                    <p className="text-sm text-gray-500">Loading scores…</p>
+                    <p className="text-sm text-muted-foreground">Loading scores…</p>
                   </div>
                 ) : renderScoresList()
               )}
               {activeTab === "judges" && (
                   <div className="flex flex-col gap-6">
-                    <div className="p-8 text-center bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <div className="p-8 text-center bg-card rounded-lg border border-border">
                       <h3 className="text-lg font-medium mb-2">
                         LLM Judges Configuration
                       </h3>
-                      <p className="text-gray-500 mb-6">
+                      <p className="text-muted-foreground mb-6">
                         Configure automated evaluators to grade your traces
                         based on custom criteria.
                       </p>
@@ -2298,8 +2298,8 @@ export default function EvaluationPage() {
                     </div>
 
                     {/* Saved Evaluators List */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                      <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                    <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+                      <div className="p-4 border-b border-border flex justify-between items-center bg-muted/50">
                         <h3 className="font-medium">Saved Evaluators</h3>
                         <div className="flex items-center gap-2">
                           <Button
@@ -2329,12 +2329,12 @@ export default function EvaluationPage() {
                       </div>
                       <div className="overflow-x-auto p-4">
                         {savedEvaluators.length === 0 ? (
-                          <div className="text-sm text-gray-500">
+                          <div className="text-sm text-muted-foreground">
                             No saved evaluators.
                           </div>
                         ) : (
                           <table className="w-full text-sm text-left">
-                            <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                            <thead className="text-xs text-foreground uppercase bg-muted">
                               <tr>
                                 <th className="px-4 py-2">Name</th>
                                 <th className="px-4 py-2">Model</th>
@@ -2349,7 +2349,7 @@ export default function EvaluationPage() {
                               {savedEvaluators.map((ev) => (
                                 <tr
                                   key={ev.id}
-                                  className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                                  className="border-b dark:border-border hover:bg-muted/50"
                                 >
                                   <td className="px-4 py-3 font-medium">
                                     {ev.name}
@@ -2442,7 +2442,7 @@ export default function EvaluationPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-muted-foreground">
                 Choose where the evaluator should run.
               </p>
             </div>
@@ -2546,12 +2546,12 @@ export default function EvaluationPage() {
                       );
                     })
                   ) : (
-                    <div className="text-sm text-gray-500 py-2">
+                    <div className="text-sm text-muted-foreground py-2">
                       No agents available
                     </div>
                   )}
                 </div>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-muted-foreground">
                   Select one or more agents (agents) to target.
                 </p>
               </div>
@@ -2586,7 +2586,7 @@ export default function EvaluationPage() {
                   No models available. Add models in the Model Registry first.
                 </p>
               )}
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 Model and API key are resolved from the registry.
               </p>
             </div>
@@ -2781,7 +2781,7 @@ export default function EvaluationPage() {
                       onChange={(e) =>
                         setDatasetCsvFile(e.target.files?.[0] || null)
                       }
-                      className="block w-full max-w-md text-sm file:mr-3 file:rounded-md file:border file:border-gray-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-gray-50"
+                      className="block w-full max-w-md text-sm file:mr-3 file:rounded-md file:border file:border-border file:bg-card file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-muted/50"
                     />
                     <Button
                       size="sm"
@@ -2791,7 +2791,7 @@ export default function EvaluationPage() {
                       {datasetCsvUploading ? t("Uploading...") : t("Upload CSV")}
                     </Button>
                   </div>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     {t("Supported headers:")} <code>input</code>,{" "}
                     <code>expected_output</code>, <code>metadata</code>,{" "}
                     <code>trace_id</code>, <code>source_trace_id</code>.
@@ -2806,7 +2806,7 @@ export default function EvaluationPage() {
                 </Button>
               </div>
               <div className="border rounded">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-4 border-b border-border grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">{t("Input")}</label>
                     <textarea
@@ -2902,7 +2902,7 @@ export default function EvaluationPage() {
                 </div>
                 <div className="max-h-[420px] overflow-auto">
                   <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                    <thead className="text-xs text-foreground uppercase bg-muted">
                       <tr>
                         <th className="px-4 py-3">Timestamp</th>
                         <th className="px-4 py-3">Item ID</th>
@@ -2918,7 +2918,7 @@ export default function EvaluationPage() {
                       {datasetItems.map((item) => (
                         <tr
                           key={item.id}
-                          className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
+                          className="border-b dark:border-border hover:bg-muted/50"
                         >
                           <td className="px-4 py-3">
                             {item.created_at
@@ -2967,7 +2967,7 @@ export default function EvaluationPage() {
                         <tr>
                           <td
                             colSpan={8}
-                            className="px-4 py-6 text-center text-gray-500"
+                            className="px-4 py-6 text-center text-muted-foreground"
                           >
                             No dataset items found.
                           </td>
@@ -2979,11 +2979,11 @@ export default function EvaluationPage() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto px-6 py-8 text-center text-sm text-gray-500">
+            <div className="flex-1 overflow-y-auto px-6 py-8 text-center text-sm text-muted-foreground">
               Select a dataset from the dataset list.
             </div>
           )}
-          <DialogFooter className="px-6 pb-6 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <DialogFooter className="px-6 pb-6 pt-3 border-t border-border">
             <Button
               variant="outline"
               onClick={() => setIsDatasetItemsDialogOpen(false)}
@@ -3014,33 +3014,33 @@ export default function EvaluationPage() {
           {runDetailLoading ? (
             <div className="flex flex-col items-center justify-center py-10 gap-3">
               <div
-                className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"
+                className="animate-spin rounded-full h-8 w-8 border-2 border-border"
                 style={{ borderTopColor: "#da2128" }}
               />
-              <p className="text-sm text-gray-500">Loading run details…</p>
+              <p className="text-sm text-muted-foreground">Loading run details…</p>
             </div>
           ) : selectedRunDetail ? (
             <div className="space-y-4 py-2">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                 <div className="rounded border p-3">
-                  <div className="text-xs text-gray-500">Run ID</div>
+                  <div className="text-xs text-muted-foreground">Run ID</div>
                   <div className="font-mono break-all">
                     {selectedRunDetail.run.id}
                   </div>
                 </div>
                 <div className="rounded border p-3">
-                  <div className="text-xs text-gray-500">Run Name</div>
+                  <div className="text-xs text-muted-foreground">Run Name</div>
                   <div>{selectedRunDetail.run.name}</div>
                 </div>
                 <div className="rounded border p-3">
-                  <div className="text-xs text-gray-500">Items</div>
+                  <div className="text-xs text-muted-foreground">Items</div>
                   <div>{selectedRunDetail.item_count}</div>
                 </div>
               </div>
 
               <div className="max-h-[420px] overflow-auto border rounded">
                 <table className="w-full text-sm text-left">
-                  <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                  <thead className="text-xs text-foreground uppercase bg-muted">
                     <tr>
                       <th className="px-4 py-3">Run Item ID</th>
                       <th className="px-4 py-3">Trace ID</th>
@@ -3054,7 +3054,7 @@ export default function EvaluationPage() {
                     {selectedRunDetail.items.map((item) => (
                       <tr
                         key={item.id}
-                        className="border-b dark:border-gray-700 align-top"
+                        className="border-b dark:border-border align-top"
                       >
                         <td className="px-4 py-3 font-mono text-xs">
                           {item.id}
@@ -3093,13 +3093,13 @@ export default function EvaluationPage() {
                                 </div>
                               ))}
                               {item.scores.length > 4 ? (
-                                <div className="text-xs text-gray-500">
+                                <div className="text-xs text-muted-foreground">
                                   +{item.scores.length - 4} more
                                 </div>
                               ) : null}
                             </div>
                           ) : (
-                            <span className="text-xs text-gray-500">
+                            <span className="text-xs text-muted-foreground">
                               No scores
                             </span>
                           )}
@@ -3110,7 +3110,7 @@ export default function EvaluationPage() {
                       <tr>
                         <td
                           colSpan={6}
-                          className="px-4 py-6 text-center text-gray-500"
+                          className="px-4 py-6 text-center text-muted-foreground"
                         >
                           No run items found.
                         </td>
@@ -3121,7 +3121,7 @@ export default function EvaluationPage() {
               </div>
             </div>
           ) : (
-            <div className="py-8 text-center text-sm text-gray-500">
+            <div className="py-8 text-center text-sm text-muted-foreground">
               No run details available.
             </div>
           )}

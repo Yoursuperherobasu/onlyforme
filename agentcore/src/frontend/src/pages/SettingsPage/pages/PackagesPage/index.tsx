@@ -529,7 +529,7 @@ export default function PackagesPage() {
       )}
 
       {/* ── Scrollable Content ───────────────────────────────────── */}
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <ForwardedIconComponent

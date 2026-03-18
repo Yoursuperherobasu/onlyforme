@@ -146,7 +146,7 @@ export default function ObservabilityPage(): JSX.Element {
   // Loading state
   if (initialQueries.status.isLoading) {
     return (
-      <div className="flex h-full w-full flex-col overflow-auto bg-gray-50 p-6">
+      <div className="flex h-full w-full flex-col overflow-auto bg-background p-6">
         <Skeleton className="h-8 w-48 mb-6" />
         <div className="grid gap-4 md:grid-cols-4">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32" />)}
@@ -158,8 +158,8 @@ export default function ObservabilityPage(): JSX.Element {
   // Not connected state
   if (!initialQueries.status.data?.connected && !isProvisioningAdminSessionRole) {
     return (
-      <div className="flex h-full w-full flex-col overflow-auto bg-gray-50 p-6">
-        <h1 className="text-2xl font-bold mb-6" style={{ color: THEME.textMain }}>Observability</h1>
+      <div className="flex h-full w-full flex-col overflow-auto bg-background p-6">
+        <h1 className="text-2xl font-bold mb-6 text-foreground">Observability</h1>
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Langfuse Not Connected</AlertTitle>
@@ -172,20 +172,20 @@ export default function ObservabilityPage(): JSX.Element {
   }
 
   return (
-    <div className="flex h-full w-full flex-col overflow-auto bg-gray-50">
+    <div className="flex h-full w-full flex-col overflow-auto bg-background">
       {/* Header */}
-      <div className="border-b bg-white px-4 py-4 shadow-sm sm:px-6 md:px-8 md:py-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="border-b bg-card px-4 py-3 shadow-sm sm:px-6 md:px-8 md:py-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <BarChart3 className="h-6 w-6 md:h-7 md:w-7" style={{ color: THEME.primary }} />
             <div>
-              <h1 className="text-xl font-semibold md:text-2xl" style={{ color: THEME.textMain }}>Observability</h1>
-              <p className="text-sm" style={{ color: THEME.textSecondary }}>Monitor your AI usage, costs, and performance metrics</p>
+              <h1 className="text-lg font-semibold md:text-xl text-foreground">Observability</h1>
+              <p className="text-sm text-muted-foreground">Monitor your AI usage, costs, and performance metrics</p>
             </div>
           </div>
 
           {/* Environment Toggle */}
-          <div className="flex items-center rounded-lg border bg-gray-50 p-1">
+          <div className="flex items-center rounded-lg border border-border bg-muted/50 p-1">
             {([
               { value: "uat" as const, label: "UAT" },
               { value: "production" as const, label: "PROD" },
@@ -193,8 +193,8 @@ export default function ObservabilityPage(): JSX.Element {
               <button
                 key={env.value}
                 onClick={() => { if (selectedEnvironment !== env.value) handleEnvChange(env.value); }}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${selectedEnvironment === env.value ? "shadow-sm" : "hover:bg-gray-100"}`}
-                style={selectedEnvironment === env.value ? { backgroundColor: THEME.primary, color: "#fff" } : { color: THEME.textSecondary }}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${selectedEnvironment === env.value ? "shadow-sm text-white" : "text-muted-foreground hover:bg-muted"}`}
+                style={selectedEnvironment === env.value ? { backgroundColor: THEME.primary } : undefined}
               >
                 {env.label}
               </button>
@@ -243,26 +243,26 @@ export default function ObservabilityPage(): JSX.Element {
         />
 
         {requiresFilterFirst && !scopeReady && (
-          <Alert className="border-blue-200 bg-blue-50">
-            <AlertCircle className="h-4 w-4" style={{ color: THEME.info }} />
-            <AlertTitle style={{ color: THEME.textMain }}>Scope Required</AlertTitle>
-            <AlertDescription style={{ color: THEME.textSecondary }}>
+          <Alert className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30">
+            <AlertCircle className="h-4 w-4 text-blue-500" />
+            <AlertTitle className="text-foreground">Scope Required</AlertTitle>
+            <AlertDescription className="text-muted-foreground">
               Select an organization or department scope to load observability data.
             </AlertDescription>
           </Alert>
         )}
 
         {showScopeWarning && scopeWarningMessage && (
-          <Alert className="border-amber-200 bg-amber-50">
-            <AlertCircle className="h-4 w-4" style={{ color: THEME.warning }} />
-            <AlertTitle style={{ color: THEME.textMain }}>Observability Scope Warning</AlertTitle>
-            <AlertDescription style={{ color: THEME.textSecondary }}>{scopeWarningMessage}</AlertDescription>
+          <Alert className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+            <AlertCircle className="h-4 w-4 text-amber-500" />
+            <AlertTitle className="text-foreground">Observability Scope Warning</AlertTitle>
+            <AlertDescription className="text-muted-foreground">{scopeWarningMessage}</AlertDescription>
           </Alert>
         )}
 
         {canRunScopedQueries && (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="bg-white border shadow-sm p-1 rounded-lg">
+            <TabsList className="bg-card border shadow-sm p-1 rounded-lg">
               {[
                 { value: "overview", label: "Overview", icon: BarChart3 },
                 { value: "agents", label: "Agents", icon: Bot },
@@ -274,8 +274,8 @@ export default function ObservabilityPage(): JSX.Element {
                 <TabsTrigger
                   key={tab.value}
                   value={tab.value}
-                  className="flex items-center gap-2 data-[state=active]:shadow-sm px-4"
-                  style={{ color: activeTab === tab.value ? THEME.primary : THEME.textSecondary }}
+                  className={`flex items-center gap-2 data-[state=active]:shadow-sm px-4 ${activeTab === tab.value ? "" : "text-muted-foreground"}`}
+                  style={activeTab === tab.value ? { color: THEME.primary } : undefined}
                 >
                   <tab.icon className="h-4 w-4" />
                   {tab.label}

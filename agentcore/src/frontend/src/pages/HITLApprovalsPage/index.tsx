@@ -528,15 +528,9 @@ export default function HITLApprovalsPage(): JSX.Element {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
       {/* -- Header -- */}
-      <div className="border-b border-border px-6 py-5">
-        <div className="flex items-center justify-between">
+      <div className="border-b border-border px-6 py-3">
+        <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
-              <IconComponent
-                name="UserCheck"
-                className="h-5 w-5 text-amber-600 dark:text-amber-400"
-              />
-            </div>
             <div>
               <h1 className="text-lg font-semibold text-foreground">
                 {t("HITL Approvals")}
@@ -546,30 +540,31 @@ export default function HITLApprovalsPage(): JSX.Element {
               </p>
             </div>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            className="gap-1.5"
-          >
-            <IconComponent name="RefreshCw" className="h-3.5 w-3.5" />
-            {t("Refresh")}
-          </Button>
-        </div>
-
-        {/* Search */}
-        <div className="relative mt-4">
-          <IconComponent
-            name="Search"
-            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <input
-            type="text"
-            placeholder={t("Search by question or agent name...")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-md border border-border bg-background py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          />
+          <div className="flex items-center gap-3">
+            {/* Search */}
+            <div className="relative">
+              <IconComponent
+                name="Search"
+                className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="text"
+                placeholder={t("Search by question or agent name...")}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-64 rounded-md border border-border bg-background py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              className="gap-1.5"
+            >
+              <IconComponent name="RefreshCw" className="h-3.5 w-3.5" />
+              {t("Refresh")}
+            </Button>
+          </div>
         </div>
 
         {/* Status tabs */}
