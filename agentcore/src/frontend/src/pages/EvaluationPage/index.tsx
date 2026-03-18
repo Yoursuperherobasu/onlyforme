@@ -4,6 +4,7 @@ import { AuthContext } from "@/contexts/authContext";
 import type { LangfuseEnvironment } from "../ObservabilityPage/types";
 import { api } from "@/controllers/API/api";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -2448,20 +2449,18 @@ export default function EvaluationPage() {
             </div>
             <div className="space-y-2">
               <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={runOnNew}
-                  onChange={(e) => setRunOnNew(e.target.checked)}
-                  className="form-checkbox"
+                  onCheckedChange={(checked) => setRunOnNew(checked === true)}
                 />
                 <span className="text-sm">Run on New Traces</span>
               </label>
               <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={runOnExisting}
-                  onChange={(e) => setRunOnExisting(e.target.checked)}
-                  className="form-checkbox"
+                  onCheckedChange={(checked) =>
+                    setRunOnExisting(checked === true)
+                  }
                 />
                 <span className="text-sm">Run on Existing Traces</span>
               </label>
@@ -2525,11 +2524,11 @@ export default function EvaluationPage() {
                           key={fid}
                           className="flex items-center gap-2 py-1"
                         >
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={checked}
-                            onChange={(e) => {
-                              if (e.target.checked) {
+                            onCheckedChange={(next) => {
+                              const isChecked = next === true;
+                              if (isChecked) {
                                 setSelectedAgentIds((s) =>
                                   Array.from(new Set([...s, fid])),
                                 );
@@ -2539,7 +2538,6 @@ export default function EvaluationPage() {
                                 );
                               }
                             }}
-                            className="form-checkbox"
                           />
                           <span className="text-sm">{label}</span>
                         </label>

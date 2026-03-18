@@ -144,9 +144,10 @@ const router = createBrowserRouter(
             }
           >
             <Route path="" element={<AppAuthenticatedPage />}>
-              <Route path="" element={<CustomDashboardWrapperPage />}>
+                <Route path="" element={<CustomDashboardWrapperPage />}>
                 <Route path="" element={<CollectionPage />}>
                   <Route index element={<DefaultLandingRedirect />} />
+                  <Route path="help-support" element={<HelpSupportPage />} />
                   <Route
                     path="approval"
                     element={
@@ -357,10 +358,12 @@ const router = createBrowserRouter(
                  
                   <Route path="shortcuts" element={<ShortcutsPage />} />
                   <Route path="messages" element={<MessagesPage />} />
-                  <Route path="help-support" element={<HelpSupportPage />} />
+                  <Route
+                    path="help-support"
+                    element={<CustomNavigate replace to={"/help-support"} />}
+                  />
                   {CustomRoutesStore()}
                 </Route>
-                <Route path="help-support" element={<HelpSupportPage />} />
                 {CustomRoutesStorePages()}
                 <Route path="account">
                   <Route path="delete" element={<DeleteAccountPage />}></Route>
