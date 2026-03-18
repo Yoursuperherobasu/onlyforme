@@ -50,6 +50,24 @@ class GuardrailPayload(BaseModel):
     public_dept_ids: list[UUID] | None = None
 
 
+class GuardrailUpdatePayload(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    framework: str | None = None
+    provider: str | None = None
+    modelRegistryId: UUID | None = None
+    category: str | None = None
+    status: str | None = None
+    rulesCount: int | None = None
+    isCustom: bool | None = None
+    runtimeConfig: dict[str, Any] | None = None
+    org_id: UUID | None = None
+    dept_id: UUID | None = None
+    visibility: str | None = None
+    public_scope: str | None = None
+    public_dept_ids: list[UUID] | None = None
+
+
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "root"
 
@@ -87,6 +105,25 @@ def _string_ids(values: list[UUID] | None) -> list[str]:
     return [str(v) for v in (values or [])]
 
 
+def _field_supplied(payload: BaseModel, field_name: str) -> bool:
+    fields_set = getattr(payload, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(payload, "__fields_set__", set())
+    return field_name in fields_set
+
+
+def _first_membership_scope(
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> tuple[UUID | None, UUID | None]:
+    if dept_pairs:
+        current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+        return current_org_id, current_dept_id
+    if org_ids:
+        return sorted(org_ids, key=str)[0], None
+    return None, None
+
+
 async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set[UUID], list[tuple[UUID, UUID]]]:
     org_rows = (
         await session.exec(
@@ -109,7 +146,7 @@ async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set
     return org_ids, [(row[0], row[1]) for row in dept_rows]
 
 
-async def _validate_scope_refs(session: DbSession, payload: GuardrailPayload) -> None:
+async def _validate_scope_refs(session: DbSession, payload: GuardrailPayload | GuardrailUpdatePayload) -> None:
     if payload.dept_id and not payload.org_id:
         raise HTTPException(status_code=400, detail="dept_id requires org_id")
 
@@ -146,7 +183,7 @@ async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, 
 async def _enforce_creation_scope(
     session: DbSession,
     current_user: CurrentActiveUser,
-    payload: GuardrailPayload,
+    payload: GuardrailPayload | GuardrailUpdatePayload,
 ) -> tuple[str, str | None, list[str]]:
     user_role = normalize_role(str(current_user.role))
     visibility = _normalize_visibility(getattr(payload, "visibility", None))
@@ -160,10 +197,19 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if user_role in {"department_admin", "developer", "business_user"}:
-            if not dept_pairs:
+        if user_role == "root":
+            payload.org_id = None
+            payload.dept_id = None
+        elif user_role == "super_admin":
+            current_org_id, _ = _first_membership_scope(org_ids, dept_pairs)
+            if not current_org_id:
+                raise HTTPException(status_code=403, detail="No active organization scope found")
+            payload.org_id = current_org_id
+            payload.dept_id = None
+        elif user_role in {"department_admin", "developer", "business_user"}:
+            current_org_id, current_dept_id = _first_membership_scope(org_ids, dept_pairs)
+            if not current_org_id or not current_dept_id:
                 raise HTTPException(status_code=403, detail="No active department scope found")
-            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
             payload.org_id = current_org_id
             payload.dept_id = current_dept_id
         else:
@@ -274,8 +320,12 @@ def _can_edit_guardrail(
 
     role = normalize_role(str(current_user.role))
     row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
+    row_visibility = (row.get("visibility") or "private").strip().lower()
+    row_created_by = str(row.get("created_by"))
 
     if role == "super_admin":
+        if row_visibility == "private" and row_org_id is None and row.get("dept_id") is None:
+            return row_created_by == str(current_user.id)
         return bool(row_org_id and row_org_id in org_ids)
 
     if role == "department_admin":
@@ -313,8 +363,11 @@ def _can_delete_guardrail(
     role = normalize_role(str(current_user.role))
     user_id = str(current_user.id)
     row_org_id = UUID(row["org_id"]) if row.get("org_id") else None
+    row_visibility = (row.get("visibility") or "private").strip().lower()
 
     if role == "super_admin":
+        if row_visibility == "private" and row_org_id is None and row.get("dept_id") is None:
+            return str(row.get("created_by")) == user_id
         return bool(row_org_id and row_org_id in org_ids)
 
     if role == "department_admin":
@@ -336,7 +389,7 @@ def _can_delete_guardrail(
     return False
 
 
-def _validate_runtime_config_shape(payload: GuardrailPayload) -> None:
+def _validate_runtime_config_shape(payload: GuardrailPayload | GuardrailUpdatePayload) -> None:
     runtime_config = payload.runtimeConfig
     if runtime_config is None:
         return
@@ -431,6 +484,37 @@ def _is_nemo_runtime_config_ready(
         if isinstance(value, str) and value.strip() and value.strip() not in {".", "..."}:
             return True
     return False
+
+
+def _hydrate_guardrail_update_payload(payload: GuardrailUpdatePayload, row: dict[str, Any]) -> None:
+    if not _field_supplied(payload, "name"):
+        payload.name = row.get("name")
+    if not _field_supplied(payload, "description"):
+        payload.description = row.get("description")
+    if not _field_supplied(payload, "framework"):
+        payload.framework = row.get("framework")
+    if not _field_supplied(payload, "modelRegistryId"):
+        payload.modelRegistryId = UUID(row["model_registry_id"]) if row.get("model_registry_id") else None
+    if not _field_supplied(payload, "category"):
+        payload.category = row.get("category")
+    if not _field_supplied(payload, "status"):
+        payload.status = row.get("status")
+    if not _field_supplied(payload, "rulesCount"):
+        payload.rulesCount = row.get("rules_count")
+    if not _field_supplied(payload, "isCustom"):
+        payload.isCustom = row.get("is_custom")
+    if not _field_supplied(payload, "runtimeConfig"):
+        payload.runtimeConfig = row.get("runtime_config")
+    if not _field_supplied(payload, "org_id"):
+        payload.org_id = UUID(row["org_id"]) if row.get("org_id") else None
+    if not _field_supplied(payload, "visibility"):
+        payload.visibility = row.get("visibility")
+    if not _field_supplied(payload, "public_scope"):
+        payload.public_scope = row.get("public_scope")
+    if not _field_supplied(payload, "public_dept_ids"):
+        payload.public_dept_ids = [UUID(v) for v in (row.get("public_dept_ids") or [])]
+    if not _field_supplied(payload, "dept_id") and payload.public_scope != "organization":
+        payload.dept_id = UUID(row["dept_id"]) if row.get("dept_id") else None
 
 
 def _serialize_guardrail(
@@ -662,7 +746,7 @@ async def create_guardrail_catalogue(
 @router.patch("/{guardrail_id}")
 async def update_guardrail_catalogue(
     guardrail_id: UUID,
-    payload: GuardrailPayload,
+    payload: GuardrailUpdatePayload,
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
@@ -678,13 +762,8 @@ async def update_guardrail_catalogue(
     if not _can_edit_guardrail(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="Not authorized to edit this guardrail")
 
-    if payload.org_id is None:
-        payload.org_id = UUID(row["org_id"]) if row.get("org_id") else None
-    if payload.public_scope is None:
-        payload.public_scope = row.get("public_scope")
-    if payload.dept_id is None and payload.public_scope != "organization":
-        payload.dept_id = UUID(row["dept_id"]) if row.get("dept_id") else None
-    framework = _normalize_guardrail_framework(payload.framework or row.get("framework"))
+    _hydrate_guardrail_update_payload(payload, row)
+    framework = _normalize_guardrail_framework(payload.framework)
 
     visibility, public_scope, public_dept_ids = await _enforce_creation_scope(
         session, current_user, payload
@@ -712,7 +791,7 @@ async def update_guardrail_catalogue(
         "model_registry_id": str(model_row.id),
         "category": payload.category,
         "status": payload.status,
-        "rules_count": payload.rulesCount if payload.rulesCount is not None else row.get("rules_count"),
+        "rules_count": payload.rulesCount,
         "is_custom": payload.isCustom,
         "runtime_config": normalized_runtime_config,
         "org_id": str(payload.org_id) if payload.org_id else None,
