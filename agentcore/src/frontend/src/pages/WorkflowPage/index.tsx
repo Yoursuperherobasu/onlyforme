@@ -582,15 +582,29 @@ export default function WorkflowsView({
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8 md:py-6">
-        <div className="mb-4 flex items-center gap-3">
-          <h1 className="text-xl font-semibold md:text-2xl">{t("Agent Control Panel")}</h1>
+      <div className="flex-shrink-0 border-b px-4 py-3 sm:px-6 md:px-8 md:py-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-lg font-semibold md:text-xl">{t("Agent Control Panel")}</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder={t("Search agents...")}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-64 rounded-lg border bg-card py-2 pl-10 pr-4 text-sm"
+              />
+            </div>
+          </div>
         </div>
 
-        <div className="mb-6 inline-flex rounded-lg border bg-muted/30 p-1">
+        <div className="mt-3 inline-flex rounded-lg border bg-muted/30 p-1">
           <button
             type="button"
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
               activeTab === "UAT"
                 ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
@@ -601,7 +615,7 @@ export default function WorkflowsView({
           </button>
           <button
             type="button"
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
               activeTab === "PROD"
                 ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
@@ -611,20 +625,9 @@ export default function WorkflowsView({
             PROD
           </button>
         </div>
-
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={t("Search agents...")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
-          />
-        </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full">
             <thead className="border-b bg-muted/50">

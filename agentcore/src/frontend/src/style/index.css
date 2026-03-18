@@ -4,6 +4,11 @@
 
 /* TODO: Confirm that all colors here are found in tailwind config */
 
+/* Slightly scale down the entire UI for better fit on smaller screens */
+html {
+  font-size: 14.5px;
+}
+
 @layer base {
   :root {
     --font-sans: "Inter", sans-serif;

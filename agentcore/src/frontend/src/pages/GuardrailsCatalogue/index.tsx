@@ -311,9 +311,9 @@ export default function GuardrailsView({
         />
       ) : (
         <div className="flex h-full w-full flex-col overflow-hidden">
-          <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+          <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
             <div>
-              <div className="mb-2 flex items-center gap-3">
+              <div className="mb-1 flex items-center gap-3">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -322,7 +322,7 @@ export default function GuardrailsView({
                 >
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <h1 className="text-2xl font-semibold">{selectedFramework.name} Policies</h1>
+                <h1 className="text-xl font-semibold">{selectedFramework.name} Policies</h1>
               </div>
               <p className="text-sm text-muted-foreground">
                 {isProdView
@@ -372,7 +372,7 @@ export default function GuardrailsView({
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto p-8">
+          <div className="flex-1 overflow-auto p-4 sm:p-6">
             {isLoading ? (
               <div className="flex h-full w-full items-center justify-center">
                 <Loading />

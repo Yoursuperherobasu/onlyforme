@@ -54,10 +54,10 @@ export function EnhancedStatCard({
   accentColor?: string;
 }) {
   return (
-    <Card className="relative overflow-hidden border-0 shadow-sm hover:shadow-md transition-shadow">
+    <Card className="relative overflow-hidden border shadow-sm hover:shadow-md transition-shadow">
       <div className="absolute top-0 left-0 w-1 h-full" style={{ backgroundColor: accentColor }} />
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pl-5">
-        <CardTitle className="text-sm font-medium" style={{ color: THEME.textSecondary }}>{title}</CardTitle>
+        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
         {Icon && (
           <div className="p-2 rounded-lg" style={{ backgroundColor: `${accentColor}10` }}>
             <Icon className="h-4 w-4" style={{ color: accentColor }} />
@@ -67,8 +67,8 @@ export function EnhancedStatCard({
       <CardContent className="pl-5">
         <div className="flex items-end justify-between">
           <div>
-            <div className="text-2xl font-bold" style={{ color: THEME.textMain }}>{value}</div>
-            {subtitle && <p className="text-xs mt-1" style={{ color: THEME.textSecondary }}>{subtitle}</p>}
+            <div className="text-2xl font-bold text-foreground">{value}</div>
+            {subtitle && <p className="text-xs mt-1 text-muted-foreground">{subtitle}</p>}
             {trend && <div className="mt-2"><TrendIndicator trend={trend} /></div>}
           </div>
           {sparklineData && sparklineKey && (
@@ -92,11 +92,11 @@ export function ProgressBar({ value, max, color = THEME.primary, showLabel = tru
   return (
     <div className="w-full">
       <div className="flex items-center gap-2">
-        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
           <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, percentage)}%`, backgroundColor: color }} />
         </div>
         {showLabel && (
-          <span className="text-xs font-medium min-w-[40px] text-right" style={{ color: THEME.textSecondary }}>
+          <span className="text-xs font-medium min-w-[40px] text-right text-muted-foreground">
             {percentage.toFixed(0)}%
           </span>
         )}
@@ -108,13 +108,13 @@ export function ProgressBar({ value, max, color = THEME.primary, showLabel = tru
 export function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload || !payload.length) return null;
   return (
-    <div className="bg-white border shadow-lg rounded-lg p-3">
-      <p className="text-sm font-medium mb-2" style={{ color: THEME.textMain }}>{label}</p>
+    <div className="bg-card border border-border shadow-lg rounded-lg p-3">
+      <p className="text-sm font-medium mb-2 text-foreground">{label}</p>
       {payload.map((entry: any, idx: number) => (
         <div key={idx} className="flex items-center gap-2 text-sm">
           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
-          <span style={{ color: THEME.textSecondary }}>{entry.name}:</span>
-          <span className="font-medium" style={{ color: THEME.textMain }}>
+          <span className="text-muted-foreground">{entry.name}:</span>
+          <span className="font-medium text-foreground">
             {typeof entry.value === "number" && entry.name?.toLowerCase().includes("cost")
               ? `$${entry.value < 0.01 ? entry.value.toFixed(4) : entry.value.toFixed(2)}`
               : typeof entry.value === "number" && entry.name?.toLowerCase().includes("token")
@@ -133,21 +133,19 @@ export function TruncationBanner({ fetchedCount, onLoadAll, isLoading }: {
   isLoading: boolean;
 }) {
   return (
-    <Alert className="border-amber-200 bg-amber-50">
-      <AlertCircle className="h-4 w-4" style={{ color: THEME.warning }} />
-      <AlertTitle className="text-sm font-medium" style={{ color: THEME.textMain }}>
+    <Alert className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+      <AlertCircle className="h-4 w-4 text-amber-500" />
+      <AlertTitle className="text-sm font-medium text-foreground">
         Showing data from {fetchedCount.toLocaleString()} traces (limit reached)
       </AlertTitle>
       <AlertDescription className="flex items-center justify-between">
-        <span className="text-sm" style={{ color: THEME.textSecondary }}>
+        <span className="text-sm text-muted-foreground">
           There may be more traces. Narrow your date range for faster results, or load all data.
         </span>
-        <Button size="sm" variant="outline" onClick={onLoadAll} disabled={isLoading} className="ml-4 shrink-0 border-amber-300 hover:bg-amber-100">
+        <Button size="sm" variant="outline" onClick={onLoadAll} disabled={isLoading} className="ml-4 shrink-0 border-amber-300 hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900/30">
           {isLoading ? "Loading..." : "Load All Data"}
         </Button>
       </AlertDescription>
     </Alert>
   );
 }
-
-

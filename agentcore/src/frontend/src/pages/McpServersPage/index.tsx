@@ -318,10 +318,10 @@ export default function MCPServersPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header - Fixed */}
-      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-xl font-semibold md:text-2xl">{t("MCP Servers")}</h1>
+          <div className="mb-1 flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">{t("MCP Servers")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("Manage MCP Servers for use in your agents")}
@@ -363,7 +363,7 @@ export default function MCPServersPage() {
       </div>
 
       {/* Table - Scrollable */}
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
