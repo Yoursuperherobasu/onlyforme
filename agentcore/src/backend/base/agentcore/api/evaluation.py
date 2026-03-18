@@ -158,6 +158,18 @@ def _string_ids(values: list | None) -> list[str]:
     return [str(v) for v in (values or [])]
 
 
+def _first_eval_membership_scope(
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> tuple[UUID | None, UUID | None]:
+    if dept_pairs:
+        current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+        return current_org_id, current_dept_id
+    if org_ids:
+        return sorted(org_ids, key=str)[0], None
+    return None, None
+
+
 async def _get_eval_scope_memberships(session, user_id: UUID) -> tuple[set[UUID], list[tuple[UUID, UUID]]]:
     """Return (org_ids, dept_pairs) for the given user."""
     org_rows = (
@@ -231,14 +243,22 @@ async def _enforce_evaluator_creation_scope(
     if visibility == "private":
         public_scope = None
         public_dept_ids = []
-        if user_role in {"department_admin", "developer", "business_user"}:
-            if not dept_pairs:
+        if user_role == "root":
+            p_org_id = None
+            p_dept_id = None
+        elif user_role == "super_admin":
+            current_org_id, _ = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id:
+                raise HTTPException(status_code=403, detail="No active organization scope found")
+            p_org_id = current_org_id
+            p_dept_id = None
+        elif user_role in {"department_admin", "developer", "business_user"}:
+            current_org_id, current_dept_id = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id or not current_dept_id:
                 raise HTTPException(status_code=403, detail="No active department scope found")
-            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
             p_org_id = current_org_id
             p_dept_id = current_dept_id
         else:
-            # root / super_admin private evaluators remain global to the creator
             p_org_id = None
             p_dept_id = None
     else:
@@ -350,6 +370,12 @@ def _can_edit_evaluator(
 
     role = normalize_role(str(current_user.role))
     if role == "super_admin":
+        if (
+            (evaluator.visibility or "private").strip().lower() == "private"
+            and evaluator.org_id is None
+            and evaluator.dept_id is None
+        ):
+            return str(evaluator.user_id) == str(current_user.id)
         return bool(evaluator.org_id and evaluator.org_id in org_ids)
 
     if role == "department_admin":
@@ -865,8 +891,7 @@ def _dataset_owned_by_user(dataset_obj: Any, user_id: str) -> bool:
     """Best-effort user scoping for datasets via metadata."""
     metadata = get_attr(dataset_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        # Keep backward compatibility with datasets created before ownership metadata.
-        return True
+        return False
 
     owner = (
         metadata.get("app_user_id")
@@ -875,7 +900,7 @@ def _dataset_owned_by_user(dataset_obj: Any, user_id: str) -> bool:
         or metadata.get("created_by_user_id")
     )
     if owner is None:
-        return True
+        return False
     return str(owner) == str(user_id)
 
 
@@ -890,7 +915,7 @@ def _dataset_accessible_by_users(
     """Check if dataset is accessible by any of the allowed user IDs or visibility rules."""
     metadata = get_attr(dataset_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        return True
+        return False
     owner = (
         metadata.get("app_user_id")
         or metadata.get("user_id")
@@ -909,7 +934,7 @@ def _dataset_accessible_by_users(
         )
 
     # Owner always has access
-    if owner is not None and str(owner) in allowed_user_ids:
+    if current_user and owner is not None and str(owner) == str(current_user.id):
         return True
 
     # Check visibility-based access
@@ -927,9 +952,6 @@ def _dataset_accessible_by_users(
         public_scope = metadata.get("public_scope")
         ds_public_dept_ids = metadata.get("public_dept_ids") or []
 
-        if current_user and _is_root_user(current_user):
-            return True
-
         if public_scope == "organization" and ds_org_id and org_ids:
             if UUID(ds_org_id) in org_ids:
                 return True
@@ -943,17 +965,14 @@ def _dataset_accessible_by_users(
                 if ds_dept_id in user_dept_ids:
                     return True
 
-    # Fall back to allowed_user_ids check (for non-visibility-aware callers)
-    if owner is None:
-        return True
-    return str(owner) in allowed_user_ids
+    return False
 
 
 def _dataset_item_owned_by_user(item_obj: Any, user_id: str) -> bool:
     """Best-effort user scoping for dataset items via metadata."""
     metadata = get_attr(item_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        return True
+        return False
     owner = (
         metadata.get("app_user_id")
         or metadata.get("user_id")
@@ -961,7 +980,7 @@ def _dataset_item_owned_by_user(item_obj: Any, user_id: str) -> bool:
         or metadata.get("created_by_user_id")
     )
     if owner is None:
-        return True
+        return False
     return str(owner) == str(user_id)
 
 
@@ -969,7 +988,7 @@ def _dataset_item_accessible_by_users(item_obj: Any, allowed_user_ids: set[str])
     """Check if dataset item is accessible by any of the allowed user IDs."""
     metadata = get_attr(item_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        return True
+        return False
     owner = (
         metadata.get("app_user_id")
         or metadata.get("user_id")
@@ -977,7 +996,7 @@ def _dataset_item_accessible_by_users(item_obj: Any, allowed_user_ids: set[str])
         or metadata.get("created_by_user_id")
     )
     if owner is None:
-        return True
+        return False
     return str(owner) in allowed_user_ids
 
 
@@ -1030,8 +1049,11 @@ def _can_manage_dataset(
         )
 
     role = normalize_role(str(getattr(current_user, "role", "")))
-    if role == "super_admin" and ds_org_id and org_ids:
-        return UUID(str(ds_org_id)) in org_ids
+    if role == "super_admin":
+        if visibility == "private" and owner is not None and ds_org_id is None and ds_dept_id is None:
+            return str(owner) == str(current_user.id)
+        if ds_org_id and org_ids:
+            return UUID(str(ds_org_id)) in org_ids
 
     if role == "department_admin":
         if _is_multi_dept_dataset(metadata):
@@ -1066,6 +1088,81 @@ async def _check_dataset_access(
     )
 
 
+async def _enforce_dataset_creation_scope(
+    session,
+    current_user,
+    payload: CreateDatasetRequest,
+) -> tuple[str, str | None, list[str], str | None, str | None]:
+    user_role = normalize_role(str(current_user.role))
+    visibility = _normalize_visibility(payload.visibility)
+    public_scope = _normalize_public_scope(payload.public_scope) if visibility == "public" else None
+    public_dept_ids = _string_ids(payload.public_dept_ids)
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+
+    p_org_id = payload.org_id
+    p_dept_id = payload.dept_id
+
+    if visibility == "private":
+        public_scope = None
+        public_dept_ids = []
+        if user_role == "root":
+            p_org_id = None
+            p_dept_id = None
+        elif user_role == "super_admin":
+            current_org_id, _ = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id:
+                raise HTTPException(status_code=403, detail="No active organization scope found")
+            p_org_id = current_org_id
+            p_dept_id = None
+        elif user_role in {"department_admin", "developer", "business_user"}:
+            current_org_id, current_dept_id = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id or not current_dept_id:
+                raise HTTPException(status_code=403, detail="No active department scope found")
+            p_org_id = current_org_id
+            p_dept_id = current_dept_id
+        else:
+            p_org_id = None
+            p_dept_id = None
+    else:
+        if public_scope is None:
+            raise HTTPException(status_code=400, detail="public_scope is required when visibility is public")
+        if public_scope == "organization":
+            if not p_org_id:
+                raise HTTPException(status_code=400, detail="org_id is required for public organization visibility")
+            if user_role != "root" and p_org_id not in org_ids:
+                raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+            p_dept_id = None
+            public_dept_ids = []
+        else:
+            if user_role in {"super_admin", "root"}:
+                if not p_org_id:
+                    raise HTTPException(status_code=400, detail="org_id is required for department visibility")
+                if user_role != "root" and p_org_id not in org_ids:
+                    raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+                if not public_dept_ids and p_dept_id:
+                    public_dept_ids = [str(p_dept_id)]
+                if not public_dept_ids:
+                    raise HTTPException(status_code=400, detail="Select at least one department")
+                await _validate_departments_exist_for_org(session, p_org_id, [UUID(v) for v in public_dept_ids])
+                p_dept_id = UUID(public_dept_ids[0]) if len(public_dept_ids) == 1 else None
+            else:
+                current_org_id, current_dept_id = _first_eval_membership_scope(org_ids, dept_pairs)
+                if not current_org_id or not current_dept_id:
+                    raise HTTPException(status_code=403, detail="No active department scope found")
+                p_org_id = current_org_id
+                p_dept_id = current_dept_id
+                public_dept_ids = [str(current_dept_id)]
+
+    await _validate_eval_scope_refs(session, p_org_id, p_dept_id)
+    return (
+        visibility,
+        public_scope,
+        public_dept_ids,
+        str(p_org_id) if p_org_id else None,
+        str(p_dept_id) if p_dept_id else None,
+    )
+
+
 def _merge_dataset_metadata(
     metadata: Any,
     *,
@@ -1078,18 +1175,28 @@ def _merge_dataset_metadata(
 ) -> dict[str, Any]:
     """Attach app metadata while preserving user-provided fields."""
     base = _as_dict(metadata)
-    base.setdefault("app_user_id", str(user_id))
-    base.setdefault("created_by_user_id", str(user_id))
+    base["app_user_id"] = str(user_id)
+    base["created_by_user_id"] = str(user_id)
+    base["owner_user_id"] = str(user_id)
+    base["user_id"] = str(user_id)
     base.setdefault("created_via", "agentcore-evaluation")
     base["visibility"] = visibility or "private"
     if public_scope:
         base["public_scope"] = public_scope
+    else:
+        base.pop("public_scope", None)
     if org_id:
         base["org_id"] = str(org_id)
+    else:
+        base.pop("org_id", None)
     if dept_id:
         base["dept_id"] = str(dept_id)
+    else:
+        base.pop("dept_id", None)
     if public_dept_ids:
         base["public_dept_ids"] = [str(d) for d in public_dept_ids]
+    else:
+        base.pop("public_dept_ids", None)
     return base
 
 
@@ -4761,57 +4868,9 @@ async def create_dataset(
     if not dataset_name:
         raise HTTPException(status_code=400, detail="Dataset name is required")
 
-    # Resolve visibility / scope
-    visibility = _normalize_visibility(payload.visibility)
-    public_scope = _normalize_public_scope(payload.public_scope) if visibility == "public" else None
-    resolved_org_id: str | None = None
-    resolved_dept_id: str | None = None
-    resolved_public_dept_ids: list[str] | None = None
-
-    if visibility == "public":
-        role = normalize_role(current_user.role)
-        org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-        user_dept_ids = {d for _, d in dept_pairs}
-
-        if public_scope == "organization":
-            if payload.org_id:
-                if not _is_root_user(current_user) and payload.org_id not in org_ids:
-                    raise HTTPException(status_code=403, detail="Organization not in your scope.")
-                resolved_org_id = str(payload.org_id)
-            elif org_ids:
-                resolved_org_id = str(sorted(org_ids, key=str)[0])
-        elif public_scope == "department":
-            if payload.org_id:
-                if not _is_root_user(current_user) and payload.org_id not in org_ids:
-                    raise HTTPException(status_code=403, detail="Organization not in your scope.")
-                resolved_org_id = str(payload.org_id)
-            elif org_ids:
-                resolved_org_id = str(sorted(org_ids, key=str)[0])
-
-            if payload.public_dept_ids:
-                if not _is_root_user(current_user) and role != "super_admin":
-                    for did in payload.public_dept_ids:
-                        if did not in user_dept_ids:
-                            raise HTTPException(status_code=403, detail=f"Department {did} is not in your scope.")
-                if resolved_org_id:
-                    await _validate_departments_exist_for_org(
-                        session, UUID(resolved_org_id), payload.public_dept_ids
-                    )
-                resolved_public_dept_ids = [str(d) for d in payload.public_dept_ids]
-            elif payload.dept_id:
-                if not _is_root_user(current_user) and role != "super_admin":
-                    if payload.dept_id not in user_dept_ids:
-                        raise HTTPException(status_code=403, detail="Department is not in your scope.")
-                if resolved_org_id:
-                    await _validate_departments_exist_for_org(
-                        session, UUID(resolved_org_id), [payload.dept_id]
-                    )
-                resolved_dept_id = str(payload.dept_id)
-                resolved_public_dept_ids = [str(payload.dept_id)]
-            elif dept_pairs:
-                first_dept = sorted((d for _, d in dept_pairs), key=str)[0]
-                resolved_dept_id = str(first_dept)
-                resolved_public_dept_ids = [str(first_dept)]
+    visibility, public_scope, resolved_public_dept_ids, resolved_org_id, resolved_dept_id = (
+        await _enforce_dataset_creation_scope(session, current_user, payload)
+    )
 
     try:
         dataset = client.create_dataset(
@@ -4950,9 +5009,6 @@ async def list_dataset_items(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
-    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Not authorized to delete dataset items")
 
     try:
         rows, total = _fetch_dataset_items_page(client, dataset_name, page, limit)
@@ -4998,7 +5054,7 @@ async def create_dataset_item(
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
     org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
     if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Not authorized to delete dataset runs")
+        raise HTTPException(status_code=403, detail="Not authorized to modify dataset items")
 
     try:
         return _create_dataset_item_for_user(
@@ -5038,6 +5094,9 @@ async def upload_dataset_items_csv(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to modify dataset items")
 
     filename = (csv_file.filename or "").strip()
     if filename and not filename.lower().endswith(".csv"):
@@ -5161,6 +5220,9 @@ async def delete_dataset_item(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete dataset items")
 
     item_obj = _fetch_dataset_item_by_id(client, item_id)
     if item_obj is None:
@@ -5176,9 +5238,6 @@ async def delete_dataset_item(
     item_dataset_name = str(get_attr(item_obj, "dataset_name", "datasetName", default="") or "")
     if item_dataset_name and item_dataset_name != dataset_name:
         raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found in dataset '{dataset_name}'")
-
-    if not _dataset_item_accessible_by_users(item_obj, allowed_user_ids):
-        raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found")
 
     try:
         _delete_dataset_item(client, item_id)
@@ -5355,6 +5414,9 @@ async def delete_dataset_run(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete dataset runs")
 
     run_obj = _find_dataset_run_by_id(client, dataset_name=dataset_name, run_id=run_id, max_scan=1000)
     if not run_obj:
@@ -6407,6 +6469,8 @@ async def update_evaluator_config(
             eval_obj.visibility = visibility
             eval_obj.public_scope = public_scope
             eval_obj.public_dept_ids = public_dept_ids or None
+            if visibility == "private":
+                eval_obj.user_id = current_user.id
 
             session.add(eval_obj)
             await session.commit()
