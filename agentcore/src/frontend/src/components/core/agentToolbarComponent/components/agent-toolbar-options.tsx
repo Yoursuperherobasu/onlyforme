@@ -12,12 +12,14 @@ type AgentToolbarOptionsProps = {
   setOpen: Dispatch<SetStateAction<boolean>>;
   openApiModal: boolean;
   setOpenApiModal: Dispatch<SetStateAction<boolean>>;
+  readOnly?: boolean;
 };
 const AgentToolbarOptions = ({
   open,
   setOpen,
   openApiModal,
   setOpenApiModal,
+  readOnly = false,
 }: AgentToolbarOptionsProps) => {
   const hasIO = useAgentStore((state) => state.hasIO);
 
@@ -32,11 +34,13 @@ const AgentToolbarOptions = ({
         />
         
       </div>
-      <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
-        <PublishStatusBadge />
-        <PublishVersionDropdown />
-        <PublishButton />
-      </div>
+      {!readOnly && (
+        <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
+          <PublishStatusBadge />
+          <PublishVersionDropdown />
+          <PublishButton />
+        </div>
+      )}
       <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">
         <TeamsButton />
       </div>

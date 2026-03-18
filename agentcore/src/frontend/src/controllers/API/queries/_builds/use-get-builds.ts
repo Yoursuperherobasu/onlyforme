@@ -24,6 +24,12 @@ export const useGetBuildsQuery: useQueryFunctionType<
   const setAgentPool = useAgentStore((state) => state.setAgentPool);
   const currentAgent = useAgentStore((state) => state.currentAgent);
 
+  const isValidUuid =
+    !!resolvedAgentId &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      resolvedAgentId,
+    );
+
   const responseFn = async () => {
     const config = {};
     config["params"] = {
@@ -46,7 +52,7 @@ export const useGetBuildsQuery: useQueryFunctionType<
     {
       placeholderData: keepPreviousData,
       refetchOnWindowFocus: false,
-      enabled: !!resolvedAgentId,
+      enabled: isValidUuid,
       retry: 0,
       retryDelay: 0,
     },

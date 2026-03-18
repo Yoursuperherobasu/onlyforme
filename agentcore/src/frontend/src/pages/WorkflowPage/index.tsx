@@ -58,6 +58,8 @@ interface WorkagentType {
   inputType?: "chat" | "autonomous" | "file_processing";
 }
 
+const EMPTY_WORKFLOWS: WorkagentType[] = [];
+
 interface WorkflowsViewProps {
   workflows?: WorkagentType[];
   setSearch?: (search: string) => void;
@@ -72,7 +74,7 @@ function formatDateTime(value?: string | null): string {
 }
 
 export default function WorkflowsView({
-  workflows = [],
+  workflows = EMPTY_WORKFLOWS,
   setSearch,
   onWorkagentClick,
 }: WorkflowsViewProps): JSX.Element {

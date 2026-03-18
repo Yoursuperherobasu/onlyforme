@@ -42,6 +42,12 @@ export const useGetPublishStatus: useQueryFunctionType<
 > = (params, options?) => {
   const { query } = UseRequestProcessor();
 
+  const isValidUuid =
+    !!params?.agent_id &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      params.agent_id,
+    );
+
   const getPublishStatusFn = async (): Promise<IAgentPublishStatus | null> => {
     if (!params?.agent_id) {
       return null;
@@ -57,7 +63,7 @@ export const useGetPublishStatus: useQueryFunctionType<
     ["useGetPublishStatus", params?.agent_id],
     getPublishStatusFn,
     {
-      enabled: !!params?.agent_id,
+      enabled: isValidUuid,
       ...options,
     },
   );
