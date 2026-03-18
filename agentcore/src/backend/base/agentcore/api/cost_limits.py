@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS cost_limit_notification (
 _CREATE_INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS ix_cost_limit_org_id ON cost_limit(org_id);
 CREATE INDEX IF NOT EXISTS ix_cost_limit_dept_id ON cost_limit(dept_id);
-CREATE INDEX IF NOT EXISTS ix_cost_limit_notification_limit_id ON cost_limit_notification(cost_limit_id);
+CREATE INDEX IF NOT EXISTS ix_cost_limit_notification_cost_limit_id ON cost_limit_notification(cost_limit_id);
 """
 
 
