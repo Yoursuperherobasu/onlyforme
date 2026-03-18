@@ -503,9 +503,7 @@ export default function ChatMessage({
                   onCopy={() => {
                     navigator.clipboard.writeText(chatMessage);
                   }}
-                  onEdit={
-                    playgroundPage ? undefined : () => setEditMessage(true)
-                  }
+                  onEdit={undefined}
                   className="h-fit group-hover:visible"
                   isBotMessage={!chat.isSend}
                   onEvaluate={handleEvaluateAnswer}
