@@ -215,27 +215,28 @@ export default function ApprovalPage() {
         </div>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-4 sm:px-6 md:px-8">
+      {/* Filter Tabs + Status Tabs */}
+      <div className="flex items-center gap-3 border-b border-border px-4 py-3 sm:px-6 md:px-8">
         {visibleTabs.map((tab) => (
           <Button
             key={tab.id}
+            size="sm"
             variant={activeTab === tab.id ? "default" : "outline"}
             onClick={() => setActiveTab(tab.id)}
           >
             {t(tab.label)}
           </Button>
         ))}
-      </div>
 
-      {/* Status Tabs */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-4 sm:px-6 md:px-8">
+        <div className="h-6 w-px bg-border mx-1" />
+
         {(activeTab === "package"
           ? (["all", "pending", "approved", "rejected", "deployed", "cancelled"] as FilterType[])
           : (["all", "pending", "approved", "rejected"] as FilterType[])
         ).map((type) => (
           <Button
             key={type}
+            size="sm"
             variant={filter === type ? "default" : "outline"}
             onClick={() => setFilter(type)}
           >

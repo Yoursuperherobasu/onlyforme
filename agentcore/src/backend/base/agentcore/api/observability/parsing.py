@@ -8,14 +8,13 @@ multi-tier caching.
 import json
 import time
 import random
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from loguru import logger
+
 from .langfuse_client import is_v3_client
 from .models import ObservationResponse
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Process-local observation caches
@@ -478,7 +477,7 @@ def call_with_rate_limit_retry(method: Any, *args: Any, **kwargs: Any) -> Any:
             if not _is_rate_limited_error(exc) or attempt >= 2:
                 raise
             backoff = min(1.5, (0.2 * (2 ** attempt)) + random.uniform(0.0, 0.1))
-            logger.debug("Langfuse rate-limited; retrying in %.2fs", backoff)
+            logger.debug("Langfuse rate-limited; retrying in {:.2f}s", backoff)
             time.sleep(backoff)
     if last_exc is not None:
         raise last_exc
@@ -577,10 +576,11 @@ def fetch_observations_for_trace(client: Any, trace_id: str) -> list:
         try:
             observations = _try_call(client.fetch_observations)
             if observations:
+                logger.debug("fetch_obs[{}]: got {} via fetch_observations()", trace_id_str[:8], len(observations))
                 _REQUEST_OBSERVATIONS_CACHE[obs_cache_key] = list(observations)
                 return _cache_and_return_observations(trace_id_str, observations, cache_key=obs_cache_key)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("fetch_obs[{}]: fetch_observations() failed: {}", trace_id_str[:8], exc)
 
     # v3 fallbacks
     if is_v3_client(client) and hasattr(client, "api"):
@@ -595,20 +595,22 @@ def fetch_observations_for_trace(client: Any, trace_id: str) -> list:
                 try:
                     observations = _try_call(method)
                     if observations:
+                        logger.debug("fetch_obs[{}]: got {} via api.{}.{}()", trace_id_str[:8], len(observations), attr_name, method_name)
                         _REQUEST_OBSERVATIONS_CACHE[obs_cache_key] = list(observations)
                         return _cache_and_return_observations(trace_id_str, observations, cache_key=obs_cache_key)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("fetch_obs[{}]: api.{}.{}() failed: {}", trace_id_str[:8], attr_name, method_name, exc)
 
     # Direct client fallback
     if hasattr(client, "client") and hasattr(client.client, "observations"):
         try:
             observations = _try_call(client.client.observations.list)
             if observations:
+                logger.debug("fetch_obs[{}]: got {} via client.client.observations.list()", trace_id_str[:8], len(observations))
                 _REQUEST_OBSERVATIONS_CACHE[obs_cache_key] = list(observations)
                 return _cache_and_return_observations(trace_id_str, observations, cache_key=obs_cache_key)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("fetch_obs[{}]: client.client.observations.list() failed: {}", trace_id_str[:8], exc)
 
     # Last fallback: embedded observations in trace detail
     try:
@@ -616,14 +618,26 @@ def fetch_observations_for_trace(client: Any, trace_id: str) -> list:
         embedded = get_attr(trace_obj, "observations", default=[]) if trace_obj else []
         if isinstance(embedded, (list, tuple)) and embedded:
             observations = list(embedded)
+            logger.debug("fetch_obs[{}]: got {} via fetch_trace_by_id() embedded", trace_id_str[:8], len(observations))
             _REQUEST_OBSERVATIONS_CACHE[obs_cache_key] = list(observations)
             return _cache_and_return_observations(trace_id_str, observations, cache_key=obs_cache_key)
-    except Exception:
-        pass
+        elif trace_obj:
+            # Even without embedded observations, try to extract metrics from the full trace
+            logger.debug("fetch_obs[{}]: fetch_trace_by_id() returned trace but no embedded observations", trace_id_str[:8])
+    except Exception as exc:
+        logger.debug("fetch_obs[{}]: fetch_trace_by_id() fallback failed: {}", trace_id_str[:8], exc)
 
     # Cache non-empty only at process level; always cache at request level
     if observations:
         _cache_and_return_observations(trace_id_str, observations, cache_key=obs_cache_key)
+    else:
+        logger.info(
+            "fetch_obs[{}]: ALL methods failed — returning empty (is_v3={}, has_api={}, has_fetch_obs={})",
+            trace_id_str[:8],
+            is_v3_client(client),
+            hasattr(client, "api"),
+            hasattr(client, "fetch_observations"),
+        )
     _REQUEST_OBSERVATIONS_CACHE[obs_cache_key] = list(observations)
     return observations
 

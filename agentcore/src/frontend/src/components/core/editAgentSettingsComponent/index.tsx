@@ -198,6 +198,7 @@ export const EditAgentSettings: React.FC<
               selectedTags={tags}
               onChange={setTags}
               placeholder="Add tags (e.g. rag, chatbot, hitl)..."
+              maxTags={10}
               disabled={locked}
             />
           </div>

@@ -6,7 +6,6 @@ the same cached enriched trace list so data is always consistent across tabs.
 
 import hashlib
 import time
-import logging
 import concurrent.futures
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,7 +28,12 @@ from .parsing import (
     _REQUEST_OBSERVATIONS_CACHE,
 )
 
-logger = logging.getLogger(__name__)
+from loguru import logger
+
+# Cache for full-trace objects fetched during pre-enrichment.
+# When the list API lacks token/cost/model data, we fetch individual traces
+# and store them here so _build_enriched_traces can use the richer data.
+_FULL_TRACE_CACHE: dict[str, Any] = {}
 
 # ---------------------------------------------------------------------------
 # EnrichedTrace — the single data structure all endpoints consume
@@ -105,6 +109,9 @@ class TraceStore:
         cached = cls._cache.get(cache_key)
         if cached and (now - cached.created_at) <= cls.FRESH_TTL:
             return cached.traces, cached.truncated
+
+        # Clear per-request full-trace cache
+        _FULL_TRACE_CACHE.clear()
 
         # Fetch raw traces
         raw_traces = _fetch_scoped_traces(
@@ -294,7 +301,7 @@ def _fetch_scoped_traces(
                 if rows:
                     return rows[:broad_limit]
             except Exception as exc:
-                logger.debug("Broad fetch_traces failed: %s", exc)
+                logger.debug("Broad fetch_traces failed: {}", exc)
 
         if hasattr(client_obj, "api"):
             api_obj = getattr(client_obj, "api")
@@ -322,7 +329,7 @@ def _fetch_scoped_traces(
                     if rows:
                         return rows[:broad_limit]
                 except Exception as exc:
-                    logger.debug("Broad api.trace.list failed: %s", exc)
+                    logger.debug("Broad api.trace.list failed: {}", exc)
 
         return []
 
@@ -498,20 +505,30 @@ def _pre_enrich_traces(
         if obs_key in _REQUEST_OBSERVATIONS_CACHE or trace_id in _REQUEST_OBSERVATIONS_CACHE:
             continue
 
-        # Trace-level data already present?
+        # Trace-level data already present? Only skip if tokens AND models are available.
+        # Cost alone is not enough — Langfuse list API often returns cost but not tokens/models.
         tot, _, _, cost, _, mods, _ = extract_trace_metrics(trace)
-        if tot > 0 or cost > 0.0 or mods:
+        if tot > 0 and mods:
             continue
 
         needs_enrichment.append((trace_id, trace_client))
 
     if not needs_enrichment:
+        logger.debug("pre_enrich: all {} traces already have trace-level data or are cached", len(traces))
         return
 
     if len(needs_enrichment) > max_enrichments:
+        logger.info("pre_enrich: capping enrichment from {} to {} traces", len(needs_enrichment), max_enrichments)
         needs_enrichment = needs_enrichment[:max_enrichments]
 
-    def _fetch_one(args: tuple[str, Any]) -> None:
+    logger.info("pre_enrich: {}/{} traces need observation enrichment", len(needs_enrichment), len(traces))
+
+    success_count = 0
+    empty_count = 0
+    error_count = 0
+
+    def _fetch_one(args: tuple[str, Any]) -> str:
+        """Returns 'ok', 'empty', or 'error'."""
         tid, client = args
         try:
             obs = fetch_observations_for_trace(client, tid)
@@ -525,11 +542,44 @@ def _pre_enrich_traces(
                         _OBSERVATIONS_CACHE[primary_key] = {"ts": time.monotonic(), "observations": obs}
                         _REQUEST_OBSERVATIONS_CACHE[primary_key] = list(obs)
                         break
-        except Exception:
-            pass
+            # If still empty, try fetch_trace_by_id as last resort
+            if not obs:
+                try:
+                    trace_obj = fetch_trace_by_id(client, tid)
+                    if trace_obj:
+                        embedded = get_attr(trace_obj, "observations", default=[])
+                        if isinstance(embedded, (list, tuple)) and embedded:
+                            obs = list(embedded)
+                            obs_key = observation_cache_key(client, tid)
+                            _OBSERVATIONS_CACHE[obs_key] = {"ts": time.monotonic(), "observations": obs}
+                            _REQUEST_OBSERVATIONS_CACHE[obs_key] = list(obs)
+                        else:
+                            # Store the full trace — it may have usage_details/cost_details
+                            # that the list API doesn't return
+                            _FULL_TRACE_CACHE[tid] = trace_obj
+                            # Check if this full trace has metrics the list version didn't
+                            ft_tok, _, _, ft_cost, _, ft_models, _ = extract_trace_metrics(trace_obj)
+                            if ft_tok > 0 or ft_cost > 0.0 or ft_models:
+                                logger.debug("pre_enrich: full trace {} has metrics (tokens={}, cost={:.4f}, models={})",
+                                             tid[:8], ft_tok, ft_cost, ft_models)
+                                return "ok"
+                except Exception:
+                    pass
+            return "ok" if obs else "empty"
+        except Exception as exc:
+            logger.debug("pre_enrich: failed to fetch observations for trace {}: {}", tid, exc)
+            return "error"
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(needs_enrichment))) as pool:
-        list(pool.map(_fetch_one, needs_enrichment))
+        results = list(pool.map(_fetch_one, needs_enrichment))
+        success_count = sum(1 for r in results if r == "ok")
+        empty_count = sum(1 for r in results if r == "empty")
+        error_count = sum(1 for r in results if r == "error")
+
+    logger.info(
+        "pre_enrich: completed — {} ok, {} empty, {} errors (out of {})",
+        success_count, empty_count, error_count, len(needs_enrichment),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -583,17 +633,22 @@ def get_trace_metrics(
         "observation_count": int(observation_count or 0),
     }
 
-    # Determine if observation fallback is needed
+    # Determine if observation fallback is needed.
+    # Langfuse list API often returns cost but NOT tokens/models, so we must
+    # fall back to observations whenever tokens or models are missing.
     needs_fallback = (
         allow_observation_fallback
         and bool(trace_id)
-        and metrics["total_tokens"] == 0
-        and metrics["total_cost"] == 0.0
-        and not metrics["models"]
+        and (metrics["total_tokens"] == 0 or not metrics["models"])
     )
 
     if not needs_fallback:
+        logger.debug("get_trace_metrics: trace {} has full data (tokens={}, cost={:.4f}, models={})",
+                     trace_id, metrics["total_tokens"], metrics["total_cost"], metrics["models"])
         return metrics
+
+    logger.debug("get_trace_metrics: trace {} needs observation fallback (tokens={}, cost={:.4f}, models={})",
+                 trace_id, metrics["total_tokens"], metrics["total_cost"], metrics["models"])
 
     # Check observation cache first (don't count cache hits against budget)
     _tid_s = str(trace_id) if trace_id else ""
@@ -666,16 +721,20 @@ def _fetch_observations_with_fallback(primary_client: Any, all_clients: list[Any
 def _build_enriched_traces(raw_traces: list[Any], clients: list[Any]) -> list[EnrichedTrace]:
     """Convert raw Langfuse trace objects into enriched traces."""
     enriched: list[EnrichedTrace] = []
-    budget: dict[str, int] = {"remaining": min(200, max(50, len(raw_traces)))}
+    budget: dict[str, int] = {"remaining": min(500, max(100, len(raw_traces) * 2))}
 
     for trace in raw_traces:
         trace_id = get_trace_id(trace)
         if not trace_id:
             continue
 
+        # If a richer full-trace was fetched during pre-enrichment, use it
+        # for metric extraction instead of the list-API trace object
+        effective_trace = _FULL_TRACE_CACHE.get(trace_id, trace)
+
         trace_client = _resolve_trace_client(trace, clients) or (clients[0] if clients else None)
         metrics = get_trace_metrics(
-            trace_client, trace,
+            trace_client, effective_trace,
             allow_observation_fallback=True,
             fallback_budget=budget,
             all_clients=clients,
@@ -711,4 +770,11 @@ def _build_enriched_traces(raw_traces: list[Any], clients: list[Any]) -> list[En
             _client_idx=idx,
         ))
 
+    with_tokens = sum(1 for t in enriched if t.total_tokens > 0)
+    with_cost = sum(1 for t in enriched if t.total_cost > 0.0)
+    with_models = sum(1 for t in enriched if t.models)
+    logger.info(
+        "build_enriched: {} traces — {} with tokens, {} with cost, {} with models (budget remaining: {})",
+        len(enriched), with_tokens, with_cost, with_models, budget["remaining"],
+    )
     return enriched

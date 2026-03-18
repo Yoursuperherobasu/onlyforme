@@ -7,6 +7,7 @@ approve/reject pending PROD publish requests.
 from datetime import datetime, timezone
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from loguru import logger
 from pydantic import BaseModel
@@ -308,6 +309,22 @@ async def _migrate_pinecone_for_prod(
                 f"[PINECONE_MIGRATION] Done: {copied} vectors copied to '{prod_namespace}'"
             )
             copy_results.append({"plan": plan, "copied": copied})
+        except httpx.HTTPStatusError as http_err:
+            # 400 with "empty or does not exist" means the UAT namespace has no
+            # vectors yet (agent configured Pinecone but hasn't ingested data).
+            # Treat as a no-op: create the PROD namespace reference in the
+            # snapshot so it's ready once data is ingested later.
+            detail = str(http_err)
+            if http_err.response.status_code == 400 and "empty or does not exist" in detail:
+                logger.warning(
+                    f"[PINECONE_MIGRATION] Source namespace '{uat_namespace}' is empty/missing "
+                    f"in index '{index_name}' — skipping copy (0 vectors). "
+                    f"PROD namespace '{prod_namespace}' will be used once data is available."
+                )
+                copy_results.append({"plan": plan, "copied": 0})
+            else:
+                logger.error(f"[PINECONE_MIGRATION] Failed to copy namespace: {http_err}")
+                raise
         except Exception as copy_err:
             logger.error(f"[PINECONE_MIGRATION] Failed to copy namespace: {copy_err}")
             # Do NOT update snapshot — raise so caller knows migration failed.

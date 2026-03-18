@@ -250,8 +250,9 @@ async def browse_registry(
         if tag:
             # JSON array contains — works for PostgreSQL
             # For tags stored as JSON array, use cast + contains
+            from sqlalchemy import String
             stmt = stmt.where(
-                AgentRegistry.tags.cast(str).ilike(f"%{tag}%"),  # type: ignore[union-attr]
+                AgentRegistry.tags.cast(String).ilike(f"%{tag}%"),  # type: ignore[union-attr]
             )
 
         # Environment filter

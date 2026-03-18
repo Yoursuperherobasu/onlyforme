@@ -15,7 +15,13 @@
       "Bash(grep -r \"createNewAgent\\\\|AddAgentModal\\\\|CreateAgent\" /d/final_code/aimldevteam/agentcore/src/frontend/src/pages --include=*.tsx)",
       "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src/pages -name *registry* -o -name *catalogue* -type f)",
       "Bash(find d:/final_code/aimldevteam/agentcore/src/backend/base/agentcore -type f -name *.py)",
-      "Bash(find d:/final_code/aimldevteam/agentcore/src/backend/base/agentcore/services -type f -name *.py)"
+      "Bash(find d:/final_code/aimldevteam/agentcore/src/backend/base/agentcore/services -type f -name *.py)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src -type f \\\\\\(-name *.tsx -o -name *.ts -o -name *.jsx -o -name *.js \\\\\\))",
+      "Bash(grep -r \"Projects\\\\|PROJECT\" /d/final_code/aimldevteam/agentcore/src/frontend/src/pages --include=*.tsx --include=*.ts -l)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -name *design* -o -name *theme* -o -name *principle*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -path *node_modules -prune -o -name designprinciples* -o -name design-principles* -o -name *design-system*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src/customization/components -type f -name *.tsx -o -name *.ts)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -name README* -o -name DESIGN* -o -name design*)"
     ]
   }
 }

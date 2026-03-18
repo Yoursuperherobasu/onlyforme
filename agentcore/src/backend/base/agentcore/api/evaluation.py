@@ -5496,7 +5496,7 @@ async def run_saved_evaluators_for_new_trace(
 ) -> int:
     """Run all saved evaluators targeting new traces for a just-finished trace."""
     logger.info(
-        f"🔍 EVALUATOR FUNCTION CALLED: trace={trace_id}, user={user_id}, "
+        f"EVALUATOR FUNCTION CALLED: trace={trace_id}, user={user_id}, "
         f"agent_id={agent_id}, agent_id={agent_id}, agent_name={agent_name}"
     )
     
@@ -5512,7 +5512,7 @@ async def run_saved_evaluators_for_new_trace(
 
     client = get_langfuse_client()
     if not client:
-        logger.warning("⚠️ Langfuse client not available, skipping evaluators")
+        logger.warning("Langfuse client not available, skipping evaluators")
         return 0
 
     requested_timestamp = _parse_trace_timestamp(timestamp) or datetime.now(timezone.utc)
