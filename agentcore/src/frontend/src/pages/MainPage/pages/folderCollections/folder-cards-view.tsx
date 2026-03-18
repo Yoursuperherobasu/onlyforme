@@ -424,7 +424,7 @@ export default function FolderCardsView({
                           className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         >
                           <option value="all">All departments</option>
-                          <option value="__none__">Unassigned</option>
+                          <option value="__none__">No department scope</option>
                           {departmentOptions.map((dept) => (
                             <option key={dept} value={dept}>
                               {dept}
@@ -443,7 +443,7 @@ export default function FolderCardsView({
                           className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         >
                           <option value="all">All creators</option>
-                          <option value="__none__">Unassigned</option>
+                          <option value="__none__">Unknown creator</option>
                           {creatorOptions.map((creator) => (
                             <option key={creator} value={creator}>
                               {creator}
