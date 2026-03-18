@@ -215,6 +215,8 @@ def aggregate_metrics(
     })
     agent_data: dict[str, dict] = defaultdict(lambda: {"count": 0, "tokens": 0, "cost": 0.0})
 
+    costs: list[float] = []
+
     for t in traces:
         total_observations += t.observation_count
         total_tokens += t.total_tokens
@@ -223,6 +225,7 @@ def aggregate_metrics(
         total_cost += t.total_cost
         if t.latency_ms is not None:
             latencies.append(t.latency_ms)
+        costs.append(t.total_cost)
         if t.session_id:
             sessions.add(t.session_id)
 
@@ -261,6 +264,13 @@ def aggregate_metrics(
         sorted_lats = sorted(latencies)
         p95_idx = int(len(sorted_lats) * 0.95)
         p95_latency = sorted_lats[min(p95_idx, len(sorted_lats) - 1)]
+
+    p95_cost_per_trace = None
+    p99_cost_per_trace = None
+    if costs:
+        sorted_costs = sorted(costs)
+        p95_cost_per_trace = sorted_costs[min(int(len(sorted_costs) * 0.95), len(sorted_costs) - 1)]
+        p99_cost_per_trace = sorted_costs[min(int(len(sorted_costs) * 0.99), len(sorted_costs) - 1)]
 
     by_model = sorted(
         [
@@ -306,6 +316,8 @@ def aggregate_metrics(
         "total_cost_usd": total_cost,
         "avg_latency_ms": avg_latency,
         "p95_latency_ms": p95_latency,
+        "p95_cost_per_trace": p95_cost_per_trace,
+        "p99_cost_per_trace": p99_cost_per_trace,
         "by_model": by_model,
         "by_date": by_date,
         "top_agents": top_agents,

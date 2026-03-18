@@ -73,12 +73,39 @@ def require_permission(action: str):
         return current_user
     return permission_dependency
 
+def _validate_service_api_key(api_key: str) -> User | None:
+    """Validate an x-api-key as a backend service-to-service key.
+
+    Used by the region-gateway to call dashboard endpoints on remote regions.
+    Returns a synthetic User with role='root' so dashboard role checks pass.
+    Returns None if the key doesn't match (caller should try other auth methods).
+    """
+    settings_service = get_settings_service()
+    expected_key = getattr(settings_service.settings, "backend_service_api_key", "")
+    if not expected_key or not api_key:
+        return None
+    if not secrets.compare_digest(api_key, expected_key):
+        return None
+
+    # Return a synthetic service user — not persisted in DB.
+    # role='root' allows it to pass dashboard role checks.
+    return User(
+        id=UUID("00000000-0000-0000-0000-000000000000"),
+        username="__region_gateway_service__",
+        email=None,
+        password="",
+        is_active=True,
+        is_superuser=True,
+        role="root",
+    )
+
+
 async def api_key_security(
     query_param: Annotated[str, Security(api_key_query)],
     header_param: Annotated[str, Security(api_key_header)],
 ) -> UserRead | None:
-    """API key security - currently disabled, use Azure Key Vault."""
-    # API key authentication disabled Azure Key Vault
+    """API key security - currently disabled for user API keys."""
+    # User API key authentication disabled — migrating to Azure Key Vault
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="API key authentication is currently disabled. Will be migrated to Azure Key Vault.",
@@ -111,11 +138,12 @@ async def get_current_user(
     if bearer and hasattr(bearer, "credentials") and bearer.credentials:
         return await get_current_user_by_jwt(bearer.credentials, db)
 
-    # 3. Try API key (currently disabled)
-    if query_param or header_param:
-        user = await api_key_security(query_param, header_param)
-        if user:
-            return user
+    # 3. Try service-to-service API key (region-gateway → backend)
+    raw_api_key = header_param or query_param
+    if raw_api_key:
+        service_user = _validate_service_api_key(raw_api_key)
+        if service_user:
+            return service_user
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

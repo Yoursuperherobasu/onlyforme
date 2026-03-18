@@ -29,53 +29,13 @@ deployments:
   version_number: v1
   environment: prod
   deployment_id: da008d08-b003-4d46-b075-ea45ef5175b5
-- agent_id: fe48c8b8-bad4-4846-80d9-980d71f703d2
-  agent_name: Simple Agent
-  version_number: v1
-  environment: uat
-  deployment_id: 8c54859b-033c-40f7-91ac-9b82582db0fa
-- agent_id: fe48c8b8-bad4-4846-80d9-980d71f703d2
-  agent_name: Simple Agent
-  version_number: v1
-  environment: prod
-  deployment_id: 593d82ff-376c-43b1-8a32-4cb1df801daa
-- agent_id: f4b13b07-cd94-415e-ba1c-84d2b0c9fee3
-  agent_name: HITL
-  version_number: v1
-  environment: uat
-  deployment_id: 5f9d0484-cfeb-4dae-b109-a792e53d49d4
-- agent_id: d7e0558c-98b0-479f-ad12-9852698cb290
-  agent_name: deptamdin single agent
-  version_number: v1
-  environment: uat
-  deployment_id: 239f70ee-bc3d-4fd4-9fb3-46b94e5d1ecc
-- agent_id: d7e0558c-98b0-479f-ad12-9852698cb290
-  agent_name: deptamdin single agent
-  version_number: v1
-  environment: prod
-  deployment_id: 4ea0e0b4-168e-43e0-a9bf-5cb045968be0
-- agent_id: 6b69b9d7-263e-47e8-8089-5604a74bb13b
+- agent_id: d335b8ad-baaa-4244-b92c-547542207649
   agent_name: New Agent
   version_number: v1
   environment: uat
-  deployment_id: ebd7d0ef-4381-499b-9423-1efc594abc49
-- agent_id: 01d57ee2-80ce-4883-8fbe-88b752d2d305
-  agent_name: New Agent
-  version_number: v1
-  environment: uat
-  deployment_id: b78031a8-11a3-42f1-8bd5-a798c910fc11
-- agent_id: 01d57ee2-80ce-4883-8fbe-88b752d2d305
-  agent_name: New Agent
-  version_number: v1
-  environment: prod
-  deployment_id: 7e7159ea-6e3a-4ae2-82be-aac33157e223
-- agent_id: 351a83de-6eea-4a01-a871-799a0b88cd09
+  deployment_id: bacccec5-1727-477e-bade-228ec679d039
+- agent_id: ffcbbab0-df81-41ca-8110-f83b7cc650b1
   agent_name: New Agent (1)
   version_number: v1
   environment: uat
-  deployment_id: abac4bae-695b-4651-9e6c-b056ba91385d
-- agent_id: 351a83de-6eea-4a01-a871-799a0b88cd09
-  agent_name: New Agent (1)
-  version_number: v1
-  environment: prod
-  deployment_id: 865d0594-b56f-444b-bc2f-f4271321df7a
+  deployment_id: d97747ca-3464-4c91-9bb8-255d50be012e
