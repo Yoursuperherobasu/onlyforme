@@ -177,6 +177,23 @@ export default function RequestModelModal({
   }, [open, normalizedRole, visibilityOptions, deptId, publicDeptIds]);
 
   useEffect(() => {
+    if (!open || visibilityScope !== "department" || visibilityOptions.departments.length === 0) return;
+    const firstDept = visibilityOptions.departments[0];
+    if (canMultiDept) {
+      const hasSelectedDept = publicDeptIds.some((id) =>
+        visibilityOptions.departments.some((dept) => dept.id === id),
+      );
+      if (!hasSelectedDept) {
+        setPublicDeptIds([firstDept.id]);
+      }
+      return;
+    }
+    if (!deptId) {
+      setDeptId(firstDept.id);
+    }
+  }, [open, visibilityScope, canMultiDept, visibilityOptions.departments, deptId, publicDeptIds]);
+
+  useEffect(() => {
     if (!open) return;
     const key = buildTestKey();
     if (testPayloadKey && key !== testPayloadKey) {

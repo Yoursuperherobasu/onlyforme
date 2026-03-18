@@ -313,6 +313,21 @@ export default function EditGuardrailModal({
       const firstDept = visibilityOptions.departments[0];
       setDeptId(firstDept.id);
       setOrgId((prev) => prev || firstDept.org_id);
+      return;
+    }
+
+    if (canMultiDept) {
+      const firstDept = departmentsForSelectedOrg[0] || visibilityOptions.departments[0];
+      if (!firstDept) return;
+      const hasSelectedDept = publicDeptIds.some((id) =>
+        departmentsForSelectedOrg.some((dept) => dept.id === id),
+      );
+      if (!orgId) {
+        setOrgId(firstDept.org_id);
+      }
+      if (publicDeptIds.length === 0 || !hasSelectedDept) {
+        setPublicDeptIds([firstDept.id]);
+      }
     }
   }, [
     open,
@@ -320,6 +335,8 @@ export default function EditGuardrailModal({
     role,
     orgId,
     deptId,
+    publicDeptIds,
+    departmentsForSelectedOrg,
     visibilityOptions.organizations,
     visibilityOptions.departments,
   ]);

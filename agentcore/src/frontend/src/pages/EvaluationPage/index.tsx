@@ -708,6 +708,73 @@ export default function EvaluationPage() {
     }));
   }, [isMembershipLockedRole, visibilityOptions.departments, userDeptId]);
 
+  useEffect(() => {
+    type VisibilityScopedForm = {
+      visibility: "private" | "public";
+      public_scope: string;
+      org_id: string;
+      dept_id: string;
+      public_dept_ids: string[];
+    };
+
+    const ensureOrganizationSelection = <T extends VisibilityScopedForm>(
+      form: T,
+      setForm: React.Dispatch<React.SetStateAction<T>>,
+    ) => {
+      if (form.visibility !== "public" || form.public_scope !== "organization") return;
+      const firstOrg =
+        visibilityOptions.organizations[0]?.id ||
+        visibilityOptions.departments[0]?.org_id ||
+        "";
+      if (!firstOrg || form.org_id) return;
+      setForm((prev) => ({ ...prev, org_id: prev.org_id || firstOrg }));
+    };
+
+    const ensureDepartmentSelection = <T extends VisibilityScopedForm>(
+      form: T,
+      setForm: React.Dispatch<React.SetStateAction<T>>,
+      availableDepts: { id: string; name: string; org_id: string }[],
+    ) => {
+      if (form.visibility !== "public" || form.public_scope !== "department") return;
+      const firstDept = availableDepts[0] || visibilityOptions.departments[0];
+      if (!firstDept) return;
+      if (canMultiDept) {
+        const hasSelectedDept = form.public_dept_ids.some((id) =>
+          availableDepts.some((dept) => dept.id === id),
+        );
+        if (!form.org_id || !hasSelectedDept) {
+          setForm((prev) => ({
+            ...prev,
+            org_id: prev.org_id || firstDept.org_id,
+            dept_id: prev.dept_id || firstDept.id,
+            public_dept_ids: hasSelectedDept ? prev.public_dept_ids : [firstDept.id],
+          }));
+        }
+        return;
+      }
+      if (!form.dept_id || !form.org_id) {
+        setForm((prev) => ({
+          ...prev,
+          org_id: prev.org_id || firstDept.org_id,
+          dept_id: prev.dept_id || firstDept.id,
+        }));
+      }
+    };
+
+    ensureOrganizationSelection(datasetForm, setDatasetForm);
+    ensureOrganizationSelection(judgeForm, setJudgeForm);
+    ensureDepartmentSelection(datasetForm, setDatasetForm, datasetDepartmentsForSelectedOrg);
+    ensureDepartmentSelection(judgeForm, setJudgeForm, judgeDepartmentsForSelectedOrg);
+  }, [
+    canMultiDept,
+    datasetForm,
+    judgeForm,
+    datasetDepartmentsForSelectedOrg,
+    judgeDepartmentsForSelectedOrg,
+    visibilityOptions.organizations,
+    visibilityOptions.departments,
+  ]);
+
   // Lazy-load scores data only when the Scores tab becomes active or environment changes
   useEffect(() => {
     if (activeTab !== "scores") return;

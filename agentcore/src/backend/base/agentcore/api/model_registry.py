@@ -1134,6 +1134,9 @@ async def request_model_visibility_change(
             if requested_dept_id:
                 row.dept_id = requested_dept_id
             row.public_dept_ids = None
+        if target_visibility == ModelVisibilityScope.PRIVATE.value:
+            row.created_by_id = current_user.id
+            row.created_by = getattr(current_user, "username", row.created_by)
         row.approval_status = ModelApprovalStatus.APPROVED.value
         row.requested_by = current_user.id
         row.request_to = None

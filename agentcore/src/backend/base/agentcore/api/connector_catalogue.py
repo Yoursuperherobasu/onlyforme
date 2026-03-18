@@ -412,7 +412,15 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if user_role in {"department_admin", "developer", "business_user"}:
+        if user_role == "root":
+            payload.org_id = None
+            payload.dept_id = None
+        elif user_role == "super_admin":
+            if not org_ids:
+                raise HTTPException(status_code=403, detail="No active organization scope found")
+            payload.org_id = sorted(org_ids, key=str)[0]
+            payload.dept_id = None
+        elif user_role in {"department_admin", "developer", "business_user"}:
             if not dept_pairs:
                 raise HTTPException(status_code=403, detail="No active department scope found")
             current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
@@ -528,6 +536,12 @@ def _can_edit_connector(
 
     role = normalize_role(str(current_user.role))
     if role == "super_admin":
+        if (
+            _normalize_visibility(getattr(row, "visibility", "private")) == "private"
+            and row.org_id is None
+            and row.dept_id is None
+        ):
+            return str(getattr(row, "created_by", "")) == str(current_user.id)
         return bool(row.org_id and row.org_id in org_ids)
 
     if role == "department_admin":
@@ -569,6 +583,12 @@ def _can_delete_connector(
     user_id = str(current_user.id)
 
     if role == "super_admin":
+        if (
+            _normalize_visibility(getattr(row, "visibility", "private")) == "private"
+            and row.org_id is None
+            and row.dept_id is None
+        ):
+            return str(getattr(row, "created_by", "")) == user_id
         return bool(row.org_id and row.org_id in org_ids)
 
     if role == "department_admin":

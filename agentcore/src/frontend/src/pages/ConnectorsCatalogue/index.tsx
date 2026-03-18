@@ -439,11 +439,28 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         }));
       }
     }
+    if (form.public_scope === "department" && canMultiDept) {
+      const firstDept = departmentsForSelectedOrg[0] || visibilityOptions.departments[0];
+      if (!firstDept) return;
+      const hasSelectedDept = form.public_dept_ids.some((id) =>
+        departmentsForSelectedOrg.some((dept) => dept.id === id),
+      );
+      if (!form.org_id || !hasSelectedDept) {
+        setForm((prev) => ({
+          ...prev,
+          org_id: prev.org_id || firstDept.org_id,
+          dept_id: prev.dept_id || firstDept.id,
+          public_dept_ids: hasSelectedDept ? prev.public_dept_ids : [firstDept.id],
+        }));
+      }
+    }
   }, [
     form.visibility,
     form.public_scope,
     form.org_id,
     form.dept_id,
+    form.public_dept_ids,
+    departmentsForSelectedOrg,
     role,
     visibilityOptions.organizations,
     visibilityOptions.departments,
