@@ -4,26 +4,20 @@
     "name": "India",
     "api_url": "http://localhost:7860",
     "is_hub": true,
-    "tenant_id": null,
-    "client_id": null,
-    "audience": null
+    "api_key": "agentcore-backend-svc-key-dev-001"
   },
   {
     "code": "SA",
     "name": "Saudi Arabia",
-    "api_url": "https://agentcore-spoke-sa.privatelink.azurewebsites.net",
+    "api_url": "https://agentcore-sa.azurewebsites.net",
     "is_hub": false,
-    "tenant_id": "SPOKE_SA_TENANT_ID",
-    "client_id": "SPOKE_SA_APP_CLIENT_ID",
-    "audience": "api://agentcore-spoke-sa"
+    "api_key": "agentcore-backend-svc-key-001"
   },
   {
     "code": "EG",
     "name": "Egypt",
-    "api_url": "https://agentcore-spoke-eg.privatelink.azurewebsites.net",
+    "api_url": "https://agentcore-eg.azurewebsites.net",
     "is_hub": false,
-    "tenant_id": "SPOKE_EG_TENANT_ID",
-    "client_id": "SPOKE_EG_APP_CLIENT_ID",
-    "audience": "api://agentcore-spoke-eg"
+    "api_key": "agentcore-backend-svc-key-001"
   }
 ]

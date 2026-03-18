@@ -3,14 +3,11 @@ from __future__ import annotations
 import json
 import logging
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
-
-_ROOT_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 # ---------------------------------------------------------------------------
@@ -18,13 +15,11 @@ _ROOT_ENV = Path(__file__).resolve().parents[1] / ".env"
 # ---------------------------------------------------------------------------
 
 class RegionEntry(BaseModel):
-    code: str                          # ISO 3166-1 alpha-2 e.g. "AE"
-    name: str                          # Display name e.g. "UAE"
-    api_url: str                       # Private Link / VNet-peered URL
-    is_hub: bool = False               # True for the hub's own entry
-    tenant_id: str | None = None       # Azure AD tenant ID (for cross-tenant)
-    client_id: str | None = None       # App Registration client ID on spoke
-    audience: str | None = None        # Token audience e.g. "api://agentcore-spoke-sa"
+    code: str                          # ISO 3166-1 alpha-2 e.g. "IN"
+    name: str                          # Display name e.g. "India"
+    api_url: str                       # Public URL of the region's backend
+    is_hub: bool = False               # True for the primary deployment
+    api_key: str | None = None         # x-api-key for this region's backend
 
 
 # ---------------------------------------------------------------------------
@@ -37,22 +32,16 @@ class Settings(BaseSettings):
     log_level: str = "info"
     cors_origins: str = "*"
 
-    # Path to regions.json (relative to working dir or absolute)
-    regions_file: str = "regions.json"
-
-    # Azure Key Vault (optional — if set, regions are loaded from KV secret)
-    key_vault_url: str | None = None
+    # Azure Key Vault — required. Region registry is stored as a KV secret.
+    key_vault_url: str = ""
     key_vault_regions_secret: str = "agentcore-region-registry"
-
-    # Azure Managed Identity client ID for the hub (used to acquire spoke tokens)
-    hub_mi_client_id: str | None = None
+    key_vault_tenant_id: str | None = None
+    key_vault_client_id: str | None = None
+    key_vault_client_secret: str | None = None
 
     # Request timeouts (seconds)
     proxy_timeout: int = 10
     health_check_timeout: int = 5
-
-    # Skip MI auth in dev mode (spokes on localhost)
-    skip_spoke_auth: bool = False
 
     model_config = SettingsConfigDict(
         env_prefix="REGION_GATEWAY_",
@@ -75,43 +64,47 @@ _regions: list[RegionEntry] = []
 
 
 def load_regions(settings: Settings | None = None) -> list[RegionEntry]:
-    """Load regions from JSON file or Azure Key Vault secret."""
+    """Load regions from Azure Key Vault secret.
+
+    The region registry (including API keys) is stored as a JSON string
+    in a single Key Vault secret. This ensures API keys are never on disk
+    and regions can be updated without redeployment.
+    """
     global _regions
     if settings is None:
         settings = get_settings()
 
-    raw: str | None = None
+    if not settings.key_vault_url:
+        raise RuntimeError(
+            "REGION_GATEWAY_KEY_VAULT_URL is required. "
+            "Region registry must be loaded from Azure Key Vault."
+        )
 
-    # 1. Try Key Vault first (production)
-    if settings.key_vault_url:
-        try:
-            from azure.identity import DefaultAzureCredential
-            from azure.keyvault.secrets import SecretClient
+    from azure.keyvault.secrets import SecretClient
 
-            credential = DefaultAzureCredential()
-            client = SecretClient(vault_url=settings.key_vault_url, credential=credential)
-            secret = client.get_secret(settings.key_vault_regions_secret)
-            raw = secret.value
-            logger.info("Loaded regions from Key Vault secret '%s'", settings.key_vault_regions_secret)
-        except Exception:
-            logger.warning("Failed to load regions from Key Vault, falling back to file", exc_info=True)
+    if settings.key_vault_tenant_id and settings.key_vault_client_id and settings.key_vault_client_secret:
+        from azure.identity import ClientSecretCredential
+        credential = ClientSecretCredential(
+            tenant_id=settings.key_vault_tenant_id,
+            client_id=settings.key_vault_client_id,
+            client_secret=settings.key_vault_client_secret,
+        )
+    else:
+        from azure.identity import DefaultAzureCredential
+        credential = DefaultAzureCredential()
 
-    # 2. Fallback to JSON file
-    if raw is None:
-        regions_path = Path(settings.regions_file)
-        if not regions_path.is_absolute():
-            regions_path = Path(__file__).resolve().parents[1] / regions_path
-        if regions_path.exists():
-            raw = regions_path.read_text(encoding="utf-8")
-            logger.info("Loaded regions from file '%s'", regions_path)
-        else:
-            logger.warning("No regions file found at '%s', starting with empty registry", regions_path)
-            _regions = []
-            return _regions
+    client = SecretClient(vault_url=settings.key_vault_url, credential=credential)
+    secret = client.get_secret(settings.key_vault_regions_secret)
 
-    if raw:
-        data = json.loads(raw)
-        _regions = [RegionEntry(**entry) for entry in data]
+    if not secret.value:
+        raise RuntimeError(
+            f"Key Vault secret '{settings.key_vault_regions_secret}' is empty. "
+            "It must contain the region registry JSON."
+        )
+
+    logger.info("Loaded regions from Key Vault secret '%s'", settings.key_vault_regions_secret)
+    data = json.loads(secret.value)
+    _regions = [RegionEntry(**entry) for entry in data]
 
     return _regions
 
