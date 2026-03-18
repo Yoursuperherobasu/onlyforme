@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from uuid import uuid4
 
 import sqlalchemy as sa
+from sqlalchemy.exc import ProgrammingError
 from alembic import op
 
 
@@ -45,6 +46,7 @@ def _has_column(bind, table_name: str, column_name: str) -> bool:
 
 def _has_index(bind, table_name: str, index_name: str) -> bool:
     return any(ix.get("name") == index_name for ix in sa.inspect(bind).get_indexes(table_name))
+
 
 
 def _upsert_permission(bind, key: str, category: str) -> None:
@@ -94,30 +96,22 @@ def _upsert_permission(bind, key: str, category: str) -> None:
 def upgrade() -> None:
     bind = op.get_bind()
 
-    # ── Create enum types ──
-    scope_type_enum = sa.Enum("organization", "department", name="scope_type_enum", create_type=False)
-    period_type_enum = sa.Enum("monthly", "quarterly", "custom", name="period_type_enum", create_type=False)
-    action_on_breach_enum = sa.Enum("notify_only", "notify_and_block", name="action_on_breach_enum", create_type=False)
-    notification_type_enum = sa.Enum("warning", "breach", name="notification_type_enum", create_type=False)
-
-    # Create enums if they don't exist
-    for enum_type in (scope_type_enum, period_type_enum, action_on_breach_enum, notification_type_enum):
-        enum_type.create(bind, checkfirst=True)
-
     # ── Create cost_limit table ──
+    # Columns use VARCHAR (matching SQLAlchemy models) instead of PostgreSQL
+    # enums to avoid type-mismatch issues during future ALTER operations.
     if not _table_exists(bind, "cost_limit"):
         op.create_table(
             "cost_limit",
             sa.Column("id", sa.Uuid(), nullable=False),
-            sa.Column("scope_type", scope_type_enum, nullable=False),
+            sa.Column("scope_type", sa.String(20), nullable=False),
             sa.Column("org_id", sa.Uuid(), nullable=False),
             sa.Column("dept_id", sa.Uuid(), nullable=True),
             sa.Column("limit_amount_usd", sa.Numeric(12, 4), nullable=False),
             sa.Column("currency", sa.String(3), nullable=False, server_default=sa.text("'USD'")),
-            sa.Column("period_type", period_type_enum, nullable=False, server_default=sa.text("'monthly'")),
+            sa.Column("period_type", sa.String(20), nullable=False, server_default=sa.text("'monthly'")),
             sa.Column("period_start_day", sa.Integer(), nullable=False, server_default=sa.text("1")),
             sa.Column("warning_threshold_pct", sa.Integer(), nullable=False, server_default=sa.text("80")),
-            sa.Column("action_on_breach", action_on_breach_enum, nullable=False, server_default=sa.text("'notify_only'")),
+            sa.Column("action_on_breach", sa.String(30), nullable=False, server_default=sa.text("'notify_only'")),
             sa.Column("is_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
             sa.Column("last_checked_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("last_breach_at", sa.DateTime(timezone=True), nullable=True),
@@ -157,7 +151,7 @@ def upgrade() -> None:
             "cost_limit_notification",
             sa.Column("id", sa.Uuid(), nullable=False),
             sa.Column("cost_limit_id", sa.Uuid(), nullable=False),
-            sa.Column("notification_type", notification_type_enum, nullable=False),
+            sa.Column("notification_type", sa.String(20), nullable=False),
             sa.Column("period_start", sa.DateTime(timezone=True), nullable=False),
             sa.Column("period_end", sa.DateTime(timezone=True), nullable=False),
             sa.Column("cost_at_notification", sa.Numeric(12, 4), nullable=False),
@@ -257,9 +251,5 @@ def downgrade() -> None:
                 pass
         op.drop_table("cost_limit")
 
-    # Drop enum types
-    for enum_name in ("notification_type_enum", "action_on_breach_enum", "period_type_enum", "scope_type_enum"):
-        try:
-            sa.Enum(name=enum_name).drop(bind, checkfirst=True)
-        except Exception:
-            pass
+
+

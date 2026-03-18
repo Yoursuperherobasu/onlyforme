@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from sqlalchemy import ARRAY, Column, DateTime, Numeric, String, UniqueConstraint
+from sqlalchemy import ARRAY, Column, DateTime, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, SQLModel
 
@@ -18,7 +18,9 @@ class CostLimitNotification(SQLModel, table=True):  # type: ignore[call-arg]
     __tablename__ = "cost_limit_notification"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    cost_limit_id: UUID = Field(foreign_key="cost_limit.id", nullable=False, index=True)
+    cost_limit_id: UUID = Field(
+        sa_column=Column(ForeignKey("cost_limit.id", ondelete="CASCADE"), nullable=False, index=True),
+    )
 
     notification_type: str = Field(
         sa_column=Column(String(20), nullable=False),

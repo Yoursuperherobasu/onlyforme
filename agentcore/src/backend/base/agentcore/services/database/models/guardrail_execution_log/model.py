@@ -14,7 +14,7 @@ class GuardrailExecutionLog(SQLModel, table=True):  # type: ignore[call-arg]
         sa_column=Column(String(80), nullable=False, server_default=text("''")),
     )
     agent_id: UUID | None = Field(default=None, foreign_key="agent.id", nullable=True)
-    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True)
     user_id: UUID | None = Field(default=None, foreign_key="user.id", nullable=True)
     session_id: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
     action: str = Field(
@@ -32,5 +32,6 @@ class GuardrailExecutionLog(SQLModel, table=True):  # type: ignore[call-arg]
     )
 
     __table_args__ = (
+        Index("ix_gel_org_id", "org_id"),
         Index("ix_gel_org_violation", "org_id", "is_violation"),
     )
