@@ -1,23 +1,40 @@
-import { useEffect } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
+import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import type { AgentType } from "@/types/agent";
+import { AuthContext } from "@/contexts/authContext";
 import { useGetTypes } from "@/controllers/API/queries/agents/use-get-types";
 import { useGetApprovalPreview } from "@/controllers/API/queries/approvals";
+import CopyAgentDialog from "@/components/agents/copy-agent-dialog";
 import CustomLoader from "@/customization/components/custom-loader";
+import { ENABLE_NEW_SIDEBAR } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
+import { useIsMobile } from "@/hooks/use-mobile";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
+import useAgentStore from "@/stores/agentStore";
 import { useTypesStore } from "@/stores/typesStore";
 import { processAgents } from "@/utils/reactFlowUtils";
+import {
+  AgentSearchProvider,
+  AgentSidebarComponent,
+} from "../AgentBuilderPage/components/agentSidebarComponent";
 import Page from "../AgentBuilderPage/components/PageComponent";
 
 export default function ApprovalPreviewPage(): JSX.Element {
   const { t } = useTranslation();
   const navigate = useCustomNavigate();
   const { agentId } = useParams();
+  const isMobile = useIsMobile();
+  const [canvasLoading, setCanvasLoading] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const { permissions } = useContext(AuthContext);
+  const canCopy = permissions?.includes("copy_agents");
   const types = useTypesStore((state) => state.types);
   const setCurrentAgent = useAgentsManagerStore((state) => state.setCurrentAgent);
+  const currentAgent = useAgentStore((state) => state.currentAgent);
 
   useGetTypes({
     enabled: Object.keys(types).length <= 0,
@@ -55,6 +72,64 @@ export default function ApprovalPreviewPage(): JSX.Element {
   const snapshot = previewData?.snapshot as any;
   const isFlowSnapshot = Array.isArray(snapshot?.nodes);
 
+  if (isFlowSnapshot && previewData && !isLoading) {
+    return (
+      <div className="flex h-full w-full flex-col overflow-hidden">
+        <SidebarProvider
+          width="17.5rem"
+          defaultOpen={!isMobile}
+          segmentedSidebar={ENABLE_NEW_SIDEBAR}
+        >
+          <AgentSearchProvider>
+            <AgentSidebarComponent isLoading={canvasLoading} readOnly />
+            <main className="flex w-full overflow-hidden">
+              <div className="flex h-full w-full flex-col overflow-hidden">
+                <div className="flex items-center gap-2 border-b bg-background px-3 py-2">
+                  <Button variant="outline" size="sm" onClick={() => navigate("/approval")}>
+                    {t("Back To Approval")}
+                  </Button>
+                  <span className="truncate text-sm text-muted-foreground">
+                    {previewData?.title || t("Review Details")}
+                  </span>
+                </div>
+                <div className="h-full w-full">
+                  <Page
+                    view
+                    enableViewportInteractions
+                    showToolbarInView
+                    toolbarReadOnly
+                    setIsLoading={setCanvasLoading}
+                  />
+                </div>
+              </div>
+            </main>
+          </AgentSearchProvider>
+        </SidebarProvider>
+        {canCopy && currentAgent && (
+          <Button
+            className="fixed bottom-6 right-6 z-40 gap-2 shadow-lg"
+            onClick={() => setCloneOpen(true)}
+          >
+            <Copy className="h-4 w-4" />
+            {t("Copy")}
+          </Button>
+        )}
+        <CopyAgentDialog
+          open={cloneOpen}
+          onOpenChange={setCloneOpen}
+          source={
+            currentAgent
+              ? { type: "agent", agent: currentAgent }
+              : null
+          }
+          onSuccess={(agentId, projectId) =>
+            navigate(`/agent/${agentId}/folder/${projectId}`)
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b px-6 py-4">
@@ -63,7 +138,7 @@ export default function ApprovalPreviewPage(): JSX.Element {
             {previewData?.title || t("Review Details")}
           </h1>
           <p className="text-xs text-muted-foreground">
-            {isFlowSnapshot ? t("Read-only flow preview") : t("Submitted request details")}
+            {t("Submitted request details")}
           </p>
         </div>
         <Button variant="outline" onClick={() => navigate("/approval")}>
@@ -83,12 +158,6 @@ export default function ApprovalPreviewPage(): JSX.Element {
               </p>
             </div>
           </div>
-        ) : isFlowSnapshot ? (
-          <Page
-            view
-            enableViewportInteractions
-            setIsLoading={() => undefined}
-          />
         ) : snapshot?.model_id ? (
           /* Model approval preview - simple request details */
           <div className="p-6">

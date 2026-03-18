@@ -160,14 +160,6 @@ const router = createBrowserRouter(
                     }
                   />
                   <Route
-                    path="approval/:agentId/review"
-                    element={
-                      <ProtectedPermissionRoute permission="view_approval_page">
-                        <ApprovalPreviewPage />
-                      </ProtectedPermissionRoute>
-                    }
-                  />
-                  <Route
                     path="hitl-approvals"
                     element={
                       <ProtectedPermissionRoute permission="view_hitl_approvals_page">
@@ -395,6 +387,16 @@ const router = createBrowserRouter(
                     <ProtectedAccessControlRoute>
                       <AccessControlPage />
                     </ProtectedAccessControlRoute>
+                  }
+                />
+              </Route>
+              <Route path="approval/:agentId/review" element={<CustomDashboardWrapperPage />}>
+                <Route
+                  path=""
+                  element={
+                    <ProtectedPermissionRoute permission="view_approval_page">
+                      <ApprovalPreviewPage />
+                    </ProtectedPermissionRoute>
                   }
                 />
               </Route>

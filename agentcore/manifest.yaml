@@ -59,3 +59,23 @@ deployments:
   version_number: v1
   environment: uat
   deployment_id: ebd7d0ef-4381-499b-9423-1efc594abc49
+- agent_id: 01d57ee2-80ce-4883-8fbe-88b752d2d305
+  agent_name: New Agent
+  version_number: v1
+  environment: uat
+  deployment_id: b78031a8-11a3-42f1-8bd5-a798c910fc11
+- agent_id: 01d57ee2-80ce-4883-8fbe-88b752d2d305
+  agent_name: New Agent
+  version_number: v1
+  environment: prod
+  deployment_id: 7e7159ea-6e3a-4ae2-82be-aac33157e223
+- agent_id: 351a83de-6eea-4a01-a871-799a0b88cd09
+  agent_name: New Agent (1)
+  version_number: v1
+  environment: uat
+  deployment_id: abac4bae-695b-4651-9e6c-b056ba91385d
+- agent_id: 351a83de-6eea-4a01-a871-799a0b88cd09
+  agent_name: New Agent (1)
+  version_number: v1
+  environment: prod
+  deployment_id: 865d0594-b56f-444b-bc2f-f4271321df7a
