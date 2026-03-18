@@ -178,9 +178,22 @@ async def _resolve_upload_scope(
 
     role = normalize_role(getattr(current_user, "role", "") or "")
     if normalized_visibility == "PRIVATE":
+        org_memberships = (
+            await session.exec(
+                select(UserOrganizationMembership.org_id).where(
+                    UserOrganizationMembership.user_id == current_user.id,
+                    UserOrganizationMembership.status.in_(["accepted", "active"]),
+                )
+            )
+        ).all()
+        allowed_orgs = {r if isinstance(r, uuid.UUID) else r[0] for r in org_memberships}
         if role in {"department_admin", "developer", "business_user"}:
             resolved_org_id, resolved_dept_id = await _resolve_default_scope(session, current_user)
             return KBVisibilityEnum.PRIVATE, resolved_org_id, resolved_dept_id, None
+        if role == "super_admin":
+            if not allowed_orgs:
+                raise HTTPException(status_code=403, detail="No active organization scope found for user")
+            return KBVisibilityEnum.PRIVATE, sorted(allowed_orgs, key=str)[0], None, None
         return KBVisibilityEnum.PRIVATE, None, None, None
 
     if normalized_visibility == "PUBLIC":
