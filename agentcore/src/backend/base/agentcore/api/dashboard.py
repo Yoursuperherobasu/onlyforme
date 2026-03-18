@@ -413,6 +413,16 @@ async def get_department_usage_kpis(
         AgentPublishRecipient.dept_id.in_(list(dept_ids))
     )
 
+    # If a UAT deployment has a pending promotion to PROD, we still count it as active in UAT
+    # (department admins treat pending approvals as still part of the active UAT footprint).
+    pending_promotion_uat_ids = (
+        select(AgentDeploymentProd.promoted_from_uat_id)
+        .where(
+            AgentDeploymentProd.promoted_from_uat_id.is_not(None),
+            AgentDeploymentProd.status == "PENDING_APPROVAL",
+        )
+    )
+
     uat_active = (
         await session.exec(
             select(func.count())
@@ -422,7 +432,10 @@ async def get_department_usage_kpis(
                     AgentDeploymentUAT.agent_id.in_(assigned_agent_ids),
                 ),
                 AgentDeploymentUAT.is_active.is_(True),
-                AgentDeploymentUAT.moved_to_prod.is_(False),
+                or_(
+                    AgentDeploymentUAT.moved_to_prod.is_(False),
+                    AgentDeploymentUAT.id.in_(pending_promotion_uat_ids),
+                ),
             )
         )
     ).one()

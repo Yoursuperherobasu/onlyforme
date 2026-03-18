@@ -53,6 +53,7 @@ interface WorkagentType {
   department: string;
   created: string;
   movedToProd?: boolean;
+  pendingProdApproval?: boolean;
   status: boolean;
   enabled: boolean;
   inputType?: "chat" | "autonomous" | "file_processing";
@@ -134,6 +135,8 @@ export default function WorkflowsView({
   const validatePublishEmail = useValidatePublishEmail();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canViewScheduler = can("view_control_panel");
+  const canDirectPromoteToProd = can("prod_publish_approval_not_required");
+  const requiresProdApproval = !canDirectPromoteToProd;
 
   const { data, isLoading } = useGetControlPanelAgents(
     {
@@ -166,6 +169,7 @@ export default function WorkflowsView({
       department: item.creator_department ?? "-",
         created: formatDateTime(item.created_at),
         movedToProd: item.moved_to_prod ?? false,
+        pendingProdApproval: item.pending_prod_approval ?? false,
         status: item.is_active,
         enabled: item.is_enabled,
         inputType: item.input_type,
@@ -820,14 +824,20 @@ export default function WorkflowsView({
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={promotingById[workflow.id]}
+                            disabled={
+                              promotingById[workflow.id] ||
+                              workflow.pendingProdApproval
+                            }
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (workflow.pendingProdApproval) return;
                               handleOpenPromoteDialog(workflow.id);
                             }}
                           >
                             <ArrowUpToLine className="h-3.5 w-3.5" />
-                            {promotingById[workflow.id]
+                            {workflow.pendingProdApproval
+                              ? t("Pending")
+                              : promotingById[workflow.id]
                               ? t("Moving...")
                               : t("Move")}
                           </button>
@@ -840,7 +850,11 @@ export default function WorkflowsView({
                     )}
                     {can("view_project_page") && (
                       <td className="px-6 py-4 text-xs">
-                        {workflow.movedToProd ? (
+                        {workflow.pendingProdApproval ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                            {t("Pending Approval")}
+                          </span>
+                        ) : workflow.movedToProd ? (
                           <span className="rounded-full border border-green-200 bg-green-50 px-2 py-1 text-green-700">
                             {t("Yes")}
                           </span>
@@ -1019,7 +1033,22 @@ export default function WorkflowsView({
           </DialogHeader>
           <div className="space-y-4">
             <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-              {t("Select visibility for PROD deployment.")}
+              {requiresProdApproval
+                ? t(
+                    "This action will stop the agent in UAT first, then send the PROD move for approval.",
+                  )
+                : t(
+                    "This action will stop the agent in UAT first and move it directly to PROD.",
+                  )}
+            </div>
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              {requiresProdApproval
+                ? t(
+                    "Until approval is completed, this deployment will remain stopped in UAT.",
+                  )
+                : t(
+                    "The UAT deployment will be marked stopped in the database at the same time as the PROD move.",
+                  )}
             </div>
             <div className="space-y-2 rounded-md border p-3">
               <div className="flex items-center gap-2">
