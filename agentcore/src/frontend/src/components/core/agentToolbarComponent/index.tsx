@@ -214,6 +214,7 @@ const AgentToolbar = memo(function AgentToolbar({ readOnly = false }: { readOnly
             setOpen={setOpen}
             openApiModal={openApiModal}
             setOpenApiModal={setOpenApiModal}
+            readOnly={readOnly}
           />
         </div>
       </Panel>

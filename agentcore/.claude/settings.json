@@ -11,7 +11,8 @@
       "Bash(find /d/final_code/aimldevteam/agentcore -path */node_modules -prune -o -path */.git -prune -o -type f \\\\\\(-name *.py \\\\\\) -print)",
       "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path .venv -prune -o -type f \\\\\\(-name *registry*.py \\\\\\) -print)",
       "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path .venv -prune -o -type f \\\\\\(-name *.py \\\\\\) -print)",
-      "Bash(grep -E \"\\\\.py$\")"
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -r 'Review Detail' d:/final_code/aimldevteam/agentcore/src/frontend/src --include=*.tsx --include=*.ts)"
     ]
   }
 }
