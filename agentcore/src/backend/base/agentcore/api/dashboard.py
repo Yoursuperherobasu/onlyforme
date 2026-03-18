@@ -32,6 +32,7 @@ from agentcore.services.database.models.orch_conversation.model import OrchConve
 from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.database.models.guardrail_execution_log.model import GuardrailExecutionLog
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -315,6 +316,7 @@ async def get_governance_guardrail_kpis(
             return DashboardSectionResponse(
                 section="governance_guardrail",
                 kpis=[
+                    DashboardKpi(id="guardrail_violation_rate", label="Guardrail Violation Rate", value=0, unit="%"),
                     DashboardKpi(id="escalation_to_human_review", label="Escalation to Human Review", value=0),
                     DashboardKpi(id="agents_without_guardrails_pct", label="% Agents Without Guardrails", value=0, unit="%"),
                 ],
@@ -352,9 +354,27 @@ async def get_governance_guardrail_kpis(
     without_guardrails = max(total - with_guardrails, 0)
     without_pct = round((without_guardrails / total) * 100, 2) if total else 0
 
+    # Guardrail Violation Rate: % of guardrail executions that blocked/masked/rewrote content.
+    gel_total_stmt = select(func.count()).select_from(GuardrailExecutionLog)
+    gel_violation_stmt = select(func.count()).select_from(GuardrailExecutionLog).where(
+        GuardrailExecutionLog.is_violation.is_(True)
+    )
+    if org_ids is not None:
+        gel_total_stmt = gel_total_stmt.where(GuardrailExecutionLog.org_id.in_(list(org_ids)))
+        gel_violation_stmt = gel_violation_stmt.where(GuardrailExecutionLog.org_id.in_(list(org_ids)))
+    total_executions = (await session.exec(gel_total_stmt)).one()
+    total_violations = (await session.exec(gel_violation_stmt)).one()
+    violation_rate = round((int(total_violations or 0) / int(total_executions or 1)) * 100, 2) if total_executions else 0
+
     return DashboardSectionResponse(
         section="governance_guardrail",
         kpis=[
+            DashboardKpi(
+                id="guardrail_violation_rate",
+                label="Guardrail Violation Rate",
+                value=violation_rate,
+                unit="%",
+            ),
             DashboardKpi(
                 id="escalation_to_human_review",
                 label="Escalation to Human Review",

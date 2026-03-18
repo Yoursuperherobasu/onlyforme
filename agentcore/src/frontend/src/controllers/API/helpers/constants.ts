@@ -47,6 +47,7 @@ export const URLs = {
   TEAMS: `teams`,
   HITL: `v1/hitl`,
   TAGS: `tags`,
+  COST_LIMITS: `cost-limits`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

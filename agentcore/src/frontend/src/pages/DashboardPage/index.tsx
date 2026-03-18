@@ -848,7 +848,7 @@ export default function DashboardAdmin(): JSX.Element {
 
   // Fallbacks
   const lifecycleKpiFallback:   SectionKpi[] = [{ name: "Agents in UAT", value: "--" }, { name: "UAT to PROD Conversion Rate", value: "--" }, { name: "Deprecated Agent Count", value: "--" }];
-  const governanceKpiFallback:  SectionKpi[] = [{ name: "Escalation to Human Review", value: "--" }, { name: "% Agents Without Guardrails", value: "--" }];
+  const governanceKpiFallback:  SectionKpi[] = [{ name: "Guardrail Violation Rate", value: "--" }, { name: "Escalation to Human Review", value: "--" }, { name: "% Agents Without Guardrails", value: "--" }];
   const deptUsageKpiFallback:   SectionKpi[] = [{ name: "Active Agents in Dept (UAT)", value: "--" }, { name: "Active Agents in Dept (PROD)", value: "--" }, { name: "Avg Response Time", value: "--" }];
   const deptApprovalKpiFallback:SectionKpi[] = [{ name: "Pending Approvals", value: "--" }, { name: "Rejection Rate", value: "--" }, { name: "Avg Approval Time", value: "--" }];
   const deptHitlKpiFallback:    SectionKpi[] = [{ name: "Agents with HITL", value: "--" }, { name: "HITL Invocation Rate", value: "--" }, { name: "Avg HITL Response Time", value: "--" }];
