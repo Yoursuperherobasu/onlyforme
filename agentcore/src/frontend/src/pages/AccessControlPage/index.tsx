@@ -42,8 +42,6 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
         keys: [
           "edit_projects_page",
           "delete_project",
-          "prod_publish_approval_required",
-          "prod_publish_approval_not_required",
         ],
       },
     ],
@@ -193,8 +191,6 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_guardrails_page: ["view_guardrail_page"],
   view_observability_dashboard: ["view_observability_page"],
   view_knowledge_base_management: ["view_knowledge_base"],
-  prod_publish_approval_required: ["hitl_approve", "hitl_reject"],
-  prod_publish_approval_not_required: ["hitl_approve", "hitl_reject"],
   view_approval_page: [
     "view_agent",
     "view_model",

@@ -36,8 +36,6 @@ PERMISSION_ALIASES = {
     "delete_mcp_registry": ["delete_mcp", "delete_mcp_server"],
     "view_knowledge_base_management": ["view_knowledge_base"],
     "view_approval_page": ["approve_reject_page", "view_hitl_approvals_page"],
-    "prod_publish_approval_required": ["hitl_approve", "hitl_reject"],
-    "prod_publish_approval_not_required": ["hitl_approve", "hitl_reject"],
     "view_control_panel": ["view_agent_scheduler_page"],
     "view_agent_scheduler_page": ["view_control_panel"],
     "start_stop_agent": ["add_scheduler"],
@@ -134,7 +132,6 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "view_projects_page",
         "edit_projects_page",
         "delete_project",
-        "prod_publish_approval_not_required",
         "view_approval_page",
         "view_agent",
         "view_model",
@@ -183,7 +180,6 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "view_projects_page",
         "edit_projects_page",
         "delete_project",
-        "prod_publish_approval_not_required",
         "view_approval_page",
         "view_agent",
         "view_model",
@@ -231,7 +227,6 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "view_projects_page",
         "edit_projects_page",
         "delete_project",
-        "prod_publish_approval_not_required",
         "view_approval_page",
         "view_agent",
         "view_model",
@@ -277,7 +272,6 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     "developer": [
         "view_dashboard",
         "view_projects_page",
-        "prod_publish_approval_required",
         "view_published_agents",
         "copy_agents",
         "view_models",
@@ -307,7 +301,6 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     "business_user": [
         "view_dashboard",
         "view_projects_page",
-        "prod_publish_approval_required",
         "view_published_agents",
         "copy_agents",
         "view_models",
@@ -342,7 +335,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v17"  # bump when permissions change
+PERMISSION_VERSION = "v18"  # bump when permissions change
 
 
 class PermissionCacheService:
