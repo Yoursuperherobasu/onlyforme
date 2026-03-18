@@ -88,6 +88,7 @@ dependencies = [
     'fastavro==1.9.7; python_version < "3.13"',
     'fastavro>=1.9.8,<2.0.0; python_version >= "3.13"',
     "redis>=5.2.1,<6.0.0",
+    "aio-pika>=9.4.0,<10.0.0",
     'pywin32==307; sys_platform == "win32"',
     "langfuse>=3.0.0,<4.0.0",
     "MarkupSafe==3.0.2",

@@ -49,6 +49,7 @@ from agentcore.observability import (
 from agentcore.middleware import ContentSizeLimitMiddleware
 from agentcore.services.deps import (
     get_queue_service,
+    get_rabbitmq_service,
     get_scheduler_service,
     get_settings_service,
     get_telemetry_service,
@@ -167,6 +168,15 @@ def get_lifespan(*, fix_migration=True, version=None):
             if not queue_service.is_started():  # Start if not already started
                 queue_service.start()
             logger.debug(f"Agents loaded in {asyncio.get_event_loop().time() - current_time:.2f}s")
+
+            # Start RabbitMQ service (if enabled)
+            current_time = asyncio.get_event_loop().time()
+            try:
+                rabbitmq_service = get_rabbitmq_service()
+                await rabbitmq_service.start()
+                logger.debug(f"RabbitMQ service started in {asyncio.get_event_loop().time() - current_time:.2f}s")
+            except Exception as e:
+                logger.warning(f"RabbitMQ service not started: {e}")
 
             current_time = asyncio.get_event_loop().time()
             logger.debug("Starting scheduler and trigger services")

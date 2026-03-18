@@ -237,3 +237,10 @@ def get_ltm_service():
     from agentcore.services.ltm.service import LTMService
 
     return get_service(ServiceType.LTM_SERVICE, LTMServiceFactory())
+
+
+def get_rabbitmq_service():
+    """Retrieves the RabbitMQService instance from the service manager."""
+    from agentcore.services.rabbitmq.factory import RabbitMQServiceFactory
+
+    return get_service(ServiceType.RABBITMQ_SERVICE, RabbitMQServiceFactory())

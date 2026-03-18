@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from enum import Enum
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Annotated
+import uuid
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -582,6 +583,41 @@ async def simplified_run_agent(
         asyncio_queue: asyncio.Queue = asyncio.Queue()
         asyncio_queue_client_consumed: asyncio.Queue = asyncio.Queue()
         event_manager = create_stream_tokens_event_manager(queue=asyncio_queue)
+
+        # --- RabbitMQ path (Option A) ---
+        from agentcore.services.deps import get_rabbitmq_service
+
+        rabbitmq_service = get_rabbitmq_service()
+        if rabbitmq_service.is_enabled():
+            from agentcore.services.deps import get_queue_service
+
+            queue_service = get_queue_service()
+            job_id = str(uuid.uuid4())
+            # Register the queue so the RabbitMQ consumer can find it
+            queue_service._queues[job_id] = (asyncio_queue, event_manager, None, None)
+
+            job_data = {
+                "job_id": job_id,
+                "agent_id": str(agent.id),
+                "agent_data": agent.data,
+                "input_request": input_request.model_dump(),
+                "prod_deployment_id": str(prod_deployment.id) if prod_deployment else None,
+                "uat_deployment_id": str(uat_deployment.id) if uat_deployment else None,
+            }
+            await rabbitmq_service.publish_run_job(job_data)
+            logger.info(f"Run job {job_id} published to RabbitMQ")
+
+            async def on_disconnect_rmq() -> None:
+                logger.debug("Client disconnected, cleaning up RabbitMQ run job")
+                await queue_service.cleanup_job(job_id)
+
+            return StreamingResponse(
+                consume_and_yield(asyncio_queue, asyncio_queue_client_consumed),
+                background=on_disconnect_rmq,
+                media_type="text/event-stream",
+            )
+
+        # --- Direct path (no RabbitMQ) ---
         main_task = asyncio.create_task(
             run_agent_generator(
                 agent=agent,

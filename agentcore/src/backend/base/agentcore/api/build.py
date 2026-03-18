@@ -142,6 +142,13 @@ async def start_agent_build(
 ) -> str:
     """Start the agent build process by setting up the queue and starting the build task.
 
+    When RabbitMQ is enabled, the job is published to a durable queue and a
+    consumer (same process) picks it up. This gives rate-limiting, retry,
+    and visibility via the RabbitMQ management UI.
+
+    When RabbitMQ is disabled (default), the job runs directly via
+    asyncio.create_task as before.
+
     Returns:
         the job_id.
     """
@@ -153,20 +160,42 @@ async def start_agent_build(
         # first-message blank-chat issue caused by the fresh TCP connection
         # delay (~100-400ms) on new browser sessions.
         event_manager._consumer_ready = asyncio.Event()
-        task_coro = generate_agent_events(
-            agent_id=agent_id,
-            background_tasks=background_tasks,
-            event_manager=event_manager,
-            inputs=inputs,
-            data=data,
-            files=files,
-            stop_component_id=stop_component_id,
-            start_component_id=start_component_id,
-            log_builds=log_builds,
-            current_user=current_user,
-            agent_name=agent_name,
-        )
-        queue_service.start_job(job_id, task_coro)
+
+        # --- RabbitMQ path (Option A) ---
+        from agentcore.services.deps import get_rabbitmq_service
+
+        rabbitmq_service = get_rabbitmq_service()
+        if rabbitmq_service.is_enabled():
+            job_data = {
+                "job_id": job_id,
+                "agent_id": str(agent_id),
+                "inputs": inputs.model_dump() if inputs else None,
+                "data": data.model_dump() if data else None,
+                "files": files,
+                "stop_component_id": stop_component_id,
+                "start_component_id": start_component_id,
+                "log_builds": log_builds,
+                "user_id": str(current_user.id),
+                "agent_name": agent_name,
+            }
+            await rabbitmq_service.publish_build_job(job_data)
+            logger.info(f"Build job {job_id} published to RabbitMQ")
+        else:
+            # --- Direct path (no RabbitMQ) ---
+            task_coro = generate_agent_events(
+                agent_id=agent_id,
+                background_tasks=background_tasks,
+                event_manager=event_manager,
+                inputs=inputs,
+                data=data,
+                files=files,
+                stop_component_id=stop_component_id,
+                start_component_id=start_component_id,
+                log_builds=log_builds,
+                current_user=current_user,
+                agent_name=agent_name,
+            )
+            queue_service.start_job(job_id, task_coro)
     except Exception as e:
         logger.exception("Failed to create queue and start task")
         raise HTTPException(status_code=500, detail=str(e)) from e
