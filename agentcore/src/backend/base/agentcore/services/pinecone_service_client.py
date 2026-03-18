@@ -268,6 +268,26 @@ def namespace_stats_via_service(
         return resp.json()
 
 
+async def async_namespace_stats_via_service(
+    index_name: str,
+    namespace: str = "",
+) -> dict:
+    """Get vector count and dimension for a namespace via pinecone-service (async).
+
+    Uses httpx.AsyncClient so it does NOT block the event loop — safe to call
+    from async FastAPI endpoints such as the publish hook.
+    """
+    url, api_key = _get_pinecone_service_settings()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        resp = await client.post(
+            f"{url}/v1/pinecone/namespace-stats",
+            headers=_headers(api_key),
+            json={"index_name": index_name, "namespace": namespace},
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
 # ---------------------------------------------------------------------------
 # List indexes
 # ---------------------------------------------------------------------------
