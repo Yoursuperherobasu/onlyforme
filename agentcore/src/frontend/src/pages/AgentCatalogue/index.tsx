@@ -320,7 +320,7 @@ export default function AgentCatalogueView({
                       <div className="flex items-center gap-2">
                         <ShadTooltip
                           content={
-                            !can("view_only_agent")
+                            !can("view_registry_agent")
                               ? t("You don't have permission to view")
                               : ""
                           }
@@ -329,7 +329,7 @@ export default function AgentCatalogueView({
                             <Button
                               variant="outline"
                               size="sm"
-                              disabled={!can("view_only_agent")}
+                              disabled={!can("view_registry_agent")}
                               onClick={() =>
                                 navigate(`/agent-catalogue/${agent.id}/view`)
                               }

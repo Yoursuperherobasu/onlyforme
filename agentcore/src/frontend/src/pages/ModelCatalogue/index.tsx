@@ -113,7 +113,7 @@ export default function ModelCatalogue(): JSX.Element {
   const isSuperAdmin = normalizedRole === "super_admin";
   const currentUserId = userData?.id;
   const userDeptId = userData?.department_id ?? null;
-  const canSeeActions = isModelAdmin && (can("edit_model_registry") || can("delete_model_registry"));
+  const canSeeActions = isModelAdmin && (can("edit_model") || can("delete_model"));
 
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -235,7 +235,7 @@ export default function ModelCatalogue(): JSX.Element {
   };
 
   const canEditModel = (model: ModelType) => {
-    if (!isModelAdmin || !can("edit_model_registry")) return false;
+    if (!isModelAdmin || !can("edit_model")) return false;
     if (model.approval_status === "pending") return false;
     if (isRoot || isSuperAdmin) return true;
     if (isDepartmentAdmin) {
@@ -251,7 +251,7 @@ export default function ModelCatalogue(): JSX.Element {
   };
 
   const canDeleteModel = (model: ModelType) => {
-    if (!isModelAdmin || !can("delete_model_registry")) return false;
+    if (!isModelAdmin || !can("delete_model")) return false;
     if (model.approval_status === "pending") return false;
     if (isRoot || isSuperAdmin) return true;
     if (isDepartmentAdmin) {

@@ -639,7 +639,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {(can("connectore_page") || can("view_connectors_page") || can("connector_page")) && (
+        {(can("view_connector_page") || can("connectore_page") || can("view_connectors_page") || can("connector_page")) && (
           <SidebarMenuItem>
               <SidebarMenuButton
                 size="md"

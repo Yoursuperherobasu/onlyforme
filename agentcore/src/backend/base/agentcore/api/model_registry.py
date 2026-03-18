@@ -887,7 +887,7 @@ async def request_model_promotion(
     session: DbSession,
     current_user: CurrentActiveUser,
 ):
-    await _require_any_permission(current_user, {"request_new_model", "add_new_model", "edit_model_registry"})
+    await _require_any_permission(current_user, {"request_new_model", "add_new_model", "edit_model"})
     row = await session.get(ModelRegistry, model_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -998,7 +998,7 @@ async def request_model_visibility_change(
     session: DbSession,
     current_user: CurrentActiveUser,
 ):
-    await _require_any_permission(current_user, {"request_new_model", "add_new_model", "edit_model_registry"})
+    await _require_any_permission(current_user, {"request_new_model", "add_new_model", "edit_model"})
     row = await session.get(ModelRegistry, model_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -1226,7 +1226,7 @@ async def update_registry_model(
     session: DbSession,
     current_user: CurrentActiveUser,
 ):
-    await _require_any_permission(current_user, {"edit_model_registry"})
+    await _require_any_permission(current_user, {"edit_model"})
     existing = await session.get(ModelRegistry, model_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -1272,7 +1272,7 @@ async def delete_registry_model(
     session: DbSession,
     current_user: CurrentActiveUser,
 ):
-    await _require_any_permission(current_user, {"delete_model_registry"})
+    await _require_any_permission(current_user, {"delete_model"})
 
     row = await session.get(ModelRegistry, model_id)
     if row is None:

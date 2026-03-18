@@ -89,23 +89,23 @@ deployments:
   version_number: v1
   environment: prod
   deployment_id: 8ed359ff-52d0-43de-9a0b-183eae1e2a77
-- agent_id: 4b1fa29b-f50e-426e-bba8-39a800cd3212
-  agent_name: Manas Simple Agent
+- agent_id: 3be4beaa-082e-4a0d-9095-3d08e4065391
+  agent_name: test
   version_number: v1
   environment: uat
-  deployment_id: 1b12b5d4-aea5-4a12-8711-17215d237b5d
-- agent_id: 807bcf41-500d-4efe-b0f0-133d30838517
-  agent_name: agent manas
+  deployment_id: 964d374a-b821-46fc-832e-5cd1e0c3b573
+- agent_id: 269e704d-180c-4b96-8e8b-0398baa3b636
+  agent_name: test2
   version_number: v1
   environment: uat
-  deployment_id: 69473473-8ff9-414a-a8e0-59c0fe4192e9
-- agent_id: 807bcf41-500d-4efe-b0f0-133d30838517
-  agent_name: agent manas
+  deployment_id: 87916a05-c686-4d06-be7a-0349a60a2f41
+- agent_id: 3be4beaa-082e-4a0d-9095-3d08e4065391
+  agent_name: test
   version_number: v1
   environment: prod
-  deployment_id: 1a3bed4d-a487-46f0-a2a5-4a8532edc80d
-- agent_id: 6967cf6d-3fd6-4bed-9b9c-ed77a57adaa0
-  agent_name: New Agent
+  deployment_id: 970d7ed6-ffe2-4685-a849-beb313966bde
+- agent_id: 0cd2ff89-0bd5-4d09-b23a-80215be4d9c3
+  agent_name: dev1
   version_number: v1
   environment: uat
-  deployment_id: 59b1a2dc-f1e4-4057-8bf5-b45fa362b9a4
+  deployment_id: 02baf179-f3f4-4c85-ab91-0a0cd6e98b3d

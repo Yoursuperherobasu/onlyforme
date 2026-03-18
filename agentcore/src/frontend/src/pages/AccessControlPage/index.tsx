@@ -40,7 +40,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       {
         name: "Actions",
         keys: [
-          "edit_projects_page",
+          "edit_project",
           "delete_project",
         ],
       },
@@ -57,14 +57,14 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
     page: "Agent Registry",
     sections: [
       { name: "Page Access", keys: ["view_published_agents"] },
-      { name: "Actions", keys: ["copy_agents", "view_only_agent"] },
+      { name: "Actions", keys: ["copy_agents", "view_registry_agent"] },
     ],
   },
   {
     page: "Model Registry",
     sections: [
       { name: "Page Access", keys: ["view_models"] },
-      { name: "Actions", keys: ["add_new_model", "request_new_model", "retire_model", "edit_model_registry", "delete_model_registry"] },
+      { name: "Actions", keys: ["add_new_model", "request_new_model", "retire_model", "edit_model", "delete_model"] },
     ],
   },
   {
@@ -147,7 +147,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
   {
     page: "Connectors",
     sections: [
-      { name: "Page Access", keys: ["connectore_page"] },
+      { name: "Page Access", keys: ["view_connector_page"] },
       { name: "Actions", keys: ["add_connector"] },
     ],
   },
@@ -200,8 +200,13 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_control_panel: ["view_agent_scheduler_page"],
   view_agent_scheduler_page: ["view_control_panel"],
   start_stop_agent: ["add_scheduler"],
-  view_connectors_page: ["connectore_page"],
-  connector_page: ["connectore_page"],
+  edit_projects_page: ["edit_project"],
+  view_only_agent: ["view_registry_agent"],
+  edit_model_registry: ["edit_model"],
+  delete_model_registry: ["delete_model"],
+  connectore_page: ["view_connector_page"],
+  view_connectors_page: ["view_connector_page"],
+  connector_page: ["view_connector_page"],
 };
 
 const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {
@@ -232,6 +237,12 @@ const sortRolesForDisplay = (roles: Role[]): Role[] => {
     if (bIdx !== undefined) return 1;
     return aName.localeCompare(bName);
   });
+};
+
+const formatPermissionLabel = (permission: Permission): string => {
+  const key = (permission.key || "").trim();
+  if (!key) return permission.name || "";
+  return key.replace(/_/g, " ");
 };
 
 export default function AccessControlPage() {
@@ -568,7 +579,7 @@ export default function AccessControlPage() {
                               }
                             />
                             <span>
-                              {perm.name}
+                              {formatPermissionLabel(perm)}
                               <span className="block text-xs text-muted-foreground font-mono">
                                 {perm.key}
                               </span>
