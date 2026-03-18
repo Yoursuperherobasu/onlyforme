@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 from typing import Any
+from uuid import UUID
 
 from loguru import logger
 
@@ -229,6 +230,7 @@ class NemoGuardrailComponent(Node):
                 )
                 self._decision = decision
                 self._decision_evaluated = True
+                asyncio.ensure_future(self._log_guardrail_execution(decision))
                 return decision
 
             decision["blocked"] = True
@@ -240,6 +242,7 @@ class NemoGuardrailComponent(Node):
             )
             self._decision = decision
             self._decision_evaluated = True
+            asyncio.ensure_future(self._log_guardrail_execution(decision))
             return decision
 
         action = result.get("action", "passthrough")
@@ -275,7 +278,54 @@ class NemoGuardrailComponent(Node):
         )
         self._decision = decision
         self._decision_evaluated = True
+        asyncio.ensure_future(self._log_guardrail_execution(decision))
         return decision
+
+    async def _log_guardrail_execution(self, decision: dict[str, Any]) -> None:
+        """Persist guardrail execution result to DB for dashboard KPIs. Fire-and-forget."""
+        try:
+            from sqlmodel import select
+
+            from agentcore.services.database.models.agent.model import Agent
+            from agentcore.services.database.models.guardrail_execution_log.model import GuardrailExecutionLog
+            from agentcore.services.deps import session_scope
+
+            agent_id: UUID | None = None
+            if self._vertex and hasattr(self._vertex, "graph"):
+                raw = getattr(self._vertex.graph, "agent_id", None)
+                if raw:
+                    agent_id = UUID(str(raw)) if not isinstance(raw, UUID) else raw
+
+            action = decision.get("action", "passthrough")
+            environment = None
+            if self._vertex and bool(getattr(self._vertex.graph, "prod_deployment_id", None)):
+                environment = "prod"
+
+            async with session_scope() as session:
+                org_id: UUID | None = None
+                if agent_id:
+                    result = (await session.exec(select(Agent.org_id).where(Agent.id == agent_id))).first()
+                    if result is not None:
+                        org_id = result
+
+                user_id: UUID | None = None
+                raw_user = getattr(self, "_user_id", None)
+                if raw_user:
+                    user_id = UUID(str(raw_user)) if not isinstance(raw_user, UUID) else raw_user
+
+                log_entry = GuardrailExecutionLog(
+                    guardrail_id=decision.get("guardrail_id", ""),
+                    agent_id=agent_id,
+                    org_id=org_id,
+                    user_id=user_id,
+                    session_id=getattr(self, "session_id", None),
+                    action=action,
+                    is_violation=(action != "passthrough"),
+                    environment=environment,
+                )
+                session.add(log_entry)
+        except Exception:
+            logger.warning("Failed to log guardrail execution to DB", exc_info=True)
 
     async def safe_output(self) -> Message:
         """Route safe content forward (typically to LLM)."""
