@@ -90,6 +90,7 @@ const useSaveAgent = () => {
             project_id,
             endpoint_name,
             locked,
+            tags,
           } = agent;
           if (!currentSavedAgent?.data?.nodes.length || data!.nodes.length > 0) {
             mutate(
@@ -101,6 +102,7 @@ const useSaveAgent = () => {
                 project_id,
                 endpoint_name,
                 locked,
+                tags,
               },
               {
                 onSuccess: (updatedAgent) => {

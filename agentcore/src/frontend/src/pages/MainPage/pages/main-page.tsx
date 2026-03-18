@@ -81,7 +81,7 @@ export default function CollectionPage(): JSX.Element {
     );
   };
 
-  const handleUpdateFolderName = (newName: string, newDescription: string) => {
+  const handleUpdateFolderName = (newName: string, newDescription: string, tags?: string[]) => {
     if (!folderToEdit || !newName.trim()) return;
 
     updateFolder(
@@ -93,6 +93,7 @@ export default function CollectionPage(): JSX.Element {
           description: newDescription,
           agents: folderToEdit.agents ?? [],
           components: folderToEdit.components ?? [],
+          tags: tags ?? folderToEdit.tags ?? [],
         },
       },
       {

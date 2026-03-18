@@ -1,7 +1,8 @@
-import { Copy, Eye, Search, Star } from "lucide-react";
+import { Copy, Eye, Search, Star, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,6 +33,7 @@ export default function AgentCatalogueView({
 }: AgentCatalogueViewProps): JSX.Element {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<RegistryEntry | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [ratingOpen, setRatingOpen] = useState(false);
@@ -48,6 +50,7 @@ export default function AgentCatalogueView({
   const { data: registryData, isLoading: isLoadingRegistry } = useGetRegistry(
     {
       search: searchQuery || undefined,
+      tag: selectedTagFilter || undefined,
       page: 1,
       page_size: 60,
       deployment_env: "PROD",
@@ -67,6 +70,14 @@ export default function AgentCatalogueView({
     () => registryData?.items || [],
     [registryData?.items],
   );
+
+  const availableTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    (registryData?.items || []).forEach((agent) => {
+      (agent.tags || []).forEach((tag: string) => tagSet.add(tag));
+    });
+    return Array.from(tagSet).sort();
+  }, [registryData?.items]);
 
   useEffect(() => {
     if (!setSearch) return;
@@ -154,6 +165,36 @@ export default function AgentCatalogueView({
         </div>
       </div>
 
+      {availableTags.length > 0 && (
+        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b px-4 py-3 sm:px-6 md:px-8">
+          <span className="text-xs font-medium text-muted-foreground">{t("Filter by tag")}:</span>
+          {availableTags.map((tag) => (
+            <Badge
+              key={tag}
+              variant={selectedTagFilter === tag ? "default" : "outline"}
+              className="cursor-pointer text-xs"
+              onClick={() =>
+                setSelectedTagFilter(selectedTagFilter === tag ? null : tag)
+              }
+            >
+              {tag}
+              {selectedTagFilter === tag && (
+                <X className="ml-1 h-3 w-3" />
+              )}
+            </Badge>
+          ))}
+          {selectedTagFilter && (
+            <button
+              type="button"
+              onClick={() => setSelectedTagFilter(null)}
+              className="text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              {t("Clear")}
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto p-4 sm:p-6 md:p-8">
         {isLoadingRegistry ? (
           <div className="flex h-full items-center justify-center">
@@ -219,12 +260,22 @@ export default function AgentCatalogueView({
 
                     <div className="mb-4 flex flex-wrap gap-2">
                       {(agent.tags || []).map((tag: string, idx: number) => (
-                        <span
+                        <button
+                          type="button"
                           key={`${agent.id}-${idx}`}
-                          className="rounded-md border bg-muted px-2.5 py-1 text-xs"
+                          className={`rounded-md border px-2.5 py-1 text-xs transition-colors hover:bg-primary/10 ${
+                            selectedTagFilter === tag
+                              ? "border-primary bg-primary/10 font-medium"
+                              : "bg-muted"
+                          }`}
+                          onClick={() =>
+                            setSelectedTagFilter(
+                              selectedTagFilter === tag ? null : tag,
+                            )
+                          }
                         >
                           {tag}
-                        </span>
+                        </button>
                       ))}
                     </div>
 

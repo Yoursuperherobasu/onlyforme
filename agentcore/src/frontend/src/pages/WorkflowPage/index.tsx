@@ -887,28 +887,40 @@ export default function WorkflowsView({
                     )}
                     {can("start_stop_agent") && (
                       <td className="px-6 py-4">
-                        <button
-                          type="button"
-                          disabled={pendingToggles[workflow.id]?.status}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                            workflowStates[workflow.id]?.status
-                              ? "bg-blue-600"
-                              : "bg-muted"
-                          }`}
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            if (pendingToggles[workflow.id]?.status) return;
-                            await handleStatusToggle(workflow.id);
-                          }}
-                        >
-                          <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                              workflowStates[workflow.id]?.status
-                                ? "translate-x-6"
-                                : "translate-x-1"
-                            }`}
-                          />
-                        </button>
+                        {(() => {
+                          const isEnabled =
+                            workflowStates[workflow.id]?.enabled ?? workflow.enabled;
+                          const isStopped = !isEnabled;
+                          const disabled = pendingToggles[workflow.id]?.status || isStopped;
+                          return (
+                            <button
+                              type="button"
+                              disabled={disabled}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                isStopped
+                                  ? "bg-muted"
+                                  : (workflowStates[workflow.id]?.status ?? workflow.status)
+                                    ? "bg-blue-600"
+                                    : "bg-muted"
+                              }`}
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (pendingToggles[workflow.id]?.status) return;
+                                await handleStatusToggle(workflow.id);
+                              }}
+                            >
+                              <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                  isStopped
+                                    ? "translate-x-1"
+                                    : (workflowStates[workflow.id]?.status ?? workflow.status)
+                                    ? "translate-x-6"
+                                    : "translate-x-1"
+                                }`}
+                              />
+                            </button>
+                          );
+                        })()}
                       </td>
                     )}
                     {can("enable_disable_agent") && (

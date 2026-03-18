@@ -9,3 +9,23 @@ deployments:
   version_number: v1
   environment: prod
   deployment_id: f3c51da1-f7a4-4dc3-a7dc-ddae8b307230
+- agent_id: 59ea65bb-5063-429d-b09e-260169337480
+  agent_name: assignee check
+  version_number: v1
+  environment: uat
+  deployment_id: 2edaba7c-e369-4eef-a396-7488f99a8832
+- agent_id: 5e9ec9d8-4bea-43d6-91fa-0315864614fc
+  agent_name: HITL_TAG
+  version_number: v1
+  environment: uat
+  deployment_id: 5b07bf6a-ebe9-4e74-87f8-cd1f6d764069
+- agent_id: d1488e59-6e26-4af0-b403-b6e0c6d2f6b2
+  agent_name: test
+  version_number: v1
+  environment: uat
+  deployment_id: 5995be34-958c-4409-842d-9d19229389f3
+- agent_id: d1488e59-6e26-4af0-b403-b6e0c6d2f6b2
+  agent_name: test
+  version_number: v1
+  environment: prod
+  deployment_id: da008d08-b003-4d46-b075-ea45ef5175b5

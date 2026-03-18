@@ -184,7 +184,23 @@ export const AccountMenu = () => {
                 </HeaderMenuItemButton>
               </div>
             )}
-            
+            {(normalizedRole === "root" || normalizedRole === "super_admin" || normalizedRole === "department_admin") && (
+              <div>
+                <HeaderMenuItemButton
+                  onClick={() => {
+                    navigate("/cost-limits");
+                  }}
+                >
+                  <span
+                    data-testid="menu_cost_limits_button"
+                    id="menu_cost_limits_button"
+                  >
+                    {t("Cost Limits")}
+                  </span>
+                </HeaderMenuItemButton>
+              </div>
+            )}
+
           </div>
 
           

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from alembic.util.exc import CommandError
 from loguru import logger
-from sqlmodel import text
+from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 if TYPE_CHECKING:
@@ -58,7 +58,37 @@ async def initialize_database(*, fix_migration: bool = False) -> None:
         if "already exists" not in str(exc):
             logger.exception(exc)
         raise
+    try:
+        await _seed_predefined_tags(database_service)
+    except Exception:
+        logger.exception("Failed to seed predefined tags (non-fatal)")
     logger.debug("Database initialized")
+
+
+async def _seed_predefined_tags(db_service: DatabaseService) -> None:
+    """Insert predefined tags if they don't already exist."""
+    from agentcore.services.database.models.tag.model import PREDEFINED_TAGS, Tag
+
+    async with session_getter(db_service) as session:
+        for tag_def in PREDEFINED_TAGS:
+            existing = (
+                await session.exec(
+                    select(Tag).where(Tag.name == tag_def["name"], Tag.is_predefined.is_(True))
+                )
+            ).first()
+            if not existing:
+                session.add(
+                    Tag(
+                        name=tag_def["name"],
+                        category=tag_def["category"],
+                        description=tag_def["description"],
+                        is_predefined=True,
+                        org_id=None,
+                        created_by=None,
+                    )
+                )
+        await session.commit()
+    logger.debug("Predefined tags seeded")
 
 
 @asynccontextmanager

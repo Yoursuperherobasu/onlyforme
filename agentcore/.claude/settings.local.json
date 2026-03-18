@@ -2,7 +2,20 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(xargs cat:*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend -name *edit*folder* -type f)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend -name *agent* -type d)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src/components/agents -name *.tsx -type f)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend -path */modals/* -name *.tsx -type f)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src/components/ui -type f -name *.tsx)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend -name *add*agent* -o -name *create*agent*)",
+      "Bash(grep -r \"add.*agent\\\\|create.*agent\" /d/final_code/aimldevteam/agentcore/src/frontend/src --include=*.tsx --include=*.ts -l)",
+      "Bash(grep -r \"from.*ui/badge\\\\|from.*ui/select\\\\|from.*ui/input\" /d/final_code/aimldevteam/agentcore/src/frontend/src --include=*.tsx --include=*.ts)",
+      "Bash(grep -r \"createNewAgent\\\\|AddAgentModal\\\\|CreateAgent\" /d/final_code/aimldevteam/agentcore/src/frontend/src/pages --include=*.tsx)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src/pages -name *registry* -o -name *catalogue* -type f)",
+      "Bash(find d:/final_code/aimldevteam/agentcore/src/backend/base/agentcore -type f -name *.py)",
+      "Bash(find d:/final_code/aimldevteam/agentcore/src/backend/base/agentcore/services -type f -name *.py)"
     ]
   }
 }

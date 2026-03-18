@@ -209,6 +209,7 @@ class AgentUpdate(SQLModel):
     fs_path: str | None = None
     lifecycle_status: LifecycleStatusEnum | None = None
     cloned_from_deployment_id: UUID | None = None
+    tags: list[str] | None = None
 
     @model_validator(mode="before")
     @classmethod

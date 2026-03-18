@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import TagInput from "@/components/common/tagInputComponent";
 import { PUBLISH_BUTTON_NAME } from "@/constants/constants";
 import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
@@ -99,6 +100,7 @@ const PublishButton = ({}: PublishButtonProps) => {
   const [open, setOpen] = useState(false);
   const [agentNameInput, setAgentNameInput] = useState("");
   const [publishDescription, setPublishDescription] = useState("");
+  const [publishTags, setPublishTags] = useState<string[]>([]);
   const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
   const [emailDraft, setEmailDraft] = useState("");
   const [debouncedEmailQuery, setDebouncedEmailQuery] = useState("");
@@ -166,6 +168,7 @@ const PublishButton = ({}: PublishButtonProps) => {
   useEffect(() => {
     if (open) {
       setAgentNameInput(currentAgent?.name ?? "");
+      setPublishTags(currentAgent?.tags ?? []);
       setSelectedEmails([]);
       setEmailDraft("");
       setEmailValidationResults([]);
@@ -382,11 +385,17 @@ const PublishButton = ({}: PublishButtonProps) => {
       return;
     }
 
-    if (trimmedName !== (currentAgent?.name ?? "")) {
+    const nameChanged = trimmedName !== (currentAgent?.name ?? "");
+    const tagsChanged =
+      JSON.stringify(publishTags.slice().sort()) !==
+      JSON.stringify((currentAgent?.tags ?? []).slice().sort());
+
+    if (nameChanged || tagsChanged) {
       try {
         const updatedAgent = await mutateUpdateAgent({
           id: currentAgent.id,
-          name: trimmedName,
+          ...(nameChanged ? { name: trimmedName } : {}),
+          ...(tagsChanged ? { tags: publishTags } : {}),
         });
 
         if (agents) {
@@ -400,7 +409,7 @@ const PublishButton = ({}: PublishButtonProps) => {
         setCanvasCurrentAgent(updatedAgent);
       } catch (error: any) {
         setErrorData({
-          title: "Failed to update agent name",
+          title: "Failed to update agent",
           list: [error?.response?.data?.detail ?? "Please try again."],
         });
         return;
@@ -574,6 +583,20 @@ const PublishButton = ({}: PublishButtonProps) => {
               placeholder="What changed in this release?"
               className="min-h-[72px] bg-background"
             />
+          </div>
+
+          <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+            <Label className="text-sm font-medium">
+              Tags (optional)
+            </Label>
+            <TagInput
+              selectedTags={publishTags}
+              onChange={setPublishTags}
+              placeholder="Add tags (e.g. rag, chatbot, hitl)..."
+            />
+            <span className="text-xs text-muted-foreground">
+              Tags help categorize this agent in the Agent Registry.
+            </span>
           </div>
 
           <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
