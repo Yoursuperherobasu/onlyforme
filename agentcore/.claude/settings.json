@@ -22,7 +22,9 @@
       "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path */.venv -prune -o -type d -name *app* -print)",
       "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path */.venv -prune -o -type d -name organization -print)",
       "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path */.venv -prune -o -type d -name department -print)",
-      "Bash(find d:/final_code/aimldevteam/agentcore/src/frontend/src -maxdepth 3 -type f \\\\\\(-name App.tsx -o -name main.tsx -o -name index.tsx -o -name Layout* -o -name *layout* \\\\\\))"
+      "Bash(find d:/final_code/aimldevteam/agentcore/src/frontend/src -maxdepth 3 -type f \\\\\\(-name App.tsx -o -name main.tsx -o -name index.tsx -o -name Layout* -o -name *layout* \\\\\\))",
+      "Bash(find d:/final_code/aimldevteam/agentcore/src/frontend -name *duplicate* -o -name *clone*)",
+      "Bash(ls -la d:/final_code/aimldevteam/agentcore/src/backend/base/agentcore/api/*.py)"
     ]
   }
 }
