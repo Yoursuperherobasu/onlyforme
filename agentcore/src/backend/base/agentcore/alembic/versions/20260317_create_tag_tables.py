@@ -48,6 +48,8 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("project_id", "tag_id"),
         if_not_exists=True,
     )
+    op.create_index("ix_project_tag_project_id", "project_tag", ["project_id"], if_not_exists=True)
+    op.create_index("ix_project_tag_tag_id", "project_tag", ["tag_id"], if_not_exists=True)
 
     # ── agent_tag ─────────────────────────────────────────────────────
     op.create_table(
@@ -60,6 +62,8 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("agent_id", "tag_id"),
         if_not_exists=True,
     )
+    op.create_index("ix_agent_tag_agent_id", "agent_tag", ["agent_id"], if_not_exists=True)
+    op.create_index("ix_agent_tag_tag_id", "agent_tag", ["tag_id"], if_not_exists=True)
 
 
 def downgrade() -> None:

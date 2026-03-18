@@ -1,9 +1,8 @@
 from datetime import datetime, timezone
-from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, Uuid, func, text
 from sqlmodel import Column, Field, SQLModel
 
 
@@ -55,7 +54,7 @@ class TagBase(SQLModel):
     description: str | None = Field(default=None, sa_column=Column(String(255), nullable=True))
     is_predefined: bool = Field(
         default=False,
-        sa_column=Column(sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa_column=Column(Boolean(), nullable=False, server_default=text("false")),
     )
 
 
@@ -66,8 +65,8 @@ class Tag(TagBase, table=True):  # type: ignore[call-arg]
     org_id: UUID | None = Field(
         default=None,
         sa_column=Column(
-            sa.Uuid(),
-            sa.ForeignKey("organization.id", name="fk_tag_org_id"),
+            Uuid(),
+            ForeignKey("organization.id", name="fk_tag_org_id"),
             nullable=True,
             index=True,
         ),
@@ -75,14 +74,14 @@ class Tag(TagBase, table=True):  # type: ignore[call-arg]
     created_by: UUID | None = Field(
         default=None,
         sa_column=Column(
-            sa.Uuid(),
-            sa.ForeignKey("user.id", name="fk_tag_created_by"),
+            Uuid(),
+            ForeignKey("user.id", name="fk_tag_created_by"),
             nullable=True,
         ),
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
 
     __table_args__ = (
@@ -117,11 +116,11 @@ class ProjectTag(SQLModel, table=True):  # type: ignore[call-arg]
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
     __table_args__ = (
-        sa.Index("ix_project_tag_project_id", "project_id"),
-        sa.Index("ix_project_tag_tag_id", "tag_id"),
+        Index("ix_project_tag_project_id", "project_id"),
+        Index("ix_project_tag_tag_id", "tag_id"),
     )
 
 
@@ -137,9 +136,9 @@ class AgentTag(SQLModel, table=True):  # type: ignore[call-arg]
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
     __table_args__ = (
-        sa.Index("ix_agent_tag_agent_id", "agent_id"),
-        sa.Index("ix_agent_tag_tag_id", "tag_id"),
+        Index("ix_agent_tag_agent_id", "agent_id"),
+        Index("ix_agent_tag_tag_id", "tag_id"),
     )
