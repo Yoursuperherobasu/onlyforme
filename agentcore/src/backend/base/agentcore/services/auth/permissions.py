@@ -345,6 +345,14 @@ class PermissionCacheService:
 
     async def get_permissions_for_role(self, role: str) -> List[str]:
         role = _normalize_role(role)
+        if role == "root":
+            async with session_scope() as session:
+                all_perm_rows = (await session.exec(select(Permission.key))).all()
+            db_keys = [p for p in all_perm_rows if p]
+            default_keys = ROLE_PERMISSIONS.get("root", [])
+            merged = list(dict.fromkeys([*db_keys, *default_keys]))
+            return _expand_permissions(merged)
+
         key = f"role:{PERMISSION_VERSION}:{role}"
 
         cached = await self.redis.get(key)
@@ -379,7 +387,11 @@ async def get_permissions_for_role(role: str) -> List[str]:
     if normalized == "root":
         async with session_scope() as session:
             all_perm_rows = (await session.exec(select(Permission.key))).all()
-        return _expand_permissions([p for p in all_perm_rows if p])
+        # Root is system-managed: include DB keys plus current runtime defaults.
+        db_keys = [p for p in all_perm_rows if p]
+        default_keys = ROLE_PERMISSIONS.get("root", [])
+        merged = list(dict.fromkeys([*db_keys, *default_keys]))
+        return _expand_permissions(merged)
 
     global permission_cache
     if permission_cache is None:

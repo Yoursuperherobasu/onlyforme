@@ -33,6 +33,7 @@ router = APIRouter(tags=["Users"], prefix="/users")
 
 ACTIVE_ORG_STATUSES = {"accepted", "active"}
 ACTIVE_DEPT_STATUS = "active"
+NON_ASSIGNABLE_ROLES = {"consumer"}
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -134,14 +135,14 @@ async def _assignable_roles_for_creator(session: DbSession, creator_role: str) -
         return [
             role
             for role in global_role_names
-            if role not in {"root", "super_admin"}
+            if role not in {"root", "super_admin", *NON_ASSIGNABLE_ROLES}
         ]
 
     if creator_role == "department_admin":
         return [
             role
             for role in global_role_names
-            if role not in {"root", "super_admin", "department_admin"}
+            if role not in {"root", "super_admin", "department_admin", *NON_ASSIGNABLE_ROLES}
         ]
 
     return []
@@ -997,6 +998,9 @@ async def patch_user(
         user_update.password = get_password_hash(user_update.password)
     if user_update.role:
         user_update.role = normalize_role(user_update.role)
+        assignable_roles = await _assignable_roles_for_creator(session, normalize_role(user.role))
+        if user_update.role not in assignable_roles:
+            raise HTTPException(status_code=403, detail="Selected role is not assignable by current user.")
         user_update.is_superuser = user_update.role in {"super_admin", "department_admin", "root"}
 
     if user_db := await get_user_by_id(session, user_id):

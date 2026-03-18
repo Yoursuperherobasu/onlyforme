@@ -354,9 +354,9 @@ const TABS: { key: TabKey; label: string; tooltip: string }[] = [
 
 export default function PackagesPage() {
   const { t } = useTranslation();
-  const { permissions } = useContext(AuthContext);
+  const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const canRequestPackages = can("request_packages");
+  const canRequestPackages = role !== "root" && can("request_packages");
   const [activeTab, setActiveTab] = useState<TabKey>("managed");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedService, setSelectedService] = useState("all");
@@ -416,9 +416,11 @@ export default function PackagesPage() {
                 {t("Request Package")}
               </Button>
             )}
-            <Button variant="outline" onClick={() => setIsMyRequestsOpen(true)}>
-              {t("My Requests")}
-            </Button>
+            {role !== "root" && (
+              <Button variant="outline" onClick={() => setIsMyRequestsOpen(true)}>
+                {t("My Requests")}
+              </Button>
+            )}
           </div>
         </div>
 
