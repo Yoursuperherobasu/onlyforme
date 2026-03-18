@@ -99,10 +99,6 @@ function DefaultLandingRedirect() {
     return <CustomNavigate replace to="hitl-approvals" />;
   }
 
-  if (permissions.includes("view_agent_scheduler_page")) {
-    return <CustomNavigate replace to="workflows" />;
-  }
-
   return <CustomNavigate replace to="dashboard-admin" />;
 }
 
@@ -244,7 +240,7 @@ const router = createBrowserRouter(
                   <Route
                     path="release-management"
                     element={
-                      <ProtectedPermissionRoute permission="view_packages_page">
+                      <ProtectedPermissionRoute permission="view_release_management_page">
                         <ReleaseManagementPage />
                       </ProtectedPermissionRoute>
                     }

@@ -707,7 +707,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {can("view_packages_page") && (
+        {can("view_release_management_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"

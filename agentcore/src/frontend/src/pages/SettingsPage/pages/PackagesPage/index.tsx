@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Search } from "lucide-react";
 
@@ -23,6 +23,7 @@ import {
 } from "@/controllers/API/queries/packages/use-get-transitive-packages";
 import RequestPackageModal from "./components/request-package-modal";
 import MyPackageRequestsModal from "./components/my-package-requests-modal";
+import { AuthContext } from "@/contexts/authContext";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -353,6 +354,9 @@ const TABS: { key: TabKey; label: string; tooltip: string }[] = [
 
 export default function PackagesPage() {
   const { t } = useTranslation();
+  const { permissions } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canRequestPackages = can("request_packages");
   const [activeTab, setActiveTab] = useState<TabKey>("managed");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedService, setSelectedService] = useState("all");
@@ -406,10 +410,12 @@ export default function PackagesPage() {
             <h1 className="text-2xl font-semibold">{t("Dependency Governance")}</h1>
           </div>
           <div className="flex items-center gap-3">
-            <Button onClick={() => setIsRequestModalOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              {t("Request Package")}
-            </Button>
+            {canRequestPackages && (
+              <Button onClick={() => setIsRequestModalOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                {t("Request Package")}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setIsMyRequestsOpen(true)}>
               {t("My Requests")}
             </Button>

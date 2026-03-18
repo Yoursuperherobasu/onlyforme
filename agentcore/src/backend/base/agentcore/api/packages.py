@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.permissions import get_permissions_for_role
 from agentcore.services.database.models.package.model import Package
 from agentcore.services.database.models.package_request.model import PackageRequest
 from agentcore.services.database.models.user.model import User
@@ -47,6 +48,14 @@ def _is_all_services(service: str) -> bool:
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).strip().lower() == "root"
+
+
+async def _require_package_permission(current_user: CurrentActiveUser, permission: str) -> None:
+    if _is_root_user(current_user):
+        return
+    user_permissions = await get_permissions_for_role(str(current_user.role))
+    if permission not in user_permissions:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing required permissions.")
 
 
 class PackageRequestCreate(BaseModel):
@@ -121,6 +130,7 @@ async def create_package_request(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict[str, Any]:
+    await _require_package_permission(current_user, "request_packages")
     now = datetime.now(timezone.utc)
     row = PackageRequest(
         service_name=payload.service_name.strip().lower(),
