@@ -91,10 +91,10 @@ from agentcore.services.database.models.evaluator.model import Evaluator  # noqa
 from agentcore.services.model_registry_service import get_decrypted_config as get_model_decrypted_config  # noqa: E402
 
 
-async def _resolve_model_from_registry(model_registry_id: str, session: Any = None) -> tuple[str, str | None]:
-    """Resolve model_name and decrypted api_key from the model registry.
+async def _resolve_model_from_registry(model_registry_id: str, session: Any = None) -> tuple[str, str | None, str | None]:
+    """Resolve model_name, decrypted api_key, and api_base from the model registry.
 
-    Returns (model_name, api_key) or raises HTTPException if not found.
+    Returns (model_name, api_key, api_base) or raises HTTPException if not found.
     If *session* is provided it is reused; otherwise a fresh session_scope is opened.
     """
     if not model_registry_id or not str(model_registry_id).strip():
@@ -116,12 +116,13 @@ async def _resolve_model_from_registry(model_registry_id: str, session: Any = No
         provider = config.get("provider", "")
         model_name = config.get("model_name", "")
         api_key = config.get("api_key") or None
+        api_base = config.get("base_url") or None
         # Build a provider-prefixed model string for LiteLLM (e.g. "openai/gpt-4o")
         if provider and model_name and not model_name.startswith(f"{provider}/"):
             resolved_model = f"{provider}/{model_name}"
         else:
             resolved_model = model_name
-        return resolved_model, api_key
+        return resolved_model, api_key, api_base
     except HTTPException:
         raise
     except Exception as e:
@@ -3100,6 +3101,61 @@ async def _resolve_trace_for_judge(
     return None, None
 
 
+async def _call_model_service_completion(
+    model_registry_id: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> str | None:
+    """Call the Model microservice using a registry model ID.
+
+    This is the canonical way to invoke any registered model (OpenAI, Azure,
+    Anthropic, Google, Groq, etc.) — the microservice handles all provider-
+    specific logic (Azure deployment names, API versions, base URLs, etc.).
+
+    Returns the response content string or None if the service is unavailable.
+    """
+    from agentcore.services.model_service_client import (
+        is_service_configured,
+        _get_model_service_settings,
+        _headers,
+    )
+
+    if not is_service_configured():
+        return None
+
+    url, api_key = _get_model_service_settings()
+
+    payload = {
+        "provider": "openai",  # placeholder — overridden by registry resolution
+        "model": "",  # resolved from registry by the service
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "provider_config": {"registry_model_id": model_registry_id},
+        "response_format": {"type": "json_object"},
+        "stream": False,
+    }
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=300.0) as http_client:
+            resp = await http_client.post(
+                f"{url}/v1/chat/completions",
+                headers=_headers(api_key),
+                json=payload,
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        if data.get("choices"):
+            return data["choices"][0].get("message", {}).get("content", "")
+        return None
+    except Exception as e:
+        logger.warning("Model service completion failed for registry_id={}: {}", model_registry_id, str(e))
+        return None
+
+
 async def run_llm_judge_task(
     client,
     trace_id: str,
@@ -3108,6 +3164,8 @@ async def run_llm_judge_task(
     model: str,
     user_id: str,
     model_api_key: str | None = None,
+    model_api_base: str | None = None,
+    model_registry_id: str | None = None,
     preset_id: str | None = None,
     ground_truth: str | None = None,
     session_id: str | None = None,
@@ -3210,73 +3268,90 @@ Respond with a JSON object containing:
 
 Respond ONLY with valid JSON, no markdown formatting."""
 
-        # 3. Call LLM (with provider/model normalization retries)
-        model_candidates = _build_litellm_model_candidates(model, model_api_key)
-        if not model_candidates:
-            logger.error(f"Judge failed: invalid empty model for trace_ref={trace_id}")
-            return
+        # 3. Call LLM — prefer Model Service (handles all providers canonically),
+        #    fall back to LiteLLM/OpenAI SDK if service is unavailable.
+        content = None
+        used_model = model
 
-        logger.info(f"Calling LLM judge with model candidates: {model_candidates}")
-
-        # If LiteLLM is available, prefer it (supports provider/model resolution).
-        if LITELLM_AVAILABLE:
-            _ensure_litellm_logging_compatibility_patch()
-
-            # Reduce noisy/proxy-related logger side effects in worker context.
-            try:
-                litellm.suppress_debug_info = True
-                litellm.turn_off_message_logging = True
-                litellm.logging = False
-            except Exception:
-                pass
-
-            response = None
-            used_model = model_candidates[0]
-            last_error: Exception | None = None
-
-            for candidate_model in model_candidates:
-                acall_kwargs = dict(
-                    model=candidate_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                )
-                acall_kwargs["no-log"] = True
-                if model_api_key:
-                    acall_kwargs["api_key"] = model_api_key
-
-                api_base = _resolve_api_base_for_model(candidate_model)
-                if api_base:
-                    acall_kwargs["api_base"] = api_base
-
-                try:
-                    response = await litellm.acompletion(**acall_kwargs)
-                    used_model = candidate_model
-                    break
-                except Exception as e:
-                    last_error = e
-                    logger.warning("LLM judge call failed for model={}: {}", candidate_model, str(e))
-                    if _is_litellm_retryable_model_error(e):
-                        continue
-                    raise
-
-            if response is None:
-                if last_error:
-                    raise last_error
-                raise RuntimeError("LLM judge call failed without a response")
-
-            content = response.choices[0].message.content
-
-        else:
-            # Fallback to OpenAI SDK if available.
-            content, used_model = await _call_openai_judge_completion(
-                model_candidates=model_candidates,
-                model_api_key=model_api_key,
+        # Try Model Service first when registry model ID is available
+        if model_registry_id:
+            logger.info(f"Calling LLM judge via Model Service: registry_id={model_registry_id}")
+            content = await _call_model_service_completion(
+                model_registry_id=model_registry_id,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
             )
+            if content:
+                used_model = f"registry:{model_registry_id}"
+
+        # Fallback to LiteLLM / OpenAI SDK
+        if content is None:
+            model_candidates = _build_litellm_model_candidates(model, model_api_key)
+            if not model_candidates:
+                logger.error(f"Judge failed: invalid empty model for trace_ref={trace_id}")
+                return
+
+            logger.info(f"Calling LLM judge with model candidates: {model_candidates}")
+
+            if LITELLM_AVAILABLE:
+                _ensure_litellm_logging_compatibility_patch()
+
+                try:
+                    litellm.suppress_debug_info = True
+                    litellm.turn_off_message_logging = True
+                    litellm.logging = False
+                except Exception:
+                    pass
+
+                response = None
+                used_model = model_candidates[0]
+                last_error: Exception | None = None
+
+                for candidate_model in model_candidates:
+                    acall_kwargs = dict(
+                        model=candidate_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        response_format={"type": "json_object"},
+                    )
+                    acall_kwargs["no-log"] = True
+                    if model_api_key:
+                        acall_kwargs["api_key"] = model_api_key
+
+                    api_base = model_api_base or _resolve_api_base_for_model(candidate_model)
+                    if api_base:
+                        acall_kwargs["api_base"] = api_base
+
+                    try:
+                        response = await litellm.acompletion(**acall_kwargs)
+                        used_model = candidate_model
+                        break
+                    except Exception as e:
+                        last_error = e
+                        logger.warning("LLM judge call failed for model={}: {}", candidate_model, str(e))
+                        if _is_litellm_retryable_model_error(e):
+                            continue
+                        raise
+
+                if response is None:
+                    if last_error:
+                        raise last_error
+                    raise RuntimeError("LLM judge call failed without a response")
+
+                content = response.choices[0].message.content
+
+            elif OPENAI_AVAILABLE:
+                content, used_model = await _call_openai_judge_completion(
+                    model_candidates=model_candidates,
+                    model_api_key=model_api_key,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            else:
+                logger.error("No LLM backend available (Model Service, LiteLLM, or OpenAI SDK)")
+                return
 
         # Clean up markdown code blocks if present
         content = content.strip()
@@ -3395,7 +3470,7 @@ async def _resolve_experiment_judge_config(
 
     # Resolve judge model from registry if provided
     if judge_model_registry_id:
-        reg_model, reg_key = await _resolve_model_from_registry(judge_model_registry_id, session=session)
+        reg_model, reg_key, _reg_base = await _resolve_model_from_registry(judge_model_registry_id, session=session)
         if not resolved_model:
             resolved_model = reg_model
         if not resolved_api_key:
@@ -3421,7 +3496,7 @@ async def _resolve_experiment_judge_config(
         if not resolved_criteria:
             resolved_criteria = (evaluator.criteria or "").strip() or None
         if not resolved_model and evaluator.model_registry_id:
-            reg_model, reg_key = await _resolve_model_from_registry(evaluator.model_registry_id, session=session)
+            reg_model, reg_key, _reg_base = await _resolve_model_from_registry(evaluator.model_registry_id, session=session)
             resolved_model = reg_model
             if not resolved_api_key:
                 resolved_api_key = reg_key
@@ -3797,7 +3872,7 @@ async def get_scores(
                 return
             user_traces_prefetched = True
             try:
-                prefetch_limit = 2000 if not trace_id else 200
+                prefetch_limit = 200 if not trace_id else 50
                 # Fetch traces for all allowed users in scope
                 for uid in allowed_user_ids:
                     try:
@@ -4005,10 +4080,12 @@ async def get_scores(
         unscoped_collected: list[Any] = []
 
         # Primary fetch with user filter.
+        # Langfuse already filters by user_id, so skip expensive ownership
+        # re-check (_score_belongs_to_user triggers 2000-trace prefetch).
         primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=True)
         primary_rows = [
             row for row in primary_rows
-            if _score_belongs_to_user(row) and _score_matches_name(row)
+            if _score_matches_name(row)
         ]
         if primary_rows:
             raw_scores = primary_rows
@@ -4025,7 +4102,7 @@ async def get_scores(
             unscoped_seen_keys: set[str] = set()
             target_count = page * limit
             scan_limit = min(200, max(50, limit))
-            max_scan_pages = 10
+            max_scan_pages = 3
 
             for scan_page in range(1, max_scan_pages + 1):
                 scan_rows, _ = _list_scores_page(scan_page, scan_limit, include_user_filter=False)
@@ -4069,7 +4146,7 @@ async def get_scores(
 
             # If the direct list endpoint is empty, try broader SDK-specific score APIs.
             if not collected and not unscoped_collected:
-                global_scan_rows = _list_global_scores(max_rows=max(1000, page * limit * 10))
+                global_scan_rows = _list_global_scores(max_rows=max(200, page * limit * 2))
                 logger.info(
                     "Global score scan fallback collected {} row(s) for user_id={}",
                     len(global_scan_rows),
@@ -4186,7 +4263,7 @@ async def get_scores(
 
             collected_rows: list[dict[str, Any]] = []
             seen_keys: set[str] = set()
-            max_traces_to_scan = 500
+            max_traces_to_scan = 50
 
             for trace_key in trace_candidates[:max_traces_to_scan]:
                 if not trace_key:
@@ -5335,7 +5412,7 @@ async def run_dataset_experiment(
     generation_model: str | None = None
     generation_model_api_key: str | None = None
     if payload.generation_model_registry_id:
-        generation_model, generation_model_api_key = await _resolve_model_from_registry(
+        generation_model, generation_model_api_key, _ = await _resolve_model_from_registry(
             payload.generation_model_registry_id, session=session
         )
 
@@ -5510,7 +5587,21 @@ async def run_saved_evaluators_for_new_trace(
         logger.warning(f"Invalid user_id for new-trace evaluation: {user_id}")
         return 0
 
-    client = get_langfuse_client()
+    # Resolve Langfuse client via DB bindings first, then env-var fallback
+    client = None
+    try:
+        async with session_scope() as _scope_session:
+            from agentcore.services.database.models.user.model import User as UserModel
+            user_obj = await _scope_session.get(UserModel, user_uuid)
+            if user_obj:
+                _, client = await _get_scoped_langfuse_for_evaluation(
+                    _scope_session, user_obj,
+                )
+    except Exception as scope_err:
+        logger.debug("Scoped Langfuse client resolution failed: {}", str(scope_err))
+
+    if not client:
+        client = get_langfuse_client()
     if not client:
         logger.warning("Langfuse client not available, skipping evaluators")
         return 0
@@ -5546,6 +5637,20 @@ async def run_saved_evaluators_for_new_trace(
     )
     if resolved_trace_dict:
         trace_dict = resolved_trace_dict
+
+    # Ensure agent_id/agent_name from caller are present in trace metadata,
+    # as the Langfuse trace may not have them in its metadata.
+    trace_meta = trace_dict.get("metadata") or {}
+    if isinstance(trace_meta, str):
+        try:
+            trace_meta = json.loads(trace_meta)
+        except Exception:
+            trace_meta = {}
+    if agent_id and not trace_meta.get("agent_id"):
+        trace_meta["agent_id"] = _normalize_agent_id(agent_id)
+    if agent_name and not trace_meta.get("agent_name"):
+        trace_meta["agent_name"] = agent_name
+    trace_dict["metadata"] = trace_meta
 
     try:
         async with session_scope() as session:
@@ -5603,15 +5708,32 @@ async def run_saved_evaluators_for_new_trace(
             )
             continue
 
+        # Resolve API key and base URL from model registry if available
+        effective_model = evaluator.model or "gpt-4o"
+        effective_api_key = None
+        effective_api_base = None
+        if evaluator.model_registry_id:
+            try:
+                effective_model, effective_api_key, effective_api_base = await _resolve_model_from_registry(
+                    evaluator.model_registry_id
+                )
+            except Exception as reg_err:
+                logger.warning(
+                    "Failed to resolve model registry {} for evaluator {}: {}",
+                    evaluator.model_registry_id, evaluator.name, str(reg_err),
+                )
+
         asyncio.create_task(
             run_llm_judge_task(
                 client=client,
                 trace_id=str(resolved_trace_id or trace_ref_id),
                 criteria=evaluator.criteria,
                 score_name=f"Evaluator: {evaluator.name}",
-                model=evaluator.model or "gpt-4o",
+                model=effective_model,
                 user_id=str(user_id),
-                model_api_key=evaluator.model_api_key,
+                model_api_key=effective_api_key,
+                model_api_base=effective_api_base,
+                model_registry_id=evaluator.model_registry_id,
                 preset_id=evaluator.preset_id,
                 ground_truth=evaluator.ground_truth,
                 session_id=session_id,
@@ -5657,32 +5779,54 @@ async def list_evaluation_models(
     """
     try:
         async with session_scope() as session:
+            # Always fetch legacy agents (owned / public from base Agent table)
+            stmt = select(agent).where(
+                or_(
+                    agent.user_id == current_user.id,
+                    agent.access_type == AccessTypeEnum.PUBLIC,
+                )
+            )
+            is_component_col = getattr(agent, "is_component", None)
+            if is_component_col is not None:
+                stmt = stmt.where(
+                    or_(
+                        is_component_col == False,  # noqa: E712
+                        is_component_col.is_(None),
+                    )
+                )
+            _res = await session.exec(stmt)
+            raw_agents = _res.all()
+            legacy_data = [
+                _agent_to_payload(a, environment=environment or None) for a in raw_agents
+            ]
+            logger.debug(
+                "Legacy agent query returned {} agent(s) for user_id={}",
+                len(legacy_data), current_user.id,
+            )
+
             if environment and environment.lower() in ("uat", "production", "prod"):
                 env = environment.lower()
                 if env == "prod":
                     env = "production"
-                agents_data = await _list_deployed_agents(session, current_user, env)
-            else:
-                # Legacy: all owned / public agents from the base Agent table
-                stmt = select(agent).where(
-                    or_(
-                        agent.user_id == current_user.id,
-                        agent.access_type == AccessTypeEnum.PUBLIC,
-                    )
+                deployed_data = await _list_deployed_agents(session, current_user, env)
+                logger.debug(
+                    "Deployed agent query ({}) returned {} agent(s) for user_id={}",
+                    env, len(deployed_data), current_user.id,
                 )
-                is_component_col = getattr(agent, "is_component", None)
-                if is_component_col is not None:
-                    stmt = stmt.where(
-                        or_(
-                            is_component_col == False,  # noqa: E712
-                            is_component_col.is_(None),
-                        )
-                    )
-                _res = await session.exec(stmt)
-                raw_agents = _res.all()
-                agents_data = [
-                    _agent_to_payload(a, environment=None) for a in raw_agents
-                ]
+                # Merge: deployed agents first, then legacy agents not already present
+                seen_agent_ids = {
+                    item.get("metadata", {}).get("agent_id")
+                    for item in deployed_data
+                    if item.get("metadata", {}).get("agent_id")
+                }
+                for legacy_item in legacy_data:
+                    aid = legacy_item.get("metadata", {}).get("agent_id")
+                    if aid and aid not in seen_agent_ids:
+                        deployed_data.append(legacy_item)
+                        seen_agent_ids.add(aid)
+                agents_data = deployed_data
+            else:
+                agents_data = legacy_data
 
         return {"object": "list", "data": agents_data}
     except Exception as e:
@@ -6009,7 +6153,7 @@ async def create_evaluator_config(
         to_ts = _parse_iso_datetime_or_400(payload.ts_to, "ts_to")
 
         # Resolve model from registry
-        effective_model, effective_api_key = await _resolve_model_from_registry(payload.model_registry_id, session=session)
+        effective_model, effective_api_key, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
 
         async with session_scope() as session:
             # Enforce RBAC scope for creation
@@ -6124,7 +6268,7 @@ async def run_evaluator_config(
 
         # Resolve model from registry at runtime
         if eval_obj.model_registry_id:
-            effective_model, effective_api_key = await _resolve_model_from_registry(eval_obj.model_registry_id, session=session)
+            effective_model, effective_api_key, _ = await _resolve_model_from_registry(eval_obj.model_registry_id, session=session)
         else:
             effective_model = eval_obj.model or "gpt-4o"
             effective_api_key = None
@@ -6236,7 +6380,7 @@ async def update_evaluator_config(
                 raise HTTPException(status_code=403, detail="Not authorized to edit evaluator")
 
             # Resolve model from registry
-            effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
+            effective_model, _, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
 
             # Re-validate scope if visibility fields are provided
             visibility, public_scope, public_dept_ids, resolved_org_id, resolved_dept_id = (
