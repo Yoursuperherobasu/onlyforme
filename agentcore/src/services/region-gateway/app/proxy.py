@@ -52,7 +52,7 @@ class _CircuitState:
 
 @dataclass
 class RegionProxy:
-    """Proxies dashboard API calls from hub to spoke backends."""
+    """Proxies dashboard API calls from hub to spoke backends using x-api-key auth."""
 
     _clients: dict[str, httpx.AsyncClient] = field(default_factory=dict)
     _circuits: dict[str, _CircuitState] = field(default_factory=dict)
@@ -106,11 +106,11 @@ class RegionProxy:
 
         client = self._get_client(region)
 
-        # Build headers
+        # Build headers — use x-api-key (same as model-service and other services)
         headers: dict[str, str] = {}
-        token = await spoke_auth.get_token(region)
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        api_key = spoke_auth.get_api_key(region)
+        if api_key:
+            headers["x-api-key"] = api_key
         if caller_user_id:
             headers["X-Hub-Caller"] = caller_user_id
         headers["X-Hub-Request-Id"] = str(time.time_ns())
@@ -170,9 +170,9 @@ class RegionProxy:
         client = self._get_client(region)
 
         headers: dict[str, str] = {}
-        token = await spoke_auth.get_token(region)
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        api_key = spoke_auth.get_api_key(region)
+        if api_key:
+            headers["x-api-key"] = api_key
 
         try:
             start = time.monotonic()

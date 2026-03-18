@@ -276,6 +276,12 @@ class Settings(BaseSettings):
     mcp_server_enable_progress_notifications: bool = False
     """If set to False, Agentcore will not send progress notifications in the MCP server."""
 
+    # Backend Service API Key (for cross-region gateway calls via x-api-key)
+    backend_service_api_key: str = ""
+    """API key for authenticating service-to-service calls to this backend (e.g. region-gateway → backend).
+    Resolved from Key Vault secret 'agentcore-backend-service-api-key'. When set, incoming requests
+    with a matching x-api-key header are authenticated as a service caller without requiring JWT."""
+
     # Model Microservice
     model_service_url: str = ""
     """Base URL of the Model microservice (e.g. http://localhost:8001).

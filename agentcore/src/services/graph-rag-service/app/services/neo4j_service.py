@@ -69,6 +69,8 @@ def _create_driver():
         auth=(settings.neo4j_username, settings.neo4j_password),
         connection_timeout=15,
         max_transaction_retry_time=30,
+        max_connection_pool_size=100,
+        connection_acquisition_timeout=10.0,
     )
     driver.verify_connectivity()
     logger.info("Neo4j driver connected to %s", settings.neo4j_uri)

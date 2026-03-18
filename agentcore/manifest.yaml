@@ -29,3 +29,13 @@ deployments:
   version_number: v1
   environment: prod
   deployment_id: da008d08-b003-4d46-b075-ea45ef5175b5
+- agent_id: d335b8ad-baaa-4244-b92c-547542207649
+  agent_name: New Agent
+  version_number: v1
+  environment: uat
+  deployment_id: bacccec5-1727-477e-bade-228ec679d039
+- agent_id: ffcbbab0-df81-41ca-8110-f83b7cc650b1
+  agent_name: New Agent (1)
+  version_number: v1
+  environment: uat
+  deployment_id: d97747ca-3464-4c91-9bb8-255d50be012e

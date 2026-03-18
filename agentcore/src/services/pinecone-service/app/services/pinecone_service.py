@@ -6,6 +6,8 @@ import hashlib
 import logging
 import time
 
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
 from app.config import get_settings
 from app.schemas import (
     CopyNamespaceRequest,
@@ -31,6 +33,20 @@ from app.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Tenacity retry for transient Pinecone API failures
+# ---------------------------------------------------------------------------
+
+_pinecone_retry = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)),
+    reraise=True,
+    before_sleep=lambda rs: logger.warning(
+        "Pinecone retry attempt %d after %s", rs.attempt_number, rs.outcome.exception()
+    ),
+)
 
 # ---------------------------------------------------------------------------
 # Cached Pinecone client (singleton)
@@ -72,6 +88,7 @@ def _stable_doc_id(namespace: str, index: int, content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@_pinecone_retry
 def ensure_index(req: EnsureIndexRequest) -> EnsureIndexResponse:
     pc = _get_pinecone_client()
     existing = pc.list_indexes()
@@ -129,6 +146,7 @@ def _generate_sparse_vectors(pc, texts: list[str], sparse_model: str, input_type
 # ---------------------------------------------------------------------------
 
 
+@_pinecone_retry
 def ingest_documents(req: IngestRequest) -> IngestResponse:
     pc = _get_pinecone_client()
     index = pc.Index(req.index_name)
@@ -186,6 +204,7 @@ def _hybrid_score_norm(dense: list[float], sparse: dict, alpha: float):
 # ---------------------------------------------------------------------------
 
 
+@_pinecone_retry
 def search_documents(req: SearchRequest) -> SearchResponse:
     pc = _get_pinecone_client()
     index = pc.Index(req.index_name)
@@ -454,6 +473,7 @@ def copy_namespace(req: CopyNamespaceRequest) -> CopyNamespaceResponse:
 # ---------------------------------------------------------------------------
 
 
+@_pinecone_retry
 def get_namespace_stats(req: NamespaceStatsRequest) -> NamespaceStatsResponse:
     """Return vector count and dimension for a specific namespace in an index."""
     pc = _get_pinecone_client()
@@ -476,6 +496,7 @@ def get_namespace_stats(req: NamespaceStatsRequest) -> NamespaceStatsResponse:
 # ---------------------------------------------------------------------------
 
 
+@_pinecone_retry
 def list_indexes() -> ListIndexesResponse:
     """List all Pinecone indexes with their namespaces and stats."""
     pc = _get_pinecone_client()
@@ -516,6 +537,7 @@ def list_indexes() -> ListIndexesResponse:
 # ---------------------------------------------------------------------------
 
 
+@_pinecone_retry
 def delete_index(req: DeleteIndexRequest) -> DeleteIndexResponse:
     """Delete a Pinecone index entirely."""
     pc = _get_pinecone_client()
@@ -537,6 +559,7 @@ def delete_index(req: DeleteIndexRequest) -> DeleteIndexResponse:
 # ---------------------------------------------------------------------------
 
 
+@_pinecone_retry
 def delete_namespace(req: DeleteNamespaceRequest) -> DeleteNamespaceResponse:
     """Delete all vectors in a namespace."""
     pc = _get_pinecone_client()
