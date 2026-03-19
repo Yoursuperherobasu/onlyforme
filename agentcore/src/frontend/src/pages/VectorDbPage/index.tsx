@@ -144,34 +144,10 @@ export default function VectorDBView(): JSX.Element {
   return (
     <div className="h-full w-full overflow-auto">
       {/* Header */}
-      <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
-        <div className="flex items-center gap-6">
-          <div>
-            <div className="mb-1 flex items-center gap-3">
-              <h1 className="text-lg font-semibold md:text-xl">{t("Vector Store Observatory")}</h1>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {t("View Pinecone namespaces across UAT and PROD environments")}
-            </p>
-          </div>
-
-          {/* Environment Filter - inline with heading */}
-          <div className="min-w-[160px]">
-            <Select
-              value={envFilter}
-              onValueChange={(value) => setEnvFilter(value as EnvFilter)}
-            >
-              <SelectTrigger className="w-full bg-card">
-                <SelectValue placeholder={t("All Envs")} />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(ENV_LABELS) as EnvFilter[]).map((env) => (
-                  <SelectItem key={env} value={env}>
-                    {t(ENV_LABELS[env])}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+        <div>
+          <div className="mb-2 flex items-center gap-3">
+            <h1 className="text-xl font-semibold md:text-2xl">{t("Vector DB Catalogue")}</h1>
           </div>
         </div>
 
@@ -245,7 +221,7 @@ export default function VectorDBView(): JSX.Element {
                       "Index / Namespace",
                       "Agent",
                       "Status",
-                      "Vectors",
+                      "Records",
                       "Migration",
                       ...(canDelete ? [""] : []),
                     ].map((h, i) => (
@@ -267,7 +243,7 @@ export default function VectorDBView(): JSX.Element {
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         {displayVectorDBs.length === 0
-                          ? t("No namespaces tracked yet. Entries appear automatically when agents with Pinecone are deployed or promoted to PROD.")
+                          ? t("No vector databases tracked yet. Entries appear automatically when agents with vector stores are deployed or promoted to PROD.")
                           : t("No entries match your current filters.")}
                       </td>
                     </tr>

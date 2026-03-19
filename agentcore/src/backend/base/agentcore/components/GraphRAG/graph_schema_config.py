@@ -167,6 +167,7 @@ class GraphSchemaConfigComponent(Node):
     )
     name = "GraphSchemaConfig"
     icon = "Settings2"
+    documentation = ""
 
     inputs = [
         # ── Domain Template ────────────────────────────────────

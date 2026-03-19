@@ -336,7 +336,7 @@ class DataVisualizerComponent(Node):
 
     display_name = "Data Visualizer"
     description = "Generate charts and visualizations from query results."
-    icon = "bar-chart-3"
+    icon = "BarChart3"
     name = "DataVisualizer"
     hidden = True
 

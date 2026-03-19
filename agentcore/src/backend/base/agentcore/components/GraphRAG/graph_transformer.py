@@ -51,6 +51,7 @@ class GraphTransformerComponent(Node):
     )
     name = "GraphTransformer"
     icon = "Filter"
+    documentation = ""
 
     inputs = [
         # -- Input Entities ---------------------------------------------

@@ -10,8 +10,9 @@ class SplitText(Node):
         "Split extracted documents into chunks for vector storage. "
         "Preserves all source metadata. Deterministic chunk IDs for idempotent ingestion."
     )
-    name = "TextSplitter" 
+    name = "TextSplitter"
     icon = "Scissors"
+    documentation = ""
 
     inputs = [
         HandleInput(
