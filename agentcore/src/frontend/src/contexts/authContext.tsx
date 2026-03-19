@@ -1,4 +1,4 @@
-import { createContext, useEffect, useState } from "react";
+import { createContext, useCallback, useEffect, useState } from "react";
 import { Cookies } from "react-cookie";
 import {
   AGENTCORE_ACCESS_TOKEN,
@@ -66,23 +66,7 @@ export function AuthProvider({ children }): React.ReactElement {
     }
   }, []);
 
-  useEffect(() => {
-    // Always attempt whoami on mount; backend can read httpOnly cookies.
-    getUser();
-  }, []);
-
-  useEffect(() => {
-    const token = cookies.get(AGENTCORE_ACCESS_TOKEN);
-    if (!token) return;
-
-    const interval = setInterval(() => {
-      getUser(); // refresh permissions every minute
-    }, 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  function getUser() {
+  const getUser = useCallback(() => {
     mutateLoggedUser(
       {},
       {
@@ -104,7 +88,37 @@ export function AuthProvider({ children }): React.ReactElement {
         },
       },
     );
-  }
+  }, [mutateLoggedUser, setAuthContext, checkHasStore, fetchApiData]);
+
+  useEffect(() => {
+    // Always attempt whoami on mount; backend can read httpOnly cookies.
+    getUser();
+  }, [getUser]);
+
+  useEffect(() => {
+    if (!userData?.id) return;
+
+    // Keep permissions fresh without forcing manual browser refresh.
+    const interval = setInterval(() => {
+      getUser();
+    }, 20 * 1000);
+
+    const onFocus = () => getUser();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        getUser();
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [userData?.id, getUser]);
 
   function login(
     newAccessToken: string,

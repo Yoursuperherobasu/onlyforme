@@ -412,7 +412,15 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if user_role in {"department_admin", "developer", "business_user"}:
+        if user_role == "root":
+            payload.org_id = None
+            payload.dept_id = None
+        elif user_role == "super_admin":
+            if not org_ids:
+                raise HTTPException(status_code=403, detail="No active organization scope found")
+            payload.org_id = sorted(org_ids, key=str)[0]
+            payload.dept_id = None
+        elif user_role in {"department_admin", "developer", "business_user"}:
             if not dept_pairs:
                 raise HTTPException(status_code=403, detail="No active department scope found")
             current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
@@ -528,6 +536,12 @@ def _can_edit_connector(
 
     role = normalize_role(str(current_user.role))
     if role == "super_admin":
+        if (
+            _normalize_visibility(getattr(row, "visibility", "private")) == "private"
+            and row.org_id is None
+            and row.dept_id is None
+        ):
+            return str(getattr(row, "created_by", "")) == str(current_user.id)
         return bool(row.org_id and row.org_id in org_ids)
 
     if role == "department_admin":
@@ -569,6 +583,12 @@ def _can_delete_connector(
     user_id = str(current_user.id)
 
     if role == "super_admin":
+        if (
+            _normalize_visibility(getattr(row, "visibility", "private")) == "private"
+            and row.org_id is None
+            and row.dept_id is None
+        ):
+            return str(getattr(row, "created_by", "")) == user_id
         return bool(row.org_id and row.org_id in org_ids)
 
     if role == "department_admin":
@@ -920,7 +940,7 @@ async def list_connectors(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> list[dict]:
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     query = select(ConnectorCatalogue).order_by(ConnectorCatalogue.name.asc())
     rows = (await session.exec(query)).all()
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
@@ -943,7 +963,7 @@ async def get_connector_visibility_options(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     role = normalize_role(str(current_user.role))
 
@@ -991,7 +1011,7 @@ async def create_connector(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     await _require_connector_permission(current_user, "add_connector")
 
     provider = payload.provider.lower()
@@ -1112,7 +1132,7 @@ async def update_connector(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     await _require_connector_permission(current_user, "add_connector")
 
     row = await session.get(ConnectorCatalogue, connector_id)
@@ -1247,7 +1267,7 @@ async def delete_connector(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     await _require_connector_permission(current_user, "add_connector")
 
     row = await session.get(ConnectorCatalogue, connector_id)
@@ -1273,7 +1293,7 @@ async def test_connector_connection(
     row = await session.get(ConnectorCatalogue, connector_id)
     if not row:
         raise HTTPException(status_code=404, detail="Connector not found")
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     if not _can_access_connector(row, current_user, org_ids, dept_pairs):
         raise HTTPException(status_code=403, detail="Connector is outside your visibility scope")
@@ -1356,7 +1376,7 @@ async def test_connector_connection_payload(
     current_user: CurrentActiveUser,
 ) -> dict:
     """Test connectivity from unsaved connector payload (used by create modal)."""
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     await _require_connector_permission(current_user, "add_connector")
 
     try:
@@ -1379,7 +1399,7 @@ async def disconnect_connector(
     session: DbSession,
 ) -> dict:
     """Manually disconnect a connector (set status to 'disconnected')."""
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     await _require_connector_permission(current_user, "add_connector")
 
     row = await session.get(ConnectorCatalogue, connector_id)
@@ -1405,7 +1425,7 @@ async def get_connector_schema(
     session: DbSession,
 ) -> dict:
     """Return cached schema metadata for a connector."""
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     row = await session.get(ConnectorCatalogue, connector_id)
     if not row:
         raise HTTPException(status_code=404, detail="Connector not found")

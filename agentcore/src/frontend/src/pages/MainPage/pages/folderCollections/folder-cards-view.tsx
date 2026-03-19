@@ -1,11 +1,11 @@
-import { Plus, Folder, MoreVertical, Edit2, Trash2, FileText, X, Info } from "lucide-react";
+import { Plus, Folder, MoreVertical, Edit2, Trash2, FileText, X, Info, Copy, Check } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { usePostFolders } from "@/controllers/API/queries/folders";
 import useAlertStore from "@/stores/alertStore";
 import { track } from "@/customization/utils/analytics";
 import type { FolderType } from "@/pages/MainPage/entities";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import TagInput from "@/components/common/tagInputComponent";
 import { Badge } from "@/components/ui/badge";
@@ -46,8 +46,10 @@ export default function FolderCardsView({
   const [projectTags, setProjectTags] = useState<string[]>([]);
   const [selectedTagFilter, setSelectedTagFilter] = useState<string[]>([]);
   const [expandedTableRow, setExpandedTableRow] = useState<string | null>(null);
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [selectedFolderDetail, setSelectedFolderDetail] = useState<FolderType | null>(null);
+  const [infoPopoverFolderId, setInfoPopoverFolderId] = useState<string | null>(null);
+  const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const headerRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDepartment, setSelectedDepartment] = useState("all");
   const [selectedCreator, setSelectedCreator] = useState("all");
@@ -209,11 +211,13 @@ export default function FolderCardsView({
     };
   }, []);
 
-  // Open detail modal
-  const handleOpenDetailModal = (folder: FolderType) => {
-    setSelectedFolderDetail(folder);
-    setDetailModalOpen(true);
-  };
+
+  // Measure header height for sticky table header
+  useEffect(() => {
+    if (headerRef.current) {
+      setHeaderHeight(headerRef.current.offsetHeight);
+    }
+  }, []);
 
   // Handle creating new folder
   const handleCreateNewFolder = (e: React.FormEvent) => {
@@ -258,7 +262,7 @@ export default function FolderCardsView({
     <>
       <div className="flex h-full w-full flex-col overflow-auto bg-background">
         {/* Header */}
-        <div className="flex items-center justify-between border-b bg-background px-6 py-4 sticky top-0 z-10">
+        <div ref={headerRef} className="flex items-center justify-between border-b bg-background px-6 py-4 sticky top-0 z-20">
           <div>
             <h1 className="text-2xl font-semibold">Projects</h1>
             <p className="text-sm text-muted-foreground">
@@ -320,7 +324,21 @@ export default function FolderCardsView({
             <div className="fixed inset-x-0 top-0 z-[70] flex h-full w-full items-start justify-center p-4">
               <div className="flex h-full max-h-[720px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-background shadow-xl transition-transform">
                 <div className="flex items-center justify-between border-b px-5 py-4">
+                  <h2 className="text-lg font-semibold">Filters</h2>
                   <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        setSelectedDepartment("all");
+                        setSelectedCreator("all");
+                        setSortByDate("newest");
+                        setSortByAgents("none");
+                        setAgentCountFilter("all");
+                        setSelectedTagFilter([]);
+                      }}
+                      className="text-sm text-primary hover:underline"
+                    >
+                      Clear Filters
+                    </button>
                     <button
                       onClick={() => setShowFilters(false)}
                       className="rounded-md p-1 text-muted-foreground hover:text-foreground"
@@ -328,21 +346,7 @@ export default function FolderCardsView({
                     >
                       <X className="h-5 w-5" />
                     </button>
-                    <h2 className="text-lg font-semibold">Filters</h2>
                   </div>
-                  <button
-                    onClick={() => {
-                      setSelectedDepartment("all");
-                      setSelectedCreator("all");
-                      setSortByDate("newest");
-                      setSortByAgents("none");
-                      setAgentCountFilter("all");
-                      setSelectedTagFilter([]);
-                    }}
-                    className="text-sm text-primary hover:underline"
-                  >
-                    Clear Filters
-                  </button>
                 </div>
 
                 <div className="flex flex-1 overflow-hidden">
@@ -420,7 +424,7 @@ export default function FolderCardsView({
                           className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         >
                           <option value="all">All departments</option>
-                          <option value="__none__">Unassigned</option>
+                          <option value="__none__">No department scope</option>
                           {departmentOptions.map((dept) => (
                             <option key={dept} value={dept}>
                               {dept}
@@ -439,7 +443,7 @@ export default function FolderCardsView({
                           className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         >
                           <option value="all">All creators</option>
-                          <option value="__none__">Unassigned</option>
+                          <option value="__none__">Unknown creator</option>
                           {creatorOptions.map((creator) => (
                             <option key={creator} value={creator}>
                               {creator}
@@ -530,20 +534,20 @@ export default function FolderCardsView({
         )}
 
         {/* Cards Section - Recent Projects */}
-        <div className="border-b bg-muted/30 px-6 py-6">
-          <h2 className="mb-4 text-sm font-semibold text-muted-foreground">Recents</h2>
+        <div className="border-b bg-muted/30 px-6 py-3">
+          <h2 className="mb-2 text-sm font-semibold text-muted-foreground">Recents</h2>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
 
             {/* Create New Project Card*/}
             {can("view_projects_page") && (
             <div
-              className="group relative flex flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-5 transition-all hover:border-primary hover:bg-accent"
+              className="group relative flex flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-4 transition-all hover:border-primary hover:bg-accent"
             >
               <div className="flex-1 flex items-center justify-center">
                 <button
                   onClick={handleOpenCreateModal}
                   disabled={isPending}
-                  className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20 disabled:opacity-50"
+                  className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20 disabled:opacity-50"
                 >
                   <Plus className="h-6 w-6 text-primary" />
                 </button>
@@ -555,17 +559,20 @@ export default function FolderCardsView({
             {/* Recent Folder Cards*/}
             {recentFolders.map((folder) => {
               const agentCount = getAgentCount(folder.id);
+              const isPopoverOpen = infoPopoverFolderId === folder.id;
               return (
                 <div
                   key={folder.id}
-                  className="group relative flex flex-col items-center justify-between rounded-lg border bg-card p-5 transition-all hover:border-primary hover:shadow-md"
+                  className="group relative flex flex-col items-center rounded-lg border bg-card p-4 transition-all hover:border-primary hover:shadow-md"
                 >
-                  {/* Top Right Icons - Menu and Info */}
-                  <div className="absolute right-2 top-2 z-10 flex gap-1">
-                    {/* Info Button - View Full Details */}
+                  {/* Top Right Icons - hover only */}
+                  <div className="absolute right-1.5 top-1.5 z-10 flex gap-0.5">
                     {can("view_projects_page") && (
                     <button
-                      onClick={() => handleOpenDetailModal(folder)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setInfoPopoverFolderId(isPopoverOpen ? null : folder.id);
+                      }}
                       className="flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-blue-100 group-hover:opacity-100"
                       title="View details"
                     >
@@ -573,8 +580,7 @@ export default function FolderCardsView({
                     </button>
                     )}
 
-                    {/* Menu Button - Only show if user has edit or delete permissions */}
-                    {(can("edit_projects_page") || can("delete_project")) && (
+                    {(can("edit_project") || can("delete_project")) && (
                     <div className="z-20">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -586,7 +592,7 @@ export default function FolderCardsView({
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {can("edit_projects_page") && (
+                          {can("edit_project") && (
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -615,83 +621,161 @@ export default function FolderCardsView({
                     )}
                   </div>
 
-                  {/* Clickable card content - Centered */}
+                  {/* Clean card - Icon + Name + Agent count */}
                   <button
                     onClick={() => can("view_projects_page") && onFolderClick(folder.id)}
                     disabled={!can("view_projects_page")}
-                    className="flex flex-1 flex-col items-center justify-center gap-3 w-full text-center py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex flex-1 flex-col items-center justify-center gap-2 w-full text-center py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {/* Icon */}
-                    <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
-                      <Folder className="h-7 w-7 text-primary" />
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20">
+                      <Folder className="h-6 w-6 text-primary" />
                     </div>
+                    <p className="text-sm font-semibold line-clamp-2 leading-tight w-full">
+                      {folder.name}
+                    </p>
+                  </button>
 
-                    {/* Text Content */}
-                    <div className="w-full space-y-1.5">
-                      {/* Folder Name */}
-                      <p 
-                        className="block text-sm font-semibold line-clamp-2 leading-tight"
-                      >
-                        {folder.name}
-                      </p>
-
-                      {/* Description - Show 1 line with ellipsis */}
-                      {folder.description && (
-                        <p 
-                          className="text-xs text-muted-foreground line-clamp-1"
-                        >
-                          {folder.description}
-                        </p>
+                  {/* Tags */}
+                  {folder.tags && folder.tags.length > 0 && (
+                    <div
+                      className="relative flex flex-wrap justify-center gap-1 w-full px-1 mb-2 group/tags"
+                      title={folder.tags.join(", ")}
+                    >
+                      {folder.tags.slice(0, 3).map((tag) => (
+                        <Badge key={tag} variant="outline" size="sm" className="text-[10px] px-1.5 py-0">
+                          {tag}
+                        </Badge>
+                      ))}
+                      {folder.tags.length > 3 && (
+                        <Badge variant="outline" size="sm" className="text-[10px] px-1.5 py-0 cursor-default">
+                          +{folder.tags.length - 3}
+                        </Badge>
                       )}
-                      {showCreatedBy && (folder.created_by_email || folder.is_own_project) && (
-                        <p className="text-xxs text-muted-foreground line-clamp-1">
-                          {folder.is_own_project ? (
-                            <>Created by: <span className="font-semibold text-primary">You</span></>
-                          ) : (
-                            <>Created by: {folder.created_by_email}</>
-                          )}
-                        </p>
-                      )}
-                      {showDepartment && folder.department_name && (
-                        <p className="text-xxs text-muted-foreground line-clamp-1">
-                          Department: {folder.department_name}
-                        </p>
-                      )}
-                      {showOrganization && folder.organization_name && (
-                        <p className="text-xxs text-muted-foreground line-clamp-1">
-                          Organization: {folder.organization_name}
-                        </p>
-                      )}
-                      {/* Tags */}
-                      {folder.tags && folder.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {folder.tags.slice(0, 3).map((tag) => (
-                            <Badge
-                              key={tag}
-                              variant="outline"
-                              size="sm"
-                              className="text-[10px] px-1.5 py-0"
-                            >
+                      {/* Full tags tooltip on hover */}
+                      {folder.tags.length > 3 && (
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/tags:flex flex-wrap gap-1 bg-popover border rounded-lg p-2 shadow-lg z-50 w-max max-w-[250px]">
+                          {folder.tags.map((tag) => (
+                            <Badge key={tag} variant="outline" size="sm" className="text-[10px] px-1.5 py-0">
                               {tag}
                             </Badge>
                           ))}
-                          {folder.tags.length > 3 && (
-                            <Badge variant="outline" size="sm" className="text-[10px] px-1.5 py-0">
-                              +{folder.tags.length - 3}
-                            </Badge>
-                          )}
                         </div>
                       )}
                     </div>
-                  </button>
+                  )}
 
-                  {/* Stats - Bottom */}
-                  <div className="flex flex-col items-center justify-center gap-1 text-xs text-muted-foreground pt-2 border-t border-border/50 w-full">
-                    <span>{agentCount} {agentCount === 1 ? "agent" : "agents"}</span>
-                    {folder.updated_at && (
-                      <span className="text-xs">{formatDate(folder.updated_at)}</span>
+                  {/* Created by + Agent count - Bottom */}
+                  <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground pt-2 border-t border-border/50 w-full">
+                    {showCreatedBy && (folder.created_by_email || folder.is_own_project) && (
+                      <>
+                        <span className="truncate max-w-[50%]" title={folder.created_by_email || ""}>
+                          {folder.is_own_project ? (
+                            <span className="text-primary font-medium">You</span>
+                          ) : (
+                            folder.created_by_email?.split("@")[0]
+                          )}
+                        </span>
+                        <span className="text-border">|</span>
+                      </>
                     )}
+                    <span>{agentCount} {agentCount === 1 ? "agent" : "agents"}</span>
                   </div>
+
+                  {/* Info Popover - shown on (i) click */}
+                  {isPopoverOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setInfoPopoverFolderId(null)}
+                      />
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-40 w-64 rounded-lg border bg-card p-3 shadow-lg">
+                        <div className="space-y-2 text-xs">
+                          {/* Description - trimmed, full on hover */}
+                          <div>
+                            <span className="font-semibold text-muted-foreground">Description</span>
+                            <p
+                              className="text-muted-foreground leading-relaxed mt-0.5 line-clamp-2 hover:line-clamp-none cursor-default transition-all"
+                              title={folder.description || "No description"}
+                            >
+                              {folder.description || "No description"}
+                            </p>
+                          </div>
+
+                          {/* Agents & Updated */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <span className="font-semibold text-muted-foreground">Agents</span>
+                              <p className="font-medium">{agentCount}</p>
+                            </div>
+                            {folder.updated_at && (
+                              <div>
+                                <span className="font-semibold text-muted-foreground">Updated</span>
+                                <p className="font-medium">{formatDate(folder.updated_at)}</p>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Created by & Department side by side */}
+                          <div className="grid grid-cols-2 gap-2">
+                            {showCreatedBy && (folder.created_by_email || folder.is_own_project) && (
+                              <div>
+                                <span className="font-semibold text-muted-foreground">Created by</span>
+                                <div className="flex items-center gap-1">
+                                  <p className="font-medium truncate" title={folder.created_by_email || ""}>
+                                    {folder.is_own_project ? (
+                                      <span className="text-primary">You</span>
+                                    ) : (
+                                      folder.created_by_email?.split("@")[0]
+                                    )}
+                                  </p>
+                                  {folder.created_by_email && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigator.clipboard.writeText(folder.created_by_email!);
+                                        setCopiedEmail(folder.created_by_email!);
+                                        setTimeout(() => setCopiedEmail(null), 1500);
+                                      }}
+                                      className="flex-shrink-0 p-0.5 rounded hover:bg-accent transition-colors"
+                                      title="Copy email"
+                                    >
+                                      {copiedEmail === folder.created_by_email ? (
+                                        <Check className="h-3 w-3 text-green-500" />
+                                      ) : (
+                                        <Copy className="h-3 w-3 text-muted-foreground" />
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {showDepartment && folder.department_name && (
+                              <div>
+                                <span className="font-semibold text-muted-foreground">Department</span>
+                                <p className="font-medium truncate">{folder.department_name}</p>
+                              </div>
+                            )}
+                          </div>
+
+                          {showOrganization && folder.organization_name && (
+                            <div>
+                              <span className="font-semibold text-muted-foreground">Organization</span>
+                              <p className="font-medium">{folder.organization_name}</p>
+                            </div>
+                          )}
+                          {folder.tags && folder.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {folder.tags.map((tag) => (
+                                <Badge key={tag} variant="outline" size="sm" className="text-[10px] px-1.5 py-0">
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -700,21 +784,26 @@ export default function FolderCardsView({
 
         {/* Table/List Section - Older Projects */}
         {olderFolders.length > 0 && (
-          <div className="flex-1 overflow-auto px-6 py-4">
+          <div className="px-6 py-4">
             <h2 className="mb-4 text-sm font-semibold text-muted-foreground">Earlier</h2>
             
-            <div className="rounded-lg border bg-card overflow-hidden">
+            <div className="rounded-lg border bg-card">
               {/* Table Header */}
-              <div className="grid grid-cols-12 gap-4 border-b bg-muted/50 px-4 py-3 text-xs font-semibold text-muted-foreground sticky top-0">
-                <div className="col-span-3 flex items-center gap-2">
-                  <Folder className="h-4 w-4" />
+              <div
+                className="flex gap-4 border-b bg-background px-4 py-3 text-xs font-semibold text-muted-foreground sticky z-10 shadow-sm items-center w-full"
+                style={{ top: headerHeight ? `${headerHeight}px` : '0px' }}
+              >
+                <div className="flex items-center gap-2 flex-[2] min-w-0">
+                  <Folder className="h-4 w-4 flex-shrink-0" />
                   <span>Name</span>
                 </div>
-                {showCreatedBy && <div className="col-span-2 flex items-center">Created By</div>}
-                {showDepartment && <div className="col-span-2 flex items-center">Department</div>}
-                {showOrganization && <div className="col-span-2 flex items-center">Organization</div>}
-                <div className="col-span-2 flex items-center">Last Updated</div>
-                <div className="col-span-1"></div>
+                {showCreatedBy && <div className="flex items-center flex-1 min-w-0">Created By</div>}
+                {showDepartment && <div className="flex items-center flex-1 min-w-0">Department</div>}
+                {showOrganization && <div className="flex items-center flex-1 min-w-0">Organization</div>}
+                <div className="flex items-center flex-1 min-w-0">Last Updated</div>
+                <div className="flex items-center flex-[1.5] min-w-0">Tags</div>
+                <div className="flex items-center flex-1 min-w-0">Description</div>
+                <div className="w-[40px] flex-shrink-0"></div>
               </div>
 
               {/* Table Body */}
@@ -724,24 +813,14 @@ export default function FolderCardsView({
                   const isExpanded = expandedTableRow === folder.id;
                   
                   return (
-                    <div 
-                      key={folder.id}
-                      onMouseEnter={() => {
-                        if (folder.description) {
-                          setExpandedTableRow(folder.id);
-                        }
-                      }}
-                      onMouseLeave={() => {
-                        setExpandedTableRow(null);
-                      }}
-                    >
+                    <div key={folder.id}>
                       {/* Main Row */}
                       <div
-                        className={`group grid grid-cols-12 gap-4 px-4 py-3 transition-colors hover:bg-muted/50 items-center ${can("view_projects_page") ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}
+                        className={`group flex gap-4 px-4 py-3 transition-colors hover:bg-muted/50 items-center w-full ${can("view_projects_page") ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}
                         onClick={() => can("view_projects_page") && onFolderClick(folder.id)}
                       >
                         {/* Name Column */}
-                        <div className="col-span-3 flex items-center gap-3 min-w-0">
+                        <div className="flex items-center gap-3 flex-[2] min-w-0">
                           <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-primary/10">
                             <Folder className="h-4 w-4 text-primary" />
                           </div>
@@ -749,11 +828,6 @@ export default function FolderCardsView({
                             <p className="truncate font-medium text-sm">
                               {folder.name}
                             </p>
-                            {folder.description && !isExpanded && (
-                              <p className="text-xs text-muted-foreground truncate">
-                                {folder.description}
-                              </p>
-                            )}
                             <p className="text-xs text-muted-foreground mt-1">
                               {agentCount} {agentCount === 1 ? "agent" : "agents"}
                             </p>
@@ -761,25 +835,36 @@ export default function FolderCardsView({
                         </div>
 
                         {showCreatedBy && (
-                          <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                          <div className="flex items-center flex-1 min-w-0 text-sm text-muted-foreground">
                             {folder.is_own_project ? (
                               <span className="truncate font-semibold text-primary">You</span>
+                            ) : folder.created_by_email ? (
+                              <span
+                                className="truncate cursor-pointer hover:text-foreground transition-colors"
+                                title={folder.created_by_email}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(folder.created_by_email!);
+                                }}
+                              >
+                                {folder.created_by_email.split("@")[0]}
+                              </span>
                             ) : (
-                              <span className="truncate">{folder.created_by_email || "--"}</span>
+                              <span>--</span>
                             )}
                           </div>
                         )}
                         {showDepartment && (
-                          <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                          <div className="flex items-center flex-1 min-w-0 text-sm text-muted-foreground">
                             <span className="truncate">{folder.department_name || "--"}</span>
                           </div>
                         )}
                         {showOrganization && (
-                          <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                          <div className="flex items-center flex-1 min-w-0 text-sm text-muted-foreground">
                             <span className="truncate">{folder.organization_name || "--"}</span>
                           </div>
                         )}
-                        <div className="col-span-2 flex items-center text-sm text-muted-foreground">
+                        <div className="flex items-center flex-1 min-w-0 text-sm text-muted-foreground">
                           {folder.updated_at || folder.created_at ? (
                             <span className="truncate">{formatDate(folder.updated_at || folder.created_at!)}</span>
                           ) : (
@@ -787,9 +872,60 @@ export default function FolderCardsView({
                           )}
                         </div>
 
-                        {/* Actions Column - Only show if user has edit or delete permissions */}
-                        <div className="col-span-1 flex items-center justify-end">
-                          {(can("edit_projects_page") || can("delete_project")) && (
+                        {/* Tags Column */}
+                        <div className="relative flex items-center flex-[1.5] min-w-0 group/tagtable">
+                          {folder.tags && folder.tags.length > 0 ? (
+                            <div
+                              className="flex flex-wrap gap-1"
+                              title={folder.tags.join(", ")}
+                            >
+                              {folder.tags.slice(0, 4).map((tag) => (
+                                <Badge key={tag} variant="outline" size="sm" className="text-[10px] px-1.5 py-0">
+                                  {tag}
+                                </Badge>
+                              ))}
+                              {folder.tags.length > 4 && (
+                                <Badge variant="outline" size="sm" className="text-[10px] px-1.5 py-0 cursor-default">
+                                  +{folder.tags.length - 4}
+                                </Badge>
+                              )}
+                              {/* Full tags tooltip on hover */}
+                              {folder.tags.length > 4 && (
+                                <div className="absolute bottom-full left-0 mb-1 hidden group-hover/tagtable:flex flex-wrap gap-1 bg-popover border rounded-lg p-2 shadow-lg z-50 w-max max-w-[300px]">
+                                  {folder.tags.map((tag) => (
+                                    <Badge key={tag} variant="outline" size="sm" className="text-[10px] px-1.5 py-0">
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">--</span>
+                          )}
+                        </div>
+
+                        {/* Description Column */}
+                        <div className="relative flex items-center flex-1 min-w-0 group/desc">
+                          {folder.description ? (
+                            <>
+                              <p className="text-xs text-muted-foreground truncate cursor-default">
+                                {folder.description}
+                              </p>
+                              <div className="absolute bottom-full right-0 mb-1 hidden group-hover/desc:block bg-popover border rounded-lg p-3 shadow-lg z-50 w-max max-w-[300px]">
+                                <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
+                                  {folder.description}
+                                </p>
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">--</span>
+                          )}
+                        </div>
+
+                        {/* Actions Column */}
+                        <div className="w-[40px] flex-shrink-0 flex items-center justify-end">
+                          {(can("edit_project") || can("delete_project")) && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <button
@@ -800,7 +936,7 @@ export default function FolderCardsView({
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              {can("edit_projects_page") && (
+                              {can("edit_project") && (
                               <DropdownMenuItem
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -829,16 +965,6 @@ export default function FolderCardsView({
                         </div>
                       </div>
 
-                      {/* Expanded Description Row */}
-                      {isExpanded && folder.description && (
-                        <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-muted/30 border-t">
-                          <div className="col-span-12">
-                            <p className="text-xs text-muted-foreground break-words whitespace-normal">
-                              <span className="font-semibold">Description:</span> {folder.description}
-                            </p>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -876,7 +1002,7 @@ export default function FolderCardsView({
                   <button
                     onClick={handleOpenCreateModal}
                     disabled={isPending}
-                    className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-md bg-[var(--button-primary)] px-4 py-2 text-sm font-medium text-[var(--button-primary-foreground)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Plus className="h-4 w-4" />
                     Create Project
@@ -953,6 +1079,7 @@ export default function FolderCardsView({
                   selectedTags={projectTags}
                   onChange={setProjectTags}
                   placeholder="Add tags (e.g. rag, chatbot, finance)..."
+                  maxTags={10}
                 />
               </div>
 
@@ -981,155 +1108,6 @@ export default function FolderCardsView({
       )}
 
       {/* Project Details Modal - ENTERPRISE DESIGN */}
-      {detailModalOpen && selectedFolderDetail && (
-        <>
-          <div
-            className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
-            onClick={() => setDetailModalOpen(false)}
-          />
-
-          <div className="fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] rounded-lg border border-border bg-card p-6 shadow-lg">
-            <div className="mb-6 flex items-start justify-between">
-              <div className="flex gap-3 flex-1">
-                <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                  <Folder className="h-6 w-6 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-lg font-semibold break-words">
-                    {selectedFolderDetail.name}
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {getAgentCount(selectedFolderDetail.id)} {getAgentCount(selectedFolderDetail.id) === 1 ? "agent" : "agents"}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setDetailModalOpen(false)}
-                className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100"
-              >
-                <X className="h-5 w-5" />
-                <span className="sr-only">Close</span>
-              </button>
-            </div>
-
-            {/* Details Content */}
-            <div className="space-y-4 mb-6">
-              {/* Ownership Badge */}
-              {selectedFolderDetail.is_own_project && showCreatedBy && (
-                <div className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                  Own Project
-                </div>
-              )}
-
-              {selectedFolderDetail.description && (
-                <div>
-                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">DESCRIPTION</h3>
-                  <p className="text-sm text-card-foreground break-words whitespace-normal leading-relaxed">
-                    {selectedFolderDetail.description}
-                  </p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">AGENTS</h3>
-                  <p className="text-sm font-medium">
-                    {getAgentCount(selectedFolderDetail.id)}
-                  </p>
-                </div>
-                {selectedFolderDetail.updated_at && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-muted-foreground mb-2">LAST UPDATED</h3>
-                    <p className="text-sm font-medium">
-                      {formatDate(selectedFolderDetail.updated_at)}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* RBAC Metadata */}
-              {showCreatedBy && (selectedFolderDetail.created_by_email || selectedFolderDetail.is_own_project) && (
-                <div>
-                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">CREATED BY</h3>
-                  <p className="text-sm font-medium">
-                    {selectedFolderDetail.is_own_project ? (
-                      selectedFolderDetail.created_by_email ? (
-                        <><span className="text-primary">You</span> ({selectedFolderDetail.created_by_email})</>
-                      ) : (
-                        <span className="text-primary">You</span>
-                      )
-                    ) : (
-                      selectedFolderDetail.created_by_email
-                    )}
-                  </p>
-                </div>
-              )}
-              {showDepartment && selectedFolderDetail.department_name && (
-                <div>
-                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">DEPARTMENT</h3>
-                  <p className="text-sm font-medium">{selectedFolderDetail.department_name}</p>
-                </div>
-              )}
-              {showOrganization && selectedFolderDetail.organization_name && (
-                <div>
-                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">ORGANIZATION</h3>
-                  <p className="text-sm font-medium">{selectedFolderDetail.organization_name}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-2 pt-4 border-t">
-              {can("view_projects_page") && (
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => {
-                  setDetailModalOpen(false);
-                  onFolderClick(selectedFolderDetail.id);
-                }}
-              >
-                Open Project
-              </Button>
-              )}
-              {(can("edit_projects_page") || can("delete_project")) && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {can("edit_projects_page") && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setDetailModalOpen(false);
-                      onRenameFolder?.(selectedFolderDetail);
-                    }}
-                  >
-                    <Edit2 className="mr-2 h-4 w-4" />
-                    Rename
-                  </DropdownMenuItem>
-                  )}
-                  {can("delete_project") && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setDetailModalOpen(false);
-                      onDeleteFolder?.(selectedFolderDetail);
-                    }}
-                    className="text-destructive"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete
-                  </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              )}
-            </div>
-          </div>
-        </>
-      )}
     </>
   );
 }

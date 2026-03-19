@@ -179,7 +179,13 @@ export const getPendingReviews = async (
 };
 
 export const getEvaluationDatasets = async (
-  params: { limit?: number; page?: number; search?: string } = { limit: 50 },
+  params: {
+    limit?: number;
+    page?: number;
+    search?: string;
+    org_id?: string;
+    dept_id?: string;
+  } = { limit: 50 },
 ) => {
   const response = await api.get("/api/evaluation/datasets", { params });
   return response.data as {
@@ -204,9 +210,13 @@ export const createEvaluationDataset = async (data: {
   return response.data as EvaluationDataset;
 };
 
-export const deleteEvaluationDataset = async (datasetName: string) => {
+export const deleteEvaluationDataset = async (
+  datasetName: string,
+  params?: { org_id?: string; dept_id?: string },
+) => {
   const response = await api.delete(
     `/api/evaluation/datasets/${encodeURIComponent(datasetName)}`,
+    { params },
   );
   return response.data as {
     status: "deleted" | "purged";
@@ -224,6 +234,8 @@ export const getEvaluationDatasetItems = async (
     limit?: number;
     page?: number;
     source_trace_id?: string;
+    org_id?: string;
+    dept_id?: string;
   } = { limit: 50 },
 ) => {
   const response = await api.get(
@@ -294,6 +306,8 @@ export const getEvaluationDatasetRuns = async (
   params: {
     limit?: number;
     page?: number;
+    org_id?: string;
+    dept_id?: string;
   } = { limit: 50 },
 ) => {
   const response = await api.get(

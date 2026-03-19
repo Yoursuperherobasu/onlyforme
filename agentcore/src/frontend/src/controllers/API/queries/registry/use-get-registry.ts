@@ -18,6 +18,8 @@ export interface RegistryEntry {
   listed_by: string;
   listed_by_username?: string | null;
   listed_by_email?: string | null;
+  department_name?: string | null;
+  organization_name?: string | null;
   version_number?: string | null;
   listed_at: string;
   created_at: string;

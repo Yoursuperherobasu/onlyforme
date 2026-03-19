@@ -36,11 +36,11 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
         <div className="grid gap-4 md:grid-cols-2">
           <Card className="border-0 shadow-sm">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+              <CardTitle className="flex items-center gap-2 text-foreground">
                 <Activity className="h-5 w-5" style={{ color: THEME.primary }} />
                 Traces & Observations
               </CardTitle>
-              <CardDescription style={{ color: THEME.textSecondary }}>Daily activity breakdown</CardDescription>
+              <CardDescription className="text-muted-foreground">Daily activity breakdown</CardDescription>
             </CardHeader>
             <CardContent>
               <SafeResponsiveContainer width="100%" height={280}>
@@ -59,11 +59,11 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
 
           <Card className="border-0 shadow-sm">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+              <CardTitle className="flex items-center gap-2 text-foreground">
                 <Layers className="h-5 w-5" style={{ color: THEME.chartColors[2] }} />
                 Token Usage Trend
               </CardTitle>
-              <CardDescription style={{ color: THEME.textSecondary }}>Token breakdown over time</CardDescription>
+              <CardDescription className="text-muted-foreground">Token breakdown over time</CardDescription>
             </CardHeader>
             <CardContent>
               <SafeResponsiveContainer width="100%" height={280}>
@@ -90,13 +90,13 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
       <Card className="border-0 shadow-sm">
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+            <CardTitle className="flex items-center gap-2 text-foreground">
               <Calendar className="h-5 w-5" style={{ color: THEME.chartColors[3] }} />
               Daily Usage Details
             </CardTitle>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: THEME.textSecondary }} />
-              <Input placeholder="Search by date..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-gray-50 border-gray-200" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search by date..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-muted/50 border-border" />
             </div>
           </div>
         </CardHeader>
@@ -104,30 +104,30 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
           {filteredUsageData && filteredUsageData.length > 0 ? (
             <Table>
               <TableHeader>
-                <TableRow className="border-gray-100">
-                  <TableHead style={{ color: THEME.textSecondary }}>Date</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Traces</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Observations</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Tokens</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Cost</TableHead>
+                <TableRow className="border-border">
+                  <TableHead className="text-muted-foreground">Date</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Traces</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Observations</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Tokens</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Cost</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredUsageData.map((day) => (
-                  <TableRow key={day.date} className="border-gray-100 hover:bg-gray-50">
-                    <TableCell className="font-medium" style={{ color: THEME.textMain }}>{day.date}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{day.trace_count}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{day.observation_count}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatTokens(day.total_tokens)}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatCost(day.total_cost)}</TableCell>
+                  <TableRow key={day.date} className="border-border hover:bg-muted/50">
+                    <TableCell className="font-medium text-foreground">{day.date}</TableCell>
+                    <TableCell className="text-right text-foreground">{day.trace_count}</TableCell>
+                    <TableCell className="text-right text-foreground">{day.observation_count}</TableCell>
+                    <TableCell className="text-right text-foreground">{formatTokens(day.total_tokens)}</TableCell>
+                    <TableCell className="text-right text-foreground">{formatCost(day.total_cost)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           ) : (
             <div className="text-center py-12">
-              <Calendar className="h-12 w-12 mx-auto mb-4" style={{ color: THEME.textSecondary }} />
-              <p style={{ color: THEME.textSecondary }}>{search ? `No results for "${search}"` : "No usage data"}</p>
+              <Calendar className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-muted-foreground">{search ? `No results for "${search}"` : "No usage data"}</p>
             </div>
           )}
         </CardContent>
@@ -135,5 +135,3 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
     </div>
   );
 }
-
-

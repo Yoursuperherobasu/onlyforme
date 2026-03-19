@@ -184,6 +184,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
   const { role, permissions, userData } = useContext(AuthContext);
   const canViewConnectorPage =
+    permissions?.includes("view_connector_page") ||
     permissions?.includes("connectore_page") ||
     permissions?.includes("view_connectors_page") ||
     permissions?.includes("connector_page");
@@ -439,11 +440,28 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         }));
       }
     }
+    if (form.public_scope === "department" && canMultiDept) {
+      const firstDept = departmentsForSelectedOrg[0] || visibilityOptions.departments[0];
+      if (!firstDept) return;
+      const hasSelectedDept = form.public_dept_ids.some((id) =>
+        departmentsForSelectedOrg.some((dept) => dept.id === id),
+      );
+      if (!form.org_id || !hasSelectedDept) {
+        setForm((prev) => ({
+          ...prev,
+          org_id: prev.org_id || firstDept.org_id,
+          dept_id: prev.dept_id || firstDept.id,
+          public_dept_ids: hasSelectedDept ? prev.public_dept_ids : [firstDept.id],
+        }));
+      }
+    }
   }, [
     form.visibility,
     form.public_scope,
     form.org_id,
     form.dept_id,
+    form.public_dept_ids,
+    departmentsForSelectedOrg,
     role,
     visibilityOptions.organizations,
     visibilityOptions.departments,
@@ -952,10 +970,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-xl font-semibold md:text-2xl">Connectors</h1>
+          <div className="mb-1 flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">Connectors</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             Configure and manage connections for agents (databases, Azure Blob, SharePoint, Outlook)
@@ -1001,7 +1019,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />

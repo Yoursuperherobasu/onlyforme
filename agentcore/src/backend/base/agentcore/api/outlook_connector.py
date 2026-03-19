@@ -96,7 +96,7 @@ async def _load_connector(
     session: DbSession,
 ) -> ConnectorCatalogue:
     """Load and validate a connector belongs to the user and is an Outlook connector."""
-    await _require_connector_permission(current_user, "connectore_page")
+    await _require_connector_permission(current_user, "view_connector_page")
     row = await session.get(ConnectorCatalogue, connector_id)
     if not row:
         raise HTTPException(status_code=404, detail="Connector not found")

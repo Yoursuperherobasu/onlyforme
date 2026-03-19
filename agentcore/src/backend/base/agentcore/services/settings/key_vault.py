@@ -122,6 +122,8 @@ def resolve_backend_secrets_from_key_vault() -> None:
     # on deployments that accept cross-region gateway calls).
     optional_mappings = {
         "BACKEND_SERVICE_API_KEY": "AGENTCORE_KEY_VAULT_BACKEND_SERVICE_API_KEY_SECRET_NAME",
+        "GRAFANA_API_KEY": "AGENTCORE_KEY_VAULT_GRAFANA_API_KEY_SECRET_NAME",
+        "AZURE_PROMETHEUS_CLIENT_SECRET": "AGENTCORE_KEY_VAULT_PROMETHEUS_CLIENT_SECRET_SECRET_NAME",
     }
 
     for env_name, secret_name_env in optional_mappings.items():

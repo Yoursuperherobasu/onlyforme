@@ -326,7 +326,18 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if payload.org_id and payload.dept_id:
+        if user_role == "root":
+            payload.org_id = None
+            payload.dept_id = None
+        elif user_role == "super_admin":
+            if payload.org_id and payload.org_id in org_ids:
+                payload.dept_id = None
+            else:
+                if not org_ids:
+                    raise HTTPException(status_code=403, detail="No active organization scope found")
+                payload.org_id = sorted(org_ids, key=str)[0]
+                payload.dept_id = None
+        elif payload.org_id and payload.dept_id:
             if user_role in {"department_admin", "developer", "business_user"}:
                 if not any(payload.org_id == org_id and payload.dept_id == dept_id for org_id, dept_id in dept_pairs):
                     raise HTTPException(
@@ -983,6 +994,9 @@ async def update_mcp_server(
     body.reviewed_by = row.reviewed_by
     body.requested_by = row.requested_by
     body.request_to = row.request_to
+    if visibility == "private":
+        body.created_by = current_user.username
+        body.created_by_id = current_user.id
 
     current_public_dept_ids = [str(v) for v in (row.public_dept_ids or [])]
     desired_public_dept_ids = [str(v) for v in (body.public_dept_ids or [])]

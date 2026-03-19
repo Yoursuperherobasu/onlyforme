@@ -157,11 +157,18 @@ export type LoginAuthType = {
 
 export type changeUser = {
   username?: string;
+  email?: string | null;
+  display_name?: string | null;
   is_active?: boolean;
   is_superuser?: boolean;
   role?: string;
   password?: string;
   profile_image?: string;
+  department_id?: string;
+  department_name?: string;
+  department_admin_email?: string;
+  organization_name?: string;
+  organization_description?: string;
   optins?: {
     github_starred?: boolean;
     discord_clicked?: boolean;

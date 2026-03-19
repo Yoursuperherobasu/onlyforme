@@ -138,6 +138,7 @@ class ControlPanelAgentItem(BaseModel):
     failed_runs: int = 0                   # placeholder – no model field yet
     input_type: str = "autonomous"         # "chat" | "autonomous" | "file_processing" — from snapshot._input_type
     moved_to_prod: bool = False
+    pending_prod_approval: bool = False
 
 
 class ControlPanelAgentsResponse(BaseModel):
@@ -558,17 +559,13 @@ async def list_control_panel_agents(
         # Hide only UAT rows that have already been promoted to PROD.
         # Newer UAT versions for the same agent must remain visible so they can
         # go through the UAT -> PROD flow again.
+        # Keep rows visible while PROD promotion is still pending approval.
         if env == ControlPanelEnv.UAT:
             promoted_uat_exists = (
                 select(AgentDeploymentProd.id)
                 .where(
                     AgentDeploymentProd.promoted_from_uat_id == AgentDeploymentUAT.id,
-                    AgentDeploymentProd.status.in_(
-                        [
-                            DeploymentPRODStatusEnum.PUBLISHED,
-                            DeploymentPRODStatusEnum.PENDING_APPROVAL,
-                        ]
-                    ),
+                    AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED,
                 )
                 .exists()
             )
@@ -637,22 +634,29 @@ async def list_control_panel_agents(
                         owner_emails_by_agent[agent_key].append(owner_email)
 
         promoted_uat_ids: set[UUID] = set()
+        pending_prod_approval_uat_ids: set[UUID] = set()
         if env == ControlPanelEnv.UAT and rows:
             uat_ids = [row[0].id for row in rows]
             promoted_rows = (
                 await session.exec(
                     select(AgentDeploymentProd.promoted_from_uat_id).where(
                         AgentDeploymentProd.promoted_from_uat_id.in_(uat_ids),
-                        AgentDeploymentProd.status.in_(
-                            [
-                                DeploymentPRODStatusEnum.PUBLISHED,
-                                DeploymentPRODStatusEnum.PENDING_APPROVAL,
-                            ]
-                        ),
+                        AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED,
                     )
                 )
             ).all()
             promoted_uat_ids = {dep_id for dep_id in promoted_rows if dep_id is not None}
+            pending_rows = (
+                await session.exec(
+                    select(AgentDeploymentProd.promoted_from_uat_id).where(
+                        AgentDeploymentProd.promoted_from_uat_id.in_(uat_ids),
+                        AgentDeploymentProd.status == DeploymentPRODStatusEnum.PENDING_APPROVAL,
+                    )
+                )
+            ).all()
+            pending_prod_approval_uat_ids = {
+                dep_id for dep_id in pending_rows if dep_id is not None
+            }
 
         items: list[ControlPanelAgentItem] = []
         for row in rows:
@@ -717,6 +721,11 @@ async def list_control_panel_agents(
                         True
                         if env == ControlPanelEnv.PROD
                         else dep.id in promoted_uat_ids
+                    ),
+                    pending_prod_approval=(
+                        False
+                        if env == ControlPanelEnv.PROD
+                        else dep.id in pending_prod_approval_uat_ids
                     ),
                 )
             )
@@ -1112,6 +1121,7 @@ async def promote_uat_to_prod(
         await session.flush()
 
         uat_dep.moved_to_prod = True
+        uat_dep.is_active = False
         uat_dep.updated_at = datetime.now(timezone.utc)
         session.add(uat_dep)
 
@@ -1407,9 +1417,9 @@ async def promote_uat_to_prod(
         return PromoteFromUATResponse(
             success=True,
             message=(
-                f"UAT {uat_dep.id} moved to PROD as v{next_version}"
+                f"UAT {uat_dep.id} stopped and moved to PROD as v{next_version}"
                 if is_admin
-                else f"UAT {uat_dep.id} submitted for PROD approval as v{next_version}"
+                else f"UAT {uat_dep.id} stopped and submitted for PROD approval as v{next_version}"
             ),
             publish_id=new_record.id,
             environment="prod",

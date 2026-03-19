@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src -type f -name *constant* -o -name *style* -o -name *theme*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -name *.md -type f)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src/components/agents -type f -name *.tsx)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -type f \\\\\\(-name *.py -o -name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(xargs grep:*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -path */node_modules -prune -o -type f -name *.py -print)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -path */node_modules -prune -o -path */.git -prune -o -type f \\\\\\(-name *.py \\\\\\) -print)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path .venv -prune -o -type f \\\\\\(-name *registry*.py \\\\\\) -print)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path .venv -prune -o -type f \\\\\\(-name *.py \\\\\\) -print)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -r 'Review Detail' d:/final_code/aimldevteam/agentcore/src/frontend/src --include=*.tsx --include=*.ts)",
+      "Bash(grep -r \"AgentRegistry\\\\|agent-registry\" /d/final_code/aimldevteam/agentcore/src/frontend/src/pages --include=*.tsx --include=*.ts)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src -type f -name *auth* -o -name *context*)",
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
+      "Bash(grep -r \"from.*zustand/auth\\\\|@/types/zustand/auth\" /d/final_code/aimldevteam/agentcore/src/frontend/src --include=*.ts --include=*.tsx)",
+      "Bash(grep -r \"department\\\\|organization\" /d/final_code/aimldevteam/agentcore/src/frontend/src/pages --include=*.tsx --include=*.ts)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -type f -name *registry*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path */.venv -prune -o -type d -name *app* -print)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path */.venv -prune -o -type d -name organization -print)",
+      "Bash(find /d/final_code/aimldevteam/agentcore/src/backend -path */.venv -prune -o -type d -name department -print)",
+      "Bash(find d:/final_code/aimldevteam/agentcore/src/frontend/src -maxdepth 3 -type f \\\\\\(-name App.tsx -o -name main.tsx -o -name index.tsx -o -name Layout* -o -name *layout* \\\\\\))",
+      "Bash(find d:/final_code/aimldevteam/agentcore/src/frontend -name *duplicate* -o -name *clone*)",
+      "Bash(ls -la d:/final_code/aimldevteam/agentcore/src/backend/base/agentcore/api/*.py)"
+    ]
+  }
+}

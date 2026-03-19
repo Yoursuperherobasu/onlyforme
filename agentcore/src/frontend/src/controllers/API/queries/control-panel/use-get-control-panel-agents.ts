@@ -26,6 +26,7 @@ export interface ControlPanelAgentItem {
   failed_runs: number;
   input_type: "chat" | "autonomous" | "file_processing";
   moved_to_prod?: boolean;
+  pending_prod_approval?: boolean;
 }
 
 export interface ControlPanelAgentsResponse {

@@ -63,9 +63,11 @@ export interface ButtonProps
 function toTitleCase(text: string) {
   return text
     ?.split(" ")
-    ?.map(
-      (word) => word?.charAt(0)?.toUpperCase() + word?.slice(1)?.toLowerCase(),
-    )
+    ?.map((word) => {
+      // Preserve all-caps words (e.g. AI, MCP, API, ID)
+      if (word?.length > 1 && word === word?.toUpperCase()) return word;
+      return word?.charAt(0)?.toUpperCase() + word?.slice(1)?.toLowerCase();
+    })
     ?.join(" ");
 }
 

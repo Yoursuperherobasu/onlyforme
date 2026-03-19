@@ -17,6 +17,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.permissions import get_permissions_for_role
 from agentcore.services.database.models.package.model import Package
 from agentcore.services.database.models.product_release.model import ProductRelease
 from agentcore.services.database.models.release_detail.model import ReleaseDetail
@@ -25,6 +26,14 @@ from agentcore.services.database.models.release_package_snapshot.model import Re
 router = APIRouter(prefix="/releases", tags=["Release Management"])
 
 ACTIVE_END_DATE = date(9999, 12, 31)
+
+
+async def _require_release_permission(current_user: CurrentActiveUser, permission: str) -> None:
+    if str(getattr(current_user, "role", "")).strip().lower() == "root":
+        return
+    user_permissions = await get_permissions_for_role(str(current_user.role))
+    if permission not in user_permissions:
+        raise HTTPException(status_code=403, detail="Missing required permissions.")
 
 
 class BumpType(str, Enum):
@@ -760,6 +769,7 @@ async def bump_release(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict[str, Any]:
+    await _require_release_permission(current_user, "publish_release")
     return await _create_release(
         session=session,
         current_user=current_user,
@@ -780,6 +790,8 @@ async def bump_release_with_details(
 ) -> dict[str, Any]:
     if details_file is None and (details_json is None or not details_json.strip()):
         raise HTTPException(status_code=400, detail="Provide either a sheet file or manual rows.")
+
+    await _require_release_permission(current_user, "publish_release")
 
     parsed_details: list[ReleaseDetailInput]
 

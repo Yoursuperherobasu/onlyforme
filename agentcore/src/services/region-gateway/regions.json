@@ -4,7 +4,7 @@
     "name": "India",
     "api_url": "http://localhost:7860",
     "is_hub": true,
-    "api_key": "agentcore-backend-svc-key-dev-001"
+    "api_key": "agentcore-backend-svc-key-001"
   },
   {
     "code": "SA",

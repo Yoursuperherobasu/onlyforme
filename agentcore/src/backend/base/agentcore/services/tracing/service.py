@@ -125,7 +125,7 @@ class TracingService(Service):
     def __init__(self, settings_service: SettingsService):
         self.settings_service = settings_service
         self.deactivated = self.settings_service.settings.deactivate_tracing
-        logger.info(f"🔧 TracingService initialized: deactivated={self.deactivated}")
+        logger.info(f"TracingService initialized: deactivated={self.deactivated}")
 
     async def _trace_worker(self, trace_context: TraceContext) -> None:
         try:
@@ -169,7 +169,7 @@ class TracingService(Service):
                 trace_context.agent_id,
             )
             return
-        logger.info(f"🎯 Creating LangFuseTracer instance for agent={trace_context.agent_name}")
+        logger.info(f"Creating LangFuseTracer instance for agent={trace_context.agent_name}")
         langfuse_tracer = _get_langfuse_tracer()
         tracer_instance = langfuse_tracer(
             trace_name=trace_context.run_name,
@@ -188,7 +188,7 @@ class TracingService(Service):
             environment=trace_context.environment,
         )
         trace_context.tracers["langfuse"] = tracer_instance
-        logger.info(f"✅ LangFuseTracer created: ready={tracer_instance.ready}, agent={trace_context.agent_name}")
+        logger.info(f"LangFuseTracer created: ready={tracer_instance.ready}, agent={trace_context.agent_name}")
 
     async def _resolve_langfuse_credentials(self, trace_context: TraceContext) -> None:
         if not trace_context.user_id:
@@ -303,14 +303,14 @@ class TracingService(Service):
             environment: Langfuse environment tag ("uat" or "production")
         """
         if self.deactivated:
-            logger.warning(f"🚫 TRACING DEACTIVATED - skipping tracer start for agent={agent_name}")
+            logger.warning(f"TRACING DEACTIVATED - skipping tracer start for agent={agent_name}")
             return
         try:
             project_name = project_name or os.getenv("LANGCHAIN_PROJECT", "Agentcore")
             # Session-centric observability views require a session_id.
             # If upstream did not provide one, fall back to run_id so the trace is still discoverable.
             effective_session_id = session_id or str(run_id)
-            logger.info(f"📝 Creating trace context: agent={agent_name}, user={user_id}, session={session_id}")
+            logger.info(f"Creating trace context: agent={agent_name}, user={user_id}, session={session_id}")
             trace_context = TraceContext(
                 run_id=run_id,
                 run_name=run_name,
@@ -326,13 +326,13 @@ class TracingService(Service):
             trace_context_var.set(trace_context)
             await self._resolve_langfuse_credentials(trace_context)
             
-            logger.info(f"🔧 Initializing Langfuse tracer for agent={agent_name}")
+            logger.info(f"Initializing Langfuse tracer for agent={agent_name}")
             self._initialize_langfuse_tracer(trace_context)
-            logger.info(f"▶️ Starting trace worker for agent={agent_name}")
+            logger.info(f"Starting trace worker for agent={agent_name}")
             await self._start(trace_context)
-            logger.info(f"✅ Trace context ready for agent={agent_name}")
+            logger.info(f"Trace context ready for agent={agent_name}")
         except Exception as e:  # noqa: BLE001
-            logger.error(f"❌ Error initializing tracers for agent={agent_name}: {e}", exc_info=True)
+            logger.error(f"Error initializing tracers for agent={agent_name}: {e}", exc_info=True)
 
     async def _stop(self, trace_context: TraceContext) -> None:
         try:
@@ -372,7 +372,7 @@ class TracingService(Service):
             return
 
         logger.info(
-            f"🎯 SCHEDULING EVALUATORS: trace={trace_context.run_id}, "
+            f"SCHEDULING EVALUATORS: trace={trace_context.run_id}, "
             f"agent={trace_context.agent_name}, agent_id={trace_context.agent_id}, "
             f"user={trace_context.user_id}, session={trace_context.session_id}"
         )
@@ -380,6 +380,10 @@ class TracingService(Service):
         try:
             from agentcore.api.evaluation import run_saved_evaluators_for_new_trace
 
+            # Pass trace input/output directly so the evaluator doesn't need
+            # to re-fetch from Langfuse (which may not have ingested yet).
+            trace_input = trace_context.all_inputs
+            trace_output = trace_context.all_outputs
             asyncio.create_task(
                 run_saved_evaluators_for_new_trace(
                     trace_id=str(trace_context.run_id),
@@ -389,11 +393,13 @@ class TracingService(Service):
                     session_id=trace_context.session_id,
                     project_name=trace_context.observability_project_name or trace_context.project_name,
                     timestamp=datetime.now(timezone.utc),
+                    trace_input=trace_input,
+                    trace_output=trace_output,
                 )
             )
-            logger.info("✅ Evaluator task scheduled successfully")
+            logger.info("Evaluator task scheduled successfully")
         except Exception as e:  # noqa: BLE001
-            logger.error(f"❌ Failed to schedule new-trace evaluators: {e}")
+            logger.error(f"Failed to schedule new-trace evaluators: {e}")
 
     async def end_tracers(self, outputs: dict, error: Exception | None = None) -> None:
         """End the trace for a graph run.

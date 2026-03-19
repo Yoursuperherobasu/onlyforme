@@ -80,6 +80,7 @@ export default function EditFolderModal({
               selectedTags={folderTags}
               onChange={setFolderTags}
               placeholder="Add tags (e.g. rag, chatbot, finance)..."
+              maxTags={10}
             />
           </div>
         </div>
