@@ -178,6 +178,16 @@ async def start_agent_build(
                 "user_id": str(current_user.id),
                 "agent_name": agent_name,
             }
+            # Create a placeholder task so GET /events doesn't 404
+            # while waiting for the consumer to pick up the job.
+            # The consumer's _execute_build_job will replace this with the real task.
+            placeholder_event = asyncio.Event()
+            event_manager._job_ready = placeholder_event
+
+            async def _wait_for_consumer():
+                await placeholder_event.wait()
+
+            queue_service.start_job(job_id, _wait_for_consumer())
             await rabbitmq_service.publish_build_job(job_data)
             logger.info(f"Build job {job_id} published to RabbitMQ")
         else:

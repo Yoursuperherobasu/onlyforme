@@ -370,6 +370,11 @@ class RabbitMQService(Service):
         )
         queue_service.start_job(job_id, task_coro)
 
+        # Signal the placeholder task (if any) that the real job has started
+        job_ready = getattr(event_manager, "_job_ready", None)
+        if job_ready is not None:
+            job_ready.set()
+
     async def _execute_run_job(self, job_data: dict[str, Any], event_manager: Any, queue_service: Any) -> None:
         """Execute a run job. Handles both streaming and non-streaming."""
         from agentcore.api.endpoints import run_agent_generator, simple_run_agent
