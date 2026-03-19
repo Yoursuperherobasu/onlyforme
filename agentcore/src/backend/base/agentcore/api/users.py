@@ -1514,7 +1514,7 @@ async def read_all_users(
         total_count=total_count,
         users=[
             UserRead(
-                **user.model_dump(),
+                **user.model_dump(exclude={"department_name", "department_id"}),
                 organization_name=org_map.get(user.id),
                 department_name=dept_name_map.get(user.id) or user.department_name,
                 department_id=dept_map.get(user.id),
