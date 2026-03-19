@@ -169,6 +169,7 @@ const EXCEL_PERMISSION_KEYS = new Set(
 
 const ROLE_DISPLAY_ORDER = [
   "super_admin",
+  "leader_executive",
   "department_admin",
   "developer",
   "business_user",

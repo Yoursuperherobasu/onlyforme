@@ -88,7 +88,7 @@ export default function UserManagementModal({
     if (open) {
       mutateGetAssignableRoles(undefined, {
         onSuccess: (roleNames) => {
-          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user"];
+          const fallbackRoles = ["super_admin", "leader_executive", "department_admin", "developer", "business_user"];
           const merged = (roleNames || []).length > 0 ? (roleNames || []) : fallbackRoles;
           const filtered = merged.filter((role) => role !== "consumer");
           const withSelected =
@@ -99,7 +99,7 @@ export default function UserManagementModal({
         },
         onError: () => {
           // Fallback roles if API fails
-          const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user"];
+          const fallbackRoles = ["super_admin", "leader_executive", "department_admin", "developer", "business_user"];
           setAvailableRoles(fallbackRoles);
         },
       });
@@ -159,12 +159,12 @@ export default function UserManagementModal({
   const isCreatingSuperAdmin = effectiveRole === "super_admin";
   const isCreatingDepartmentAdmin = effectiveRole === "department_admin";
   const adminExcludedRoles = ["root", "super_admin", "department_admin"];
-  const isDepartmentAssignableRole = !adminExcludedRoles.includes(effectiveRole);
+  const isDepartmentAssignableRole = !adminExcludedRoles.includes(effectiveRole) && effectiveRole !== "leader_executive";
   const enableBulkDepartmentAdd =
     !data && (isDepartmentAdminCreator || isSuperAdmin) && isDepartmentAssignableRole;
   const requiresOrganizationBootstrap = isRootAdmin && isCreatingSuperAdmin;
   const requiresDepartmentAdminSelection =
-    isSuperAdmin && !isCreatingDepartmentAdmin;
+    isSuperAdmin && (effectiveRole === "developer" || effectiveRole === "business_user");
   const rolesToRender = (() => {
     let baseRoles: string[] = [];
     if (isRootAdmin) {
@@ -173,7 +173,7 @@ export default function UserManagementModal({
       baseRoles =
         availableRoles.length > 0
           ? availableRoles.filter((role) => !["root", "super_admin"].includes(role))
-          : ["department_admin", "developer", "business_user"];
+          : ["leader_executive", "department_admin", "developer", "business_user"];
     } else if (isDepartmentAdminCreator) {
       baseRoles =
         availableRoles.length > 0
@@ -184,7 +184,7 @@ export default function UserManagementModal({
     } else if (availableRoles.length > 0) {
       baseRoles = availableRoles;
     } else {
-      baseRoles = ["super_admin", "department_admin", "developer", "business_user"];
+      baseRoles = ["super_admin", "leader_executive", "department_admin", "developer", "business_user"];
     }
     if (isRootAdmin) {
       return ["super_admin"];
@@ -341,7 +341,8 @@ export default function UserManagementModal({
               return;
             }
             const submitRequiresDepartmentAdminSelection =
-              userData?.role === "super_admin" && effectiveRole !== "department_admin";
+              userData?.role === "super_admin" &&
+              (effectiveRole === "developer" || effectiveRole === "business_user");
             if (submitRequiresDepartmentAdminSelection && !validateDepartmentAdminSelection()) {
               return;
             }

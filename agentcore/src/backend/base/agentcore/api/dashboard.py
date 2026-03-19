@@ -1175,7 +1175,7 @@ async def get_root_maturity_kpis(
         return proxied
 
     role = str(getattr(current_user, "role", "")).lower()
-    if role != "root":
+    if role not in {"root", "leader_executive"}:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
 
     total_agents = (
