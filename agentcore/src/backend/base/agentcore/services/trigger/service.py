@@ -1119,7 +1119,52 @@ class TriggerService(Service):
         version: str | None,
         trigger_config: dict | None = None,
     ) -> None:
-        """Execute the agent flow with the trigger payload."""
+        """Execute the agent flow with the trigger payload.
+
+        When RabbitMQ is enabled, publishes to the trigger queue for
+        rate-limited, durable execution. Otherwise runs directly.
+        """
+        from agentcore.services.deps import get_rabbitmq_service
+
+        rabbitmq_service = get_rabbitmq_service()
+        if rabbitmq_service.is_enabled():
+            trigger_type = "folder" if payload.get("files") else "email"
+            job_data = {
+                "job_id": str(uuid4()),
+                "trigger_type": trigger_type,
+                "trigger_config_id": str(trigger_config_id),
+                "agent_id": str(agent_id),
+                "payload": payload,
+                "environment": environment,
+                "version": version,
+                "trigger_config": trigger_config,
+            }
+            await rabbitmq_service.publish_trigger_job(job_data)
+            logger.info(
+                f"{trigger_type.capitalize()} trigger job published to RabbitMQ: "
+                f"agent={agent_id} trigger={trigger_config_id}"
+            )
+            return
+
+        await self._execute_trigger_direct(
+            trigger_config_id=trigger_config_id,
+            agent_id=agent_id,
+            payload=payload,
+            environment=environment,
+            version=version,
+            trigger_config=trigger_config,
+        )
+
+    async def _execute_trigger_direct(
+        self,
+        trigger_config_id: UUID,
+        agent_id: UUID,
+        payload: dict,
+        environment: str,
+        version: str | None,
+        trigger_config: dict | None = None,
+    ) -> None:
+        """Direct execution of the trigger (no RabbitMQ)."""
         from agentcore.services.deps import get_db_service
 
         start_time = time.perf_counter()

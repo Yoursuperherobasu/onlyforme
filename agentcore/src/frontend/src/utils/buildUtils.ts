@@ -634,6 +634,9 @@ async function onEvent(
       const allNodesValid = buildResults.every((result) => result);
       onBuildComplete && onBuildComplete(allNodesValid);
       useAgentStore.getState().setIsBuilding(false);
+      // Safety net: ensure loading indicator is cleared when build ends,
+      // in case the add_message event didn't clear it (e.g., race condition)
+      useMessagesStore.getState().setDisplayLoadingMessage(false);
       return true;
     }
     case "error": {

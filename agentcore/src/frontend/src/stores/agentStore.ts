@@ -253,6 +253,11 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
   },
   setIsBuilding: (isBuilding) => {
     set({ isBuilding });
+    // When build ends (for any reason), ensure the loading indicator is cleared
+    // to prevent "agent running..." from getting stuck on error or reopen
+    if (!isBuilding) {
+      useMessagesStore.getState().setDisplayLoadingMessage(false);
+    }
   },
   setAgentState: (agentState) => {
     const newAgentState =

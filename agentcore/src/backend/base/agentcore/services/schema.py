@@ -19,3 +19,4 @@ class ServiceType(str, Enum):
     SCHEDULER_SERVICE = "scheduler_service"
     TRIGGER_SERVICE = "trigger_service"
     LTM_SERVICE = "ltm_service"
+    RABBITMQ_SERVICE = "rabbitmq_service"
