@@ -121,6 +121,9 @@ class ControlPanelAgentItem(BaseModel):
     agent_name: str
     agent_description: str | None = None
     version_number: str
+    version_label: str
+    promoted_from_uat_id: UUID | None = None
+    source_uat_version_number: str | None = None
     status: str
     visibility: str
     is_active: bool
@@ -635,6 +638,7 @@ async def list_control_panel_agents(
 
         promoted_uat_ids: set[UUID] = set()
         pending_prod_approval_uat_ids: set[UUID] = set()
+        source_uat_version_map: dict[UUID, str] = {}
         if env == ControlPanelEnv.UAT and rows:
             uat_ids = [row[0].id for row in rows]
             promoted_rows = (
@@ -657,6 +661,23 @@ async def list_control_panel_agents(
             pending_prod_approval_uat_ids = {
                 dep_id for dep_id in pending_rows if dep_id is not None
             }
+        elif env == ControlPanelEnv.PROD and rows:
+            promoted_from_uat_ids = [
+                row[0].promoted_from_uat_id
+                for row in rows
+                if row[0].promoted_from_uat_id is not None
+            ]
+            if promoted_from_uat_ids:
+                source_rows = (
+                    await session.exec(
+                        select(AgentDeploymentUAT.id, AgentDeploymentUAT.version_number).where(
+                            AgentDeploymentUAT.id.in_(promoted_from_uat_ids)
+                        )
+                    )
+                ).all()
+                source_uat_version_map = {
+                    dep_id: f"v{version_number}" for dep_id, version_number in source_rows
+                }
 
         items: list[ControlPanelAgentItem] = []
         for row in rows:
@@ -693,6 +714,14 @@ async def list_control_panel_agents(
             # Read _input_type from the snapshot (set at publish time)
             snap = dep.agent_snapshot or {}
             _input_type = snap.get("_input_type", "autonomous")
+            version_number = f"v{dep.version_number}"
+            promoted_from_uat_id = getattr(dep, "promoted_from_uat_id", None)
+            source_uat_version_number = (
+                source_uat_version_map.get(promoted_from_uat_id)
+                if promoted_from_uat_id is not None
+                else None
+            )
+            version_label = version_number
 
             items.append(
                 ControlPanelAgentItem(
@@ -700,7 +729,10 @@ async def list_control_panel_agents(
                     agent_id=dep.agent_id,
                     agent_name=dep.agent_name,
                     agent_description=dep.agent_description,
-                    version_number=f"v{dep.version_number}",
+                    version_number=version_number,
+                    version_label=version_label,
+                    promoted_from_uat_id=promoted_from_uat_id,
+                    source_uat_version_number=source_uat_version_number,
                     status=dep.status.value if hasattr(dep.status, "value") else str(dep.status),
                     visibility=dep.visibility.value if hasattr(dep.visibility, "value") else str(dep.visibility),
                     is_active=dep.is_active,
@@ -1081,16 +1113,26 @@ async def promote_uat_to_prod(
             raise HTTPException(status_code=400, detail="Invalid visibility. Use PUBLIC or PRIVATE.") from exc
         normalized_recipient_emails = _normalize_email_list(body.recipient_emails or [])
 
-        max_version = (
-            await session.exec(
-                select(func.max(AgentDeploymentProd.version_number)).where(
-                    AgentDeploymentProd.agent_id == uat_dep.agent_id
-                )
-            )
-        ).one()
-        next_version = int(max_version or 0) + 1
+        next_version = int(uat_dep.version_number)
         role = str(getattr(current_user, "role", "")).lower()
         is_admin = role in ADMIN_ROLES
+
+        existing_prod_version = (
+            await session.exec(
+                select(AgentDeploymentProd).where(
+                    AgentDeploymentProd.agent_id == uat_dep.agent_id,
+                    AgentDeploymentProd.version_number == next_version,
+                )
+            )
+        ).first()
+        if existing_prod_version is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"PROD version v{next_version} already exists for this agent. "
+                    "This UAT version has already been promoted or the version number is in use."
+                ),
+            )
 
         new_record = AgentDeploymentProd(
             agent_id=uat_dep.agent_id,

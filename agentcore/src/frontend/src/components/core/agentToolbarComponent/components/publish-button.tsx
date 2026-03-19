@@ -120,11 +120,18 @@ const PublishButton = ({}: PublishButtonProps) => {
     { refetchInterval: 30000 },
   );
   const hasPendingApproval = Boolean(publishStatus?.has_pending_approval);
+  const lockedPublishedAgentName = useMemo(() => {
+    const names = [publishStatus?.uat?.agent_name, publishStatus?.prod?.agent_name]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    return names[0] ?? "";
+  }, [publishStatus?.prod?.agent_name, publishStatus?.uat?.agent_name]);
+  const isFirstPublish = !lockedPublishedAgentName;
   const agentNameAvailability = useNameAvailability({
     entity: "agent",
     name: agentNameInput,
     exclude_id: currentAgent?.id ?? null,
-    enabled: open && agentNameInput.trim().length > 0,
+    enabled: open && isFirstPublish && agentNameInput.trim().length > 0,
   });
 
   const normalizedEmails = useMemo(() => {
@@ -167,13 +174,13 @@ const PublishButton = ({}: PublishButtonProps) => {
 
   useEffect(() => {
     if (open) {
-      setAgentNameInput(currentAgent?.name ?? "");
+      setAgentNameInput(lockedPublishedAgentName || currentAgent?.name || "");
       setPublishTags(currentAgent?.tags ?? []);
       setSelectedEmails([]);
       setEmailDraft("");
       setEmailValidationResults([]);
     }
-  }, [open, currentAgent?.name]);
+  }, [open, currentAgent?.name, currentAgent?.tags, lockedPublishedAgentName]);
 
   useEffect(() => {
     if (!open) {
@@ -370,7 +377,7 @@ const PublishButton = ({}: PublishButtonProps) => {
       });
       return;
     }
-    if (agentNameAvailability.isNameTaken) {
+    if (isFirstPublish && agentNameAvailability.isNameTaken) {
       setErrorData({
         title: "Agent name already taken",
         list: [
@@ -379,22 +386,25 @@ const PublishButton = ({}: PublishButtonProps) => {
       });
       return;
     }
-    const trimmedName = agentNameInput.trim();
-    if (!trimmedName) {
+    const trimmedPublishedName = (
+      isFirstPublish ? agentNameInput : lockedPublishedAgentName
+    ).trim();
+    if (!trimmedPublishedName) {
       setErrorData({ title: "Agent name cannot be empty." });
       return;
     }
 
-    const nameChanged = trimmedName !== (currentAgent?.name ?? "");
+    const nameChangedOnFirstPublish =
+      isFirstPublish && trimmedPublishedName !== (currentAgent?.name ?? "");
     const tagsChanged =
       JSON.stringify(publishTags.slice().sort()) !==
       JSON.stringify((currentAgent?.tags ?? []).slice().sort());
 
-    if (nameChanged || tagsChanged) {
+    if (nameChangedOnFirstPublish || tagsChanged) {
       try {
         const updatedAgent = await mutateUpdateAgent({
           id: currentAgent.id,
-          ...(nameChanged ? { name: trimmedName } : {}),
+          ...(nameChangedOnFirstPublish ? { name: trimmedPublishedName } : {}),
           ...(tagsChanged ? { tags: publishTags } : {}),
         });
 
@@ -481,6 +491,9 @@ const PublishButton = ({}: PublishButtonProps) => {
           : {}),
         environment: "uat",
         visibility: "PRIVATE",
+        ...(isFirstPublish
+          ? { published_agent_name: trimmedPublishedName }
+          : {}),
         publish_description: publishDescription.trim() || undefined,
         recipient_emails:
           normalizedEmails.length > 0 ? normalizedEmails : undefined,
@@ -537,7 +550,7 @@ const PublishButton = ({}: PublishButtonProps) => {
               htmlFor="publish-agent-name"
               className="text-xs text-muted-foreground"
             >
-              Agent name
+              Published agent name
             </Label>
             <Input
               id="publish-agent-name"
@@ -545,8 +558,15 @@ const PublishButton = ({}: PublishButtonProps) => {
               onChange={(event) => setAgentNameInput(event.target.value)}
               placeholder="Enter agent name"
               className="mt-2"
+              disabled={!isFirstPublish}
             />
+            <p className="mt-2 text-xs text-muted-foreground">
+              {isFirstPublish
+                ? "Set this once on the first publish. Later versions will reuse the same published name."
+                : "This name is locked after the first publish and is reused for every later version."}
+            </p>
             {agentNameInput.trim().length > 0 &&
+              isFirstPublish &&
               !agentNameAvailability.isFetching &&
               agentNameAvailability.isNameTaken && (
                 <p className="mt-2 text-xs font-medium text-red-500">
@@ -734,7 +754,7 @@ const PublishButton = ({}: PublishButtonProps) => {
                 validationInProgress ||
                 publishMutation.isPending ||
                 agentNameAvailability.isFetching ||
-                agentNameAvailability.isNameTaken
+                (isFirstPublish && agentNameAvailability.isNameTaken)
               }
             >
               {publishMutation.isPending

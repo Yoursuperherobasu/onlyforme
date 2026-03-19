@@ -47,6 +47,7 @@ interface WorkagentType {
   name: string;
   description: string;
   version?: string;
+  visibility?: "PUBLIC" | "PRIVATE" | string;
   user: string;
   userEmail?: string;
   owner?: string;
@@ -186,14 +187,15 @@ export default function WorkflowsView({
         agentId: item.agent_id,
         name: item.agent_name,
         description: item.agent_description ?? "",
-      version: item.version_number ?? "-",
-      user: item.creator_name ?? "-",
-      userEmail: item.creator_email ?? undefined,
-      owner: item.owner_name ?? "-",
-      ownerCount: item.owner_count ?? 0,
+        version: item.version_label ?? item.version_number ?? "-",
+        visibility: item.visibility ?? "-",
+        user: item.creator_name ?? "-",
+        userEmail: item.creator_email ?? undefined,
+        owner: item.owner_name ?? "-",
+        ownerCount: item.owner_count ?? 0,
         ownerNames: item.owner_names ?? [],
         ownerEmails: item.owner_emails ?? [],
-      department: item.creator_department ?? "-",
+        department: item.creator_department ?? "-",
         createdAtRaw: item.created_at ?? undefined,
         created: formatDateTime(item.created_at),
         movedToProd: item.moved_to_prod ?? false,
@@ -792,8 +794,8 @@ export default function WorkflowsView({
   }, [searchQuery, setSearch]);
 
   const tableColumnCount =
-    6 +
-    (can("view_project_page") ? 3 : 0) +
+    7 +
+    (can("view_project_page") ? (activeTab === "UAT" ? 2 : 1) : 0) +
     (canViewScheduler ? 1 : 0) +
     (can("start_stop_agent") ? 1 : 0) +
     (can("enable_disable_agent") ? 1 : 0);
@@ -1142,10 +1144,15 @@ export default function WorkflowsView({
                   {t("Creator")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  {t("Owner")}
+                  <ShadTooltip content={t("Business Owner")}>
+                    <span className="cursor-help">{t("Bus. Owner")}</span>
+                  </ShadTooltip>
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   {t("Department")}
+                </th>
+                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  {t("Visibility")}
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   {t("Created At")}
@@ -1155,14 +1162,9 @@ export default function WorkflowsView({
                     {t("Sharing Options")}
                   </th>
                 )}
-                {can("view_project_page") && (
+                {can("view_project_page") && activeTab === "UAT" && (
                   <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                     {t("Move UAT to PROD")}
-                  </th>
-                )}
-                {can("view_project_page") && (
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                    {t("Moved to PROD")}
                   </th>
                 )}
                 {canViewScheduler && (
@@ -1262,6 +1264,18 @@ export default function WorkflowsView({
 
                     <td className="px-6 py-4 text-sm">{workflow.department}</td>
 
+                    <td className="px-6 py-4 text-sm">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${
+                          workflow.visibility === "PUBLIC"
+                            ? "border-green-200 bg-green-50 text-green-700"
+                            : "border-slate-200 bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        {workflow.visibility ?? "-"}
+                      </span>
+                    </td>
+
                     <td className="px-6 py-4 text-sm text-muted-foreground">
                       {workflow.created}
                     </td>
@@ -1316,51 +1330,28 @@ export default function WorkflowsView({
                         </DropdownMenu>
                       </td>
                     )}
-                    {can("view_project_page") && (
+                    {can("view_project_page") && activeTab === "UAT" && (
                       <td className="px-6 py-4">
-                        {activeTab === "UAT" ? (
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={
-                              promotingById[workflow.id] ||
-                              workflow.pendingProdApproval
-                            }
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (workflow.pendingProdApproval) return;
-                              handleOpenPromoteDialog(workflow.id);
-                            }}
-                          >
-                            <ArrowUpToLine className="h-3.5 w-3.5" />
-                            {workflow.pendingProdApproval
-                              ? t("Pending")
-                              : promotingById[workflow.id]
-                              ? t("Moving...")
-                              : t("Move")}
-                          </button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">
-                            -
-                          </span>
-                        )}
-                      </td>
-                    )}
-                    {can("view_project_page") && (
-                      <td className="px-6 py-4 text-xs">
-                        {workflow.pendingProdApproval ? (
-                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
-                            {t("Pending Approval")}
-                          </span>
-                        ) : workflow.movedToProd ? (
-                          <span className="rounded-full border border-green-200 bg-green-50 px-2 py-1 text-green-700">
-                            {t("Yes")}
-                          </span>
-                        ) : (
-                          <span className="rounded-full border border-muted px-2 py-1 text-muted-foreground">
-                            {t("No")}
-                          </span>
-                        )}
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={
+                            promotingById[workflow.id] ||
+                            workflow.pendingProdApproval
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (workflow.pendingProdApproval) return;
+                            handleOpenPromoteDialog(workflow.id);
+                          }}
+                        >
+                          <ArrowUpToLine className="h-3.5 w-3.5" />
+                          {workflow.pendingProdApproval
+                            ? t("Pending")
+                            : promotingById[workflow.id]
+                            ? t("Moving...")
+                            : t("Move")}
+                        </button>
                       </td>
                     )}
                     {canViewScheduler && (

@@ -138,6 +138,13 @@ class PublishRequest(BaseModel):
         default=None,
         description="Release notes / description for this deployment action",
     )
+    published_agent_name: str | None = Field(
+        default=None,
+        description=(
+            "Stable published display name. Required on first publish and reused "
+            "for all later versions."
+        ),
+    )
     promoted_from_uat_id: UUID | None = Field(
         default=None,
         description=(
@@ -899,6 +906,81 @@ async def _get_next_version_number(
         return 1
 
     return max(results) + 1
+
+
+async def _resolve_published_agent_name(
+    session: AsyncSession,
+    *,
+    agent_id: UUID,
+    requested_name: str | None,
+) -> str:
+    """Return the stable published name for this agent.
+
+    The first publish locks the name. Later publishes always reuse that same
+    deployment name, even if the editable draft agent name changes.
+    """
+
+    normalized_requested_name = (requested_name or "").strip()
+
+    existing_uat = (
+        await session.exec(
+            select(AgentDeploymentUAT)
+            .where(
+                AgentDeploymentUAT.agent_id == agent_id,
+                AgentDeploymentUAT.agent_name.is_not(None),
+            )
+            .order_by(
+                col(AgentDeploymentUAT.deployed_at).asc(),
+                col(AgentDeploymentUAT.created_at).asc(),
+                col(AgentDeploymentUAT.id).asc(),
+            )
+        )
+    ).first()
+    existing_prod = (
+        await session.exec(
+            select(AgentDeploymentProd)
+            .where(
+                AgentDeploymentProd.agent_id == agent_id,
+                AgentDeploymentProd.agent_name.is_not(None),
+            )
+            .order_by(
+                col(AgentDeploymentProd.deployed_at).asc(),
+                col(AgentDeploymentProd.created_at).asc(),
+                col(AgentDeploymentProd.id).asc(),
+            )
+        )
+    ).first()
+
+    candidates = [
+        record
+        for record in (existing_uat, existing_prod)
+        if record is not None and str(record.agent_name or "").strip()
+    ]
+    if candidates:
+        first_record = min(
+            candidates,
+            key=lambda record: (
+                getattr(record, "deployed_at", None) or datetime.min.replace(tzinfo=timezone.utc),
+                getattr(record, "created_at", None) or datetime.min.replace(tzinfo=timezone.utc),
+                str(record.id),
+            ),
+        )
+        stable_name = str(first_record.agent_name).strip()
+        if normalized_requested_name and normalized_requested_name != stable_name:
+            logger.info(
+                "Ignoring publish name override for agent {}. Reusing locked published name '{}'.",
+                agent_id,
+                stable_name,
+            )
+        return stable_name
+
+    if not normalized_requested_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="published_agent_name is required for the first publish of this agent.",
+        )
+
+    return normalized_requested_name
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1999,6 +2081,12 @@ async def publish_agent(
         snapshot = agent.data.copy()
         env = body.environment.value  # "uat" or "prod"
         promoted_from_uat_id = body.promoted_from_uat_id
+        promoted_uat_version_number: int | None = None
+        published_agent_name = await _resolve_published_agent_name(
+            session,
+            agent_id=agent_id,
+            requested_name=body.published_agent_name,
+        )
 
         # ── Validate & resolve UAT promotion ──
         if promoted_from_uat_id is not None:
@@ -2025,6 +2113,7 @@ async def publish_agent(
                 )
             # Use the UAT-tested snapshot instead of the current draft
             snapshot = uat_record.agent_snapshot.copy()
+            promoted_uat_version_number = uat_record.version_number
             logger.info(
                 f"Promoting from UAT v{uat_record.version_number} ({promoted_from_uat_id}) "
                 f"to PROD for agent {agent_id}"
@@ -2054,7 +2143,7 @@ async def publish_agent(
                 dept_id=resolved_department_id,
                 version_number=next_version,
                 agent_snapshot=snapshot,
-                agent_name=agent.name,
+                agent_name=published_agent_name,
                 agent_description=agent.description,
                 publish_description=body.publish_description,
                 deployed_by=current_user.id,
@@ -2098,7 +2187,7 @@ async def publish_agent(
             logger.info(f"Generated API key (prefix={key_prefix}) for UAT deploy {new_record.id} v{next_version}")
 
             logger.info(
-                f"Deployed agent '{agent.name}' ({agent_id}) to UAT as v{next_version} "
+                f"Deployed agent '{published_agent_name}' ({agent_id}) to UAT as v{next_version} "
                 f"by user {current_user.id} [dept={resolved_department_id}]"
             )
 
@@ -2127,7 +2216,7 @@ async def publish_agent(
                     session=session,
                     snapshot=snapshot,
                     agent_id=agent_id,
-                    agent_name=agent.name,
+                    agent_name=published_agent_name,
                     org_id=agent.org_id,
                     dept_id=resolved_department_id,
                 )
@@ -2168,7 +2257,7 @@ async def publish_agent(
             await _notify_publish_event(
                 session,
                 agent_id=agent_id,
-                agent_name=agent.name,
+                agent_name=published_agent_name,
                 environment="uat",
                 version_number=next_version,
                 publish_id=new_record.id,
@@ -2203,7 +2292,7 @@ async def publish_agent(
 
             return PublishActionResponse(
                 success=True,
-                message=f"Agent '{agent.name}' deployed to UAT as v{next_version}",
+                message=f"Agent '{published_agent_name}' deployed to UAT as v{next_version}",
                 publish_id=new_record.id,
                 environment="uat",
                 status=new_record.status.value,
@@ -2214,11 +2303,33 @@ async def publish_agent(
 
         else:
             # ─── PROD ────────────────────────────────────────────
-            next_version = await _get_next_version_number(session, agent_id, AgentDeploymentProd)
+            next_version = (
+                promoted_uat_version_number
+                if promoted_uat_version_number is not None
+                else await _get_next_version_number(session, agent_id, AgentDeploymentProd)
+            )
             role = str(getattr(current_user, "role", "")).lower()
             is_admin = role in ADMIN_ROLES
 
             visibility_enum = ProdDeploymentVisibilityEnum(body.visibility.upper())
+
+            if promoted_uat_version_number is not None:
+                existing_prod_version = (
+                    await session.exec(
+                        select(AgentDeploymentProd).where(
+                            AgentDeploymentProd.agent_id == agent_id,
+                            AgentDeploymentProd.version_number == next_version,
+                        )
+                    )
+                ).first()
+                if existing_prod_version is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            f"PROD version v{next_version} already exists for agent {agent_id}. "
+                            "This UAT version has already been promoted or the version number is in use."
+                        ),
+                    )
 
             if is_admin:
                 # Admin/manager: direct deploy
@@ -2229,7 +2340,7 @@ async def publish_agent(
                     promoted_from_uat_id=promoted_from_uat_id,
                     version_number=next_version,
                     agent_snapshot=snapshot,
-                    agent_name=agent.name,
+                    agent_name=published_agent_name,
                     agent_description=agent.description,
                     publish_description=body.publish_description,
                     deployed_by=current_user.id,
@@ -2269,7 +2380,7 @@ async def publish_agent(
                 logger.info(f"Generated API key (prefix={key_prefix}) for PROD deploy {new_record.id} v{next_version}")
 
                 logger.info(
-                    f"Admin direct-deployed agent '{agent.name}' ({agent_id}) to PROD "
+                    f"Admin direct-deployed agent '{published_agent_name}' ({agent_id}) to PROD "
                     f"as v{next_version} by {current_user.id} [dept={resolved_department_id}]"
                 )
 
@@ -2324,7 +2435,7 @@ async def publish_agent(
                 await _notify_publish_event(
                     session,
                     agent_id=agent_id,
-                    agent_name=agent.name,
+                    agent_name=published_agent_name,
                     environment="prod",
                     version_number=next_version,
                     publish_id=new_record.id,
@@ -2359,7 +2470,7 @@ async def publish_agent(
 
                 return PublishActionResponse(
                     success=True,
-                    message=f"Agent '{agent.name}' deployed to PROD as v{next_version}",
+                    message=f"Agent '{published_agent_name}' deployed to PROD as v{next_version}",
                     publish_id=new_record.id,
                     environment="prod",
                     status=DeploymentPRODStatusEnum.PUBLISHED.value,
@@ -2378,7 +2489,7 @@ async def publish_agent(
                     promoted_from_uat_id=promoted_from_uat_id,
                     version_number=next_version,
                     agent_snapshot=snapshot,
-                    agent_name=agent.name,
+                    agent_name=published_agent_name,
                     agent_description=agent.description,
                     publish_description=body.publish_description,
                     deployed_by=current_user.id,
@@ -2420,7 +2531,7 @@ async def publish_agent(
                 await session.refresh(new_record)
 
                 logger.info(
-                    f"Developer {current_user.id} submitted agent '{agent.name}' ({agent_id}) "
+                    f"Developer {current_user.id} submitted agent '{published_agent_name}' ({agent_id}) "
                     f"for PROD approval as v{next_version}. "
                     f"Approval sent to dept admin {resolved_department_admin_id} [dept={resolved_department_id}]"
                 )
@@ -2445,7 +2556,7 @@ async def publish_agent(
 
                 return PublishActionResponse(
                     success=True,
-                    message=f"Agent '{agent.name}' submitted for PROD approval as v{next_version}. "
+                    message=f"Agent '{published_agent_name}' submitted for PROD approval as v{next_version}. "
                             f"Awaiting department admin review.",
                     publish_id=new_record.id,
                     environment="prod",

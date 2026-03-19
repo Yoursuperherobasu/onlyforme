@@ -32,6 +32,7 @@ interface Agent {
   deploy_id: string;
   agent_id: string;
   version_number: number;
+  version_label: string;
   environment: "uat" | "prod" | string;
 }
 
@@ -79,6 +80,7 @@ function mapApiAgents(apiAgents: OrchAgentSummary[]): Agent[] {
     deploy_id: a.deploy_id,
     agent_id: a.agent_id,
     version_number: a.version_number,
+    version_label: a.version_label,
     environment: a.environment,
   }));
 }
@@ -329,9 +331,9 @@ export default function AgentOrchestrator() {
     return agent?.color || "#10a37f";
   };
 
-  const versionBadge = (version: number) => (
+  const versionBadge = (versionLabel: string) => (
     <span className="ml-2 inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-xxs font-semibold uppercase leading-none text-muted-foreground">
-      v{version}
+      {versionLabel}
     </span>
   );
 
@@ -820,7 +822,7 @@ export default function AgentOrchestrator() {
                   />
                   <span className="flex min-w-0 items-center">
                     <span className="truncate">{agent.name}</span>
-                    {versionBadge(agent.version_number)}
+                    {versionBadge(agent.version_label)}
                     {uatBadge(agent.environment)}
                   </span>
                 </button>
@@ -853,7 +855,7 @@ export default function AgentOrchestrator() {
               {selectedAgent ? (
                 <span className="flex items-center">
                   <span>{selectedAgent.name}</span>
-                  {versionBadge(selectedAgent.version_number)}
+                  {versionBadge(selectedAgent.version_label)}
                   {uatBadge(selectedAgent.environment)}
                 </span>
               ) : (
@@ -884,7 +886,7 @@ export default function AgentOrchestrator() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center font-medium">
                         <span>{agent.name}</span>
-                        {versionBadge(agent.version_number)}
+                        {versionBadge(agent.version_label)}
                         {uatBadge(agent.environment)}
                       </div>
                       <div className="text-xs text-muted-foreground">
@@ -1085,7 +1087,7 @@ export default function AgentOrchestrator() {
                     <div className="min-w-0">
                       <div className="flex items-center font-medium">
                         <span>@{agent.name}</span>
-                        {versionBadge(agent.version_number)}
+                        {versionBadge(agent.version_label)}
                         {uatBadge(agent.environment)}
                       </div>
                       <div className="text-xs text-muted-foreground">
