@@ -102,7 +102,6 @@ class UserRead(SQLModel):
     last_login_at: datetime | None = Field(nullable=True)
     deleted_at: datetime | None = Field(default=None)
     optins: dict[str, Any] | None = Field(default=None)
-    department_name: str | None = Field(default=None)
     department_admin: UUID | None = Field(default=None)
     created_by: UUID | None = Field(default=None)
     created_by_username: str | None = Field(default=None)

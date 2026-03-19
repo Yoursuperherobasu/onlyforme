@@ -100,28 +100,6 @@ interface DeployActionPayload {
   deployment_notes?: string;
 }
 
-export const useCancelPackageRequest: useMutationFunctionType<
-  undefined,
-  { requestId: string },
-  PackageRequestItem
-> = (options?) => {
-  const { mutate, queryClient } = UseRequestProcessor();
-
-  const fn = async (payload: { requestId: string }): Promise<PackageRequestItem> => {
-    const res = await api.post(`${getURL("PACKAGES")}/requests/${payload.requestId}/cancel`);
-    return res.data;
-  };
-
-  return mutate(["useCancelPackageRequest"], fn, {
-    ...options,
-    onSettled: () => {
-      queryClient.refetchQueries({ queryKey: ["useGetMyPackageRequests"] });
-      queryClient.refetchQueries({ queryKey: ["useGetPackageRequestsForApproval"] });
-      queryClient.refetchQueries({ queryKey: ["useGetApprovals"] });
-    },
-  });
-};
-
 export const useApprovePackageRequest: useMutationFunctionType<
   undefined,
   RequestActionPayload,

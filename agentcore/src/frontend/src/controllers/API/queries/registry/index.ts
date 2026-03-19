@@ -1,9 +1,6 @@
 export { useGetRegistry } from "./use-get-registry";
 export type { RegistryEntry, RegistryListResponse } from "./use-get-registry";
 
-export { useGetRegistryEntry } from "./use-get-registry-entry";
-export type { RegistryEntryDetail } from "./use-get-registry-entry";
-
 export { useGetRegistryPreview } from "./use-get-registry-preview";
 export type { RegistryPreviewResponse } from "./use-get-registry-preview";
 
