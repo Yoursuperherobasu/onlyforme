@@ -189,6 +189,9 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "hitl_approve",
         "hitl_reject",
     ],
+    "leader_executive": [
+        "view_dashboard",
+    ],
     "super_admin": [
         "view_dashboard",
         "view_projects_page",
@@ -355,7 +358,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v20"  # bump when permissions change
+PERMISSION_VERSION = "v21"  # bump when permissions change
 
 
 class PermissionCacheService:

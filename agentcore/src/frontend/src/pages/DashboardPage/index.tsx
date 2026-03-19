@@ -745,6 +745,7 @@ export default function DashboardAdmin(): JSX.Element {
   const isBusinessUser    = normalizedRole === "business_user";
   const isRootAdmin       = normalizedRole === "root";
   const isSuperAdmin      = normalizedRole === "super_admin";
+  const isLeaderExecutive = normalizedRole === "leader_executive";
 
   // ── Region selector (root admin only) ──────────────────────────────────
   const regions = useRegionStore((s) => s.regions);
@@ -870,7 +871,7 @@ export default function DashboardAdmin(): JSX.Element {
   useEffect(() => { if (!isBusinessUser) return; api.get(`/api/metrics-dashboard/query-preset/avg_response_time`).then((r) => { const res = r?.data?.prometheus?.data?.result; const v = Array.isArray(res) && res.length > 0 ? res[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; if (!Number.isFinite(n)) { setBusinessExperienceKpis((p) => p ?? businessExperienceFallback); return; } setBusinessExperienceKpis((prev) => { const next = prev ? [...prev] : [...businessExperienceFallback]; const idx = next.findIndex((k) => k.name === "Avg Response Time"); if (idx >= 0) next[idx] = { ...next[idx], value: `${Math.round(n!)}ms` }; else next.push({ name: "Avg Response Time", value: `${Math.round(n!)}ms` }); return next; }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; const now = Math.floor(Date.now() / 1000); api.get(`/api/metrics-dashboard/query-preset-range/response_time_trend`, { params: { start: now - 604800, end: now, step: "3600s" } }).then((r) => setBusinessResponseTimeSeries((r?.data?.series?.[0]?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => ({ date: new Date(Number(v?.[0] ?? 0) * 1000).toISOString().slice(0, 10), value: Number.isFinite(Number(v?.[1] ?? 0)) ? Number(v[1]) : 0 })))).catch(() => setBusinessResponseTimeSeries([])); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/business-experience").then((r) => { const next = r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? []; setBusinessExperienceKpis((prev) => { const m = new Map((prev ?? businessExperienceFallback).map((k) => [k.name, k.value])); for (const k of next) m.set(k.name, k.value); return Array.from(m.entries()).map(([name, value]) => ({ name, value })); }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
-  useEffect(() => { if (!isRootAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity", regionConfig).then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, refreshTick, selectedRegionCode]);
+  useEffect(() => { if (!isRootAdmin && !isLeaderExecutive) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity", regionConfig).then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, isLeaderExecutive, refreshTick, selectedRegionCode]);
   useEffect(() => {
     if (!isDepartmentAdmin) return;
     api
@@ -941,7 +942,7 @@ export default function DashboardAdmin(): JSX.Element {
 
   // -- Resolve KPIs + charts for each section ----------------------------
 
-  const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : isRootAdmin ? rootSections : sections;
+  const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : (isRootAdmin || isLeaderExecutive) ? rootSections : sections;
 
   const resolveSection = (section: SectionConfig): { kpis: SectionKpi[]; charts: SectionChart[] } => {
     let kpis = [...section.kpis];
@@ -960,7 +961,7 @@ export default function DashboardAdmin(): JSX.Element {
     if (isDepartmentAdmin && section.id === "hitl") applyOverride(deptHitlKpis);
     if (isDeveloper && section.id === "code") applyOverride(devCodeKpis);
     if (isDeveloper && section.id === "performance") applyOverride(devPerformanceKpis);
-    if (isRootAdmin && section.id === "maturity") applyOverride(rootMaturityKpis);
+    if ((isRootAdmin || isLeaderExecutive) && section.id === "maturity") applyOverride(rootMaturityKpis);
     if (isBusinessUser && section.id === "maturity") applyOverride(businessMaturityKpis);
     if (isBusinessUser && section.id === "experience") applyOverride(businessExperienceKpis);
 

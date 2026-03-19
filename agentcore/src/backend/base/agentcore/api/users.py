@@ -46,6 +46,7 @@ router = APIRouter(tags=["Users"], prefix="/users")
 ACTIVE_ORG_STATUSES = {"accepted", "active"}
 ACTIVE_DEPT_STATUS = "active"
 NON_ASSIGNABLE_ROLES = {"consumer"}
+ORG_SCOPED_NON_DEPARTMENT_ROLES = {"leader_executive"}
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -161,7 +162,7 @@ async def _assignable_roles_for_creator(session: DbSession, creator_role: str) -
         return [
             role
             for role in global_role_names
-            if role not in {"root", "super_admin", "department_admin", *NON_ASSIGNABLE_ROLES}
+            if role not in {"root", "super_admin", "department_admin", *NON_ASSIGNABLE_ROLES, *ORG_SCOPED_NON_DEPARTMENT_ROLES}
         ]
 
     return []
@@ -1061,32 +1062,36 @@ async def add_user(
                         detail=f"Langfuse provisioning failed; department creation rolled back: {exc}",
                     ) from exc
             else:
-                if target_role not in {"developer", "business_user"}:
-                    raise HTTPException(status_code=400, detail="Invalid target role for super admin.")
-                if not user.department_id:
-                    raise HTTPException(status_code=400, detail="Department is required.")
-                department = (
-                    await session.exec(
-                        select(Department).where(
-                            Department.id == user.department_id,
-                            Department.org_id == org_id,
-                            Department.status == "active",
+                if target_role in ORG_SCOPED_NON_DEPARTMENT_ROLES:
+                    new_user.department_admin_email = None
+                    new_user.department_name = None
+                elif target_role in {"developer", "business_user"}:
+                    if not user.department_id:
+                        raise HTTPException(status_code=400, detail="Department is required.")
+                    department = (
+                        await session.exec(
+                            select(Department).where(
+                                Department.id == user.department_id,
+                                Department.org_id == org_id,
+                                Department.status == "active",
+                            )
                         )
+                    ).first()
+                    if not department:
+                        raise HTTPException(status_code=400, detail="Invalid department.")
+                    dept_admin = await session.get(User, department.admin_user_id)
+                    new_user.department_admin_email = dept_admin.username if dept_admin else None
+                    new_user.department_name = department.name
+                    await _ensure_department_membership(
+                        session,
+                        user_id=new_user.id,
+                        org_id=org_id,
+                        department_id=department.id,
+                        role_id=role_entity.id,
+                        actor_user_id=current_user.id,
                     )
-                ).first()
-                if not department:
-                    raise HTTPException(status_code=400, detail="Invalid department.")
-                dept_admin = await session.get(User, department.admin_user_id)
-                new_user.department_admin_email = dept_admin.username if dept_admin else None
-                new_user.department_name = department.name
-                await _ensure_department_membership(
-                    session,
-                    user_id=new_user.id,
-                    org_id=org_id,
-                    department_id=department.id,
-                    role_id=role_entity.id,
-                    actor_user_id=current_user.id,
-                )
+                else:
+                    raise HTTPException(status_code=400, detail="Invalid target role for super admin.")
 
         elif creator_role == "department_admin":
             creator_membership = (
