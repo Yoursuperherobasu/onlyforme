@@ -403,6 +403,8 @@ class DatabaseService(Service):
 
     @staticmethod
     def _create_db_and_tables(connection) -> None:
+        # Ensure all models are registered in SQLModel.metadata before creating tables
+        import agentcore.services.database.models  # noqa: F401
         from sqlalchemy import inspect
 
         inspector = inspect(connection)

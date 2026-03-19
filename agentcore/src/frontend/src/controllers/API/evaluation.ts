@@ -210,6 +210,24 @@ export const createEvaluationDataset = async (data: {
   return response.data as EvaluationDataset;
 };
 
+export const updateEvaluationDataset = async (
+  datasetName: string,
+  data: {
+    description?: string;
+    visibility?: string;
+    public_scope?: string;
+    org_id?: string;
+    dept_id?: string;
+    public_dept_ids?: string[];
+  },
+) => {
+  const response = await api.patch(
+    `/api/evaluation/datasets/${encodeURIComponent(datasetName)}`,
+    data,
+  );
+  return response.data as EvaluationDataset;
+};
+
 export const deleteEvaluationDataset = async (
   datasetName: string,
   params?: { org_id?: string; dept_id?: string },

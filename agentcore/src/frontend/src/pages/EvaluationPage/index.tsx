@@ -40,6 +40,7 @@ import {
   createEvaluator,
   DatasetExperimentJob,
   deleteEvaluationDataset,
+  updateEvaluationDataset,
   deleteEvaluationDatasetItem,
   deleteEvaluationDatasetRun,
   deleteEvaluator,
@@ -166,6 +167,15 @@ export default function EvaluationPage() {
     dept_id: "" as string,
     public_dept_ids: [] as string[],
   });
+  const [editingDataset, setEditingDataset] = useState<EvaluationDataset | null>(null);
+  const [datasetEditForm, setDatasetEditForm] = useState({
+    description: "",
+    visibility: "private" as string,
+    public_scope: "" as string,
+    org_id: "" as string,
+    dept_id: "" as string,
+    public_dept_ids: [] as string[],
+  });
   const [datasetItemForm, setDatasetItemForm] = useState({
     input: "",
     expected_output: "",
@@ -243,11 +253,6 @@ export default function EvaluationPage() {
     preset_id: "",
     saved_evaluator_id: "",
     model_registry_id: "",
-    visibility: "private" as "private" | "public",
-    public_scope: "" as string,
-    org_id: "" as string,
-    dept_id: "" as string,
-    public_dept_ids: [] as string[],
   });
   const toVisibilityScope = useCallback(
     (visibility?: "private" | "public", publicScope?: string) => {
@@ -406,34 +411,16 @@ export default function EvaluationPage() {
   }, [getDatasetOwnerId, isDeptScopedForUser, isMultiDeptScope, userId, userRole]);
   const canManageSelectedDataset = canDeleteDataset(selectedDataset);
   const datasetVisibilityScope = toVisibilityScope(datasetForm.visibility, datasetForm.public_scope);
-  const judgeVisibilityScope = toVisibilityScope(judgeForm.visibility, judgeForm.public_scope);
   const datasetDepartmentsForSelectedOrg = useMemo(
     () => visibilityOptions.departments.filter((dept) => !datasetForm.org_id || dept.org_id === datasetForm.org_id),
     [visibilityOptions.departments, datasetForm.org_id],
-  );
-  const judgeDepartmentsForSelectedOrg = useMemo(
-    () => visibilityOptions.departments.filter((dept) => !judgeForm.org_id || dept.org_id === judgeForm.org_id),
-    [visibilityOptions.departments, judgeForm.org_id],
   );
   const selectedDatasetDeptLabel = useMemo(
     () => getSelectedDeptLabel(canMultiDept ? datasetForm.public_dept_ids : datasetForm.dept_id ? [datasetForm.dept_id] : [], datasetForm.org_id),
     [canMultiDept, datasetForm.dept_id, datasetForm.org_id, datasetForm.public_dept_ids, getSelectedDeptLabel],
   );
-  const selectedJudgeDeptLabel = useMemo(
-    () => getSelectedDeptLabel(canMultiDept ? judgeForm.public_dept_ids : judgeForm.dept_id ? [judgeForm.dept_id] : [], judgeForm.org_id),
-    [canMultiDept, getSelectedDeptLabel, judgeForm.dept_id, judgeForm.org_id, judgeForm.public_dept_ids],
-  );
   const setDatasetVisibilityScope = useCallback((scope: "private" | "department" | "organization") => {
     setDatasetForm((prev) => ({
-      ...prev,
-      visibility: scope === "private" ? "private" : "public",
-      public_scope: scope === "private" ? "" : scope,
-      dept_id: scope === "department" ? prev.dept_id : "",
-      public_dept_ids: scope === "department" ? prev.public_dept_ids : [],
-    }));
-  }, []);
-  const setJudgeVisibilityScope = useCallback((scope: "private" | "department" | "organization") => {
-    setJudgeForm((prev) => ({
       ...prev,
       visibility: scope === "private" ? "private" : "public",
       public_scope: scope === "private" ? "" : scope,
@@ -468,11 +455,6 @@ export default function EvaluationPage() {
       preset_id: "",
       saved_evaluator_id: "",
       model_registry_id: "",
-      visibility: "private",
-      public_scope: "",
-      org_id: "",
-      dept_id: "",
-      public_dept_ids: [],
     });
     setGroundTruth("");
     setSelectedAgentIds([]);
@@ -787,15 +769,11 @@ export default function EvaluationPage() {
     };
 
     ensureOrganizationSelection(datasetForm, setDatasetForm);
-    ensureOrganizationSelection(judgeForm, setJudgeForm);
     ensureDepartmentSelection(datasetForm, setDatasetForm, datasetDepartmentsForSelectedOrg);
-    ensureDepartmentSelection(judgeForm, setJudgeForm, judgeDepartmentsForSelectedOrg);
   }, [
     canMultiDept,
     datasetForm,
-    judgeForm,
     datasetDepartmentsForSelectedOrg,
-    judgeDepartmentsForSelectedOrg,
     visibilityOptions.organizations,
     visibilityOptions.departments,
   ]);
@@ -1904,6 +1882,24 @@ export default function EvaluationPage() {
                           >
                             View
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingDataset(dataset);
+                              setDatasetEditForm({
+                                description: dataset.description || "",
+                                visibility: dataset.visibility || "private",
+                                public_scope: dataset.public_scope || "",
+                                org_id: dataset.org_id || "",
+                                dept_id: dataset.dept_id || "",
+                                public_dept_ids: dataset.public_dept_ids || [],
+                              });
+                            }}
+                          >
+                            Edit
+                          </Button>
                         </div>
                       </td>
                       <td
@@ -2086,6 +2082,16 @@ export default function EvaluationPage() {
                     });
                     return;
                   }
+                  if (value === "__custom__") {
+                    setDatasetExperimentForm({
+                      ...datasetExperimentForm,
+                      evaluator_config_id: "",
+                      preset_id: "__custom__",
+                      evaluator_name: "",
+                      criteria: "",
+                    });
+                    return;
+                  }
                   const preset = presets.find((item) => item.id === value);
                   setDatasetExperimentForm({
                     ...datasetExperimentForm,
@@ -2108,6 +2114,7 @@ export default function EvaluationPage() {
                       {preset.name}
                     </SelectItem>
                   ))}
+                  <SelectItem value="__custom__">+ Custom Preset</SelectItem>
                 </SelectContent>
               </Select>
               {selectedDatasetPreset?.requires_ground_truth ? (
@@ -2468,9 +2475,6 @@ export default function EvaluationPage() {
                               <tr>
                                 <th className="px-4 py-2">Name</th>
                                 <th className="px-4 py-2">Model</th>
-                                <th className="px-4 py-2">Visibility</th>
-                                {isDepartmentAdmin && <th className="px-4 py-2">Created By</th>}
-                                {isSuperAdmin && <th className="px-4 py-2">Department Scope</th>}
                                 <th className="px-4 py-2">Criteria</th>
                                 <th className="px-4 py-2">Action</th>
                               </tr>
@@ -2485,21 +2489,6 @@ export default function EvaluationPage() {
                                     {ev.name}
                                   </td>
                                   <td className="px-4 py-3">{ev.model}</td>
-                                  <td className="px-4 py-3">
-                                    <span
-                                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(ev)}`}
-                                    >
-                                      {getVisibilityLabel(ev)}
-                                    </span>
-                                  </td>
-                                  {isDepartmentAdmin && (
-                                    <td className="px-4 py-3 max-w-[220px] truncate" title={ev.created_by || "-"}>
-                                      {ev.created_by || "-"}
-                                    </td>
-                                  )}
-                                  {isSuperAdmin && (
-                                    <td className="px-4 py-3">{getDepartmentScopeLabel(ev)}</td>
-                                  )}
                                   <td
                                     className="px-4 py-3 truncate max-w-xl"
                                     title={ev.criteria}
@@ -2601,6 +2590,16 @@ export default function EvaluationPage() {
                 <Select
                   value={judgeForm.preset_id}
                   onValueChange={(val) => {
+                    if (val === "__custom__") {
+                      setJudgeForm({
+                        ...judgeForm,
+                        criteria: "",
+                        name: "",
+                        preset_id: "__custom__",
+                        saved_evaluator_id: "",
+                      });
+                      return;
+                    }
                     const p = presets.find((x) => x.id === val);
                     if (p)
                       setJudgeForm({
@@ -2621,6 +2620,7 @@ export default function EvaluationPage() {
                         {p.name}
                       </SelectItem>
                     ))}
+                    <SelectItem value="__custom__">+ Custom Preset</SelectItem>
                   </SelectContent>
                 </Select>
                 {selectedPreset?.requires_ground_truth && (
@@ -2718,6 +2718,19 @@ export default function EvaluationPage() {
               </p>
             </div>
 
+            {judgeForm.preset_id === "__custom__" && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Evaluator Name</label>
+                <Input
+                  placeholder="e.g. My Custom Evaluator"
+                  value={judgeForm.name}
+                  onChange={(e) =>
+                    setJudgeForm({ ...judgeForm, name: e.target.value })
+                  }
+                />
+              </div>
+            )}
+
             <div className="space-y-2">
               <label className="text-sm font-medium">Evaluation Criteria</label>
               <textarea
@@ -2741,116 +2754,6 @@ export default function EvaluationPage() {
                 />
               </div>
             )}
-
-            {/* Visibility Controls */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Visibility Scope</label>
-              <select
-                value={judgeVisibilityScope}
-                onChange={(e) =>
-                  setJudgeVisibilityScope(
-                    e.target.value as "private" | "department" | "organization",
-                  )
-                }
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="private">Private</option>
-                <option value="department">Department</option>
-                <option value="organization">Organization</option>
-              </select>
-            </div>
-            {judgeVisibilityScope === "organization" && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Organization</label>
-                  <select
-                    value={judgeForm.org_id}
-                    onChange={(e) =>
-                      setJudgeForm({ ...judgeForm, org_id: e.target.value })
-                    }
-                    disabled={isMembershipLockedRole}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
-                  >
-                    {visibilityOptions.organizations.map((org) => (
-                      <option key={org.id} value={org.id}>
-                        {org.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-            {judgeVisibilityScope === "department" && (
-                <>
-                  {canMultiDept && (
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Organization</label>
-                      <select
-                        value={judgeForm.org_id}
-                        onChange={(e) =>
-                          setJudgeForm({
-                            ...judgeForm,
-                            org_id: e.target.value,
-                            public_dept_ids: [],
-                          })
-                        }
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      >
-                        {visibilityOptions.organizations.map((org) => (
-                          <option key={org.id} value={org.id}>
-                            {org.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Department{canMultiDept ? "s" : ""}</label>
-                    {canMultiDept ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          >
-                            <span className="truncate text-left">{selectedJudgeDeptLabel}</span>
-                            <ChevronDown className="h-4 w-4 opacity-70" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="max-h-64 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
-                          {judgeDepartmentsForSelectedOrg.map((dept) => (
-                            <DropdownMenuCheckboxItem
-                              key={dept.id}
-                              checked={judgeForm.public_dept_ids.includes(dept.id)}
-                              onCheckedChange={(checked) =>
-                                setJudgeForm((prev) => ({
-                                  ...prev,
-                                  public_dept_ids: checked
-                                    ? Array.from(new Set([...prev.public_dept_ids, dept.id]))
-                                    : prev.public_dept_ids.filter((id) => id !== dept.id),
-                                }))
-                              }
-                            >
-                              {dept.name}
-                            </DropdownMenuCheckboxItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : (
-                      <select
-                        value={judgeForm.dept_id}
-                        disabled
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
-                      >
-                        {visibilityOptions.departments.map((dept) => (
-                          <option key={dept.id} value={dept.id}>
-                            {dept.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                </>
-              )}
 
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleSaveEvaluator}>
@@ -3321,6 +3224,158 @@ export default function EvaluationPage() {
             </Button>
             <Button onClick={handleCreateScore} disabled={isSubmitting}>
               {isSubmitting ? "Saving..." : "Save Score"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Dataset Dialog — same visibility pattern as LLM Judge */}
+      <Dialog open={!!editingDataset} onOpenChange={(open) => { if (!open) setEditingDataset(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Dataset: {editingDataset?.name}</DialogTitle>
+            <DialogDescription>Update dataset description and visibility scope.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Description</label>
+              <Input
+                placeholder="Dataset description"
+                value={datasetEditForm.description}
+                onChange={(e) => setDatasetEditForm({ ...datasetEditForm, description: e.target.value })}
+              />
+            </div>
+
+            {/* Visibility Scope — same as LLM Judge */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Visibility Scope</label>
+              <select
+                value={datasetEditForm.visibility === "public" ? (datasetEditForm.public_scope || "department") : "private"}
+                onChange={(e) => {
+                  const scope = e.target.value as "private" | "department" | "organization";
+                  setDatasetEditForm((prev) => ({
+                    ...prev,
+                    visibility: scope === "private" ? "private" : "public",
+                    public_scope: scope === "private" ? "" : scope,
+                    dept_id: scope === "department" ? prev.dept_id : "",
+                    public_dept_ids: scope === "department" ? prev.public_dept_ids : [],
+                  }));
+                }}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="private">Private</option>
+                <option value="department">Department</option>
+                <option value="organization">Organization</option>
+              </select>
+            </div>
+
+            {/* Organization — shown for org scope */}
+            {datasetEditForm.visibility === "public" && datasetEditForm.public_scope === "organization" && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Organization</label>
+                <select
+                  value={datasetEditForm.org_id}
+                  onChange={(e) => setDatasetEditForm({ ...datasetEditForm, org_id: e.target.value })}
+                  disabled={isMembershipLockedRole}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                >
+                  {visibilityOptions.organizations.map((org) => (
+                    <option key={org.id} value={org.id}>{org.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Department — shown for dept scope */}
+            {datasetEditForm.visibility === "public" && datasetEditForm.public_scope === "department" && (
+              <>
+                {canMultiDept && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Organization</label>
+                    <select
+                      value={datasetEditForm.org_id}
+                      onChange={(e) => setDatasetEditForm({ ...datasetEditForm, org_id: e.target.value, public_dept_ids: [] })}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      {visibilityOptions.organizations.map((org) => (
+                        <option key={org.id} value={org.id}>{org.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Department{canMultiDept ? "s" : ""}</label>
+                  {canMultiDept ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        >
+                          <span className="truncate text-left">
+                            {getSelectedDeptLabel(datasetEditForm.public_dept_ids, datasetEditForm.org_id)}
+                          </span>
+                          <ChevronDown className="h-4 w-4 opacity-70" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent className="max-h-64 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
+                        {visibilityOptions.departments
+                          .filter((dept) => !datasetEditForm.org_id || dept.org_id === datasetEditForm.org_id)
+                          .map((dept) => (
+                            <DropdownMenuCheckboxItem
+                              key={dept.id}
+                              checked={datasetEditForm.public_dept_ids.includes(dept.id)}
+                              onCheckedChange={(checked) =>
+                                setDatasetEditForm((prev) => ({
+                                  ...prev,
+                                  public_dept_ids: checked
+                                    ? Array.from(new Set([...prev.public_dept_ids, dept.id]))
+                                    : prev.public_dept_ids.filter((id) => id !== dept.id),
+                                }))
+                              }
+                            >
+                              {dept.name}
+                            </DropdownMenuCheckboxItem>
+                          ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <select
+                      value={datasetEditForm.dept_id}
+                      disabled
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
+                    >
+                      {visibilityOptions.departments.map((dept) => (
+                        <option key={dept.id} value={dept.id}>{dept.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingDataset(null)}>Cancel</Button>
+            <Button
+              onClick={async () => {
+                if (!editingDataset) return;
+                try {
+                  await updateEvaluationDataset(editingDataset.name, {
+                    description: datasetEditForm.description || undefined,
+                    visibility: datasetEditForm.visibility,
+                    public_scope: datasetEditForm.visibility === "public" ? datasetEditForm.public_scope : undefined,
+                    org_id: datasetEditForm.org_id || undefined,
+                    dept_id: datasetEditForm.dept_id || undefined,
+                    public_dept_ids: datasetEditForm.public_dept_ids.length > 0 ? datasetEditForm.public_dept_ids : undefined,
+                  });
+                  setEditingDataset(null);
+                  fetchDatasets();
+                } catch (err: any) {
+                  setErrorData({ title: err?.response?.data?.detail || "Failed to update dataset" });
+                }
+              }}
+            >
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>
