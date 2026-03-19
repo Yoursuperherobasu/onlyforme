@@ -143,7 +143,7 @@ export default function VectorDBView(): JSX.Element {
       <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-xl font-semibold md:text-2xl">{t("Vector Store Observatory")}</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">{t("Vector DB Catalogue")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("View Pinecone namespaces across UAT and PROD environments")}
@@ -246,7 +246,7 @@ export default function VectorDBView(): JSX.Element {
                       "Index / Namespace",
                       "Agent",
                       "Status",
-                      "Vectors",
+                      "Records",
                       "Migration",
                       "",
                     ].map((h, i) => (
@@ -268,7 +268,7 @@ export default function VectorDBView(): JSX.Element {
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         {displayVectorDBs.length === 0
-                          ? t("No namespaces tracked yet. Entries appear automatically when agents with Pinecone are deployed or promoted to PROD.")
+                          ? t("No vector databases tracked yet. Entries appear automatically when agents with vector stores are deployed or promoted to PROD.")
                           : t("No entries match your current filters.")}
                       </td>
                     </tr>

@@ -6,7 +6,6 @@ from agentcore.components._importing import import_mod
 
 if TYPE_CHECKING:
     from .entity_resolver import EntityResolverComponent
-    from .graph_community_search import GraphCommunitySearchComponent
     from .graph_entity_extractor import GraphEntityExtractorComponent
     from .graph_rag_retriever import GraphRAGRetrieverComponent
     from .graph_schema_config import GraphSchemaConfigComponent
@@ -17,7 +16,6 @@ _dynamic_imports = {
     "Neo4jGraphStoreComponent": "neo4j_graph_store",
     "GraphEntityExtractorComponent": "graph_entity_extractor",
     "GraphRAGRetrieverComponent": "graph_rag_retriever",
-    "GraphCommunitySearchComponent": "graph_community_search",
     "GraphSchemaConfigComponent": "graph_schema_config",
     "EntityResolverComponent": "entity_resolver",
     "GraphTransformerComponent": "graph_transformer",
@@ -27,7 +25,6 @@ __all__ = [
     "Neo4jGraphStoreComponent",
     "GraphEntityExtractorComponent",
     "GraphRAGRetrieverComponent",
-    "GraphCommunitySearchComponent",
     "GraphSchemaConfigComponent",
     "EntityResolverComponent",
     "GraphTransformerComponent",

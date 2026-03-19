@@ -21,6 +21,7 @@ class PineconeVectorStoreNode(LCVectorStoreNode):
     description = "Pinecone Vector Store with optional hybrid search and reranking"
     name = "Pinecone"
     icon = "Pinecone"
+    documentation = ""
     inputs = [
         StrInput(name="index_name", display_name="Index Name", required=True),
         StrInput(name="namespace", display_name="Namespace", info="Namespace for the index."),

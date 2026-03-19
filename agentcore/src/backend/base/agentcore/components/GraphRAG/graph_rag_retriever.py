@@ -61,6 +61,7 @@ class GraphRAGRetrieverComponent(Node):
     )
     name = "GraphRAGRetriever"
     icon = "Combine"
+    documentation = ""
 
     inputs = [
         # -- Graph Results ----------------------------------------------

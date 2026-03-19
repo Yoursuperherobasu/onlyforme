@@ -113,6 +113,7 @@ class GraphEntityExtractorComponent(Node):
     )
     name = "GraphEntityExtractor"
     icon = "Sparkles"
+    documentation = ""
 
     inputs = [
         # -- Input Data -------------------------------------------------
