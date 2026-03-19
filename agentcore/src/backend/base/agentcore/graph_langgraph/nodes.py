@@ -928,7 +928,10 @@ def _resolve_vertex_dependencies(vertex: LangGraphVertex, state: AgentCoreState)
                     if isinstance(item_result, dict):
                         source_output = _get_source_output_name(vertex, item, key)
                         item_result = _extract_from_result(item_result, source_output)
-                    resolved_list.append(item_result)
+                    if isinstance(item_result, list):
+                        resolved_list.extend(item_result)
+                    else:
+                        resolved_list.append(item_result)
                 else:
                     resolved_list.append(item)
             if resolved_list != value:

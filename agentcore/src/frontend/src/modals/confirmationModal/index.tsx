@@ -37,6 +37,8 @@ function ConfirmationModal({
   destructiveCancel = false,
   icon,
   loading,
+  confirmDisabled = false,
+  closeOnConfirm = true,
   data,
   index,
   onConfirm,
@@ -108,10 +110,13 @@ function ConfirmationModal({
               variant={destructive ? "destructive" : "default"}
               onClick={() => {
                 setFlag(true);
-                setModalOpen(false);
+                if (closeOnConfirm) {
+                  setModalOpen(false);
+                }
                 onConfirm(index, data);
               }}
               loading={loading}
+              disabled={confirmDisabled}
               data-testid="replace-button"
             >
               {confirmationText}

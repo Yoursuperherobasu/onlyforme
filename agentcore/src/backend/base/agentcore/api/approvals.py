@@ -7,6 +7,7 @@ approve/reject pending PROD publish requests.
 from datetime import datetime, timezone
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from loguru import logger
 from pydantic import BaseModel
@@ -308,6 +309,22 @@ async def _migrate_pinecone_for_prod(
                 f"[PINECONE_MIGRATION] Done: {copied} vectors copied to '{prod_namespace}'"
             )
             copy_results.append({"plan": plan, "copied": copied})
+        except httpx.HTTPStatusError as http_err:
+            # 400 with "empty or does not exist" means the UAT namespace has no
+            # vectors yet (agent configured Pinecone but hasn't ingested data).
+            # Treat as a no-op: create the PROD namespace reference in the
+            # snapshot so it's ready once data is ingested later.
+            detail = str(http_err)
+            if http_err.response.status_code == 400 and "empty or does not exist" in detail:
+                logger.warning(
+                    f"[PINECONE_MIGRATION] Source namespace '{uat_namespace}' is empty/missing "
+                    f"in index '{index_name}' — skipping copy (0 vectors). "
+                    f"PROD namespace '{prod_namespace}' will be used once data is available."
+                )
+                copy_results.append({"plan": plan, "copied": 0})
+            else:
+                logger.error(f"[PINECONE_MIGRATION] Failed to copy namespace: {http_err}")
+                raise
         except Exception as copy_err:
             logger.error(f"[PINECONE_MIGRATION] Failed to copy namespace: {copy_err}")
             # Do NOT update snapshot — raise so caller knows migration failed.
@@ -721,21 +738,27 @@ async def _get_approval_for_view(
     if not target_uuid:
         raise HTTPException(status_code=404, detail="Approval request not found")
 
+    is_super = _is_org_scoped_super_admin(current_user)
+    super_org_ids: set[UUID] | None = None
+    if is_super:
+        super_org_ids = await _designated_super_admin_org_ids(session, current_user)
+
     # Direct match by approval request id.
     req = (await session.exec(select(ApprovalRequest).where(ApprovalRequest.id == target_uuid))).first()
     if req:
         if req.request_to == current_user.id or req.requested_by == current_user.id:
             return req
+        if is_super and super_org_ids and req.org_id in super_org_ids:
+            return req
         raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
     # Fallback by agent id: latest request visible to user.
     stmt = select(ApprovalRequest).where(ApprovalRequest.agent_id == target_uuid).order_by(ApprovalRequest.requested_at.desc())
-    if _is_org_scoped_super_admin(current_user):
-        org_ids = await _designated_super_admin_org_ids(session, current_user)
+    if is_super and super_org_ids:
         stmt = stmt.where(
             (ApprovalRequest.request_to == current_user.id)
             | (ApprovalRequest.requested_by == current_user.id)
-            | (ApprovalRequest.org_id.in_(list(org_ids)) if org_ids else False)
+            | (ApprovalRequest.org_id.in_(list(super_org_ids)))
         )
     else:
         stmt = stmt.where(
@@ -792,18 +815,33 @@ async def _get_mcp_approval_for_view(
         target_uuid = None
     if not target_uuid:
         raise HTTPException(status_code=404, detail="MCP approval request not found")
+
+    is_super = _is_org_scoped_super_admin(current_user)
+    super_org_ids: set[UUID] | None = None
+    if is_super:
+        super_org_ids = await _designated_super_admin_org_ids(session, current_user)
+
     req = await session.get(McpApprovalRequest, target_uuid)
     if not req:
         stmt = select(McpApprovalRequest).where(McpApprovalRequest.mcp_id == target_uuid).order_by(
             McpApprovalRequest.requested_at.desc()
         )
-        stmt = stmt.where(
-            (McpApprovalRequest.request_to == current_user.id) | (McpApprovalRequest.requested_by == current_user.id)
-        )
+        if is_super and super_org_ids:
+            stmt = stmt.where(
+                (McpApprovalRequest.request_to == current_user.id)
+                | (McpApprovalRequest.requested_by == current_user.id)
+                | (McpApprovalRequest.org_id.in_(list(super_org_ids)))
+            )
+        else:
+            stmt = stmt.where(
+                (McpApprovalRequest.request_to == current_user.id) | (McpApprovalRequest.requested_by == current_user.id)
+            )
         req = (await session.exec(stmt)).first()
     if not req:
         raise HTTPException(status_code=404, detail="MCP approval request not found")
     if req.request_to == current_user.id or req.requested_by == current_user.id:
+        return req
+    if is_super and super_org_ids and req.org_id in super_org_ids:
         return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 
@@ -854,20 +892,34 @@ async def _get_model_approval_for_view(
         target_uuid = None
     if not target_uuid:
         raise HTTPException(status_code=404, detail="Model approval request not found")
+
+    is_super = _is_org_scoped_super_admin(current_user)
+    super_org_ids: set[UUID] | None = None
+    if is_super:
+        super_org_ids = await _designated_super_admin_org_ids(session, current_user)
+
     req = await session.get(ModelApprovalRequest, target_uuid)
     if not req:
         stmt = select(ModelApprovalRequest).where(ModelApprovalRequest.model_id == target_uuid).order_by(
             ModelApprovalRequest.requested_at.desc()
         )
-        # Model approvals: visible to assigned approver or requester only
-        stmt = stmt.where(
-            (ModelApprovalRequest.request_to == current_user.id)
-            | (ModelApprovalRequest.requested_by == current_user.id)
-        )
+        if is_super and super_org_ids:
+            stmt = stmt.where(
+                (ModelApprovalRequest.request_to == current_user.id)
+                | (ModelApprovalRequest.requested_by == current_user.id)
+                | (ModelApprovalRequest.org_id.in_(list(super_org_ids)))
+            )
+        else:
+            stmt = stmt.where(
+                (ModelApprovalRequest.request_to == current_user.id)
+                | (ModelApprovalRequest.requested_by == current_user.id)
+            )
         req = (await session.exec(stmt)).first()
     if not req:
         raise HTTPException(status_code=404, detail="Model approval request not found")
     if req.request_to == current_user.id or req.requested_by == current_user.id:
+        return req
+    if is_super and super_org_ids and req.org_id in super_org_ids:
         return req
     raise HTTPException(status_code=403, detail="Not allowed to view this approval")
 

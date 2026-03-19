@@ -377,6 +377,8 @@ export type ConfirmationModalType = {
   destructiveCancel?: boolean;
   modalContentTitle?: string;
   loading?: boolean;
+  confirmDisabled?: boolean;
+  closeOnConfirm?: boolean;
   cancelText?: string;
   confirmationText?: string;
   children:

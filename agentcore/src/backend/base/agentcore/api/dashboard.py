@@ -16,9 +16,8 @@ from agentcore.api.utils import CurrentActiveUser, DbSession
 logger = logging.getLogger(__name__)
 
 # Region config — read from env vars
-_DEPLOYMENT_ROLE = os.getenv("DEPLOYMENT_ROLE", "hub").lower()
 _REGION_CODE = os.getenv("REGION_CODE", "")
-_REGION_GATEWAY_URL = os.getenv("REGION_GATEWAY_URL", "http://localhost:8006")
+_REGION_GATEWAY_URL = os.getenv("REGION_GATEWAY_URL", "").strip()
 from agentcore.services.database.models.agent.model import Agent
 from agentcore.services.database.models.agent_bundle.model import AgentBundle, BundleTypeEnum
 from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
@@ -65,9 +64,9 @@ async def _maybe_proxy_to_region(
     if role != "root":
         raise HTTPException(status_code=403, detail="Cross-region access requires root role")
 
-    # Only hub deployment can proxy
-    if _DEPLOYMENT_ROLE != "hub":
-        raise HTTPException(status_code=400, detail="Cross-region proxy only available on hub")
+    # Region gateway must be configured to proxy cross-region requests
+    if not _REGION_GATEWAY_URL:
+        raise HTTPException(status_code=400, detail="Cross-region proxy not configured on this deployment")
 
     # Forward to region-gateway
     gateway_url = f"{_REGION_GATEWAY_URL}/api/regions/{region_code}/dashboard/{section_path}"
@@ -98,9 +97,9 @@ async def list_regions(current_user: CurrentActiveUser):
     if role != "root":
         raise HTTPException(status_code=403, detail="Region listing requires root role")
 
-    if _DEPLOYMENT_ROLE != "hub":
-        # Spoke deployments only know about themselves
-        return [{"code": _REGION_CODE, "name": _REGION_CODE, "is_hub": False}]
+    if not _REGION_GATEWAY_URL:
+        # No gateway configured — this deployment only knows about itself
+        return [{"code": _REGION_CODE, "name": _REGION_CODE, "is_hub": True}]
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -414,6 +413,16 @@ async def get_department_usage_kpis(
         AgentPublishRecipient.dept_id.in_(list(dept_ids))
     )
 
+    # If a UAT deployment has a pending promotion to PROD, we still count it as active in UAT
+    # (department admins treat pending approvals as still part of the active UAT footprint).
+    pending_promotion_uat_ids = (
+        select(AgentDeploymentProd.promoted_from_uat_id)
+        .where(
+            AgentDeploymentProd.promoted_from_uat_id.is_not(None),
+            AgentDeploymentProd.status == "PENDING_APPROVAL",
+        )
+    )
+
     uat_active = (
         await session.exec(
             select(func.count())
@@ -423,7 +432,10 @@ async def get_department_usage_kpis(
                     AgentDeploymentUAT.agent_id.in_(assigned_agent_ids),
                 ),
                 AgentDeploymentUAT.is_active.is_(True),
-                AgentDeploymentUAT.moved_to_prod.is_(False),
+                or_(
+                    AgentDeploymentUAT.moved_to_prod.is_(False),
+                    AgentDeploymentUAT.id.in_(pending_promotion_uat_ids),
+                ),
             )
         )
     ).one()

@@ -65,11 +65,11 @@ export function OverviewTab({
           {metrics?.by_date && metrics.by_date.length > 0 && (
             <Card className="border-0 shadow-sm">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+                <CardTitle className="flex items-center gap-2 text-foreground">
                   <DollarSign className="h-5 w-5" style={{ color: THEME.chartColors[2] }} />
                   Cost Analysis
                 </CardTitle>
-                <CardDescription style={{ color: THEME.textSecondary }}>Daily cost trend with activity correlation</CardDescription>
+                <CardDescription className="text-muted-foreground">Daily cost trend with activity correlation</CardDescription>
               </CardHeader>
               <CardContent>
                 <SafeResponsiveContainer width="100%" height={220}>
@@ -93,7 +93,7 @@ export function OverviewTab({
             {/* Recent Agent Activity */}
             <Card className="border-0 shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center gap-2" style={{ color: THEME.textSecondary }}>
+                <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
                   <Activity className="h-4 w-4" />
                   Recent Agent Activity
                 </CardTitle>
@@ -101,20 +101,20 @@ export function OverviewTab({
               <CardContent>
                 {recentAgents.length === 0 ? (
                   <div className="text-center py-4">
-                    <Activity className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-                    <p className="text-sm" style={{ color: THEME.textSecondary }}>No recent activity</p>
+                    <Activity className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                    <p className="text-sm text-muted-foreground">No recent activity</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {recentAgents.map((agent) => (
-                      <div key={agent.agent_id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors">
+                      <div key={agent.agent_id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
                         <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: agent.error_count > 0 ? THEME.error : THEME.success }} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate" style={{ color: THEME.textMain }}>{agent.agent_name || 'Unnamed Agent'}</p>
-                          <p className="text-xs" style={{ color: THEME.textSecondary }}>{agent.session_count} sessions • {agent.error_count > 0 ? `${agent.error_count} errors` : 'No errors'}</p>
+                          <p className="text-sm font-medium truncate text-foreground">{agent.agent_name || 'Unnamed Agent'}</p>
+                          <p className="text-xs text-muted-foreground">{agent.session_count} sessions • {agent.error_count > 0 ? `${agent.error_count} errors` : 'No errors'}</p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p className="text-xs font-medium" style={{ color: THEME.textSecondary }}>{formatRelativeTime(agent.last_activity)}</p>
+                          <p className="text-xs font-medium text-muted-foreground">{formatRelativeTime(agent.last_activity)}</p>
                         </div>
                       </div>
                     ))}
@@ -126,7 +126,7 @@ export function OverviewTab({
             {/* Performance */}
             <Card className="border-0 shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center gap-2" style={{ color: THEME.textSecondary }}>
+                <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
                   <Timer className="h-4 w-4" />
                   Performance
                 </CardTitle>
@@ -134,22 +134,34 @@ export function OverviewTab({
               <CardContent className="space-y-4">
                 <div>
                   <div className="flex justify-between text-sm mb-2">
-                    <span style={{ color: THEME.textSecondary }}>Avg Latency</span>
-                    <span className="font-medium" style={{ color: THEME.textMain }}>{formatLatency(metrics?.avg_latency_ms ?? null)}</span>
+                    <span className="text-muted-foreground">Avg Latency</span>
+                    <span className="font-medium text-foreground">{formatLatency(metrics?.avg_latency_ms ?? null)}</span>
                   </div>
                   <ProgressBar value={metrics?.avg_latency_ms ?? 0} max={10000} color={THEME.chartColors[1]} />
                 </div>
                 <div>
                   <div className="flex justify-between text-sm mb-2">
-                    <span style={{ color: THEME.textSecondary }}>P95 Latency</span>
-                    <span className="font-medium" style={{ color: THEME.textMain }}>{formatLatency(metrics?.p95_latency_ms ?? null)}</span>
+                    <span className="text-muted-foreground">P95 Latency</span>
+                    <span className="font-medium text-foreground">{formatLatency(metrics?.p95_latency_ms ?? null)}</span>
                   </div>
                   <ProgressBar value={metrics?.p95_latency_ms ?? 0} max={15000} color={THEME.chartColors[3]} />
                 </div>
                 <div>
                   <div className="flex justify-between text-sm mb-2">
-                    <span style={{ color: THEME.textSecondary }}>Observations</span>
-                    <span className="font-medium" style={{ color: THEME.textMain }}>{metrics?.total_observations ?? 0}</span>
+                    <span className="text-muted-foreground">Observations</span>
+                    <span className="font-medium text-foreground">{metrics?.total_observations ?? 0}</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-muted-foreground">P95 Cost / Trace</span>
+                    <span className="font-medium text-foreground">{metrics?.p95_cost_per_trace != null ? formatCost(metrics.p95_cost_per_trace) : "-"}</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-muted-foreground">P99 Cost / Trace</span>
+                    <span className="font-medium text-foreground">{metrics?.p99_cost_per_trace != null ? formatCost(metrics.p99_cost_per_trace) : "-"}</span>
                   </div>
                 </div>
               </CardContent>
@@ -161,11 +173,11 @@ export function OverviewTab({
             {metrics?.by_date && metrics.by_date.length > 0 && (
               <Card className="border-0 shadow-sm">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+                  <CardTitle className="flex items-center gap-2 text-foreground">
                     <TrendingUp className="h-5 w-5" style={{ color: THEME.primary }} />
                     Token Usage Trend
                   </CardTitle>
-                  <CardDescription style={{ color: THEME.textSecondary }}>Daily token consumption over time</CardDescription>
+                  <CardDescription className="text-muted-foreground">Daily token consumption over time</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <SafeResponsiveContainer width="100%" height={280}>
@@ -190,11 +202,11 @@ export function OverviewTab({
             {metrics?.by_model && metrics.by_model.length > 0 && (
               <Card className="border-0 shadow-sm">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+                  <CardTitle className="flex items-center gap-2 text-foreground">
                     <PieChartIcon className="h-5 w-5" style={{ color: THEME.chartColors[1] }} />
                     Model Distribution
                   </CardTitle>
-                  <CardDescription style={{ color: THEME.textSecondary }}>Token usage breakdown by model</CardDescription>
+                  <CardDescription className="text-muted-foreground">Token usage breakdown by model</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <SafeResponsiveContainer width="100%" height={280}>
@@ -217,7 +229,7 @@ export function OverviewTab({
           {metrics?.by_model && metrics.by_model.length > 0 && (
             <Card className="border-0 shadow-sm">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+                <CardTitle className="flex items-center gap-2 text-foreground">
                   <Cpu className="h-5 w-5" style={{ color: THEME.chartColors[4] }} />
                   Model Usage Summary
                 </CardTitle>
@@ -225,12 +237,12 @@ export function OverviewTab({
               <CardContent>
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-gray-100">
-                      <TableHead style={{ color: THEME.textSecondary }}>Model</TableHead>
-                      <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Calls</TableHead>
-                      <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Tokens</TableHead>
-                      <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Cost</TableHead>
-                      <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Share</TableHead>
+                    <TableRow className="border-border">
+                      <TableHead className="text-muted-foreground">Model</TableHead>
+                      <TableHead className="text-right text-muted-foreground">Calls</TableHead>
+                      <TableHead className="text-right text-muted-foreground">Tokens</TableHead>
+                      <TableHead className="text-right text-muted-foreground">Cost</TableHead>
+                      <TableHead className="text-right text-muted-foreground">Share</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -238,20 +250,20 @@ export function OverviewTab({
                       const totalTokens = metrics.by_model.reduce((sum, m) => sum + m.total_tokens, 0);
                       const share = totalTokens > 0 ? (model.total_tokens / totalTokens) * 100 : 0;
                       return (
-                        <TableRow key={model.model} className="border-gray-100 hover:bg-gray-50">
-                          <TableCell className="font-medium" style={{ color: THEME.textMain }}>
+                        <TableRow key={model.model} className="border-border hover:bg-muted/50">
+                          <TableCell className="font-medium text-foreground">
                             <div className="flex items-center gap-2">
                               <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.chartColors[idx % THEME.chartColors.length] }} />
                               {model.model.split("/").pop() || model.model}
                             </div>
                           </TableCell>
-                          <TableCell className="text-right" style={{ color: THEME.textMain }}>{model.call_count}</TableCell>
-                          <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatTokens(model.total_tokens)}</TableCell>
-                          <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatCost(model.total_cost)}</TableCell>
+                          <TableCell className="text-right text-foreground">{model.call_count}</TableCell>
+                          <TableCell className="text-right text-foreground">{formatTokens(model.total_tokens)}</TableCell>
+                          <TableCell className="text-right text-foreground">{formatCost(model.total_cost)}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-2">
                               <ProgressBar value={share} max={100} color={THEME.chartColors[idx % THEME.chartColors.length]} showLabel={false} />
-                              <span className="text-xs font-medium min-w-[40px]" style={{ color: THEME.textSecondary }}>{share.toFixed(1)}%</span>
+                              <span className="text-xs font-medium min-w-[40px] text-muted-foreground">{share.toFixed(1)}%</span>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -267,7 +279,7 @@ export function OverviewTab({
           {sessionsData?.sessions && sessionsData.sessions.length > 0 && (
             <Card className="border-0 shadow-sm">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+                <CardTitle className="flex items-center gap-2 text-foreground">
                   <Clock className="h-5 w-5" style={{ color: THEME.chartColors[3] }} />
                   Recent Sessions
                 </CardTitle>
@@ -277,21 +289,21 @@ export function OverviewTab({
                   {sessionsData.sessions.slice(0, 5).map((session) => (
                     <div
                       key={session.session_id}
-                      className={`flex items-center justify-between p-4 rounded-lg cursor-pointer transition-all hover:shadow-md ${session.has_errors ? 'bg-red-50 border border-red-100' : 'bg-gray-50 hover:bg-gray-100'}`}
+                      className={`flex items-center justify-between p-4 rounded-lg cursor-pointer transition-all hover:shadow-md ${session.has_errors ? 'bg-red-50 border border-red-100' : 'bg-muted/50 hover:bg-muted'}`}
                       onClick={() => onSelectSession(session.session_id)}
                     >
                       <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${session.has_errors ? 'bg-red-100' : 'bg-white'}`}>
-                          {session.has_errors ? <XCircle className="h-5 w-5 text-red-500" /> : <Clock className="h-5 w-5" style={{ color: THEME.textSecondary }} />}
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${session.has_errors ? 'bg-red-100' : 'bg-card'}`}>
+                          {session.has_errors ? <XCircle className="h-5 w-5 text-red-500" /> : <Clock className="h-5 w-5 text-muted-foreground" />}
                         </div>
                         <div>
-                          <p className="font-medium truncate max-w-[300px]" style={{ color: THEME.textMain }}>{session.session_id}</p>
-                          <p className="text-sm" style={{ color: THEME.textSecondary }}>{session.trace_count} traces | {formatTokens(session.total_tokens)} tokens</p>
+                          <p className="font-medium truncate max-w-[300px] text-foreground">{session.session_id}</p>
+                          <p className="text-sm text-muted-foreground">{session.trace_count} traces | {formatTokens(session.total_tokens)} tokens</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
                         <span className="text-sm font-medium" style={{ color: THEME.primary }}>{formatCost(session.total_cost)}</span>
-                        <ChevronRight className="h-5 w-5" style={{ color: THEME.textSecondary }} />
+                        <ChevronRight className="h-5 w-5 text-muted-foreground" />
                       </div>
                     </div>
                   ))}
@@ -304,5 +316,3 @@ export function OverviewTab({
     </div>
   );
 }
-
-

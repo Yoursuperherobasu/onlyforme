@@ -771,9 +771,13 @@ const KnowledgeBasesTab = ({
               cellRenderer: (params: any) => {
                 if (params.data?.rowType !== "kb") return "";
                 const value = params.data?.created_by_email || "-";
+                const displayValue =
+                  typeof value === "string" && value.includes("@")
+                    ? value.split("@")[0]
+                    : value;
                 return (
                   <div className="max-w-[170px] truncate" title={value}>
-                    {value}
+                    {displayValue}
                   </div>
                 );
               },

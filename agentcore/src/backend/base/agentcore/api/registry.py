@@ -73,6 +73,8 @@ class RegistryEntryResponse(BaseModel):
     listed_by: UUID
     listed_by_username: str | None = None
     listed_by_email: str | None = None
+    department_name: str | None = None
+    organization_name: str | None = None
     version_number: str | None = None
     listed_at: datetime
     created_at: datetime
@@ -250,8 +252,9 @@ async def browse_registry(
         if tag:
             # JSON array contains — works for PostgreSQL
             # For tags stored as JSON array, use cast + contains
+            from sqlalchemy import String
             stmt = stmt.where(
-                AgentRegistry.tags.cast(str).ilike(f"%{tag}%"),  # type: ignore[union-attr]
+                AgentRegistry.tags.cast(String).ilike(f"%{tag}%"),  # type: ignore[union-attr]
             )
 
         # Environment filter
@@ -312,6 +315,12 @@ async def browse_registry(
                 )
                 for u in users
             }
+            lister_dept_map: dict[UUID, str | None] = {
+                u.id: getattr(u, "department_name", None) for u in users
+            }
+            lister_org_map: dict[UUID, str | None] = {
+                u.id: getattr(u, "organization_name", None) for u in users
+            }
         if prod_deploy_ids:
             prod_rows = (
                 await session.exec(
@@ -353,6 +362,8 @@ async def browse_registry(
                     listed_by=r.listed_by,
                     listed_by_username=lister_map.get(r.listed_by),
                     listed_by_email=lister_email_map.get(r.listed_by),
+                    department_name=lister_dept_map.get(r.listed_by),
+                    organization_name=lister_org_map.get(r.listed_by),
                     version_number=version_number,
                     listed_at=r.listed_at,
                     created_at=r.created_at,
@@ -423,6 +434,8 @@ async def get_registry_entry(
                 else None
             )
         )
+        lister_department_name = getattr(lister, "department_name", None) if lister else None
+        lister_organization_name = getattr(lister, "organization_name", None) if lister else None
 
         # Fetch deployment details based on environment
         version_number: str | None = None
@@ -469,6 +482,8 @@ async def get_registry_entry(
             listed_by=entry.listed_by,
             listed_by_username=lister_username,
             listed_by_email=lister_email,
+            department_name=lister_department_name,
+            organization_name=lister_organization_name,
             listed_at=entry.listed_at,
             created_at=entry.created_at,
             updated_at=entry.updated_at,

@@ -56,9 +56,15 @@ export const useGetHealthQuery: useQueryFunctionType<
       );
       return response.data;
     } catch (error) {
+      const status = (error as AxiosError)?.response?.status;
+      if (status === 401 || status === 403) {
+        setHealthCheckTimeout(null);
+        throw error;
+      }
+
       const isServerBusy =
         healthCheckTimeout === null &&
-        (error as AxiosError)?.response?.status === 503;
+        status === 503;
 
       if (isServerBusy) {
         setHealthCheckTimeout("timeout");

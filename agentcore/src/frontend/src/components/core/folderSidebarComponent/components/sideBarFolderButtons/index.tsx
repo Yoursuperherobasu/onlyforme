@@ -363,6 +363,8 @@ const SideBarFoldersButtonsComponent = ({
     "view_platform_configs",
     "view_help_support_page",
     "view_approval_page",
+    "view_packages_page",
+    "view_release_management_page",
   ]);
   const can = (permissionKey: string) =>
     isRootAdmin
@@ -637,7 +639,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {(can("connectore_page") || can("view_connectors_page") || can("connector_page")) && (
+        {(can("view_connector_page") || can("connectore_page") || can("view_connectors_page") || can("connector_page")) && (
           <SidebarMenuItem>
               <SidebarMenuButton
                 size="md"
@@ -707,7 +709,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {can("view_packages_page") && (
+        {can("view_release_management_page") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"

@@ -5,16 +5,13 @@ from typing import TYPE_CHECKING, Any
 from agentcore.components._importing import import_mod
 
 if TYPE_CHECKING:
-    from .chroma import ChromaVectorStoreComponent
     from .pinecone import PineconeVectorStoreComponent
 
 _dynamic_imports = {
-    "ChromaVectorStoreComponent": "chroma",
     "PineconeVectorStoreComponent": "pinecone",
 }
 
 __all__ = [
-    "ChromaVectorStoreComponent",
     "PineconeVectorStoreComponent",
 ]
 

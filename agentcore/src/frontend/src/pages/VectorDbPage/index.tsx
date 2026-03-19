@@ -8,7 +8,7 @@ import {
   Database,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Loading from "@/components/ui/loading";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
 } from "@/controllers/API/queries/vector-db/use-get-vector-db-catalogue";
 import { useDeleteVectorDBCatalogue } from "@/controllers/API/queries/vector-db/use-delete-vector-db-catalogue";
 import { getProviderIcon } from "@/utils/logo_provider";
+import { AuthContext } from "@/contexts/authContext";
 
 type EnvFilter = "all" | "uat" | "prod";
 
@@ -49,6 +50,9 @@ export default function VectorDBView(): JSX.Element {
   const { t } = useTranslation();
   const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const { permissions } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canDelete = can("delete_vector_db_catalogue");
 
   // Always fetch all entries so stats reflect the full picture
   const {
@@ -140,10 +144,10 @@ export default function VectorDBView(): JSX.Element {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-xl font-semibold md:text-2xl">{t("Vector Store Observatory")}</h1>
+          <div className="mb-1 flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">{t("Vector Store Observatory")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("View Pinecone namespaces across UAT and PROD environments")}
@@ -224,7 +228,7 @@ export default function VectorDBView(): JSX.Element {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
@@ -248,7 +252,7 @@ export default function VectorDBView(): JSX.Element {
                       "Status",
                       "Vectors",
                       "Migration",
-                      "",
+                      ...(canDelete ? [""] : []),
                     ].map((h, i) => (
                       <th
                         key={h || `col-${i}`}
@@ -264,7 +268,7 @@ export default function VectorDBView(): JSX.Element {
                   {filteredVectorDBs.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={canDelete ? 8 : 7}
                         className="px-6 py-12 text-center text-muted-foreground"
                       >
                         {displayVectorDBs.length === 0
@@ -352,7 +356,7 @@ export default function VectorDBView(): JSX.Element {
                               <span className="text-sm font-medium">
                                 {db.environment === "prod" && db.vectorsCopied > 0
                                   ? db.vectorsCopied.toLocaleString()
-                                  : db.vectorCount}
+                                  : Number(db.vectorCount || 0).toLocaleString()}
                               </span>
                             </div>
                           </td>
@@ -379,18 +383,20 @@ export default function VectorDBView(): JSX.Element {
                           </td>
 
                           {/* Delete */}
-                          <td className="px-4 py-4">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                              disabled={deletingId === db.id}
-                              onClick={() => handleDelete(db)}
-                              title={t("Delete entry")}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </td>
+                          {canDelete && (
+                            <td className="px-4 py-4">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                                disabled={deletingId === db.id}
+                                onClick={() => handleDelete(db)}
+                                title={t("Delete entry")}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })

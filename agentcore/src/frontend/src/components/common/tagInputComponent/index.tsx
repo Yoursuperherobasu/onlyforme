@@ -27,7 +27,7 @@ export default function TagInput({
   selectedTags,
   onChange,
   placeholder = "Add tags...",
-  maxTags = 20,
+  maxTags = 10,
   disabled = false,
 }: TagInputProps) {
   const [inputValue, setInputValue] = useState("");
@@ -223,10 +223,15 @@ export default function TagInput({
         </div>
       )}
 
-      {/* Hint */}
+      {/* Hint / Limit message */}
       {!disabled && selectedTags.length === 0 && !showDropdown && (
         <p className="mt-1 text-xs text-muted-foreground">
           Type to search or create custom tags. Press Enter or comma to add.
+        </p>
+      )}
+      {!disabled && selectedTags.length >= maxTags && (
+        <p className="mt-1 text-xs text-amber-600">
+          Tag limit reached ({maxTags}/{maxTags})
         </p>
       )}
     </div>

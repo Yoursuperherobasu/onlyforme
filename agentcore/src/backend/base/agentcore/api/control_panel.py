@@ -138,6 +138,7 @@ class ControlPanelAgentItem(BaseModel):
     failed_runs: int = 0                   # placeholder – no model field yet
     input_type: str = "autonomous"         # "chat" | "autonomous" | "file_processing" — from snapshot._input_type
     moved_to_prod: bool = False
+    pending_prod_approval: bool = False
 
 
 class ControlPanelAgentsResponse(BaseModel):
@@ -558,17 +559,13 @@ async def list_control_panel_agents(
         # Hide only UAT rows that have already been promoted to PROD.
         # Newer UAT versions for the same agent must remain visible so they can
         # go through the UAT -> PROD flow again.
+        # Keep rows visible while PROD promotion is still pending approval.
         if env == ControlPanelEnv.UAT:
             promoted_uat_exists = (
                 select(AgentDeploymentProd.id)
                 .where(
                     AgentDeploymentProd.promoted_from_uat_id == AgentDeploymentUAT.id,
-                    AgentDeploymentProd.status.in_(
-                        [
-                            DeploymentPRODStatusEnum.PUBLISHED,
-                            DeploymentPRODStatusEnum.PENDING_APPROVAL,
-                        ]
-                    ),
+                    AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED,
                 )
                 .exists()
             )
@@ -637,22 +634,29 @@ async def list_control_panel_agents(
                         owner_emails_by_agent[agent_key].append(owner_email)
 
         promoted_uat_ids: set[UUID] = set()
+        pending_prod_approval_uat_ids: set[UUID] = set()
         if env == ControlPanelEnv.UAT and rows:
             uat_ids = [row[0].id for row in rows]
             promoted_rows = (
                 await session.exec(
                     select(AgentDeploymentProd.promoted_from_uat_id).where(
                         AgentDeploymentProd.promoted_from_uat_id.in_(uat_ids),
-                        AgentDeploymentProd.status.in_(
-                            [
-                                DeploymentPRODStatusEnum.PUBLISHED,
-                                DeploymentPRODStatusEnum.PENDING_APPROVAL,
-                            ]
-                        ),
+                        AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED,
                     )
                 )
             ).all()
             promoted_uat_ids = {dep_id for dep_id in promoted_rows if dep_id is not None}
+            pending_rows = (
+                await session.exec(
+                    select(AgentDeploymentProd.promoted_from_uat_id).where(
+                        AgentDeploymentProd.promoted_from_uat_id.in_(uat_ids),
+                        AgentDeploymentProd.status == DeploymentPRODStatusEnum.PENDING_APPROVAL,
+                    )
+                )
+            ).all()
+            pending_prod_approval_uat_ids = {
+                dep_id for dep_id in pending_rows if dep_id is not None
+            }
 
         items: list[ControlPanelAgentItem] = []
         for row in rows:
@@ -717,6 +721,11 @@ async def list_control_panel_agents(
                         True
                         if env == ControlPanelEnv.PROD
                         else dep.id in promoted_uat_ids
+                    ),
+                    pending_prod_approval=(
+                        False
+                        if env == ControlPanelEnv.PROD
+                        else dep.id in pending_prod_approval_uat_ids
                     ),
                 )
             )
@@ -1112,6 +1121,7 @@ async def promote_uat_to_prod(
         await session.flush()
 
         uat_dep.moved_to_prod = True
+        uat_dep.is_active = False
         uat_dep.updated_at = datetime.now(timezone.utc)
         session.add(uat_dep)
 
@@ -1276,6 +1286,73 @@ async def promote_uat_to_prod(
             # Non-admin: guardrail promotion is deferred until admin approval.
             # See approvals.py approve_agent().
 
+        # ─── Data migration (Pinecone + Neo4j, UAT → PROD) for admin direct publish ──
+        data_migration_ready = True
+        if is_admin and new_record.agent_snapshot:
+            from agentcore.api.approvals import (
+                _migrate_pinecone_for_prod,
+                _migrate_neo4j_for_prod,
+                _track_pinecone_migration_failure,
+            )
+
+            pinecone_migration_failed = False
+            pinecone_error_msg = ""
+            neo4j_migration_failed = False
+            neo4j_error_msg = ""
+
+            logger.info(
+                f"[DATA_MIGRATION] Admin direct promote: deployment={new_record.id} "
+                f"has_snapshot={bool(new_record.agent_snapshot)} "
+                f"promoted_from_uat_id={new_record.promoted_from_uat_id}"
+            )
+
+            # --- Pinecone migration ---
+            try:
+                await _migrate_pinecone_for_prod(deployment=new_record, session=session)
+            except Exception as pc_err:
+                logger.error(f"[DATA_MIGRATION] Pinecone migration failed: {pc_err}")
+                pinecone_migration_failed = True
+                pinecone_error_msg = str(pc_err)
+                try:
+                    await _track_pinecone_migration_failure(
+                        deployment=new_record, session=session, error_msg=pinecone_error_msg,
+                    )
+                except Exception as track_err:
+                    logger.warning(f"[DATA_MIGRATION] Failed to track Pinecone failure: {track_err}")
+
+            # --- Neo4j migration ---
+            try:
+                await _migrate_neo4j_for_prod(deployment=new_record, session=session)
+            except Exception as neo_err:
+                logger.error(f"[DATA_MIGRATION] Neo4j migration failed: {neo_err}")
+                neo4j_migration_failed = True
+                neo4j_error_msg = str(neo_err)
+
+            # Handle migration failure
+            if pinecone_migration_failed or neo4j_migration_failed:
+                data_migration_ready = False
+                await session.rollback()
+                new_record.status = DeploymentPRODStatusEnum.ERROR
+                new_record.updated_at = datetime.now(timezone.utc)
+                session.add(new_record)
+                await session.commit()
+                migration_errors = []
+                if pinecone_migration_failed:
+                    migration_errors.append(f"Pinecone VDB migration failed: {pinecone_error_msg}")
+                if neo4j_migration_failed:
+                    migration_errors.append(f"Neo4j graph migration failed: {neo4j_error_msg}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"Agent promoted but data migration failed. "
+                        f"{' | '.join(migration_errors)}. "
+                        f"Deployment {new_record.id} has been marked as ERROR and will not serve in PROD. "
+                        f"Please retry or contact support."
+                    ),
+                )
+            else:
+                await session.commit()
+
         if is_admin:
             try:
                 await sync_agent_registry(
@@ -1289,8 +1366,8 @@ async def promote_uat_to_prod(
             except Exception as sync_err:
                 logger.warning(f"Registry sync failed for promoted PROD deploy {new_record.id}: {sync_err}")
 
-            # ─── HTTP notify (only if guardrail promotion succeeded) ──
-            if guardrails_ready:
+            # ─── HTTP notify (only if guardrail promotion AND data migration succeeded) ──
+            if guardrails_ready and data_migration_ready:
                 try:
                     import httpx
                     from agentcore.services.deps import get_settings_service
@@ -1315,8 +1392,13 @@ async def promote_uat_to_prod(
                 except Exception as notify_err:
                     logger.warning(f"Post-promote notify API failed for PROD deploy {new_record.id}: {notify_err}")
             else:
+                skip_reasons = []
+                if not guardrails_ready:
+                    skip_reasons.append("guardrail promotion failed")
+                if not data_migration_ready:
+                    skip_reasons.append("data migration failed")
                 logger.warning(
-                    f"[PROMOTE_NOTIFY] Skipped — guardrail promotion failed for PROD deploy {new_record.id}"
+                    f"[PROMOTE_NOTIFY] Skipped — {' and '.join(skip_reasons)} for PROD deploy {new_record.id}"
                 )
 
             # Trigger handoff payload for admin direct publish.
@@ -1335,9 +1417,9 @@ async def promote_uat_to_prod(
         return PromoteFromUATResponse(
             success=True,
             message=(
-                f"UAT {uat_dep.id} moved to PROD as v{next_version}"
+                f"UAT {uat_dep.id} stopped and moved to PROD as v{next_version}"
                 if is_admin
-                else f"UAT {uat_dep.id} submitted for PROD approval as v{next_version}"
+                else f"UAT {uat_dep.id} stopped and submitted for PROD approval as v{next_version}"
             ),
             publish_id=new_record.id,
             environment="prod",

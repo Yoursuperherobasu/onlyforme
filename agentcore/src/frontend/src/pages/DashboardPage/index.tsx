@@ -1057,10 +1057,10 @@ export default function DashboardAdmin(): JSX.Element {
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* -- Page Header -- */}
       <div className="flex-shrink-0 border-b border-border bg-card">
-        <div className="px-4 py-4 sm:px-6 md:px-8 md:py-5">
+        <div className="px-4 py-3 sm:px-6 md:px-8 md:py-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-xl font-bold text-foreground md:text-2xl">{t("Dashboard")}</h1>
+              <h1 className="text-lg font-bold text-foreground md:text-xl">{t("Dashboard")}</h1>
               <div className="mt-1.5 flex items-center gap-2">
                 <span className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
                   {headerSubtitle}
@@ -1116,7 +1116,7 @@ export default function DashboardAdmin(): JSX.Element {
       )}
 
       {/* ── Section Stack ── */}
-      <div className="flex-1 overflow-auto bg-background px-4 py-4 sm:px-6 md:px-8 md:py-6">
+      <div className="flex-1 overflow-auto bg-background px-4 py-3 sm:px-6 md:px-8 md:py-4">
         <div className="space-y-4">
           {sectionsToRender.map((section, i) => {
             const { kpis, charts } = resolveSection(section);

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,10 +46,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/pinecone", tags=["Pinecone"], dependencies=[Depends(verify_api_key)])
 
 
+_executor = ThreadPoolExecutor(max_workers=10)
+
+
 async def _run_sync(func, *args):
-    """Run a blocking function in the default executor to avoid blocking the event loop."""
+    """Run a blocking function in a bounded executor to avoid blocking the event loop."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(func, *args))
+    return await loop.run_in_executor(_executor, partial(func, *args))
 
 
 @router.post("/ensure-index", response_model=EnsureIndexResponse)

@@ -53,10 +53,13 @@ interface WorkagentType {
   department: string;
   created: string;
   movedToProd?: boolean;
+  pendingProdApproval?: boolean;
   status: boolean;
   enabled: boolean;
   inputType?: "chat" | "autonomous" | "file_processing";
 }
+
+const EMPTY_WORKFLOWS: WorkagentType[] = [];
 
 interface WorkflowsViewProps {
   workflows?: WorkagentType[];
@@ -72,7 +75,7 @@ function formatDateTime(value?: string | null): string {
 }
 
 export default function WorkflowsView({
-  workflows = [],
+  workflows = EMPTY_WORKFLOWS,
   setSearch,
   onWorkagentClick,
 }: WorkflowsViewProps): JSX.Element {
@@ -131,7 +134,9 @@ export default function WorkflowsView({
   const promoteMutation = usePostControlPanelPromote();
   const validatePublishEmail = useValidatePublishEmail();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const canViewScheduler = can("view_agent_scheduler_page");
+  const canViewScheduler = can("view_control_panel");
+  const canDirectPromoteToProd = can("prod_publish_approval_not_required");
+  const requiresProdApproval = !canDirectPromoteToProd;
 
   const { data, isLoading } = useGetControlPanelAgents(
     {
@@ -164,6 +169,7 @@ export default function WorkflowsView({
       department: item.creator_department ?? "-",
         created: formatDateTime(item.created_at),
         movedToProd: item.moved_to_prod ?? false,
+        pendingProdApproval: item.pending_prod_approval ?? false,
         status: item.is_active,
         enabled: item.is_enabled,
         inputType: item.input_type,
@@ -579,50 +585,52 @@ export default function WorkflowsView({
     (can("enable_disable_agent") ? 1 : 0);
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8 md:py-6">
-        <div className="mb-4 flex items-center gap-3">
-          <h1 className="text-xl font-semibold md:text-2xl">{t("Agent Control Panel")}</h1>
-        </div>
-
-        <div className="mb-6 inline-flex rounded-lg border bg-muted/30 p-1">
-          <button
-            type="button"
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === "UAT"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setActiveTab("UAT")}
-          >
-            UAT
-          </button>
-          <button
-            type="button"
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === "PROD"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setActiveTab("PROD")}
-          >
-            PROD
-          </button>
-        </div>
-
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={t("Search agents...")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
-          />
+      <div className="flex h-full w-full flex-col overflow-hidden">
+        <div className="flex-shrink-0 border-b px-4 py-3 sm:px-6 md:px-8 md:py-4">
+          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">{t("Agent Control Panel")}</h1>
+            <div className="inline-flex rounded-lg border border-border bg-muted/30 p-1">
+              <button
+                type="button"
+                className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === "UAT"
+                    ? "bg-[var(--button-primary)] text-[var(--button-primary-foreground)] shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+                onClick={() => setActiveTab("UAT")}
+              >
+                UAT
+              </button>
+              <button
+                type="button"
+                className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === "PROD"
+                    ? "bg-[var(--button-primary)] text-[var(--button-primary-foreground)] shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+                onClick={() => setActiveTab("PROD")}
+              >
+                PROD
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder={t("Search agents...")}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-64 rounded-lg border bg-card py-2 pl-10 pr-4 text-sm"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full">
             <thead className="border-b bg-muted/50">
@@ -816,14 +824,20 @@ export default function WorkflowsView({
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={promotingById[workflow.id]}
+                            disabled={
+                              promotingById[workflow.id] ||
+                              workflow.pendingProdApproval
+                            }
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (workflow.pendingProdApproval) return;
                               handleOpenPromoteDialog(workflow.id);
                             }}
                           >
                             <ArrowUpToLine className="h-3.5 w-3.5" />
-                            {promotingById[workflow.id]
+                            {workflow.pendingProdApproval
+                              ? t("Pending")
+                              : promotingById[workflow.id]
                               ? t("Moving...")
                               : t("Move")}
                           </button>
@@ -836,7 +850,11 @@ export default function WorkflowsView({
                     )}
                     {can("view_project_page") && (
                       <td className="px-6 py-4 text-xs">
-                        {workflow.movedToProd ? (
+                        {workflow.pendingProdApproval ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                            {t("Pending Approval")}
+                          </span>
+                        ) : workflow.movedToProd ? (
                           <span className="rounded-full border border-green-200 bg-green-50 px-2 py-1 text-green-700">
                             {t("Yes")}
                           </span>
@@ -1015,7 +1033,22 @@ export default function WorkflowsView({
           </DialogHeader>
           <div className="space-y-4">
             <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-              {t("Select visibility for PROD deployment.")}
+              {requiresProdApproval
+                ? t(
+                    "This action will stop the agent in UAT first, then send the PROD move for approval.",
+                  )
+                : t(
+                    "This action will stop the agent in UAT first and move it directly to PROD.",
+                  )}
+            </div>
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              {requiresProdApproval
+                ? t(
+                    "Until approval is completed, this deployment will remain stopped in UAT.",
+                  )
+                : t(
+                    "The UAT deployment will be marked stopped in the database at the same time as the PROD move.",
+                  )}
             </div>
             <div className="space-y-2 rounded-md border p-3">
               <div className="flex items-center gap-2">

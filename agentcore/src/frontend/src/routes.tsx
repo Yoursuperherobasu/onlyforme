@@ -99,10 +99,6 @@ function DefaultLandingRedirect() {
     return <CustomNavigate replace to="hitl-approvals" />;
   }
 
-  if (permissions.includes("view_agent_scheduler_page")) {
-    return <CustomNavigate replace to="workflows" />;
-  }
-
   return <CustomNavigate replace to="dashboard-admin" />;
 }
 
@@ -148,22 +144,15 @@ const router = createBrowserRouter(
             }
           >
             <Route path="" element={<AppAuthenticatedPage />}>
-              <Route path="" element={<CustomDashboardWrapperPage />}>
+                <Route path="" element={<CustomDashboardWrapperPage />}>
                 <Route path="" element={<CollectionPage />}>
                   <Route index element={<DefaultLandingRedirect />} />
+                  <Route path="help-support" element={<HelpSupportPage />} />
                   <Route
                     path="approval"
                     element={
                       <ProtectedPermissionRoute permission="view_approval_page">
                         <ApprovalPage />
-                      </ProtectedPermissionRoute>
-                    }
-                  />
-                  <Route
-                    path="approval/:agentId/review"
-                    element={
-                      <ProtectedPermissionRoute permission="view_approval_page">
-                        <ApprovalPreviewPage />
                       </ProtectedPermissionRoute>
                     }
                   />
@@ -244,7 +233,7 @@ const router = createBrowserRouter(
                   <Route
                     path="release-management"
                     element={
-                      <ProtectedPermissionRoute permission="view_packages_page">
+                      <ProtectedPermissionRoute permission="view_release_management_page">
                         <ReleaseManagementPage />
                       </ProtectedPermissionRoute>
                     }
@@ -369,10 +358,12 @@ const router = createBrowserRouter(
                  
                   <Route path="shortcuts" element={<ShortcutsPage />} />
                   <Route path="messages" element={<MessagesPage />} />
-                  <Route path="help-support" element={<HelpSupportPage />} />
+                  <Route
+                    path="help-support"
+                    element={<CustomNavigate replace to={"/help-support"} />}
+                  />
                   {CustomRoutesStore()}
                 </Route>
-                <Route path="help-support" element={<HelpSupportPage />} />
                 {CustomRoutesStorePages()}
                 <Route path="account">
                   <Route path="delete" element={<DeleteAccountPage />}></Route>
@@ -395,6 +386,16 @@ const router = createBrowserRouter(
                     <ProtectedAccessControlRoute>
                       <AccessControlPage />
                     </ProtectedAccessControlRoute>
+                  }
+                />
+              </Route>
+              <Route path="approval/:agentId/review" element={<CustomDashboardWrapperPage />}>
+                <Route
+                  path=""
+                  element={
+                    <ProtectedPermissionRoute permission="view_approval_page">
+                      <ApprovalPreviewPage />
+                    </ProtectedPermissionRoute>
                   }
                 />
               </Route>

@@ -189,6 +189,12 @@ async def _can_edit_knowledge_base(
     org_ids, dept_ids = await _get_scope_memberships(session, current_user.id)
 
     if role == "super_admin":
+        if (
+            kb.visibility == KBVisibilityEnum.PRIVATE
+            and kb.org_id is None
+            and kb.dept_id is None
+        ):
+            return kb.created_by == current_user.id
         return bool(kb.org_id and kb.org_id in org_ids)
 
     if role == "department_admin":
@@ -225,6 +231,12 @@ async def _can_delete_knowledge_base(
     org_ids, dept_ids = await _get_scope_memberships(session, current_user.id)
 
     if role == "super_admin":
+        if (
+            kb.visibility == KBVisibilityEnum.PRIVATE
+            and kb.org_id is None
+            and kb.dept_id is None
+        ):
+            return kb.created_by == current_user.id
         return bool(kb.org_id and kb.org_id in org_ids)
 
     if role == "department_admin":
@@ -606,6 +618,8 @@ async def update_knowledge_base(
     kb.org_id = org_id
     kb.dept_id = dept_id
     kb.public_dept_ids = public_dept_ids
+    if visibility == KBVisibilityEnum.PRIVATE:
+        kb.created_by = current_user.id
     kb.updated_at = datetime.now(timezone.utc)
 
     session.add(kb)

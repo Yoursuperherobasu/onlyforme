@@ -15,6 +15,7 @@ from agentcore.api.schemas import (
 from agentcore.services.auth.decorators import PermissionChecker
 from agentcore.services.auth.permissions import (
     PERMISSION_ALIASES,
+    ROLE_PERMISSIONS,
     invalidate_role_permissions_cache,
     normalize_role,
 )
@@ -239,6 +240,89 @@ async def delete_role(
     await session.delete(role)
     await session.commit()
     return {"detail": "Role deleted"}
+
+
+@router.post(
+    "/{role_id}/restore-defaults",
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
+)
+async def restore_role_default_permissions(
+    role_id: UUID,
+    session: DbSession,
+    current_user: User = Depends(get_current_active_user),
+) -> dict:
+    _ensure_access_control_actor(current_user)
+
+    role = await session.get(Role, role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    default_permissions = ROLE_PERMISSIONS.get(_normalize_role_name(role.name))
+    if not role.is_system or default_permissions is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Default restore is only available for system roles with configured defaults.",
+        )
+
+    available_perms = (
+        await session.exec(
+            select(Permission).where(Permission.key.in_(set(default_permissions)))
+        )
+    ).all()
+    available_keys = {perm.key for perm in available_perms}
+    valid_keys = [key for key in default_permissions if key in available_keys]
+
+    await _replace_role_permissions(session, role.id, valid_keys)
+    await invalidate_role_permissions_cache(role.name)
+
+    return {
+        "detail": f"Default permissions restored for role '{role.name}'.",
+        "role": role.name,
+        "restored_permissions": valid_keys,
+    }
+
+
+@router.post(
+    "/restore-defaults",
+    dependencies=[Depends(PermissionChecker(["view_access_control_page"]))],
+)
+async def restore_default_role_permissions(
+    session: DbSession,
+    current_user: User = Depends(get_current_active_user),
+) -> dict:
+    _ensure_access_control_actor(current_user)
+
+    role_names = list(ROLE_PERMISSIONS.keys())
+    roles = (
+        await session.exec(
+            select(Role).where(Role.name.in_(role_names))
+        )
+    ).all()
+    role_by_name = {role.name: role for role in roles}
+
+    perm_rows = (
+        await session.exec(
+            select(Permission).where(Permission.key.in_({
+                p for perms in ROLE_PERMISSIONS.values() for p in perms
+            }))
+        )
+    ).all()
+    perm_by_key = {perm.key: perm.id for perm in perm_rows}
+
+    restored_roles: list[str] = []
+    for role_name, perm_keys in ROLE_PERMISSIONS.items():
+        role = role_by_name.get(role_name)
+        if not role:
+            continue
+        valid_keys = [key for key in perm_keys if key in perm_by_key]
+        await _replace_role_permissions(session, role.id, valid_keys)
+        await invalidate_role_permissions_cache(role.name)
+        restored_roles.append(role.name)
+
+    return {
+        "detail": "Default role permissions restored.",
+        "restored_roles": restored_roles,
+    }
 
 
 async def _replace_role_permissions(session: DbSession, role_id: UUID, permissions: list[str]) -> None:

@@ -89,7 +89,7 @@ export function AgentCard({
       ? t("You")
       : approverNameRaw || t("Unknown")
     : "";
-  const canModerate = entityType === "package" ? true : can("prod_publish_approval_required");
+  const canModerate = entityType === "package" ? true : can("view_approval_page");
   const submittedDisplay = (() => {
     const dt = new Date(submitted);
     if (Number.isNaN(dt.getTime())) return submitted;

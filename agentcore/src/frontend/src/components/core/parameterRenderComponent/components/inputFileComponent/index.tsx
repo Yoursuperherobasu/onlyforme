@@ -19,6 +19,7 @@ import IconComponent, {
   ForwardedIconComponent,
 } from "../../../../common/genericIconComponent";
 import { Button } from "../../../../ui/button";
+import { Checkbox } from "../../../../ui/checkbox";
 import { Input } from "../../../../ui/input";
 import type { FileComponentType, InputProps } from "../../types";
 
@@ -62,6 +63,8 @@ export default function InputFileComponent({
   const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<
     string[]
   >([]);
+  const [selectedIndividualFilePaths, setSelectedIndividualFilePaths] =
+    useState<Set<string>>(new Set());
   const [expandedSelectedKbIds, setExpandedSelectedKbIds] = useState<
     Record<string, boolean>
   >({});
@@ -226,7 +229,10 @@ export default function InputFileComponent({
     return Array.from(groupedByKb.values());
   }, [files, knowledgeBases, selectedFiles]);
 
-  const applyKnowledgeBaseSelection = (kbIds: string[]) => {
+  const applyKnowledgeBaseSelection = (
+    kbIds: string[],
+    individualPaths: Set<string>,
+  ) => {
     if (!files || !knowledgeBases) return;
     const selectedKbs = knowledgeBases.filter((kb) => kbIds.includes(kb.id));
     const normalizedKbNames = selectedKbs.map((kb) =>
@@ -248,6 +254,15 @@ export default function InputFileComponent({
     [...scopedByKbId, ...scopedByPath].forEach((file) => {
       dedupedByPath.set(normalizePath(file.path), file);
     });
+
+    // Add individually selected files (not part of a fully-selected KB)
+    individualPaths.forEach((path) => {
+      const file = files.find((f) => normalizePath(f.path) === normalizePath(path));
+      if (file) {
+        dedupedByPath.set(normalizePath(file.path), file);
+      }
+    });
+
     const scopedFiles = Array.from(dedupedByPath.values());
     const filePaths = scopedFiles.map((file) => file.path);
     handleOnNewValue({
@@ -348,15 +363,19 @@ export default function InputFileComponent({
                     setIsKnowledgeBaseModalOpen(open);
                     if (!open) {
                       setKnowledgeBaseSearch("");
+                      setSelectedIndividualFilePaths(new Set());
                     }
                   }}
                   onSubmit={() => {
-                    applyKnowledgeBaseSelection(selectedKnowledgeBaseIds);
+                    applyKnowledgeBaseSelection(
+                      selectedKnowledgeBaseIds,
+                      selectedIndividualFilePaths,
+                    );
                     setIsKnowledgeBaseModalOpen(false);
                     setKnowledgeBaseSearch("");
                   }}
                 >
-                  <BaseModal.Header description="Select one or more knowledge bases.">
+                  <BaseModal.Header description="Select entire knowledge bases or expand to pick individual files.">
                     Select Knowledge Base
                   </BaseModal.Header>
                   <BaseModal.Content className="gap-2 overflow-auto">
@@ -414,16 +433,77 @@ export default function InputFileComponent({
                                   setSelectedKnowledgeBaseIds(
                                     isSelected ? [] : [group.id],
                                   );
+                                  // Single mode: clear individual picks when selecting a whole KB
+                                  if (!isSelected) {
+                                    setSelectedIndividualFilePaths(new Set());
+                                  }
+                                }
+                                // When selecting entire KB, clear individual file picks for this KB
+                                if (!isSelected) {
+                                  setSelectedIndividualFilePaths((prev) => {
+                                    const next = new Set(prev);
+                                    group.files.forEach((f) =>
+                                      next.delete(f.path),
+                                    );
+                                    return next;
+                                  });
                                 }
                               }}
                             >
-                              {isSelected ? "Selected" : "Select"}
+                              {isSelected ? "Selected" : "Select All"}
                             </Button>
                           </div>
                           {isExpanded && (
                             <div className="border-t px-3 py-2">
                               {group.files.length > 0 ? (
-                                <FilesRendererComponent files={group.files} />
+                                <div className="flex flex-col gap-1">
+                                  {group.files.map((file) => {
+                                    const filePath = file.path;
+                                    const isFileSelected =
+                                      isSelected ||
+                                      selectedIndividualFilePaths.has(filePath);
+                                    return (
+                                      <label
+                                        key={file.id}
+                                        className={cn(
+                                          "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
+                                          isFileSelected && !isSelected && "bg-muted/30",
+                                        )}
+                                      >
+                                        <Checkbox
+                                          checked={isFileSelected}
+                                          disabled={isSelected}
+                                          onCheckedChange={(checked) => {
+                                            setSelectedIndividualFilePaths(
+                                              (prev) => {
+                                                const next = new Set(prev);
+                                                if (checked) {
+                                                  next.add(filePath);
+                                                } else {
+                                                  next.delete(filePath);
+                                                }
+                                                return next;
+                                              },
+                                            );
+                                          }}
+                                          className="focus-visible:ring-0"
+                                        />
+                                        <ForwardedIconComponent
+                                          name="File"
+                                          className="h-4 w-4 shrink-0 text-muted-foreground"
+                                        />
+                                        <span className="truncate">
+                                          {file.name}
+                                        </span>
+                                        <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                                          {file.size
+                                            ? `${(file.size / 1024).toFixed(1)} KB`
+                                            : ""}
+                                        </span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
                               ) : (
                                 <div className="text-xs text-muted-foreground">
                                   No files in this knowledge base.
@@ -443,7 +523,9 @@ export default function InputFileComponent({
                   <BaseModal.Footer
                     submit={{
                       label: "Select",
-                      disabled: selectedKnowledgeBaseIds.length === 0,
+                      disabled:
+                        selectedKnowledgeBaseIds.length === 0 &&
+                        selectedIndividualFilePaths.size === 0,
                       dataTestId: "select-knowledge-base-modal-button",
                     }}
                   />
@@ -456,14 +538,42 @@ export default function InputFileComponent({
                         const selectedPathSet = new Set(
                           selectedFiles.map(normalizePath),
                         );
-                        const existingKbIds =
-                          files
-                            ?.filter((f) =>
-                              selectedPathSet.has(normalizePath(f.path)),
-                            )
-                            .map((f) => f.knowledge_base_id)
-                            .filter((kbId): kbId is string => !!kbId) ?? [];
-                        setSelectedKnowledgeBaseIds(Array.from(new Set(existingKbIds)));
+                        // Determine which KBs are fully selected vs individual files
+                        const matchedFiles =
+                          files?.filter((f) =>
+                            selectedPathSet.has(normalizePath(f.path)),
+                          ) ?? [];
+                        const kbFileCounts = new Map<string, number>();
+                        const kbSelectedCounts = new Map<string, number>();
+                        files?.forEach((f) => {
+                          if (f.knowledge_base_id) {
+                            kbFileCounts.set(
+                              f.knowledge_base_id,
+                              (kbFileCounts.get(f.knowledge_base_id) ?? 0) + 1,
+                            );
+                          }
+                        });
+                        matchedFiles.forEach((f) => {
+                          if (f.knowledge_base_id) {
+                            kbSelectedCounts.set(
+                              f.knowledge_base_id,
+                              (kbSelectedCounts.get(f.knowledge_base_id) ?? 0) + 1,
+                            );
+                          }
+                        });
+                        const fullySelectedKbIds: string[] = [];
+                        const individualPaths = new Set<string>();
+                        kbSelectedCounts.forEach((count, kbId) => {
+                          if (count === (kbFileCounts.get(kbId) ?? 0)) {
+                            fullySelectedKbIds.push(kbId);
+                          } else {
+                            matchedFiles
+                              .filter((f) => f.knowledge_base_id === kbId)
+                              .forEach((f) => individualPaths.add(f.path));
+                          }
+                        });
+                        setSelectedKnowledgeBaseIds(fullySelectedKbIds);
+                        setSelectedIndividualFilePaths(individualPaths);
                         setIsKnowledgeBaseModalOpen(true);
                       }}
                       variant={selectedFiles.length !== 0 ? "ghost" : "default"}

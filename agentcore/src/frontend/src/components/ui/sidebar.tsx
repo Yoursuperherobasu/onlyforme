@@ -86,7 +86,17 @@ const SidebarContext = React.createContext<SidebarContext | null>(null);
 function useSidebar() {
   const context = React.useContext(SidebarContext);
   if (!context) {
-    throw new Error("useSidebar must be used within a SidebarProvider.");
+    // Return safe defaults instead of throwing (handles HMR edge cases)
+    return {
+      state: "expanded" as const,
+      open: true,
+      setOpen: () => {},
+      toggleSidebar: () => {},
+      defaultOpen: true,
+      activeSection: "agents" as SidebarSection,
+      setActiveSection: () => {},
+      defaultSection: "agents" as SidebarSection,
+    };
   }
 
   return context;

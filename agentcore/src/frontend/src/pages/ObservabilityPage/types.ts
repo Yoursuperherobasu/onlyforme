@@ -41,6 +41,8 @@ export interface Metrics {
   total_cost_usd: number;
   avg_latency_ms: number | null;
   p95_latency_ms: number | null;
+  p95_cost_per_trace: number | null;
+  p99_cost_per_trace: number | null;
   by_model: ModelUsageItem[];
   by_date: DailyUsageItem[];
   top_agents: Array<{ name: string; count: number; tokens: number; cost: number }>;

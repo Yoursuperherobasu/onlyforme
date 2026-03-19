@@ -62,7 +62,7 @@ try:
 except ImportError:
     litellm = None
     LITELLM_AVAILABLE = False
-    logger.warning("LiteLLM not installed. LLM Judge features will be disabled.")
+    logger.debug("LiteLLM not installed. Judge will use Model Service or OpenAI SDK.")
 
 # Try importing OpenAI as a fallback for the judge when LiteLLM isn't present
 try:
@@ -91,10 +91,10 @@ from agentcore.services.database.models.evaluator.model import Evaluator  # noqa
 from agentcore.services.model_registry_service import get_decrypted_config as get_model_decrypted_config  # noqa: E402
 
 
-async def _resolve_model_from_registry(model_registry_id: str, session: Any = None) -> tuple[str, str | None]:
-    """Resolve model_name and decrypted api_key from the model registry.
+async def _resolve_model_from_registry(model_registry_id: str, session: Any = None) -> tuple[str, str | None, str | None]:
+    """Resolve model_name, decrypted api_key, and api_base from the model registry.
 
-    Returns (model_name, api_key) or raises HTTPException if not found.
+    Returns (model_name, api_key, api_base) or raises HTTPException if not found.
     If *session* is provided it is reused; otherwise a fresh session_scope is opened.
     """
     if not model_registry_id or not str(model_registry_id).strip():
@@ -116,12 +116,13 @@ async def _resolve_model_from_registry(model_registry_id: str, session: Any = No
         provider = config.get("provider", "")
         model_name = config.get("model_name", "")
         api_key = config.get("api_key") or None
+        api_base = config.get("base_url") or None
         # Build a provider-prefixed model string for LiteLLM (e.g. "openai/gpt-4o")
         if provider and model_name and not model_name.startswith(f"{provider}/"):
             resolved_model = f"{provider}/{model_name}"
         else:
             resolved_model = model_name
-        return resolved_model, api_key
+        return resolved_model, api_key, api_base
     except HTTPException:
         raise
     except Exception as e:
@@ -155,6 +156,18 @@ def _normalize_public_scope(value: str | None) -> str | None:
 
 def _string_ids(values: list | None) -> list[str]:
     return [str(v) for v in (values or [])]
+
+
+def _first_eval_membership_scope(
+    org_ids: set[UUID],
+    dept_pairs: list[tuple[UUID, UUID]],
+) -> tuple[UUID | None, UUID | None]:
+    if dept_pairs:
+        current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
+        return current_org_id, current_dept_id
+    if org_ids:
+        return sorted(org_ids, key=str)[0], None
+    return None, None
 
 
 async def _get_eval_scope_memberships(session, user_id: UUID) -> tuple[set[UUID], list[tuple[UUID, UUID]]]:
@@ -230,14 +243,22 @@ async def _enforce_evaluator_creation_scope(
     if visibility == "private":
         public_scope = None
         public_dept_ids = []
-        if user_role in {"department_admin", "developer", "business_user"}:
-            if not dept_pairs:
+        if user_role == "root":
+            p_org_id = None
+            p_dept_id = None
+        elif user_role == "super_admin":
+            current_org_id, _ = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id:
+                raise HTTPException(status_code=403, detail="No active organization scope found")
+            p_org_id = current_org_id
+            p_dept_id = None
+        elif user_role in {"department_admin", "developer", "business_user"}:
+            current_org_id, current_dept_id = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id or not current_dept_id:
                 raise HTTPException(status_code=403, detail="No active department scope found")
-            current_org_id, current_dept_id = sorted(dept_pairs, key=lambda x: (str(x[0]), str(x[1])))[0]
             p_org_id = current_org_id
             p_dept_id = current_dept_id
         else:
-            # root / super_admin private evaluators remain global to the creator
             p_org_id = None
             p_dept_id = None
     else:
@@ -349,6 +370,12 @@ def _can_edit_evaluator(
 
     role = normalize_role(str(current_user.role))
     if role == "super_admin":
+        if (
+            (evaluator.visibility or "private").strip().lower() == "private"
+            and evaluator.org_id is None
+            and evaluator.dept_id is None
+        ):
+            return str(evaluator.user_id) == str(current_user.id)
         return bool(evaluator.org_id and evaluator.org_id in org_ids)
 
     if role == "department_admin":
@@ -864,8 +891,7 @@ def _dataset_owned_by_user(dataset_obj: Any, user_id: str) -> bool:
     """Best-effort user scoping for datasets via metadata."""
     metadata = get_attr(dataset_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        # Keep backward compatibility with datasets created before ownership metadata.
-        return True
+        return False
 
     owner = (
         metadata.get("app_user_id")
@@ -874,7 +900,7 @@ def _dataset_owned_by_user(dataset_obj: Any, user_id: str) -> bool:
         or metadata.get("created_by_user_id")
     )
     if owner is None:
-        return True
+        return False
     return str(owner) == str(user_id)
 
 
@@ -889,7 +915,7 @@ def _dataset_accessible_by_users(
     """Check if dataset is accessible by any of the allowed user IDs or visibility rules."""
     metadata = get_attr(dataset_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        return True
+        return False
     owner = (
         metadata.get("app_user_id")
         or metadata.get("user_id")
@@ -908,7 +934,7 @@ def _dataset_accessible_by_users(
         )
 
     # Owner always has access
-    if owner is not None and str(owner) in allowed_user_ids:
+    if current_user and owner is not None and str(owner) == str(current_user.id):
         return True
 
     # Check visibility-based access
@@ -926,9 +952,6 @@ def _dataset_accessible_by_users(
         public_scope = metadata.get("public_scope")
         ds_public_dept_ids = metadata.get("public_dept_ids") or []
 
-        if current_user and _is_root_user(current_user):
-            return True
-
         if public_scope == "organization" and ds_org_id and org_ids:
             if UUID(ds_org_id) in org_ids:
                 return True
@@ -942,17 +965,14 @@ def _dataset_accessible_by_users(
                 if ds_dept_id in user_dept_ids:
                     return True
 
-    # Fall back to allowed_user_ids check (for non-visibility-aware callers)
-    if owner is None:
-        return True
-    return str(owner) in allowed_user_ids
+    return False
 
 
 def _dataset_item_owned_by_user(item_obj: Any, user_id: str) -> bool:
     """Best-effort user scoping for dataset items via metadata."""
     metadata = get_attr(item_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        return True
+        return False
     owner = (
         metadata.get("app_user_id")
         or metadata.get("user_id")
@@ -960,7 +980,7 @@ def _dataset_item_owned_by_user(item_obj: Any, user_id: str) -> bool:
         or metadata.get("created_by_user_id")
     )
     if owner is None:
-        return True
+        return False
     return str(owner) == str(user_id)
 
 
@@ -968,7 +988,7 @@ def _dataset_item_accessible_by_users(item_obj: Any, allowed_user_ids: set[str])
     """Check if dataset item is accessible by any of the allowed user IDs."""
     metadata = get_attr(item_obj, "metadata", default=None)
     if not isinstance(metadata, dict):
-        return True
+        return False
     owner = (
         metadata.get("app_user_id")
         or metadata.get("user_id")
@@ -976,7 +996,7 @@ def _dataset_item_accessible_by_users(item_obj: Any, allowed_user_ids: set[str])
         or metadata.get("created_by_user_id")
     )
     if owner is None:
-        return True
+        return False
     return str(owner) in allowed_user_ids
 
 
@@ -1029,8 +1049,11 @@ def _can_manage_dataset(
         )
 
     role = normalize_role(str(getattr(current_user, "role", "")))
-    if role == "super_admin" and ds_org_id and org_ids:
-        return UUID(str(ds_org_id)) in org_ids
+    if role == "super_admin":
+        if visibility == "private" and owner is not None and ds_org_id is None and ds_dept_id is None:
+            return str(owner) == str(current_user.id)
+        if ds_org_id and org_ids:
+            return UUID(str(ds_org_id)) in org_ids
 
     if role == "department_admin":
         if _is_multi_dept_dataset(metadata):
@@ -1065,6 +1088,81 @@ async def _check_dataset_access(
     )
 
 
+async def _enforce_dataset_creation_scope(
+    session,
+    current_user,
+    payload: CreateDatasetRequest,
+) -> tuple[str, str | None, list[str], str | None, str | None]:
+    user_role = normalize_role(str(current_user.role))
+    visibility = _normalize_visibility(payload.visibility)
+    public_scope = _normalize_public_scope(payload.public_scope) if visibility == "public" else None
+    public_dept_ids = _string_ids(payload.public_dept_ids)
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+
+    p_org_id = payload.org_id
+    p_dept_id = payload.dept_id
+
+    if visibility == "private":
+        public_scope = None
+        public_dept_ids = []
+        if user_role == "root":
+            p_org_id = None
+            p_dept_id = None
+        elif user_role == "super_admin":
+            current_org_id, _ = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id:
+                raise HTTPException(status_code=403, detail="No active organization scope found")
+            p_org_id = current_org_id
+            p_dept_id = None
+        elif user_role in {"department_admin", "developer", "business_user"}:
+            current_org_id, current_dept_id = _first_eval_membership_scope(org_ids, dept_pairs)
+            if not current_org_id or not current_dept_id:
+                raise HTTPException(status_code=403, detail="No active department scope found")
+            p_org_id = current_org_id
+            p_dept_id = current_dept_id
+        else:
+            p_org_id = None
+            p_dept_id = None
+    else:
+        if public_scope is None:
+            raise HTTPException(status_code=400, detail="public_scope is required when visibility is public")
+        if public_scope == "organization":
+            if not p_org_id:
+                raise HTTPException(status_code=400, detail="org_id is required for public organization visibility")
+            if user_role != "root" and p_org_id not in org_ids:
+                raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+            p_dept_id = None
+            public_dept_ids = []
+        else:
+            if user_role in {"super_admin", "root"}:
+                if not p_org_id:
+                    raise HTTPException(status_code=400, detail="org_id is required for department visibility")
+                if user_role != "root" and p_org_id not in org_ids:
+                    raise HTTPException(status_code=403, detail="org_id must belong to your organization scope")
+                if not public_dept_ids and p_dept_id:
+                    public_dept_ids = [str(p_dept_id)]
+                if not public_dept_ids:
+                    raise HTTPException(status_code=400, detail="Select at least one department")
+                await _validate_departments_exist_for_org(session, p_org_id, [UUID(v) for v in public_dept_ids])
+                p_dept_id = UUID(public_dept_ids[0]) if len(public_dept_ids) == 1 else None
+            else:
+                current_org_id, current_dept_id = _first_eval_membership_scope(org_ids, dept_pairs)
+                if not current_org_id or not current_dept_id:
+                    raise HTTPException(status_code=403, detail="No active department scope found")
+                p_org_id = current_org_id
+                p_dept_id = current_dept_id
+                public_dept_ids = [str(current_dept_id)]
+
+    await _validate_eval_scope_refs(session, p_org_id, p_dept_id)
+    return (
+        visibility,
+        public_scope,
+        public_dept_ids,
+        str(p_org_id) if p_org_id else None,
+        str(p_dept_id) if p_dept_id else None,
+    )
+
+
 def _merge_dataset_metadata(
     metadata: Any,
     *,
@@ -1077,18 +1175,28 @@ def _merge_dataset_metadata(
 ) -> dict[str, Any]:
     """Attach app metadata while preserving user-provided fields."""
     base = _as_dict(metadata)
-    base.setdefault("app_user_id", str(user_id))
-    base.setdefault("created_by_user_id", str(user_id))
+    base["app_user_id"] = str(user_id)
+    base["created_by_user_id"] = str(user_id)
+    base["owner_user_id"] = str(user_id)
+    base["user_id"] = str(user_id)
     base.setdefault("created_via", "agentcore-evaluation")
     base["visibility"] = visibility or "private"
     if public_scope:
         base["public_scope"] = public_scope
+    else:
+        base.pop("public_scope", None)
     if org_id:
         base["org_id"] = str(org_id)
+    else:
+        base.pop("org_id", None)
     if dept_id:
         base["dept_id"] = str(dept_id)
+    else:
+        base.pop("dept_id", None)
     if public_dept_ids:
         base["public_dept_ids"] = [str(d) for d in public_dept_ids]
+    else:
+        base.pop("public_dept_ids", None)
     return base
 
 
@@ -2114,6 +2222,33 @@ def _delete_dataset_run(client: Any, *, dataset_name: str, run_name: str) -> Non
         return
     raise RuntimeError("Dataset run deletion is not supported by current Langfuse SDK")
 
+
+def _delete_dataset_container(client: Any, dataset_name: str) -> bool:
+    """Delete a dataset container across SDK variants."""
+    attempts: list[Any] = []
+
+    if hasattr(client, "delete_dataset"):
+        attempts.append(lambda: client.delete_dataset(dataset_name=dataset_name))
+
+    if hasattr(client, "api") and hasattr(client.api, "datasets"):
+        datasets_api = client.api.datasets
+        if hasattr(datasets_api, "delete"):
+            attempts.append(lambda: datasets_api.delete(dataset_name=dataset_name))
+        if hasattr(datasets_api, "delete_dataset"):
+            attempts.append(lambda: datasets_api.delete_dataset(dataset_name=dataset_name))
+
+    last_error: Exception | None = None
+    for attempt in attempts:
+        try:
+            attempt()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+
+    if last_error is not None:
+        logger.debug("Dataset container delete not available for '{}': {}", dataset_name, str(last_error))
+    return False
+
 _KNOWN_LITELLM_PROVIDERS = {
     "openai",
     "azure",
@@ -2577,6 +2712,7 @@ def _submit_score_to_langfuse(
     comment: str | None = None,
     observation_id: str | None = None,
     source: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Submit score using SDK-compatible method across Langfuse versions."""
     payload: Dict[str, Any] = {
@@ -2589,14 +2725,17 @@ def _submit_score_to_langfuse(
         payload["observation_id"] = observation_id
     if source:
         payload["source"] = source
+    if user_id:
+        payload["user_id"] = user_id
 
+    # Build payload variants to handle different SDK versions that may not accept
+    # all kwargs (e.g., older SDKs don't accept user_id, source, observation_id).
+    optional_keys = {"source", "observation_id", "user_id"}
+    present_optional = {k for k in optional_keys if k in payload}
     payload_variants = [payload]
-    if "source" in payload:
-        payload_variants.append({k: v for k, v in payload.items() if k != "source"})
-    if "observation_id" in payload:
-        payload_variants.append({k: v for k, v in payload.items() if k != "observation_id"})
-    if "source" in payload and "observation_id" in payload:
-        payload_variants.append({k: v for k, v in payload.items() if k not in {"source", "observation_id"}})
+    # Add a variant without optional keys for compatibility
+    if present_optional:
+        payload_variants.append({k: v for k, v in payload.items() if k not in present_optional})
 
     def _call_with_compatible_kwargs(func) -> bool:
         last_error: TypeError | None = None
@@ -2613,11 +2752,13 @@ def _submit_score_to_langfuse(
     # v2-style helper
     if hasattr(client, "score"):
         if _call_with_compatible_kwargs(client.score):
+            logger.info(f"Score submitted via client.score(): trace_id={trace_id}, name={name}, value={value}")
             return
 
     # v3-style helper
     if hasattr(client, "create_score"):
         if _call_with_compatible_kwargs(client.create_score):
+            logger.info(f"Score submitted via client.create_score(): trace_id={trace_id}, name={name}, value={value}")
             return
 
     # Direct API fallbacks (SDK internals)
@@ -2627,12 +2768,14 @@ def _submit_score_to_langfuse(
             score_api = getattr(api_obj, attr, None)
             if score_api and hasattr(score_api, "create"):
                 if _call_with_compatible_kwargs(score_api.create):
+                    logger.info(f"Score submitted via api.{attr}.create(): trace_id={trace_id}, name={name}, value={value}")
                     return
 
     if hasattr(client, "client") and hasattr(client.client, "scores"):
         scores_client = client.client.scores
         if hasattr(scores_client, "create"):
             if _call_with_compatible_kwargs(scores_client.create):
+                logger.info(f"Score submitted via client.client.scores.create(): trace_id={trace_id}, name={name}, value={value}")
                 return
 
     raise RuntimeError("No supported score submission method found on Langfuse client")
@@ -3095,9 +3238,64 @@ async def _resolve_trace_for_judge(
             except Exception as e:
                 logger.debug("Wide trace lookup failed for trace_ref={}: {}", trace_id, str(e))
 
-        await asyncio.sleep(min(0.5 * attempt, 3.0))
+        await asyncio.sleep(min(2.0 * attempt, 10.0))
 
     return None, None
+
+
+async def _call_model_service_completion(
+    model_registry_id: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> str | None:
+    """Call the Model microservice using a registry model ID.
+
+    This is the canonical way to invoke any registered model (OpenAI, Azure,
+    Anthropic, Google, Groq, etc.) — the microservice handles all provider-
+    specific logic (Azure deployment names, API versions, base URLs, etc.).
+
+    Returns the response content string or None if the service is unavailable.
+    """
+    from agentcore.services.model_service_client import (
+        is_service_configured,
+        _get_model_service_settings,
+        _headers,
+    )
+
+    if not is_service_configured():
+        return None
+
+    url, api_key = _get_model_service_settings()
+
+    payload = {
+        "provider": "openai",  # placeholder — overridden by registry resolution
+        "model": "",  # resolved from registry by the service
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "provider_config": {"registry_model_id": model_registry_id},
+        "response_format": {"type": "json_object"},
+        "stream": False,
+    }
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=300.0) as http_client:
+            resp = await http_client.post(
+                f"{url}/v1/chat/completions",
+                headers=_headers(api_key),
+                json=payload,
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        if data.get("choices"):
+            return data["choices"][0].get("message", {}).get("content", "")
+        return None
+    except Exception as e:
+        logger.warning("Model service completion failed for registry_id={}: {}", model_registry_id, str(e))
+        return None
 
 
 async def run_llm_judge_task(
@@ -3108,6 +3306,8 @@ async def run_llm_judge_task(
     model: str,
     user_id: str,
     model_api_key: str | None = None,
+    model_api_base: str | None = None,
+    model_registry_id: str | None = None,
     preset_id: str | None = None,
     ground_truth: str | None = None,
     session_id: str | None = None,
@@ -3115,44 +3315,73 @@ async def run_llm_judge_task(
     agent_name: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
+    trace_input: Any | None = None,
+    trace_output: Any | None = None,
 ):
     """Background task to run LLM judge."""
-    if not LITELLM_AVAILABLE and not OPENAI_AVAILABLE:
-        logger.error("LiteLLM not installed and OpenAI SDK not available, cannot run judge")
+    # Model Service (via model_registry_id) is the primary path and doesn't need
+    # LiteLLM or OpenAI SDK. Only block if ALL backends are unavailable.
+    if not LITELLM_AVAILABLE and not OPENAI_AVAILABLE and not model_registry_id:
+        logger.error("No LLM backend available (Model Service, LiteLLM, or OpenAI SDK), cannot run judge")
         return
 
     try:
-        # 1. Resolve canonical trace id and fetch trace payload.
-        logger.info(
-            f"Resolving trace for evaluation: trace_ref={trace_id}, session_id={session_id}, agent_id={agent_id}"
-        )
-        resolved_trace_id, trace_dict = await _resolve_trace_for_judge(
-            client,
-            trace_id=str(trace_id),
-            user_id=str(user_id),
-            session_id=session_id,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            project_name=project_name,
-            timestamp=timestamp,
-            max_attempts=3,
-        )
-        if not resolved_trace_id or not trace_dict:
-            logger.error(
-                f"Judge failed: could not resolve trace for trace_ref={trace_id}, "
-                f"user_id={user_id}, session_id={session_id}, agent_id={agent_id}"
-            )
-            return
-        if resolved_trace_id != str(trace_id):
-            logger.info(f"Resolved trace_ref={trace_id} to canonical trace_id={resolved_trace_id}")
-        trace_input = trace_dict.get('input', '')
-        trace_output = trace_dict.get('output', '')
+        resolved_trace_id = str(trace_id)
 
-        # Convert to string if needed
-        if not isinstance(trace_input, str):
-            trace_input = json.dumps(trace_input)
-        if not isinstance(trace_output, str):
-            trace_output = json.dumps(trace_output)
+        # If trace input/output were passed directly (new-trace evaluations),
+        # use them immediately — no need to fetch from Langfuse.
+        if trace_input is not None or trace_output is not None:
+            logger.info(f"Using directly-provided trace data for evaluation: trace_ref={trace_id}")
+            trace_input = trace_input or ''
+            trace_output = trace_output or ''
+        else:
+            # Fetch from Langfuse (for manual/existing-trace evaluations)
+            await asyncio.sleep(5)
+            logger.info(
+                f"Resolving trace for evaluation: trace_ref={trace_id}, session_id={session_id}, agent_id={agent_id}"
+            )
+            _, trace_dict = await _resolve_trace_for_judge(
+                client,
+                trace_id=str(trace_id),
+                user_id=str(user_id),
+                session_id=session_id,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                project_name=project_name,
+                timestamp=timestamp,
+                max_attempts=6,
+            )
+            if not trace_dict:
+                logger.error(
+                    f"Judge failed: could not resolve trace for trace_ref={trace_id}, "
+                    f"user_id={user_id}, session_id={session_id}, agent_id={agent_id}"
+                )
+                return
+            resolved_trace_id = str(trace_dict.get("id") or trace_id)
+            if resolved_trace_id != str(trace_id):
+                logger.info(f"Resolved trace_ref={trace_id} to canonical trace_id={resolved_trace_id}")
+            trace_input = trace_dict.get('input', '')
+            trace_output = trace_dict.get('output', '')
+
+        # Convert to string — trace data may be Message objects, dicts, lists, etc.
+        def _to_str(val: Any) -> str:
+            if val is None:
+                return ''
+            if isinstance(val, str):
+                return val
+            # Handle Message-like objects (LangChain, custom)
+            if hasattr(val, 'content'):
+                return str(val.content)
+            if hasattr(val, 'text'):
+                return str(val.text)
+            # Handle dicts/lists
+            try:
+                return json.dumps(val, default=str)
+            except Exception:
+                return str(val)
+
+        trace_input = _to_str(trace_input)
+        trace_output = _to_str(trace_output)
 
         # 2. Construct Prompt
         if ground_truth:
@@ -3210,75 +3439,95 @@ Respond with a JSON object containing:
 
 Respond ONLY with valid JSON, no markdown formatting."""
 
-        # 3. Call LLM (with provider/model normalization retries)
-        model_candidates = _build_litellm_model_candidates(model, model_api_key)
-        if not model_candidates:
-            logger.error(f"Judge failed: invalid empty model for trace_ref={trace_id}")
-            return
+        # 3. Call LLM — prefer Model Service (handles all providers canonically),
+        #    fall back to LiteLLM/OpenAI SDK if service is unavailable.
+        content = None
+        used_model = model
 
-        logger.info(f"Calling LLM judge with model candidates: {model_candidates}")
-
-        # If LiteLLM is available, prefer it (supports provider/model resolution).
-        if LITELLM_AVAILABLE:
-            _ensure_litellm_logging_compatibility_patch()
-
-            # Reduce noisy/proxy-related logger side effects in worker context.
-            try:
-                litellm.suppress_debug_info = True
-                litellm.turn_off_message_logging = True
-                litellm.logging = False
-            except Exception:
-                pass
-
-            response = None
-            used_model = model_candidates[0]
-            last_error: Exception | None = None
-
-            for candidate_model in model_candidates:
-                acall_kwargs = dict(
-                    model=candidate_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                )
-                acall_kwargs["no-log"] = True
-                if model_api_key:
-                    acall_kwargs["api_key"] = model_api_key
-
-                api_base = _resolve_api_base_for_model(candidate_model)
-                if api_base:
-                    acall_kwargs["api_base"] = api_base
-
-                try:
-                    response = await litellm.acompletion(**acall_kwargs)
-                    used_model = candidate_model
-                    break
-                except Exception as e:
-                    last_error = e
-                    logger.warning("LLM judge call failed for model={}: {}", candidate_model, str(e))
-                    if _is_litellm_retryable_model_error(e):
-                        continue
-                    raise
-
-            if response is None:
-                if last_error:
-                    raise last_error
-                raise RuntimeError("LLM judge call failed without a response")
-
-            content = response.choices[0].message.content
-
-        else:
-            # Fallback to OpenAI SDK if available.
-            content, used_model = await _call_openai_judge_completion(
-                model_candidates=model_candidates,
-                model_api_key=model_api_key,
+        # Try Model Service first when registry model ID is available
+        if model_registry_id:
+            logger.info(f"Calling LLM judge via Model Service: registry_id={model_registry_id}")
+            content = await _call_model_service_completion(
+                model_registry_id=model_registry_id,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
             )
+            if content:
+                used_model = f"registry:{model_registry_id}"
+
+        # Fallback to LiteLLM / OpenAI SDK
+        if content is None:
+            model_candidates = _build_litellm_model_candidates(model, model_api_key)
+            if not model_candidates:
+                logger.error(f"Judge failed: invalid empty model for trace_ref={trace_id}")
+                return
+
+            logger.info(f"Calling LLM judge with model candidates: {model_candidates}")
+
+            if LITELLM_AVAILABLE:
+                _ensure_litellm_logging_compatibility_patch()
+
+                try:
+                    litellm.suppress_debug_info = True
+                    litellm.turn_off_message_logging = True
+                    litellm.logging = False
+                except Exception:
+                    pass
+
+                response = None
+                used_model = model_candidates[0]
+                last_error: Exception | None = None
+
+                for candidate_model in model_candidates:
+                    acall_kwargs = dict(
+                        model=candidate_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        response_format={"type": "json_object"},
+                    )
+                    acall_kwargs["no-log"] = True
+                    if model_api_key:
+                        acall_kwargs["api_key"] = model_api_key
+
+                    api_base = model_api_base or _resolve_api_base_for_model(candidate_model)
+                    if api_base:
+                        acall_kwargs["api_base"] = api_base
+
+                    try:
+                        response = await litellm.acompletion(**acall_kwargs)
+                        used_model = candidate_model
+                        break
+                    except Exception as e:
+                        last_error = e
+                        logger.warning("LLM judge call failed for model={}: {}", candidate_model, str(e))
+                        if _is_litellm_retryable_model_error(e):
+                            continue
+                        raise
+
+                if response is None:
+                    if last_error:
+                        raise last_error
+                    raise RuntimeError("LLM judge call failed without a response")
+
+                content = response.choices[0].message.content
+
+            elif OPENAI_AVAILABLE:
+                content, used_model = await _call_openai_judge_completion(
+                    model_candidates=model_candidates,
+                    model_api_key=model_api_key,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            else:
+                logger.error("No LLM backend available (Model Service, LiteLLM, or OpenAI SDK)")
+                return
 
         # Clean up markdown code blocks if present
+        if not content:
+            logger.error(f"Judge failed: LLM returned empty response for trace_ref={trace_id}")
+            return
         content = content.strip()
         if content.startswith("```json"):
             content = content[7:]
@@ -3326,12 +3575,36 @@ Respond ONLY with valid JSON, no markdown formatting."""
             name=score_name,
             value=normalized_value,
             comment=score_comment,
+            user_id=str(user_id),
         )
         
         # Flush to ensure immediate send
         if hasattr(client, "flush"):
             client.flush()
-        
+
+        # Wait briefly for Langfuse to index the score, then verify
+        await asyncio.sleep(3)
+        try:
+            from agentcore.api.observability.parsing import fetch_scores_for_trace
+            verification_scores = fetch_scores_for_trace(client, str(resolved_trace_id), limit=50)
+            found = any(
+                getattr(s, 'name', '') == score_name or str(getattr(s, 'name', '')) == score_name
+                for s in (verification_scores or [])
+            )
+            logger.info(
+                f"Score verification for trace {resolved_trace_id}: "
+                f"found={found}, total_scores={len(verification_scores or [])}, "
+                f"score_names={[getattr(s, 'name', '') for s in (verification_scores or [])]}"
+            )
+        except Exception as verify_err:
+            logger.debug(f"Score verification failed: {verify_err}")
+
+        # Invalidate score cache so the UI picks up the new score immediately
+        for cache_key in [k for k in list(_SCORE_LIST_CACHE) if k.startswith(f"{user_id}|")]:
+            _SCORE_LIST_CACHE.pop(cache_key, None)
+        for cache_key in [k for k in list(_PENDING_REVIEWS_CACHE) if k.startswith(f"{user_id}|")]:
+            _PENDING_REVIEWS_CACHE.pop(cache_key, None)
+
         logger.info(
             f"Judge completed for trace_ref={trace_id}, trace_id={resolved_trace_id}: "
             f"{score_name}={normalized_value}"
@@ -3395,7 +3668,7 @@ async def _resolve_experiment_judge_config(
 
     # Resolve judge model from registry if provided
     if judge_model_registry_id:
-        reg_model, reg_key = await _resolve_model_from_registry(judge_model_registry_id, session=session)
+        reg_model, reg_key, _reg_base = await _resolve_model_from_registry(judge_model_registry_id, session=session)
         if not resolved_model:
             resolved_model = reg_model
         if not resolved_api_key:
@@ -3421,7 +3694,7 @@ async def _resolve_experiment_judge_config(
         if not resolved_criteria:
             resolved_criteria = (evaluator.criteria or "").strip() or None
         if not resolved_model and evaluator.model_registry_id:
-            reg_model, reg_key = await _resolve_model_from_registry(evaluator.model_registry_id, session=session)
+            reg_model, reg_key, _reg_base = await _resolve_model_from_registry(evaluator.model_registry_id, session=session)
             resolved_model = reg_model
             if not resolved_api_key:
                 resolved_api_key = reg_key
@@ -3761,7 +4034,13 @@ async def get_scores(
         session, current_user, org_id=org_id, dept_id=dept_id
     )
     if not client:
+        client = get_langfuse_client()
+    if not client:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    logger.info(
+        f"get_scores: user={current_user.id}, env={environment}, page={page}, limit={limit}, "
+        f"has_client_scores={hasattr(client, 'client') and hasattr(getattr(client, 'client', None) or object(), 'scores')}"
+    )
 
     try:
         user_id = str(current_user.id)
@@ -3787,40 +4066,6 @@ async def get_scores(
                     cached_score_payload = cached_payload
 
         trace_lookup: Dict[str, Dict[str, Any]] = {}
-        user_trace_ids: set[str] = set()
-        trace_owner_cache: Dict[str, bool] = {}
-        user_traces_prefetched = False
-
-        def _ensure_user_traces_prefetched() -> None:
-            nonlocal user_traces_prefetched
-            if user_traces_prefetched:
-                return
-            user_traces_prefetched = True
-            try:
-                prefetch_limit = 2000 if not trace_id else 200
-                # Fetch traces for all allowed users in scope
-                for uid in allowed_user_ids:
-                    try:
-                        user_traces = fetch_traces_from_langfuse(
-                            client,
-                            user_id=uid,
-                            limit=prefetch_limit,
-                            environment=environment,
-                        )
-                        for raw_trace in user_traces or []:
-                            trace_dict = parse_trace_data(raw_trace)
-                            trace_key = str(trace_dict.get("id") or "")
-                            if not trace_key:
-                                continue
-                            trace_lookup[trace_key] = trace_dict
-                            user_trace_ids.add(trace_key)
-                    except Exception:
-                        continue
-            except Exception as trace_error:
-                logger.debug(
-                    "Failed to prefetch user traces for score listing: {}",
-                    str(trace_error),
-                )
 
         def _extract_scores_payload(response: Any) -> tuple[list[Any], int | None]:
             if response is None:
@@ -3850,9 +4095,39 @@ async def get_scores(
 
         def _list_scores_page(page_num: int, page_limit: int, *, include_user_filter: bool) -> tuple[list[Any], int | None]:
             if not (hasattr(client, "client") and hasattr(client.client, "scores")):
+                logger.warning("Langfuse client does not have client.scores attribute — trying alternative methods")
+                # Try alternative score list methods
+                if hasattr(client, "api"):
+                    api_obj = client.api
+                    for attr in ("score_v_2", "scores", "score"):
+                        score_api = getattr(api_obj, attr, None)
+                        if score_api and hasattr(score_api, "get"):
+                            try:
+                                kwargs: Dict[str, Any] = {"page": page_num, "limit": page_limit}
+                                if trace_id:
+                                    kwargs["trace_id"] = trace_id
+                                response = score_api.get(**kwargs)
+                                rows, total = _extract_scores_payload(response)
+                                logger.info(f"Score list via api.{attr}.get() returned {len(rows)} rows")
+                                return rows, total
+                            except Exception as e:
+                                logger.debug(f"api.{attr}.get() failed: {e}")
+                                continue
+                        if score_api and hasattr(score_api, "list"):
+                            try:
+                                kwargs = {"page": page_num, "limit": page_limit}
+                                if trace_id:
+                                    kwargs["trace_id"] = trace_id
+                                response = score_api.list(**kwargs)
+                                rows, total = _extract_scores_payload(response)
+                                logger.info(f"Score list via api.{attr}.list() returned {len(rows)} rows")
+                                return rows, total
+                            except Exception as e:
+                                logger.debug(f"api.{attr}.list() failed: {e}")
+                                continue
                 return [], None
 
-            kwargs: Dict[str, Any] = {
+            kwargs = {
                 "page": page_num,
                 "limit": page_limit,
             }
@@ -3868,131 +4143,9 @@ async def get_scores(
             except TypeError:
                 kwargs.pop("user_id", None)
                 response = client.client.scores.list(**kwargs)
-            return _extract_scores_payload(response)
-
-        def _list_global_scores(max_rows: int = 2000) -> list[Any]:
-            """Best-effort global score scan across SDK variants."""
-            rows_out: list[Any] = []
-            seen_keys: set[str] = set()
-            page_size = min(100, max_rows)
-            max_pages = max(1, (max_rows + page_size - 1) // page_size)
-
-            def _append(rows: list[Any]) -> None:
-                for row in rows or []:
-                    row_id = str(get_attr(row, "id", default="") or "")
-                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    row_name = str(get_attr(row, "name", default="score") or "score")
-                    row_ts = str(get_attr(row, "timestamp", "created_at", "createdAt", default="") or "")
-                    dedupe_key = row_id or f"{row_trace_id}::{row_name}::{row_ts}"
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-                    rows_out.append(row)
-
-            # Method 1: v3 score_v_2.get
-            if hasattr(client, "api") and hasattr(client.api, "score_v_2"):
-                for page_num in range(1, max_pages + 1):
-                    kwargs: Dict[str, Any] = {"limit": page_size, "page": page_num}
-                    try:
-                        payload = client.api.score_v_2.get(**kwargs)
-                    except Exception:
-                        break
-                    page_rows, _ = _extract_scores_payload(payload)
-                    if not page_rows:
-                        break
-                    _append(page_rows)
-                    if len(rows_out) >= max_rows or len(page_rows) < page_size:
-                        break
-
-            # Method 2: v3 api.scores.list/api.score.list
-            if len(rows_out) < max_rows and hasattr(client, "api"):
-                for attr in ("scores", "score"):
-                    score_api = getattr(client.api, attr, None)
-                    if not score_api or not hasattr(score_api, "list"):
-                        continue
-                    for page_num in range(1, max_pages + 1):
-                        kwargs = {"limit": page_size, "page": page_num}
-                        try:
-                            payload = score_api.list(**kwargs)
-                        except Exception:
-                            break
-                        page_rows, _ = _extract_scores_payload(payload)
-                        if not page_rows:
-                            break
-                        _append(page_rows)
-                        if len(rows_out) >= max_rows or len(page_rows) < page_size:
-                            break
-                    if len(rows_out) >= max_rows:
-                        break
-
-            # Method 3: direct scores client without user filter
-            if len(rows_out) < max_rows and hasattr(client, "client") and hasattr(client.client, "scores"):
-                for page_num in range(1, max_pages + 1):
-                    kwargs = {"limit": page_size, "page": page_num}
-                    try:
-                        payload = client.client.scores.list(**kwargs)
-                    except Exception:
-                        break
-                    page_rows, _ = _extract_scores_payload(payload)
-                    if not page_rows:
-                        break
-                    _append(page_rows)
-                    if len(rows_out) >= max_rows or len(page_rows) < page_size:
-                        break
-
-            return rows_out[:max_rows]
-
-        def _score_belongs_to_user(score_row: Any) -> bool:
-            score_user_id = get_attr(score_row, "user_id", "userId")
-            if score_user_id is not None:
-                return str(score_user_id) in allowed_user_ids
-
-            score_trace_id = str(get_attr(score_row, "trace_id", "traceId", default="") or "")
-            if not score_trace_id:
-                return False
-            if score_trace_id in trace_owner_cache:
-                return trace_owner_cache[score_trace_id]
-
-            _ensure_user_traces_prefetched()
-            if score_trace_id in user_trace_ids:
-                trace_owner_cache[score_trace_id] = True
-                return True
-
-            # Last-resort ownership check: resolve trace and compare trace user_id.
-            try:
-                trace_raw = _fetch_trace_by_id(client, score_trace_id)
-                if trace_raw:
-                    trace_dict = parse_trace_data(trace_raw)
-                    trace_lookup[score_trace_id] = trace_dict
-                    trace_user_id = str(_extract_trace_user_id(trace_dict) or "")
-                    if trace_user_id:
-                        is_owner = trace_user_id in allowed_user_ids
-                    else:
-                        # Some deployments don't populate user_id on traces/scores.
-                        # If we cannot establish ownership via user metadata at all,
-                        # allow the score as a best-effort fallback.
-                        is_owner = not user_trace_ids
-                    trace_owner_cache[score_trace_id] = is_owner
-                    if is_owner:
-                        user_trace_ids.add(score_trace_id)
-                    return is_owner
-            except Exception as owner_error:
-                logger.debug(
-                    "Could not verify trace ownership for score trace_id={}: {}",
-                    score_trace_id,
-                    str(owner_error),
-                )
-
-            if not user_trace_ids:
-                logger.debug(
-                    "Score ownership fallback: accepting trace_id={} without user metadata",
-                    score_trace_id,
-                )
-                trace_owner_cache[score_trace_id] = True
-                return True
-
-            trace_owner_cache[score_trace_id] = False
-            return False
+            rows, total = _extract_scores_payload(response)
+            logger.info(f"Score list via client.client.scores.list(user_filter={include_user_filter}) returned {len(rows)} rows, total={total}")
+            return rows, total
 
         def _score_matches_name(score_row: Any) -> bool:
             if not name:
@@ -4002,14 +4155,24 @@ async def get_scores(
 
         raw_scores: list[Any] = []
         total = 0
-        unscoped_collected: list[Any] = []
 
-        # Primary fetch with user filter.
-        primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=True)
+        # Primary fetch: scores in Langfuse are project-scoped, so fetch without
+        # user_id filter (scores typically don't carry user_id). This avoids
+        # the expensive fallback chain that was causing high latency.
+        primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=False)
         primary_rows = [
             row for row in primary_rows
-            if _score_belongs_to_user(row) and _score_matches_name(row)
+            if _score_matches_name(row)
         ]
+
+        # If no results without user filter, try with user filter as secondary
+        if not primary_rows:
+            primary_rows, primary_total = _list_scores_page(page, limit, include_user_filter=True)
+            primary_rows = [
+                row for row in primary_rows
+                if _score_matches_name(row)
+            ]
+
         if primary_rows:
             raw_scores = primary_rows
             total = (
@@ -4017,261 +4180,6 @@ async def get_scores(
                 if primary_total is not None and len(primary_rows) > 0
                 else len(primary_rows)
             )
-        else:
-            # Fallback: some score records do not carry user_id; scan without user filter,
-            # then enforce user isolation with trace ownership checks.
-            collected: list[Any] = []
-            seen_keys: set[str] = set()
-            unscoped_seen_keys: set[str] = set()
-            target_count = page * limit
-            scan_limit = min(200, max(50, limit))
-            max_scan_pages = 10
-
-            for scan_page in range(1, max_scan_pages + 1):
-                scan_rows, _ = _list_scores_page(scan_page, scan_limit, include_user_filter=False)
-                if not scan_rows:
-                    break
-
-                for row in scan_rows:
-                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    if trace_id and row_trace_id != str(trace_id):
-                        continue
-                    if not _score_matches_name(row):
-                        continue
-
-                    # Keep an unscoped copy in case ownership metadata is completely absent.
-                    row_id_for_unscoped = str(get_attr(row, "id", default="") or "")
-                    unscoped_dedupe_key = row_id_for_unscoped or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if unscoped_dedupe_key not in unscoped_seen_keys:
-                        unscoped_seen_keys.add(unscoped_dedupe_key)
-                        unscoped_collected.append(row)
-
-                    if not _score_belongs_to_user(row):
-                        continue
-
-                    row_id = str(get_attr(row, "id", default="") or "")
-                    dedupe_key = row_id or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-                    collected.append(row)
-
-                if len(collected) >= target_count:
-                    break
-                if len(scan_rows) < scan_limit:
-                    break
-
-            # If the direct list endpoint is empty, try broader SDK-specific score APIs.
-            if not collected and not unscoped_collected:
-                global_scan_rows = _list_global_scores(max_rows=max(1000, page * limit * 10))
-                logger.info(
-                    "Global score scan fallback collected {} row(s) for user_id={}",
-                    len(global_scan_rows),
-                    user_id,
-                )
-                for row in global_scan_rows:
-                    row_trace_id = str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    if trace_id and row_trace_id != str(trace_id):
-                        continue
-                    if not _score_matches_name(row):
-                        continue
-
-                    row_id_for_unscoped = str(get_attr(row, "id", default="") or "")
-                    unscoped_dedupe_key = row_id_for_unscoped or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if unscoped_dedupe_key not in unscoped_seen_keys:
-                        unscoped_seen_keys.add(unscoped_dedupe_key)
-                        unscoped_collected.append(row)
-
-                    if not _score_belongs_to_user(row):
-                        continue
-
-                    row_id = str(get_attr(row, "id", default="") or "")
-                    dedupe_key = row_id or (
-                        f"{row_trace_id}::{get_attr(row, 'name', default='score')}::"
-                        f"{get_attr(row, 'timestamp', 'created_at', 'createdAt', default='')}"
-                    )
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-                    collected.append(row)
-
-            total = len(collected)
-            start = (page - 1) * limit
-            raw_scores = collected[start:start + limit]
-
-            # If ownership metadata is unavailable, fall back to unscoped rows so the
-            # UI remains usable in single-tenant/local deployments.
-            if not raw_scores and not user_trace_ids and unscoped_collected:
-                logger.warning(
-                    "Score ownership metadata unavailable for user_id={}; using unscoped score fallback",
-                    user_id,
-                )
-                total = len(unscoped_collected)
-                raw_scores = unscoped_collected[start:start + limit]
-
-        # Final fallback: collect scores per user-owned trace using observability's
-        # robust score fetcher when list-based score APIs are empty/incompatible.
-        if not raw_scores and not user_trace_ids and not trace_id and not unscoped_collected:
-            _ensure_user_traces_prefetched()
-
-        if not raw_scores and (user_trace_ids or trace_id or unscoped_collected):
-            logger.info(
-                "Score list API returned no rows for user_id={}; using per-trace score fallback",
-                user_id,
-            )
-            trace_candidates: list[str] = []
-            if trace_id:
-                trace_candidates = [str(trace_id)]
-            elif user_trace_ids:
-                trace_candidates = list(user_trace_ids)
-            else:
-                trace_candidates = list(
-                    dict.fromkeys(
-                        str(get_attr(row, "trace_id", "traceId", default="") or "")
-                        for row in unscoped_collected
-                        if str(get_attr(row, "trace_id", "traceId", default="") or "")
-                    )
-                )
-
-            # Expand trace candidates with canonical ids and run_ids, as score writes may
-            # target a different id than the one returned by list endpoints.
-            expanded_trace_candidates: list[str] = []
-            for candidate_id in trace_candidates:
-                candidate_id = str(candidate_id or "").strip()
-                if not candidate_id:
-                    continue
-                if candidate_id not in expanded_trace_candidates:
-                    expanded_trace_candidates.append(candidate_id)
-
-                trace_dict = trace_lookup.get(candidate_id)
-                if not trace_dict:
-                    try:
-                        trace_raw = _fetch_trace_by_id(client, candidate_id)
-                        if trace_raw:
-                            trace_dict = parse_trace_data(trace_raw)
-                            resolved_id = str(trace_dict.get("id") or "")
-                            if resolved_id:
-                                trace_lookup[resolved_id] = trace_dict
-                            trace_lookup[candidate_id] = trace_dict
-                    except Exception as resolve_error:
-                        logger.debug(
-                            "Failed resolving canonical trace id for candidate {}: {}",
-                            candidate_id,
-                            str(resolve_error),
-                        )
-
-                if trace_dict:
-                    resolved_id = str(trace_dict.get("id") or "")
-                    if resolved_id and resolved_id not in expanded_trace_candidates:
-                        expanded_trace_candidates.append(resolved_id)
-                    run_id = _extract_trace_run_id(trace_dict)
-                    if run_id and run_id not in expanded_trace_candidates:
-                        expanded_trace_candidates.append(str(run_id))
-
-            if expanded_trace_candidates:
-                trace_candidates = expanded_trace_candidates
-                logger.info(
-                    "Expanded per-trace score fallback candidates to {} ids",
-                    len(trace_candidates),
-                )
-
-            collected_rows: list[dict[str, Any]] = []
-            seen_keys: set[str] = set()
-            max_traces_to_scan = 500
-
-            for trace_key in trace_candidates[:max_traces_to_scan]:
-                if not trace_key:
-                    continue
-                try:
-                    trace_scores = fetch_scores_for_trace(
-                        client,
-                        trace_id=trace_key,
-                        user_id=user_id,
-                        limit=200,
-                    )
-                except Exception as trace_score_error:
-                    logger.debug(
-                        "Per-trace score fetch failed for trace_id={}: {}",
-                        trace_key,
-                        str(trace_score_error),
-                    )
-                    continue
-
-                for trace_score in trace_scores:
-                    score_name = str(get_attr(trace_score, "name", default="") or "")
-                    if name and name.lower() not in score_name.lower():
-                        continue
-
-                    score_id = str(get_attr(trace_score, "id", default="") or "")
-                    created_at = get_attr(trace_score, "created_at", "timestamp", default=None)
-                    dedupe_key = score_id or f"{trace_key}::{score_name}::{created_at}"
-                    if dedupe_key in seen_keys:
-                        continue
-                    seen_keys.add(dedupe_key)
-
-                    source_value = get_attr(trace_score, "source", default=None)
-                    if hasattr(source_value, "value"):
-                        source_value = source_value.value
-
-                    collected_rows.append(
-                        {
-                            "id": score_id,
-                            "trace_id": trace_key,
-                            "name": score_name or "Score",
-                            "value": float(get_attr(trace_score, "value", default=0.0) or 0.0),
-                            "source": str(source_value) if source_value is not None else "API",
-                            "comment": get_attr(trace_score, "comment", default=None),
-                            "created_at": created_at,
-                            "observation_id": get_attr(trace_score, "observation_id", "observationId", default=None),
-                            "config_id": get_attr(trace_score, "config_id", "configId", default=None),
-                            "user_id": user_id,
-                        }
-                    )
-
-            def _score_sort_key(row: dict[str, Any]) -> datetime:
-                parsed = _parse_trace_timestamp(row.get("created_at"))
-                return parsed or datetime.min.replace(tzinfo=timezone.utc)
-
-            collected_rows.sort(key=_score_sort_key, reverse=True)
-            total = len(collected_rows)
-            start = (page - 1) * limit
-            raw_scores = collected_rows[start:start + limit]
-            logger.info(
-                "Per-trace score fallback produced {} row(s); returning {} row(s) for page={} limit={}",
-                total,
-                len(raw_scores),
-                page,
-                limit,
-            )
-
-        # Last-mile retry for intermittent first-load empties.
-        if not raw_scores and page == 1 and not trace_id and not name:
-            retry_rows, retry_total = _list_scores_page(page, limit, include_user_filter=True)
-            retry_rows = [
-                row for row in retry_rows
-                if _score_belongs_to_user(row) and _score_matches_name(row)
-            ]
-            if retry_rows:
-                logger.info(
-                    "Recovered transient empty score list on retry for user_id={} with {} row(s)",
-                    user_id,
-                    len(retry_rows),
-                )
-                raw_scores = retry_rows
-                total = (
-                    int(retry_total)
-                    if retry_total is not None and len(retry_rows) > 0
-                    else len(retry_rows)
-                )
 
         # Parse to response model (including agent/agent name).
         items: list[ScoreResponse] = []
@@ -4684,57 +4592,9 @@ async def create_dataset(
     if not dataset_name:
         raise HTTPException(status_code=400, detail="Dataset name is required")
 
-    # Resolve visibility / scope
-    visibility = _normalize_visibility(payload.visibility)
-    public_scope = _normalize_public_scope(payload.public_scope) if visibility == "public" else None
-    resolved_org_id: str | None = None
-    resolved_dept_id: str | None = None
-    resolved_public_dept_ids: list[str] | None = None
-
-    if visibility == "public":
-        role = normalize_role(current_user.role)
-        org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-        user_dept_ids = {d for _, d in dept_pairs}
-
-        if public_scope == "organization":
-            if payload.org_id:
-                if not _is_root_user(current_user) and payload.org_id not in org_ids:
-                    raise HTTPException(status_code=403, detail="Organization not in your scope.")
-                resolved_org_id = str(payload.org_id)
-            elif org_ids:
-                resolved_org_id = str(sorted(org_ids, key=str)[0])
-        elif public_scope == "department":
-            if payload.org_id:
-                if not _is_root_user(current_user) and payload.org_id not in org_ids:
-                    raise HTTPException(status_code=403, detail="Organization not in your scope.")
-                resolved_org_id = str(payload.org_id)
-            elif org_ids:
-                resolved_org_id = str(sorted(org_ids, key=str)[0])
-
-            if payload.public_dept_ids:
-                if not _is_root_user(current_user) and role != "super_admin":
-                    for did in payload.public_dept_ids:
-                        if did not in user_dept_ids:
-                            raise HTTPException(status_code=403, detail=f"Department {did} is not in your scope.")
-                if resolved_org_id:
-                    await _validate_departments_exist_for_org(
-                        session, UUID(resolved_org_id), payload.public_dept_ids
-                    )
-                resolved_public_dept_ids = [str(d) for d in payload.public_dept_ids]
-            elif payload.dept_id:
-                if not _is_root_user(current_user) and role != "super_admin":
-                    if payload.dept_id not in user_dept_ids:
-                        raise HTTPException(status_code=403, detail="Department is not in your scope.")
-                if resolved_org_id:
-                    await _validate_departments_exist_for_org(
-                        session, UUID(resolved_org_id), [payload.dept_id]
-                    )
-                resolved_dept_id = str(payload.dept_id)
-                resolved_public_dept_ids = [str(payload.dept_id)]
-            elif dept_pairs:
-                first_dept = sorted((d for _, d in dept_pairs), key=str)[0]
-                resolved_dept_id = str(first_dept)
-                resolved_public_dept_ids = [str(first_dept)]
+    visibility, public_scope, resolved_public_dept_ids, resolved_org_id, resolved_dept_id = (
+        await _enforce_dataset_creation_scope(session, current_user, payload)
+    )
 
     try:
         dataset = client.create_dataset(
@@ -4820,13 +4680,7 @@ async def delete_dataset(
 
     # Langfuse SDK currently exposes run/item deletion, but may not support deleting
     # the dataset container itself in every version.
-    dataset_deleted = False
-    if hasattr(client, "api") and hasattr(client.api, "datasets") and hasattr(client.api.datasets, "delete"):
-        try:
-            client.api.datasets.delete(dataset_name=dataset_name)
-            dataset_deleted = True
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Dataset container delete not available for '{}': {}", dataset_name, str(exc))
+    dataset_deleted = _delete_dataset_container(client, dataset_name)
 
     if hasattr(client, "flush"):
         try:
@@ -4873,9 +4727,6 @@ async def list_dataset_items(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
-    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
-    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Not authorized to delete dataset items")
 
     try:
         rows, total = _fetch_dataset_items_page(client, dataset_name, page, limit)
@@ -4921,7 +4772,7 @@ async def create_dataset_item(
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
     org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
     if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
-        raise HTTPException(status_code=403, detail="Not authorized to delete dataset runs")
+        raise HTTPException(status_code=403, detail="Not authorized to modify dataset items")
 
     try:
         return _create_dataset_item_for_user(
@@ -4961,6 +4812,9 @@ async def upload_dataset_items_csv(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to modify dataset items")
 
     filename = (csv_file.filename or "").strip()
     if filename and not filename.lower().endswith(".csv"):
@@ -5084,6 +4938,9 @@ async def delete_dataset_item(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete dataset items")
 
     item_obj = _fetch_dataset_item_by_id(client, item_id)
     if item_obj is None:
@@ -5099,9 +4956,6 @@ async def delete_dataset_item(
     item_dataset_name = str(get_attr(item_obj, "dataset_name", "datasetName", default="") or "")
     if item_dataset_name and item_dataset_name != dataset_name:
         raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found in dataset '{dataset_name}'")
-
-    if not _dataset_item_accessible_by_users(item_obj, allowed_user_ids):
-        raise HTTPException(status_code=404, detail=f"Dataset item '{item_id}' not found")
 
     try:
         _delete_dataset_item(client, item_id)
@@ -5278,6 +5132,9 @@ async def delete_dataset_run(
 
     if not await _check_dataset_access(dataset, allowed_user_ids, current_user, session):
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    org_ids, dept_pairs = await _get_eval_scope_memberships(session, current_user.id)
+    if not _can_manage_dataset(dataset, current_user, org_ids, dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to delete dataset runs")
 
     run_obj = _find_dataset_run_by_id(client, dataset_name=dataset_name, run_id=run_id, max_scan=1000)
     if not run_obj:
@@ -5335,7 +5192,7 @@ async def run_dataset_experiment(
     generation_model: str | None = None
     generation_model_api_key: str | None = None
     if payload.generation_model_registry_id:
-        generation_model, generation_model_api_key = await _resolve_model_from_registry(
+        generation_model, generation_model_api_key, _ = await _resolve_model_from_registry(
             payload.generation_model_registry_id, session=session
         )
 
@@ -5450,8 +5307,8 @@ EVALUATION_PRESETS = [
     {
         "id": "coherence",
         "name": "Coherence",
-        "description": "Evaluate if the response agents logically and makes sense.",
-        "criteria": "Evaluate the coherence and logical agent of the output on a scale 0-1. Consider:\n- Logical structure: Do ideas connect naturally?\n- Internal consistency: Are there contradictions?\n- Clarity of thought: Is the reasoning easy to follow?",
+        "description": "Evaluate if the response flows logically and makes sense.",
+        "criteria": "Evaluate the coherence and logical flow of the output on a scale 0-1. Consider:\n- Logical structure: Do ideas connect naturally?\n- Internal consistency: Are there contradictions?\n- Clarity of thought: Is the reasoning easy to follow?",
         "requires_ground_truth": False,
     },
     {
@@ -5493,16 +5350,17 @@ async def run_saved_evaluators_for_new_trace(
     session_id: str | None = None,
     project_name: str | None = None,
     timestamp: datetime | None = None,
+    trace_input: Any | None = None,
+    trace_output: Any | None = None,
 ) -> int:
     """Run all saved evaluators targeting new traces for a just-finished trace."""
     logger.info(
-        f"🔍 EVALUATOR FUNCTION CALLED: trace={trace_id}, user={user_id}, "
-        f"agent_id={agent_id}, agent_id={agent_id}, agent_name={agent_name}"
+        f"EVALUATOR FUNCTION CALLED: trace={trace_id}, user={user_id}, "
+        f"agent_id={agent_id}, agent_name={agent_name}"
     )
     
-    if not (LITELLM_AVAILABLE or OPENAI_AVAILABLE):
-        logger.warning("⚠️ LiteLLM/OpenAI not available, skipping evaluators")
-        return 0
+    # Model Service is the primary LLM backend — don't require LiteLLM/OpenAI
+    # to be installed. They're only needed as fallbacks.
 
     try:
         user_uuid = UUID(str(user_id))
@@ -5510,42 +5368,43 @@ async def run_saved_evaluators_for_new_trace(
         logger.warning(f"Invalid user_id for new-trace evaluation: {user_id}")
         return 0
 
-    client = get_langfuse_client()
+    # Resolve Langfuse client via DB bindings first, then env-var fallback
+    client = None
+    try:
+        async with session_scope() as _scope_session:
+            from agentcore.services.database.models.user.model import User as UserModel
+            user_obj = await _scope_session.get(UserModel, user_uuid)
+            if user_obj:
+                _, client = await _get_scoped_langfuse_for_evaluation(
+                    _scope_session, user_obj,
+                )
+    except Exception as scope_err:
+        logger.debug("Scoped Langfuse client resolution failed: {}", str(scope_err))
+
     if not client:
-        logger.warning("⚠️ Langfuse client not available, skipping evaluators")
+        client = get_langfuse_client()
+    if not client:
+        logger.warning("Langfuse client not available, skipping evaluators")
         return 0
 
     requested_timestamp = _parse_trace_timestamp(timestamp) or datetime.now(timezone.utc)
     trace_ref_id = str(trace_id)
-    
-    # Use agent_id or agent_id (they're aliases)
-    agent_id = agent_id or agent_id
+    normalized_caller_agent_id = _normalize_agent_id(agent_id)
 
+    # Build trace_dict from caller-provided data (authoritative source).
+    # No need to fetch from Langfuse — the tracing service provides all context.
     trace_dict: Dict[str, Any] = {
         "id": trace_ref_id,
         "session_id": session_id,
         "timestamp": requested_timestamp,
         "metadata": {
-            "agent_id": _normalize_agent_id(agent_id),
+            "agent_id": normalized_caller_agent_id,
             "agent_name": agent_name,
             "project_name": project_name,
             "run_id": trace_ref_id,
         },
     }
-
-    resolved_trace_id, resolved_trace_dict = await _resolve_trace_for_judge(
-        client,
-        trace_id=trace_ref_id,
-        user_id=str(user_id),
-        session_id=session_id,
-        agent_id=agent_id,
-        agent_name=agent_name,
-        project_name=project_name,
-        timestamp=requested_timestamp,
-        max_attempts=4,
-    )
-    if resolved_trace_dict:
-        trace_dict = resolved_trace_dict
+    resolved_trace_id = trace_ref_id
 
     try:
         async with session_scope() as session:
@@ -5603,15 +5462,32 @@ async def run_saved_evaluators_for_new_trace(
             )
             continue
 
+        # Resolve API key and base URL from model registry if available
+        effective_model = evaluator.model or "gpt-4o"
+        effective_api_key = None
+        effective_api_base = None
+        if evaluator.model_registry_id:
+            try:
+                effective_model, effective_api_key, effective_api_base = await _resolve_model_from_registry(
+                    evaluator.model_registry_id
+                )
+            except Exception as reg_err:
+                logger.warning(
+                    "Failed to resolve model registry {} for evaluator {}: {}",
+                    evaluator.model_registry_id, evaluator.name, str(reg_err),
+                )
+
         asyncio.create_task(
             run_llm_judge_task(
                 client=client,
                 trace_id=str(resolved_trace_id or trace_ref_id),
                 criteria=evaluator.criteria,
                 score_name=f"Evaluator: {evaluator.name}",
-                model=evaluator.model or "gpt-4o",
+                model=effective_model,
                 user_id=str(user_id),
-                model_api_key=evaluator.model_api_key,
+                model_api_key=effective_api_key,
+                model_api_base=effective_api_base,
+                model_registry_id=evaluator.model_registry_id,
                 preset_id=evaluator.preset_id,
                 ground_truth=evaluator.ground_truth,
                 session_id=session_id,
@@ -5619,6 +5495,8 @@ async def run_saved_evaluators_for_new_trace(
                 agent_name=agent_name,
                 project_name=project_name,
                 timestamp=requested_timestamp,
+                trace_input=trace_input,
+                trace_output=trace_output,
             )
         )
         scheduled += 1
@@ -5657,32 +5535,54 @@ async def list_evaluation_models(
     """
     try:
         async with session_scope() as session:
+            # Always fetch legacy agents (owned / public from base Agent table)
+            stmt = select(agent).where(
+                or_(
+                    agent.user_id == current_user.id,
+                    agent.access_type == AccessTypeEnum.PUBLIC,
+                )
+            )
+            is_component_col = getattr(agent, "is_component", None)
+            if is_component_col is not None:
+                stmt = stmt.where(
+                    or_(
+                        is_component_col == False,  # noqa: E712
+                        is_component_col.is_(None),
+                    )
+                )
+            _res = await session.exec(stmt)
+            raw_agents = _res.all()
+            legacy_data = [
+                _agent_to_payload(a, environment=environment or None) for a in raw_agents
+            ]
+            logger.debug(
+                "Legacy agent query returned {} agent(s) for user_id={}",
+                len(legacy_data), current_user.id,
+            )
+
             if environment and environment.lower() in ("uat", "production", "prod"):
                 env = environment.lower()
                 if env == "prod":
                     env = "production"
-                agents_data = await _list_deployed_agents(session, current_user, env)
-            else:
-                # Legacy: all owned / public agents from the base Agent table
-                stmt = select(agent).where(
-                    or_(
-                        agent.user_id == current_user.id,
-                        agent.access_type == AccessTypeEnum.PUBLIC,
-                    )
+                deployed_data = await _list_deployed_agents(session, current_user, env)
+                logger.debug(
+                    "Deployed agent query ({}) returned {} agent(s) for user_id={}",
+                    env, len(deployed_data), current_user.id,
                 )
-                is_component_col = getattr(agent, "is_component", None)
-                if is_component_col is not None:
-                    stmt = stmt.where(
-                        or_(
-                            is_component_col == False,  # noqa: E712
-                            is_component_col.is_(None),
-                        )
-                    )
-                _res = await session.exec(stmt)
-                raw_agents = _res.all()
-                agents_data = [
-                    _agent_to_payload(a, environment=None) for a in raw_agents
-                ]
+                if env == "production":
+                    # Production: only deployed production agents
+                    agents_data = deployed_data
+                else:
+                    # UAT: deployed UAT agents + legacy (base table) agents, de-duplicated
+                    seen_agent_ids: set[str] = set()
+                    agents_data = []
+                    for item in deployed_data + legacy_data:
+                        aid = item.get("metadata", {}).get("agent_id", "") or item.get("id", "")
+                        if aid not in seen_agent_ids:
+                            seen_agent_ids.add(aid)
+                            agents_data.append(item)
+            else:
+                agents_data = legacy_data
 
         return {"object": "list", "data": agents_data}
     except Exception as e:
@@ -6009,7 +5909,7 @@ async def create_evaluator_config(
         to_ts = _parse_iso_datetime_or_400(payload.ts_to, "ts_to")
 
         # Resolve model from registry
-        effective_model, effective_api_key = await _resolve_model_from_registry(payload.model_registry_id, session=session)
+        effective_model, effective_api_key, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
 
         async with session_scope() as session:
             # Enforce RBAC scope for creation
@@ -6124,7 +6024,7 @@ async def run_evaluator_config(
 
         # Resolve model from registry at runtime
         if eval_obj.model_registry_id:
-            effective_model, effective_api_key = await _resolve_model_from_registry(eval_obj.model_registry_id, session=session)
+            effective_model, effective_api_key, _ = await _resolve_model_from_registry(eval_obj.model_registry_id, session=session)
         else:
             effective_model = eval_obj.model or "gpt-4o"
             effective_api_key = None
@@ -6236,7 +6136,7 @@ async def update_evaluator_config(
                 raise HTTPException(status_code=403, detail="Not authorized to edit evaluator")
 
             # Resolve model from registry
-            effective_model, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
+            effective_model, _, _ = await _resolve_model_from_registry(payload.model_registry_id, session=session)
 
             # Re-validate scope if visibility fields are provided
             visibility, public_scope, public_dept_ids, resolved_org_id, resolved_dept_id = (
@@ -6263,6 +6163,8 @@ async def update_evaluator_config(
             eval_obj.visibility = visibility
             eval_obj.public_scope = public_scope
             eval_obj.public_dept_ids = public_dept_ids or None
+            if visibility == "private":
+                eval_obj.user_id = current_user.id
 
             session.add(eval_obj)
             await session.commit()
