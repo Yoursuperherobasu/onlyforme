@@ -42,7 +42,7 @@ class DataVisualizerTool(LCToolNode):
         "A tool that generates charts and visualizations from query result data. "
         "Wire this into a Worker Node's Tools input alongside the Talk to Data Tool."
     )
-    icon = "bar-chart-3"
+    icon = "BarChart3"
     name = "DataVisualizerTool"
 
     inputs = [

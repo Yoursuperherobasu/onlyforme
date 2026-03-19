@@ -309,6 +309,13 @@ class Settings(BaseSettings):
     pinecone_service_api_key: str = ""
     """API key for authenticating with the Pinecone microservice (sent as x-api-key header)."""
 
+    # Azure AI Search (direct SDK — no microservice needed)
+    azure_ai_search_endpoint: str = ""
+    """Azure AI Search service endpoint (e.g. https://mysearch.search.windows.net).
+    The component uses the azure-search-documents SDK directly."""
+    azure_ai_search_api_key: str = ""
+    """Azure AI Search admin API key for index management, ingestion, and search."""
+
     # Unified RAG Microservice (Pinecone + Graph RAG)
     rag_service_url: str = ""
     """Base URL of the unified RAG microservice (e.g. http://localhost:8005).

@@ -1217,24 +1217,26 @@ export default function EvaluationPage() {
     }
   };
 
-  const handleDeleteDataset = async () => {
-    if (!selectedDatasetName) {
+  const handleDeleteDataset = async (datasetToDelete?: EvaluationDataset | null) => {
+    const targetDataset = datasetToDelete ?? selectedDataset;
+    const targetDatasetName = targetDataset?.name || selectedDatasetName;
+    if (!targetDatasetName) {
       setErrorData({ title: "Select a dataset first" });
       return;
     }
     const confirmed = window.confirm(
       t(
         "Delete dataset '{{name}}'? This will remove all dataset items and experiment runs.",
-        { name: selectedDatasetName },
+        { name: targetDatasetName },
       ),
     );
     if (!confirmed) return;
 
     try {
-      const deletedDatasetName = selectedDatasetName;
+      const deletedDatasetName = targetDatasetName;
       const result = await deleteEvaluationDataset(deletedDatasetName, {
-        org_id: selectedDataset?.org_id || undefined,
-        dept_id: selectedDataset?.dept_id || undefined,
+        org_id: targetDataset?.org_id || undefined,
+        dept_id: targetDataset?.dept_id || undefined,
       });
       if (result.status === "deleted") {
         setSuccessData({ title: t("Dataset '{{name}}' deleted", { name: deletedDatasetName }) });
@@ -1856,51 +1858,25 @@ export default function EvaluationPage() {
                   {isSuperAdmin && <th className="px-4 py-3">Department Scope</th>}
                   <th className="px-4 py-3">Items</th>
                   <th className="px-4 py-3">Updated</th>
+                  <th className="px-4 py-3 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {datasets.map((dataset) => {
                   const isSelected = selectedDatasetName === dataset.name;
+                  const canManageDataset = canDeleteDataset(dataset);
                   return (
                     <tr
                       key={dataset.id || dataset.name}
                       className={`border-b dark:border-border hover:bg-muted/50 cursor-pointer ${
-                        isSelected ? "bg-red-50 dark:bg-red-950/30" : ""
+                        isSelected
+                          ? "bg-slate-100 dark:bg-slate-800/70 border-l-4 border-l-slate-500"
+                          : ""
                       }`}
                       onClick={() => void handleOpenDatasetItemsDialog(dataset.name)}
                     >
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <span className="font-medium">{dataset.name}</span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleOpenDatasetItemsDialog(dataset.name);
-                            }}
-                          >
-                            View
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingDataset(dataset);
-                              setDatasetEditForm({
-                                description: dataset.description || "",
-                                visibility: dataset.visibility || "private",
-                                public_scope: dataset.public_scope || "",
-                                org_id: dataset.org_id || "",
-                                dept_id: dataset.dept_id || "",
-                                public_dept_ids: dataset.public_dept_ids || [],
-                              });
-                            }}
-                          >
-                            Edit
-                          </Button>
-                        </div>
+                        <span className="font-medium">{dataset.name}</span>
                       </td>
                       <td
                         className="px-4 py-3 max-w-xl truncate"
@@ -1929,13 +1905,49 @@ export default function EvaluationPage() {
                           ? new Date(dataset.updated_at).toLocaleString()
                           : "-"}
                       </td>
+                      <td className="px-4 py-3">
+                        {canManageDataset ? (
+                          <div className="flex items-center justify-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingDataset(dataset);
+                                setDatasetEditForm({
+                                  description: dataset.description || "",
+                                  visibility: dataset.visibility || "private",
+                                  public_scope: dataset.public_scope || "",
+                                  org_id: dataset.org_id || "",
+                                  dept_id: dataset.dept_id || "",
+                                  public_dept_ids: dataset.public_dept_ids || [],
+                                });
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteDataset(dataset);
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-center text-muted-foreground">-</div>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
                 {datasets.length === 0 && (
                   <tr>
                     <td
-                      colSpan={5 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0)}
+                      colSpan={6 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0)}
                       className="px-4 py-6 text-center text-muted-foreground"
                     >
                       No datasets found.
@@ -2803,29 +2815,37 @@ export default function EvaluationPage() {
               <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                 <div className="space-y-1">
                   <label className="text-sm font-medium">{t("Import CSV")}</label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      key={datasetCsvInputKey}
-                      type="file"
-                      accept=".csv,text/csv"
-                      onChange={(e) =>
-                        setDatasetCsvFile(e.target.files?.[0] || null)
-                      }
-                      className="block w-full max-w-md text-sm file:mr-3 file:rounded-md file:border file:border-border file:bg-card file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-muted/50"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={handleUploadDatasetCsv}
-                      disabled={!datasetCsvFile || datasetCsvUploading}
-                    >
-                      {datasetCsvUploading ? t("Uploading...") : t("Upload CSV")}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {t("Supported headers:")} <code>input</code>,{" "}
-                    <code>expected_output</code>, <code>metadata</code>,{" "}
-                    <code>trace_id</code>, <code>source_trace_id</code>.
-                  </p>
+                  {canManageSelectedDataset ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          key={datasetCsvInputKey}
+                          type="file"
+                          accept=".csv,text/csv"
+                          onChange={(e) =>
+                            setDatasetCsvFile(e.target.files?.[0] || null)
+                          }
+                          className="block w-full max-w-md text-sm file:mr-3 file:rounded-md file:border file:border-border file:bg-card file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-muted/50"
+                        />
+                        <Button
+                          size="sm"
+                          onClick={handleUploadDatasetCsv}
+                          disabled={!datasetCsvFile || datasetCsvUploading}
+                        >
+                          {datasetCsvUploading ? t("Uploading...") : t("Upload CSV")}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t("Supported headers:")} <code>input</code>,{" "}
+                        <code>expected_output</code>, <code>metadata</code>,{" "}
+                        <code>trace_id</code>, <code>source_trace_id</code>.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {t("CSV import is available only to users who can manage this dataset.")}
+                    </p>
+                  )}
                 </div>
                 <Button
                   size="sm"
@@ -2925,9 +2945,15 @@ export default function EvaluationPage() {
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <Button size="sm" onClick={handleAddDatasetItem}>
-                      <Plus className="h-4 w-4 mr-1" /> Add Dataset Item
-                    </Button>
+                    {canManageSelectedDataset ? (
+                      <Button size="sm" onClick={handleAddDatasetItem}>
+                        <Plus className="h-4 w-4 mr-1" /> Add Dataset Item
+                      </Button>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        {t("Item creation is available only to users who can manage this dataset.")}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="max-h-[420px] overflow-auto">

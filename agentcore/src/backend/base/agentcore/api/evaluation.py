@@ -3593,11 +3593,21 @@ async def _run_dataset_experiment_async(
 
     # 2. Create DatasetRun in local DB
     async with session_scope() as db:
+        dataset_row = await db.get(Dataset, dataset_uuid)
         run = DatasetRun(
             dataset_id=dataset_uuid,
             name=experiment_name,
             description=description,
-            metadata_={"source": "agentcore-evaluation-datasets", "user_id": user_id},
+            metadata_={
+                "source": "agentcore-evaluation-datasets",
+                "user_id": user_id,
+                "dataset_name": dataset_name,
+                "dataset_visibility": dataset_row.visibility if dataset_row else "private",
+                "dataset_public_scope": dataset_row.public_scope if dataset_row else None,
+                "dataset_org_id": str(dataset_row.org_id) if dataset_row and dataset_row.org_id else None,
+                "dataset_dept_id": str(dataset_row.dept_id) if dataset_row and dataset_row.dept_id else None,
+                "dataset_public_dept_ids": [str(v) for v in (dataset_row.public_dept_ids or [])] if dataset_row else [],
+            },
             user_id=UUID(user_id),
         )
         db.add(run)
@@ -4411,6 +4421,68 @@ def _can_edit_dataset(
     return False
 
 
+async def _assert_dataset_manage_access(db, dataset: Dataset, current_user) -> None:
+    """Require dataset-manage access for write operations on dataset children."""
+    manage_org_ids, manage_dept_pairs = await _get_eval_scope_memberships(db, current_user.id)
+    if not _can_edit_dataset(dataset, current_user, manage_org_ids, manage_dept_pairs):
+        raise HTTPException(status_code=403, detail="Not authorized to manage dataset")
+
+
+def _merge_local_dataset_metadata(
+    metadata: Any,
+    *,
+    owner_user_id: str,
+    visibility: str,
+    public_scope: str | None,
+    org_id: str | None,
+    dept_id: str | None,
+    public_dept_ids: list[str] | None,
+) -> dict[str, Any]:
+    """Keep dataset metadata aligned with the authoritative dataset columns."""
+    return _merge_dataset_metadata(
+        metadata,
+        user_id=owner_user_id,
+        visibility=visibility,
+        public_scope=public_scope,
+        org_id=org_id,
+        dept_id=dept_id,
+        public_dept_ids=public_dept_ids,
+    )
+
+
+def _merge_local_dataset_item_metadata(
+    metadata: Any,
+    *,
+    current_user_id: str,
+    dataset: Dataset,
+    source: str,
+) -> dict[str, Any]:
+    """Attach audit metadata to dataset items while inheriting the parent dataset scope."""
+    base = _as_dict(metadata)
+    base["app_user_id"] = str(current_user_id)
+    base["created_by_user_id"] = str(current_user_id)
+    base["owner_user_id"] = str(current_user_id)
+    base["user_id"] = str(current_user_id)
+    base["dataset_id"] = str(dataset.id)
+    base["dataset_name"] = dataset.name
+    base["dataset_visibility"] = dataset.visibility or "private"
+    base["dataset_public_scope"] = dataset.public_scope
+    if dataset.org_id:
+        base["dataset_org_id"] = str(dataset.org_id)
+    else:
+        base.pop("dataset_org_id", None)
+    if dataset.dept_id:
+        base["dataset_dept_id"] = str(dataset.dept_id)
+    else:
+        base.pop("dataset_dept_id", None)
+    if dataset.public_dept_ids:
+        base["dataset_public_dept_ids"] = [str(v) for v in dataset.public_dept_ids]
+    else:
+        base.pop("dataset_public_dept_ids", None)
+    base["created_via"] = source
+    return base
+
+
 @router.get("/datasets")
 async def list_datasets(
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -4521,7 +4593,15 @@ async def create_dataset(
             dataset = Dataset(
                 name=dataset_name,
                 description=payload.description,
-                metadata_=payload.metadata if isinstance(payload.metadata, dict) else None,
+                metadata_=_merge_local_dataset_metadata(
+                    payload.metadata,
+                    owner_user_id=str(current_user.id),
+                    visibility=visibility,
+                    public_scope=public_scope,
+                    org_id=resolved_org_id,
+                    dept_id=resolved_dept_id,
+                    public_dept_ids=resolved_public_dept_ids,
+                ),
                 user_id=current_user.id,
                 org_id=UUID(resolved_org_id) if resolved_org_id else None,
                 dept_id=UUID(resolved_dept_id) if resolved_dept_id else None,
@@ -4583,6 +4663,16 @@ async def update_dataset(
                 dataset.dept_id = UUID(resolved_dept_id) if resolved_dept_id else None
                 if visibility == "private":
                     dataset.user_id = current_user.id
+
+            dataset.metadata_ = _merge_local_dataset_metadata(
+                dataset.metadata_,
+                owner_user_id=str(dataset.user_id),
+                visibility=dataset.visibility or "private",
+                public_scope=dataset.public_scope,
+                org_id=str(dataset.org_id) if dataset.org_id else None,
+                dept_id=str(dataset.dept_id) if dataset.dept_id else None,
+                public_dept_ids=[str(d) for d in (dataset.public_dept_ids or [])] or None,
+            )
 
             dataset.updated_at = datetime.now(timezone.utc)
             db.add(dataset)
@@ -4723,6 +4813,7 @@ async def create_dataset_item(
     try:
         async with session_scope() as db:
             dataset = await _get_dataset_with_access(db, dataset_name, current_user)
+            await _assert_dataset_manage_access(db, dataset, current_user)
 
             # Normalize input/expected_output to dict
             item_input = payload.input
@@ -4736,7 +4827,12 @@ async def create_dataset_item(
                 dataset_id=dataset.id,
                 input=item_input,
                 expected_output=expected_output,
-                metadata_=payload.metadata if isinstance(payload.metadata, dict) else None,
+                metadata_=_merge_local_dataset_item_metadata(
+                    payload.metadata,
+                    current_user_id=str(current_user.id),
+                    dataset=dataset,
+                    source="agentcore-evaluation-manual-item",
+                ),
                 source_trace_id=payload.source_trace_id or payload.trace_id,
                 source_observation_id=payload.source_observation_id,
             )
@@ -4794,6 +4890,7 @@ async def upload_dataset_items_csv(
     try:
         async with session_scope() as db:
             dataset = await _get_dataset_with_access(db, dataset_name, current_user)
+            await _assert_dataset_manage_access(db, dataset, current_user)
             batch: list[DatasetItem] = []
 
             for row_number, row in enumerate(reader, start=2):
@@ -4821,7 +4918,12 @@ async def upload_dataset_items_csv(
                         dataset_id=dataset.id,
                         input=item_input,
                         expected_output=expected_output,
-                        metadata_=req.metadata if isinstance(req.metadata, dict) else None,
+                        metadata_=_merge_local_dataset_item_metadata(
+                            req.metadata,
+                            current_user_id=str(current_user.id),
+                            dataset=dataset,
+                            source="agentcore-evaluation-csv-import",
+                        ),
                         source_trace_id=req.source_trace_id or req.trace_id,
                         source_observation_id=req.source_observation_id,
                     ))
@@ -4872,6 +4974,7 @@ async def delete_dataset_item(
     try:
         async with session_scope() as db:
             dataset = await _get_dataset_with_access(db, dataset_name, current_user)
+            await _assert_dataset_manage_access(db, dataset, current_user)
             item = (await db.exec(
                 select(DatasetItem).where(DatasetItem.id == item_uuid, DatasetItem.dataset_id == dataset.id)
             )).first()
@@ -5031,6 +5134,7 @@ async def delete_dataset_run(
     try:
         async with session_scope() as db:
             dataset = await _get_dataset_with_access(db, dataset_name, current_user)
+            await _assert_dataset_manage_access(db, dataset, current_user)
 
             run = (await db.exec(
                 select(DatasetRun).where(DatasetRun.id == run_uuid, DatasetRun.dataset_id == dataset.id)

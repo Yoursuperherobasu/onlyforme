@@ -5,14 +5,17 @@ from typing import TYPE_CHECKING, Any
 from agentcore.components._importing import import_mod
 
 if TYPE_CHECKING:
+    from .azure_ai_search import AzureAISearchVectorStoreComponent
     from .pinecone import PineconeVectorStoreComponent
 
 _dynamic_imports = {
     "PineconeVectorStoreComponent": "pinecone",
+    "AzureAISearchVectorStoreComponent": "azure_ai_search",
 }
 
 __all__ = [
     "PineconeVectorStoreComponent",
+    "AzureAISearchVectorStoreComponent",
 ]
 
 

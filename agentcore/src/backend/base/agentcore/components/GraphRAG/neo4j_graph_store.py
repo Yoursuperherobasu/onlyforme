@@ -50,6 +50,7 @@ class Neo4jGraphStoreComponent(Node):
     )
     name = "Neo4jGraphStore"
     icon = "GitFork"
+    documentation = ""
 
     inputs = [
         StrInput(

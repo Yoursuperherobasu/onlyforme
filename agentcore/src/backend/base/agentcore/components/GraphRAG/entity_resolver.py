@@ -83,6 +83,7 @@ class EntityResolverComponent(Node):
     )
     name = "EntityResolver"
     icon = "Merge"
+    documentation = ""
 
     inputs = [
         # -- Input Entities ---------------------------------------------
