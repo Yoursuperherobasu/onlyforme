@@ -10,6 +10,8 @@ import {
   useGetUsers,
   useUpdateUser,
 } from "@/controllers/API/queries/auth";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import CustomLoader from "@/customization/components/custom-loader";
 import IconComponent from "../../components/common/genericIconComponent";
 import ShadTooltip from "../../components/common/shadTooltipComponent";
@@ -27,7 +29,6 @@ import {
 import {
   USER_ADD_ERROR_ALERT,
   USER_ADD_SUCCESS_ALERT,
-  USER_DEL_ERROR_ALERT,
   USER_DEL_SUCCESS_ALERT,
   USER_EDIT_ERROR_ALERT,
   USER_EDIT_SUCCESS_ALERT,
@@ -64,6 +65,11 @@ export default function AdminPage() {
   >("organization");
   const [departments, setDepartments] = useState<DepartmentListItem[]>([]);
   const [organizations, setOrganizations] = useState<OrganizationListItem[]>([]);
+  const [userToDelete, setUserToDelete] = useState<Users | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteDialogError, setDeleteDialogError] = useState<string[]>([]);
+  const [deleteDialogChecking, setDeleteDialogChecking] = useState(false);
+  const [deleteDialogDeleting, setDeleteDialogDeleting] = useState(false);
 
   const [size, setPageSize] = useState(PAGINATION_SIZE);
   const [index, setPageIndex] = useState(PAGINATION_PAGE);
@@ -230,21 +236,50 @@ export default function AdminPage() {
     fetchUsers({ pageIndex: PAGINATION_PAGE, sortOrderValue: value });
   }
 
-  function handleDeleteUser(user) {
+  async function openDeleteUserDialog(user: Users) {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+    setDeleteDialogError([]);
+    setDeleteDialogChecking(true);
+
+    try {
+      const response = await api.get(`${getURL("USERS")}/${user.id}/delete-check`);
+      if (!response.data?.can_delete && response.data?.detail) {
+        setDeleteDialogError([response.data.detail]);
+      }
+    } catch (error) {
+      setDeleteDialogError(normalizeErrorMessages(error));
+    } finally {
+      setDeleteDialogChecking(false);
+    }
+  }
+
+  function closeDeleteUserDialog() {
+    setDeleteDialogOpen(false);
+    setUserToDelete(null);
+    setDeleteDialogError([]);
+    setDeleteDialogChecking(false);
+    setDeleteDialogDeleting(false);
+  }
+
+  function handleDeleteUser(user: Users | null) {
+    if (!user) return;
+    setDeleteDialogDeleting(true);
     mutateDeleteUser(
       { user_id: user.id },
       {
         onSuccess: () => {
+          closeDeleteUserDialog();
           resetFilter();
           setSuccessData({
             title: USER_DEL_SUCCESS_ALERT,
           });
         },
         onError: (error) => {
-          setErrorData({
-            title: USER_DEL_ERROR_ALERT,
-            list: normalizeErrorMessages(error),
-          });
+          setDeleteDialogError(normalizeErrorMessages(error));
+        },
+        onSettled: () => {
+          setDeleteDialogDeleting(false);
         },
       },
     );
@@ -837,33 +872,18 @@ export default function AdminPage() {
                               </UserManagementModal>
                               
 
-                              <ConfirmationModal
-                                size="x-small"
-                                title={t("Delete")}
-                                titleHeader={t("Delete User")}
-                                modalContentTitle={t("Attention!")}
-                                cancelText={t("Cancel")}
-                                confirmationText={t("Delete")}
-                                icon={"UserMinus2"}
-                                data={user}
-                                index={index}
-                                onConfirm={(index, user) => {
-                                  handleDeleteUser(user);
+                              <button
+                                type="button"
+                                className="ml-2"
+                                onClick={() => {
+                                  openDeleteUserDialog(user);
                                 }}
                               >
-                                <ConfirmationModal.Content>
-                                  <span>
-                                    {t("Are you sure you want to delete this user?")}{" "}
-                                    {t("This action cannot be undone.")}
-                                  </span>
-                                </ConfirmationModal.Content>
-                                <ConfirmationModal.Trigger>
-                                  <IconComponent
-                                    name="Trash2"
-                                    className="ml-2 h-4 w-4 cursor-pointer"
-                                  />
-                                </ConfirmationModal.Trigger>
-                              </ConfirmationModal>
+                                <IconComponent
+                                  name="Trash2"
+                                  className="h-4 w-4 cursor-pointer"
+                                />
+                              </button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -881,6 +901,52 @@ export default function AdminPage() {
                 paginate={handleChangePagination}
                 rowsCount={PAGINATION_ROWS_COUNT}
               ></PaginatorComponent>
+
+              <ConfirmationModal
+                open={deleteDialogOpen}
+                onClose={closeDeleteUserDialog}
+                onCancel={closeDeleteUserDialog}
+                closeOnConfirm={false}
+                confirmDisabled={
+                  deleteDialogChecking ||
+                  deleteDialogDeleting ||
+                  deleteDialogError.length > 0 ||
+                  !userToDelete
+                }
+                loading={deleteDialogDeleting}
+                size="x-small"
+                title={t("Delete")}
+                titleHeader={t("Delete User")}
+                modalContentTitle={t("Attention!")}
+                cancelText={t("Cancel")}
+                confirmationText={t("Delete")}
+                icon={"UserMinus2"}
+                data={userToDelete}
+                onConfirm={(index, user) => {
+                  handleDeleteUser(user);
+                }}
+              >
+                <ConfirmationModal.Content>
+                  <div className="space-y-3">
+                    <span className="block">
+                      {t("Are you sure you want to delete this user?")}{" "}
+                      {t("This action cannot be undone.")}
+                    </span>
+                    {deleteDialogChecking && (
+                      <p className="text-sm text-muted-foreground">
+                        Checking dependencies before delete...
+                      </p>
+                    )}
+                    {deleteDialogError.length > 0 && (
+                      <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                        {deleteDialogError.map((message) => (
+                          <p key={message}>{message}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </ConfirmationModal.Content>
+              </ConfirmationModal>
             </>
           )}
         </div>

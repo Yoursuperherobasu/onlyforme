@@ -40,10 +40,8 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       {
         name: "Actions",
         keys: [
-          "edit_projects_page",
+          "edit_project",
           "delete_project",
-          "prod_publish_approval_required",
-          "prod_publish_approval_not_required",
         ],
       },
     ],
@@ -59,14 +57,14 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
     page: "Agent Registry",
     sections: [
       { name: "Page Access", keys: ["view_published_agents"] },
-      { name: "Actions", keys: ["copy_agents", "view_only_agent"] },
+      { name: "Actions", keys: ["copy_agents", "view_registry_agent"] },
     ],
   },
   {
     page: "Model Registry",
     sections: [
       { name: "Page Access", keys: ["view_models"] },
-      { name: "Actions", keys: ["add_new_model", "request_new_model", "retire_model", "edit_model_registry", "delete_model_registry"] },
+      { name: "Actions", keys: ["add_new_model", "request_new_model", "retire_model", "edit_model", "delete_model"] },
     ],
   },
   {
@@ -75,7 +73,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Page Access", keys: ["view_control_panel"] },
       {
         name: "Actions",
-        keys: ["share_agent", "start_stop_agent", "enable_disable_agent"],
+        keys: ["share_agent", "start_stop_agent", "enable_disable_agent", "add_scheduler"],
       },
     ],
   },
@@ -95,12 +93,21 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Actions", keys: ["add_guardrails", "retire_guardrails"] },
     ],
   },
-  { page: "VectorDB Catalogue", sections: [{ name: "Page Access", keys: ["view_vectordb_page"] }] },
+  {
+    page: "VectorDB Catalogue",
+    sections: [
+      { name: "Page Access", keys: ["view_vectordb_page"] },
+      { name: "Actions", keys: ["delete_vector_db_catalogue"] },
+    ],
+  },
   {
     page: "MCP Servers",
     sections: [
       { name: "Page Access", keys: ["view_mcp_page"] },
-      { name: "Actions", keys: ["add_new_mcp", "retire_mcp", "request_new_mcp"] },
+      {
+        name: "Actions",
+        keys: ["add_new_mcp", "edit_mcp", "delete_mcp", "request_new_mcp"],
+      },
     ],
   },
   {
@@ -117,7 +124,20 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Actions", keys: ["edit_platform_configs"] },
     ],
   },
-  { page: "Packages", sections: [{ name: "Page Access", keys: ["view_packages_page"] }] },
+  {
+    page: "Packages",
+    sections: [
+      { name: "Page Access", keys: ["view_packages_page"] },
+      { name: "Actions", keys: ["request_packages"] },
+    ],
+  },
+  {
+    page: "Release Management",
+    sections: [
+      { name: "Page Access", keys: ["view_release_management_page"] },
+      { name: "Actions", keys: ["publish_release"] },
+    ],
+  },
   {
     page: "Help & Support",
     sections: [
@@ -130,7 +150,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
   {
     page: "Connectors",
     sections: [
-      { name: "Page Access", keys: ["connectore_page"] },
+      { name: "Page Access", keys: ["view_connector_page"] },
       { name: "Actions", keys: ["add_connector"] },
     ],
   },
@@ -141,18 +161,19 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Actions", keys: ["hitl_approve", "hitl_reject"] },
     ],
   },
-  {
-    page: "Agent Scheduler",
-    sections: [
-      { name: "Page Access", keys: ["view_agent_scheduler_page"] },
-      { name: "Actions", keys: ["add_scheduler"] },
-    ],
-  },
 ];
 
 const EXCEL_PERMISSION_KEYS = new Set(
   EXCEL_PERMISSION_STRUCTURE.flatMap((page) => page.sections.flatMap((section) => section.keys)),
 );
+
+const ROLE_DISPLAY_ORDER = [
+  "super_admin",
+  "department_admin",
+  "developer",
+  "business_user",
+  "consumer",
+] as const;
 
 const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   manage_users: ["view_admin_page"],
@@ -166,16 +187,18 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_vector_db: ["view_vectordb_page"],
   view_vectorDb_page: ["view_vectordb_page"],
   view_vector_db_page: ["view_vectordb_page"],
+  retire_vector_db: ["delete_vector_db_catalogue"],
   view_mcp_servers_page: ["view_mcp_page"],
-  view_mcp_page: ["view_mcp"],
+  retire_mcp: ["delete_mcp", "delete_mcp_registry"],
+  delete_mcp_registry: ["delete_mcp", "retire_mcp"],
+  delete_mcp_server: ["delete_mcp"],
+  edit_mcp_registry: ["edit_mcp"],
+  edit_mcp_server: ["edit_mcp"],
   view_model_catalogue_page: ["view_models"],
   view_agent_catalogue_page: ["view_published_agents"],
   view_guardrails_page: ["view_guardrail_page"],
   view_observability_dashboard: ["view_observability_page"],
   view_knowledge_base_management: ["view_knowledge_base"],
-  approve_reject_page: ["prod_publish_approval_required"],
-  prod_publish_approval_required: ["hitl_approve", "hitl_reject"],
-  prod_publish_approval_not_required: ["hitl_approve", "hitl_reject"],
   view_approval_page: [
     "view_agent",
     "view_model",
@@ -183,9 +206,15 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
     "view_hitl_approvals_page",
   ],
   view_control_panel: ["view_agent_scheduler_page"],
+  view_agent_scheduler_page: ["view_control_panel"],
   start_stop_agent: ["add_scheduler"],
-  view_connectors_page: ["connectore_page"],
-  connector_page: ["connectore_page"],
+  edit_projects_page: ["edit_project"],
+  view_only_agent: ["view_registry_agent"],
+  edit_model_registry: ["edit_model"],
+  delete_model_registry: ["delete_model"],
+  connectore_page: ["view_connector_page"],
+  view_connectors_page: ["view_connector_page"],
+  connector_page: ["view_connector_page"],
 };
 
 const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {
@@ -201,6 +230,27 @@ const expandRolePermissionsForUi = (permissionKeys: string[]): string[] => {
     });
   });
   return expanded;
+};
+
+const sortRolesForDisplay = (roles: Role[]): Role[] => {
+  const orderIndex = new Map(ROLE_DISPLAY_ORDER.map((name, index) => [name, index]));
+  return [...roles].sort((a, b) => {
+    const aName = (a.name || "").trim().toLowerCase();
+    const bName = (b.name || "").trim().toLowerCase();
+    const aIdx = orderIndex.get(aName);
+    const bIdx = orderIndex.get(bName);
+
+    if (aIdx !== undefined && bIdx !== undefined) return aIdx - bIdx;
+    if (aIdx !== undefined) return -1;
+    if (bIdx !== undefined) return 1;
+    return aName.localeCompare(bName);
+  });
+};
+
+const formatPermissionLabel = (permission: Permission): string => {
+  const key = (permission.key || "").trim();
+  if (!key) return permission.name || "";
+  return key.replace(/_/g, " ");
 };
 
 export default function AccessControlPage() {
@@ -223,6 +273,8 @@ export default function AccessControlPage() {
   const [newRolePermissions, setNewRolePermissions] = useState<string[]>([]);
   const [hasLoadError, setHasLoadError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRestoringSelectedDefaults, setIsRestoringSelectedDefaults] = useState(false);
+  const [isRestoringAllDefaults, setIsRestoringAllDefaults] = useState(false);
   const hasLoadedRef = useRef(false);
 
   const selectedRole = useMemo(
@@ -241,7 +293,7 @@ export default function AccessControlPage() {
   );
 
   // Load permissions and roles
-  const loadData = useCallback(async (force = false) => {
+  const loadData = useCallback(async (force = false, showLoader = true) => {
     if (hasLoadedRef.current && !force) {
       return;
     }
@@ -249,7 +301,9 @@ export default function AccessControlPage() {
       hasLoadedRef.current = true;
     }
     setHasLoadError(false);
-    setIsLoading(true);
+    if (showLoader) {
+      setIsLoading(true);
+    }
 
     try {
       const [permissionsRes, rolesRes] = await Promise.all([
@@ -275,11 +329,18 @@ export default function AccessControlPage() {
           availablePermissionKeys.has(key),
         ),
       }));
-      setRoles(normalizedRoles);
+      const sortedRoles = sortRolesForDisplay(normalizedRoles);
+      setRoles(sortedRoles);
 
-      if (normalizedRoles.length > 0) {
-        setSelectedRoleId(normalizedRoles[0].id);
-        setDraftPermissions(normalizedRoles[0].permissions || []);
+      if (sortedRoles.length > 0) {
+        const preservedRole =
+          (selectedRoleId && sortedRoles.find((role) => role.id === selectedRoleId)) ||
+          sortedRoles[0];
+        setSelectedRoleId(preservedRole.id);
+        setDraftPermissions(toSavablePermissions(preservedRole.permissions || []));
+      } else {
+        setSelectedRoleId(null);
+        setDraftPermissions([]);
       }
     } catch (error: any) {
       console.error("Failed to load access control data:", error);
@@ -289,9 +350,11 @@ export default function AccessControlPage() {
         list: [error?.message || t("Unknown error")],
       });
     } finally {
-      setIsLoading(false);
+      if (showLoader) {
+        setIsLoading(false);
+      }
     }
-  }, [setErrorData]);
+  }, [selectedRoleId, setErrorData, toSavablePermissions]);
 
   // Initial data load
   useEffect(() => {
@@ -431,6 +494,51 @@ export default function AccessControlPage() {
     );
   };
 
+  const canRestoreSelectedRole = Boolean(
+    selectedRole?.is_system && selectedRole?.name?.trim().toLowerCase() !== "root",
+  );
+
+  const handleRestoreSelectedDefaults = async () => {
+    if (!selectedRole) return;
+    if (!confirm(
+      t("Restore default permissions for role \"{{name}}\"? This will overwrite current permissions for this role only.", { name: selectedRole.name }),
+    )) {
+      return;
+    }
+    setIsRestoringSelectedDefaults(true);
+    try {
+      await api.post(`${getURL("ROLES")}/${selectedRole.id}/restore-defaults`);
+      await loadData(true, false);
+      setSuccessData({ title: t("Role default permissions restored successfully") });
+    } catch (error: any) {
+      setErrorData({
+        title: t("Failed to restore role default permissions"),
+        list: [error?.response?.data?.detail || error?.message || t("Unknown error")],
+      });
+    } finally {
+      setIsRestoringSelectedDefaults(false);
+    }
+  };
+
+  const handleRestoreAllDefaults = async () => {
+    if (!confirm(t("Restore default role permissions for all system roles? This will overwrite current system role mappings."))) {
+      return;
+    }
+    setIsRestoringAllDefaults(true);
+    try {
+      await api.post(`${getURL("ROLES")}/restore-defaults`);
+      await loadData(true, false);
+      setSuccessData({ title: t("All role default permissions restored successfully") });
+    } catch (error: any) {
+      setErrorData({
+        title: t("Failed to restore default role permissions"),
+        list: [error?.response?.data?.detail || error?.message || t("Unknown error")],
+      });
+    } finally {
+      setIsRestoringAllDefaults(false);
+    }
+  };
+
   const renderPermissionHierarchy = (
     selectedKeys: string[],
     onToggle: (key: string, checked: boolean) => void,
@@ -479,15 +587,10 @@ export default function AccessControlPage() {
                               }
                             />
                             <span>
-                              {perm.name}
+                              {formatPermissionLabel(perm)}
                               <span className="block text-xs text-muted-foreground font-mono">
                                 {perm.key}
                               </span>
-                              {perm.description && (
-                                <span className="block text-xs text-muted-foreground">
-                                  {perm.description}
-                                </span>
-                              )}
                             </span>
                           </label>
                         ))}
@@ -632,13 +735,29 @@ export default function AccessControlPage() {
                 <div className="text-sm font-medium">
                   {t("Permissions for")} {selectedRole?.name || "-"}
                 </div>
-                <Button
-                  variant="primary"
-                  disabled={!hasChanges || isSaving}
-                  onClick={handleSavePermissions}
-                >
-                  {isSaving ? t("Saving...") : t("Save Changes")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    disabled={!canRestoreSelectedRole || isRestoringSelectedDefaults || isRestoringAllDefaults}
+                    onClick={handleRestoreSelectedDefaults}
+                  >
+                    {isRestoringSelectedDefaults ? t("Restoring...") : t("Restore Role Defaults")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={isRestoringAllDefaults || isRestoringSelectedDefaults}
+                    onClick={handleRestoreAllDefaults}
+                  >
+                    {isRestoringAllDefaults ? t("Restoring...") : t("Restore All Role Defaults")}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!hasChanges || isSaving}
+                    onClick={handleSavePermissions}
+                  >
+                    {isSaving ? t("Saving...") : t("Save Changes")}
+                  </Button>
+                </div>
               </div>
               <div className="rounded-md border p-4">
                 {selectedRole ? (

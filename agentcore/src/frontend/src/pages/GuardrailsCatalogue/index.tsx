@@ -72,7 +72,8 @@ export default function GuardrailsView({
   const { permissions, role, userData } = useContext(AuthContext);
   const can = (permission: string) => permissions?.includes(permission);
   const isProdView = selectedEnvironment === "prod";
-  const canCreateOrEdit = can("add_guardrails") && !isProdView;
+  const canAddGuardrails = can("add_guardrails");
+  const canCreateOrEdit = canAddGuardrails && !isProdView;
   const canDelete = can("retire_guardrails") && !isProdView;
   const canManage = canCreateOrEdit || canDelete;
   const isDepartmentAdmin = role === "department_admin";
@@ -311,9 +312,9 @@ export default function GuardrailsView({
         />
       ) : (
         <div className="flex h-full w-full flex-col overflow-hidden">
-          <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+          <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
             <div>
-              <div className="mb-2 flex items-center gap-3">
+              <div className="mb-1 flex items-center gap-3">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -322,7 +323,7 @@ export default function GuardrailsView({
                 >
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <h1 className="text-2xl font-semibold">{selectedFramework.name} Policies</h1>
+                <h1 className="text-xl font-semibold">{selectedFramework.name} Policies</h1>
               </div>
               <p className="text-sm text-muted-foreground">
                 {isProdView
@@ -345,7 +346,7 @@ export default function GuardrailsView({
                     }}
                     className={`rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
                       selectedEnvironment === env.value
-                        ? "bg-primary text-primary-foreground shadow-sm"
+                        ? "bg-[var(--button-primary)] text-[var(--button-primary-foreground)] shadow-sm"
                         : "text-muted-foreground hover:bg-muted"
                     }`}
                   >
@@ -363,16 +364,24 @@ export default function GuardrailsView({
                   className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                 />
               </div>
-              {canCreateOrEdit && (
-                <Button onClick={handleCreateGuardrail}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Guardrail
-                </Button>
-              )}
+              <Button
+                onClick={handleCreateGuardrail}
+                disabled={isProdView || !canAddGuardrails}
+                title={
+                  isProdView
+                    ? "Production view is read-only"
+                    : !canAddGuardrails
+                      ? "You do not have permission to add guardrails"
+                      : undefined
+                }
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Guardrail
+              </Button>
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto p-8">
+          <div className="flex-1 overflow-auto p-4 sm:p-6">
             {isLoading ? (
               <div className="flex h-full w-full items-center justify-center">
                 <Loading />

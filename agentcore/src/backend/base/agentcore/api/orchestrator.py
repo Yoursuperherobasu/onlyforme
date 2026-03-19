@@ -1052,6 +1052,61 @@ async def orch_chat_stream(
             queue.put_nowait((None, None, None))
 
     # -- 4. Start background task and return streaming response ----------
+    # --- RabbitMQ path (Option A) ---
+    from agentcore.services.deps import get_rabbitmq_service
+
+    rabbitmq_service = get_rabbitmq_service()
+    if rabbitmq_service.is_enabled():
+        from agentcore.services.deps import get_queue_service
+
+        queue_service = get_queue_service()
+        job_id = str(uuid4())
+        # Register the queue so the RabbitMQ consumer can find it
+        queue_service._queues[job_id] = (queue, event_manager, None, None)
+
+        job_data = {
+            "job_id": job_id,
+            "agent_id": agent_id_str,
+            "agent_name": agent_name,
+            "snapshot": snapshot,
+            "input_value": input_value,
+            "session_id": chat_session_id,
+            "user_id": user_id_str,
+            "files": dep_files,
+            "deployment_id": str(dep_deployment_id),
+            "org_id": dep_org_id,
+            "dept_id": dep_dept_id,
+            "is_prod_deployment": dep_is_prod,
+            "project_id": orch_project_id,
+            "project_name": orch_project_name,
+        }
+        await rabbitmq_service.publish_orchestrator_job(job_data)
+        logger.info(f"Orchestrator job {job_id} published to RabbitMQ")
+
+        async def _consume_rmq():
+            while True:
+                try:
+                    _event_id, value, _ = await queue.get()
+                    if value is None:
+                        break
+                    yield value
+                except Exception:
+                    break
+
+        async def _on_disconnect_rmq():
+            await queue_service.cleanup_job(job_id)
+
+        return StreamingResponse(
+            _consume_rmq(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+            background=_on_disconnect_rmq,
+        )
+
+    # --- Direct path (no RabbitMQ) ---
     run_task = asyncio.create_task(_run_and_persist())
 
     async def _consume():

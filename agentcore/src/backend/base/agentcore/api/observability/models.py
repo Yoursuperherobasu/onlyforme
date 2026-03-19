@@ -180,6 +180,8 @@ class MetricsResponse(BaseModel):
     total_cost_usd: float = 0.0
     avg_latency_ms: float | None = None
     p95_latency_ms: float | None = None
+    p95_cost_per_trace: float | None = None
+    p99_cost_per_trace: float | None = None
     by_model: list[ModelUsageItem] = []
     by_date: list[DailyUsageItem] = []
     top_agents: list[dict] = []

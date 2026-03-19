@@ -140,10 +140,10 @@ export default function AgentCatalogueView({
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-xl font-semibold md:text-2xl">{t("Agent Registry")}</h1>
+          <div className="mb-1 flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">{t("Agent Registry")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t(
@@ -195,7 +195,7 @@ export default function AgentCatalogueView({
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-4 sm:p-6 md:p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         {isLoadingRegistry ? (
           <div className="flex h-full items-center justify-center">
             <CustomLoader />
@@ -246,6 +246,18 @@ export default function AgentCatalogueView({
                                   </ShadTooltip>
                                 ) : (
                                   displayName
+                                )}
+                                {agent.department_name && (
+                                  <>
+                                    {" · "}
+                                    <span className="text-muted-foreground">{agent.department_name}</span>
+                                  </>
+                                )}
+                                {agent.organization_name && (
+                                  <>
+                                    {" · "}
+                                    <span className="text-muted-foreground">{agent.organization_name}</span>
+                                  </>
                                 )}
                               </>
                             );
@@ -308,7 +320,7 @@ export default function AgentCatalogueView({
                       <div className="flex items-center gap-2">
                         <ShadTooltip
                           content={
-                            !can("view_only_agent")
+                            !can("view_registry_agent")
                               ? t("You don't have permission to view")
                               : ""
                           }
@@ -317,7 +329,7 @@ export default function AgentCatalogueView({
                             <Button
                               variant="outline"
                               size="sm"
-                              disabled={!can("view_only_agent")}
+                              disabled={!can("view_registry_agent")}
                               onClick={() =>
                                 navigate(`/agent-catalogue/${agent.id}/view`)
                               }

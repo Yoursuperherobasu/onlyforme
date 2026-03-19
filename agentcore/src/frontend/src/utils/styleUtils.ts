@@ -1,5 +1,5 @@
 import { TwitterLogoIcon } from "@radix-ui/react-icons";
-import dynamicIconImports from "lucide-react/dynamicIconImports";
+import dynamicIconImports from "lucide-react/dynamicIconImports.mjs";
 import { lazy } from "react";
 import { FaApple, FaDiscord, FaGithub } from "react-icons/fa";
 import { ENABLE_KNOWLEDGE_BASES } from "@/customization/feature-flags";

@@ -62,6 +62,12 @@ export const useMessagesStore = create<MessagesStoreType>((set, get) => ({
   addMessage: (message) => {
     const existingMessage = get().messages.find((msg) => msg.id === message.id);
     if (existingMessage) {
+      // Clear loading indicator even when updating an existing message
+      // (handles race conditions where message was added via query refetch
+      // before the SSE event arrived)
+      if (message.sender === "Machine" || message.category === "error") {
+        set(() => ({ displayLoadingMessage: false }));
+      }
       // Check if this is a streaming partial message (state: "partial")
       if (message.properties?.state === "partial") {
         // For streaming, accumulate the text content

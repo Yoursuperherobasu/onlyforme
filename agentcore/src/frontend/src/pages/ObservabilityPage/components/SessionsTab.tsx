@@ -45,15 +45,15 @@ export function SessionsTab({ sessionsData, sessionsLoading, sessionsFetching, f
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+                <CardTitle className="flex items-center gap-2 text-foreground">
                   <Clock className="h-5 w-5" style={{ color: THEME.chartColors[1] }} />
                   Sessions
                 </CardTitle>
-                <CardDescription style={{ color: THEME.textSecondary }}>Your chat sessions with metrics</CardDescription>
+                <CardDescription className="text-muted-foreground">Your chat sessions with metrics</CardDescription>
               </div>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: THEME.textSecondary }} />
-                <Input placeholder="Search sessions..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-gray-50 border-gray-200" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input placeholder="Search sessions..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-muted/50 border-border" />
               </div>
             </div>
           </CardHeader>
@@ -61,48 +61,48 @@ export function SessionsTab({ sessionsData, sessionsLoading, sessionsFetching, f
             {filtered.length > 0 ? (
               <Table>
                 <TableHeader>
-                  <TableRow className="border-gray-100">
-                    <TableHead style={{ color: THEME.textSecondary }}>Session ID</TableHead>
-                    <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Traces</TableHead>
-                    <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Tokens</TableHead>
-                    <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Cost</TableHead>
-                    <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Latency</TableHead>
-                    <TableHead style={{ color: THEME.textSecondary }}>Models</TableHead>
+                  <TableRow className="border-border">
+                    <TableHead className="text-muted-foreground">Session ID</TableHead>
+                    <TableHead className="text-right text-muted-foreground">Traces</TableHead>
+                    <TableHead className="text-right text-muted-foreground">Tokens</TableHead>
+                    <TableHead className="text-right text-muted-foreground">Cost</TableHead>
+                    <TableHead className="text-right text-muted-foreground">Latency</TableHead>
+                    <TableHead className="text-muted-foreground">Models</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.map((session) => (
-                    <TableRow key={session.session_id} className={`cursor-pointer border-gray-100 hover:bg-gray-50 ${session.has_errors ? "bg-red-50/50" : ""}`} onClick={() => onSelectSession(session.session_id)}>
-                      <TableCell className="font-medium max-w-[200px] truncate" style={{ color: THEME.textMain }}>
+                    <TableRow key={session.session_id} className={`cursor-pointer border-border hover:bg-muted/50 ${session.has_errors ? "bg-red-50/50" : ""}`} onClick={() => onSelectSession(session.session_id)}>
+                      <TableCell className="font-medium max-w-[200px] truncate text-foreground">
                         <div className="flex items-center gap-2">
                           {session.has_errors && <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />}
                           {session.session_id}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right" style={{ color: THEME.textMain }}>{session.trace_count}</TableCell>
-                      <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatTokens(session.total_tokens)}</TableCell>
-                      <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatCost(session.total_cost)}</TableCell>
-                      <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatLatency(session.avg_latency_ms ?? null)}</TableCell>
+                      <TableCell className="text-right text-foreground">{session.trace_count}</TableCell>
+                      <TableCell className="text-right text-foreground">{formatTokens(session.total_tokens)}</TableCell>
+                      <TableCell className="text-right text-foreground">{formatCost(session.total_cost)}</TableCell>
+                      <TableCell className="text-right text-foreground">{formatLatency(session.avg_latency_ms ?? null)}</TableCell>
                       <TableCell>
                         <div className="flex gap-1 flex-wrap">
                           {session.models_used.slice(0, 2).map((model) => (
-                            <Badge key={model} variant="secondary" className="text-xs bg-gray-100" style={{ color: THEME.textMain }}>{model.split("/").pop() || model}</Badge>
+                            <Badge key={model} variant="secondary" className="text-xs bg-muted text-foreground">{model.split("/").pop() || model}</Badge>
                           ))}
                           {session.models_used.length > 2 && (
-                            <Badge variant="secondary" className="text-xs bg-gray-100" style={{ color: THEME.textSecondary }}>+{session.models_used.length - 2}</Badge>
+                            <Badge variant="secondary" className="text-xs bg-muted text-muted-foreground">+{session.models_used.length - 2}</Badge>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell><ChevronRight className="h-4 w-4" style={{ color: THEME.textSecondary }} /></TableCell>
+                      <TableCell><ChevronRight className="h-4 w-4 text-muted-foreground" /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             ) : (
               <div className="text-center py-12">
-                <Clock className="h-12 w-12 mx-auto mb-4" style={{ color: THEME.textSecondary }} />
-                <p style={{ color: THEME.textSecondary }}>{search ? `No sessions found matching "${search}"` : "No sessions found"}</p>
+                <Clock className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                <p className="text-muted-foreground">{search ? `No sessions found matching "${search}"` : "No sessions found"}</p>
               </div>
             )}
           </CardContent>

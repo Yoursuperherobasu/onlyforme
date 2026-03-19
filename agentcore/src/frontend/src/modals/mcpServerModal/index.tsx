@@ -187,12 +187,19 @@ export default function AddMcpServerModal({
 
   function buildTenancyPayload() {
     const isPublic = visibilityScope !== "private";
+    const resolvedPrivateDeptId = canMultiDept
+      ? deptId || publicDeptIds[0] || undefined
+      : deptId || undefined;
     return {
       visibility: isPublic ? "public" : "private",
       public_scope: isPublic ? visibilityScope : null,
       org_id: orgId || undefined,
       dept_id:
-        visibilityScope === "department" ? (canMultiDept ? undefined : deptId || undefined) : undefined,
+        visibilityScope === "department"
+          ? (canMultiDept ? undefined : deptId || undefined)
+          : visibilityScope === "private"
+            ? resolvedPrivateDeptId
+            : undefined,
       public_dept_ids:
         visibilityScope === "department"
           ? (canMultiDept ? publicDeptIds : deptId ? [deptId] : [])
@@ -516,6 +523,75 @@ export default function AddMcpServerModal({
       if (publicDeptIds.length === 0) setPublicDeptIds([firstDept.id]);
     }
   }, [open, normalizedRole, visibilityOptions, deptId, orgId, publicDeptIds]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (visibilityScope === "organization") {
+      const firstOrg =
+        visibilityOptions.organizations[0]?.id ||
+        visibilityOptions.departments[0]?.org_id ||
+        "";
+      if (!orgId && firstOrg) setOrgId(firstOrg);
+      return;
+    }
+    if (visibilityScope !== "department") return;
+    const firstDept = departmentsForSelectedOrg[0] || visibilityOptions.departments[0];
+    if (!firstDept) return;
+    if (canMultiDept) {
+      const hasSelectedDept = publicDeptIds.some((id) =>
+        departmentsForSelectedOrg.some((dept) => dept.id === id),
+      );
+      if (!orgId) setOrgId(firstDept.org_id);
+      if (!hasSelectedDept) setPublicDeptIds([firstDept.id]);
+      return;
+    }
+    if (!deptId) setDeptId(firstDept.id);
+    if (!orgId) setOrgId(firstDept.org_id);
+  }, [
+    open,
+    visibilityScope,
+    canMultiDept,
+    orgId,
+    deptId,
+    publicDeptIds,
+    departmentsForSelectedOrg,
+    visibilityOptions.organizations,
+    visibilityOptions.departments,
+  ]);
+
+  useEffect(() => {
+    if (!open || visibilityScope !== "private" || !canMultiDept) return;
+    const fallbackDeptId =
+      deptId ||
+      publicDeptIds[0] ||
+      initialData?.dept_id ||
+      initialData?.public_dept_ids?.[0] ||
+      departmentsForSelectedOrg[0]?.id ||
+      visibilityOptions.departments[0]?.id ||
+      "";
+    if (fallbackDeptId && deptId !== fallbackDeptId) {
+      setDeptId(fallbackDeptId);
+    }
+    if (!orgId) {
+      const fallbackOrgId =
+        departmentsForSelectedOrg.find((dept) => dept.id === fallbackDeptId)?.org_id ||
+        visibilityOptions.departments.find((dept) => dept.id === fallbackDeptId)?.org_id ||
+        visibilityOptions.organizations[0]?.id ||
+        "";
+      if (fallbackOrgId) setOrgId(fallbackOrgId);
+    }
+  }, [
+    open,
+    visibilityScope,
+    canMultiDept,
+    deptId,
+    publicDeptIds,
+    orgId,
+    initialData,
+    departmentsForSelectedOrg,
+    visibilityOptions.departments,
+    visibilityOptions.organizations,
+  ]);
 
   const handleTypeChange = (val: string) => {
     setType(val);

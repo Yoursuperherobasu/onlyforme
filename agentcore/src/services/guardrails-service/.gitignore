@@ -10,7 +10,7 @@ src/frontend
 # C extensions
 *.so
 .venvguard/
-
+.venvrail/
 # Distribution / packaging
 .Python
 build/

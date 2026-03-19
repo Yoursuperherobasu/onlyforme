@@ -43,6 +43,10 @@ from .teams_app import TeamsApp
 from .hitl_request import HITLRequest
 from .trigger_config import TriggerConfigTable, TriggerExecutionLogTable
 from .evaluator.model import Evaluator
+from .dataset.model import Dataset
+from .dataset_item.model import DatasetItem
+from .dataset_run.model import DatasetRun
+from .dataset_run_item.model import DatasetRunItem
 from .vertex_builds import VertexBuildTable
 from .langfuse_binding import LangfuseBinding
 from .observability_provision_job import ObservabilityProvisionJob
@@ -110,6 +114,10 @@ __all__ = [
     "TriggerConfigTable",
     "TriggerExecutionLogTable",
     "Evaluator",
+    "Dataset",
+    "DatasetItem",
+    "DatasetRun",
+    "DatasetRunItem",
     "VertexBuildTable",
     "LangfuseBinding",
     "ObservabilityProvisionJob",

@@ -31,13 +31,13 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
       <Card className="border-0 shadow-sm">
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+            <CardTitle className="flex items-center gap-2 text-foreground">
               <Cpu className="h-5 w-5" style={{ color: THEME.chartColors[4] }} />
               Model Usage Breakdown
             </CardTitle>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: THEME.textSecondary }} />
-              <Input placeholder="Search models..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-gray-50 border-gray-200" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search models..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-muted/50 border-border" />
             </div>
           </div>
         </CardHeader>
@@ -45,39 +45,39 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
           {filteredModels.length > 0 ? (
             <Table>
               <TableHeader>
-                <TableRow className="border-gray-100">
-                  <TableHead style={{ color: THEME.textSecondary }}>Model</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Calls</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Input Tokens</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Output Tokens</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Total Tokens</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Cost</TableHead>
-                  <TableHead className="text-right" style={{ color: THEME.textSecondary }}>Avg Latency</TableHead>
+                <TableRow className="border-border">
+                  <TableHead className="text-muted-foreground">Model</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Calls</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Input Tokens</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Output Tokens</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Total Tokens</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Cost</TableHead>
+                  <TableHead className="text-right text-muted-foreground">Avg Latency</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredModels.map((model, idx) => (
-                  <TableRow key={model.model} className="border-gray-100 hover:bg-gray-50">
-                    <TableCell className="font-medium" style={{ color: THEME.textMain }}>
+                  <TableRow key={model.model} className="border-border hover:bg-muted/50">
+                    <TableCell className="font-medium text-foreground">
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.chartColors[idx % THEME.chartColors.length] }} />
                         {model.model}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{model.call_count}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatTokens(model.input_tokens)}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatTokens(model.output_tokens)}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatTokens(model.total_tokens)}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatCost(model.total_cost)}</TableCell>
-                    <TableCell className="text-right" style={{ color: THEME.textMain }}>{formatLatency(model.avg_latency_ms)}</TableCell>
+                    <TableCell className="text-right text-foreground">{model.call_count}</TableCell>
+                    <TableCell className="text-right text-foreground">{formatTokens(model.input_tokens)}</TableCell>
+                    <TableCell className="text-right text-foreground">{formatTokens(model.output_tokens)}</TableCell>
+                    <TableCell className="text-right text-foreground">{formatTokens(model.total_tokens)}</TableCell>
+                    <TableCell className="text-right text-foreground">{formatCost(model.total_cost)}</TableCell>
+                    <TableCell className="text-right text-foreground">{formatLatency(model.avg_latency_ms)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           ) : (
             <div className="text-center py-12">
-              <Cpu className="h-12 w-12 mx-auto mb-4" style={{ color: THEME.textSecondary }} />
-              <p style={{ color: THEME.textSecondary }}>{search ? `No models found matching "${search}"` : "No model usage data"}</p>
+              <Cpu className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-muted-foreground">{search ? `No models found matching "${search}"` : "No model usage data"}</p>
             </div>
           )}
         </CardContent>
@@ -86,11 +86,11 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
       {metrics?.top_agents && metrics.top_agents.length > 0 && (
         <Card className="border-0 shadow-sm">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2" style={{ color: THEME.textMain }}>
+            <CardTitle className="flex items-center gap-2 text-foreground">
               <TrendingUp className="h-5 w-5" style={{ color: THEME.primary }} />
               Top Agents by Usage
             </CardTitle>
-            <CardDescription style={{ color: THEME.textSecondary }}>agent execution count and token usage</CardDescription>
+            <CardDescription className="text-muted-foreground">agent execution count and token usage</CardDescription>
           </CardHeader>
           <CardContent>
             <SafeResponsiveContainer width="100%" height={Math.max(250, metrics.top_agents.length * 50)}>
@@ -107,20 +107,20 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
                     if (!active || !payload || !payload.length) return null;
                     const data = payload[0].payload;
                     return (
-                      <div className="bg-white border shadow-lg rounded-lg p-3">
-                        <p className="text-sm font-medium mb-2" style={{ color: THEME.textMain }}>{data.name}</p>
+                      <div className="bg-card border shadow-lg rounded-lg p-3">
+                        <p className="text-sm font-medium mb-2 text-foreground">{data.name}</p>
                         <div className="space-y-1 text-sm">
                           <div className="flex justify-between gap-4">
-                            <span style={{ color: THEME.textSecondary }}>Count:</span>
-                            <span className="font-medium" style={{ color: THEME.textMain }}>{data.count}</span>
+                            <span className="text-muted-foreground">Count:</span>
+                            <span className="font-medium text-foreground">{data.count}</span>
                           </div>
                           <div className="flex justify-between gap-4">
-                            <span style={{ color: THEME.textSecondary }}>Tokens:</span>
-                            <span className="font-medium" style={{ color: THEME.textMain }}>{formatTokens(data.tokens)}</span>
+                            <span className="text-muted-foreground">Tokens:</span>
+                            <span className="font-medium text-foreground">{formatTokens(data.tokens)}</span>
                           </div>
                           <div className="flex justify-between gap-4">
-                            <span style={{ color: THEME.textSecondary }}>Cost:</span>
-                            <span className="font-medium" style={{ color: THEME.textMain }}>{formatCost(data.cost)}</span>
+                            <span className="text-muted-foreground">Cost:</span>
+                            <span className="font-medium text-foreground">{formatCost(data.cost)}</span>
                           </div>
                         </div>
                       </div>
@@ -138,5 +138,3 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
     </div>
   );
 }
-
-

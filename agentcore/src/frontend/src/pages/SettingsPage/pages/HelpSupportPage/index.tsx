@@ -163,10 +163,10 @@ export default function HelpSupportPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* ── Fixed Header ─────────────────────────────────────────── */}
-      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-xl font-semibold md:text-2xl">
+          <div className="mb-1 flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">
               {t("Help & Support")}
             </h1>
             <HelpCircle className="h-5 w-5 text-primary" />
@@ -211,7 +211,7 @@ export default function HelpSupportPage() {
       </div>
 
       {/* ── Scrollable Content ───────────────────────────────────── */}
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <div className="flex flex-col items-center gap-2">

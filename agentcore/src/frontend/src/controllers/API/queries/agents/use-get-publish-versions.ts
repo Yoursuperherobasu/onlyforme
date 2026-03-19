@@ -33,6 +33,12 @@ export const useGetPublishVersions: useQueryFunctionType<
 > = (params, options?) => {
   const { query } = UseRequestProcessor();
 
+  const isValidUuid =
+    !!params?.agent_id &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      params.agent_id,
+    );
+
   const getPublishVersionsFn = async (): Promise<IPublishVersionRecord[]> => {
     if (!params?.agent_id) {
       return [];
@@ -48,7 +54,7 @@ export const useGetPublishVersions: useQueryFunctionType<
     ["useGetPublishVersions", params?.agent_id, params?.env],
     getPublishVersionsFn,
     {
-      enabled: !!params?.agent_id,
+      enabled: isValidUuid,
       ...options,
     },
   );

@@ -421,7 +421,6 @@ class ConfigResponse(BaseModel):
     auto_saving_interval: int
     health_check_max_retries: int
     max_file_size_upload: int
-    webhook_polling_interval: int
     public_agent_cleanup_interval: int
     public_agent_expiration: int
     event_delivery: Literal["polling", "streaming", "direct"]
@@ -445,7 +444,6 @@ class ConfigResponse(BaseModel):
             auto_saving_interval=settings.auto_saving_interval,
             health_check_max_retries=settings.health_check_max_retries,
             max_file_size_upload=settings.max_file_size_upload,
-            webhook_polling_interval=settings.webhook_polling_interval,
             public_agent_cleanup_interval=settings.public_agent_cleanup_interval,
             public_agent_expiration=settings.public_agent_expiration,
             event_delivery=settings.event_delivery,

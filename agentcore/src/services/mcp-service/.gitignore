@@ -9,7 +9,7 @@ src/frontend
 
 # C extensions
 *.so
-
+.venvmcp/
 # Distribution / packaging
 .Python
 build/

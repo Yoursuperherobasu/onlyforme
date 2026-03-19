@@ -1,4 +1,4 @@
-import { ArrowUpToLine, Info, Search, Share2 } from "lucide-react";
+import { ArrowUpToLine, Filter, Info, Search, Share2, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -29,6 +29,7 @@ import {
   useToggleControlPanelAgent,
 } from "@/controllers/API/queries/control-panel";
 import CustomLoader from "@/customization/components/custom-loader";
+import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import EmbedModal from "@/modals/EmbedModal/embed-modal";
 import ExportApiModal from "@/modals/exportApiModal";
 import ExportModal from "@/modals/exportModal";
@@ -37,6 +38,8 @@ import type { AgentType } from "@/types/agent";
 import SchedulerPage from "@/pages/SchedulerPage";
 
 type EnvironmentTab = "UAT" | "PROD";
+type FilterTab = "creator" | "owner" | "department" | "version" | "deployment" | "timeline";
+type CreatedDateFilter = "all" | "today" | "7d" | "30d" | "90d";
 
 interface WorkagentType {
   id: string;
@@ -52,11 +55,15 @@ interface WorkagentType {
   ownerEmails?: string[];
   department: string;
   created: string;
+  createdAtRaw?: string;
   movedToProd?: boolean;
+  pendingProdApproval?: boolean;
   status: boolean;
   enabled: boolean;
   inputType?: "chat" | "autonomous" | "file_processing";
 }
+
+const EMPTY_WORKFLOWS: WorkagentType[] = [];
 
 interface WorkflowsViewProps {
   workflows?: WorkagentType[];
@@ -72,13 +79,23 @@ function formatDateTime(value?: string | null): string {
 }
 
 export default function WorkflowsView({
-  workflows = [],
+  workflows = EMPTY_WORKFLOWS,
   setSearch,
   onWorkagentClick,
 }: WorkflowsViewProps): JSX.Element {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<EnvironmentTab>("UAT");
+  const [showFilters, setShowFilters] = useState(false);
+  const [activeFilterTab, setActiveFilterTab] = useState<FilterTab>("creator");
+  const [selectedCreator, setSelectedCreator] = useState("all");
+  const [selectedOwner, setSelectedOwner] = useState("all");
+  const [selectedDepartment, setSelectedDepartment] = useState("all");
+  const [selectedVersion, setSelectedVersion] = useState("all");
+  const [selectedEnabledState, setSelectedEnabledState] = useState("all");
+  const [selectedStartStopState, setSelectedStartStopState] = useState("all");
+  const [selectedCreatedDate, setSelectedCreatedDate] =
+    useState<CreatedDateFilter>("all");
   const [workflowStates, setWorkagentStates] = useState<{
     [key: string]: { status: boolean; enabled: boolean };
   }>({});
@@ -123,7 +140,8 @@ export default function WorkflowsView({
   const [exportAgentData, setExportAgentData] = useState<AgentType | undefined>(
     undefined,
   );
-  const { permissions } = useContext(AuthContext);
+  const { permissions, userData } = useContext(AuthContext);
+  const navigate = useCustomNavigate();
   const isAuth = true;
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -131,7 +149,21 @@ export default function WorkflowsView({
   const promoteMutation = usePostControlPanelPromote();
   const validatePublishEmail = useValidatePublishEmail();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const canViewScheduler = can("view_agent_scheduler_page");
+  const canViewScheduler = can("view_control_panel");
+  const canDirectPromoteToProd = can("prod_publish_approval_not_required");
+  const requiresProdApproval = !canDirectPromoteToProd;
+
+  const handleRowDoubleClick = (workflow: WorkagentType) => {
+    const agentId = workflow.agentId;
+    if (!agentId) return;
+    const isCreator =
+      userData?.email && workflow.userEmail && userData.email === workflow.userEmail;
+    if (isCreator) {
+      navigate(`/agent/${agentId}`);
+    } else {
+      navigate(`/agent/${agentId}?readonly=1`);
+    }
+  };
 
   const { data, isLoading } = useGetControlPanelAgents(
     {
@@ -159,16 +191,154 @@ export default function WorkflowsView({
       userEmail: item.creator_email ?? undefined,
       owner: item.owner_name ?? "-",
       ownerCount: item.owner_count ?? 0,
-      ownerNames: item.owner_names ?? [],
-      ownerEmails: item.owner_emails ?? [],
+        ownerNames: item.owner_names ?? [],
+        ownerEmails: item.owner_emails ?? [],
       department: item.creator_department ?? "-",
+        createdAtRaw: item.created_at ?? undefined,
         created: formatDateTime(item.created_at),
         movedToProd: item.moved_to_prod ?? false,
+        pendingProdApproval: item.pending_prod_approval ?? false,
         status: item.is_active,
         enabled: item.is_enabled,
         inputType: item.input_type,
       }));
   }, [workflows, data?.items]);
+
+  const creatorOptions = useMemo(() => {
+    const names = new Set<string>();
+    displayworkflows.forEach((workflow) => {
+      if (workflow.user && workflow.user !== "-") names.add(workflow.user);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [displayworkflows]);
+
+  const ownerOptions = useMemo(() => {
+    const names = new Set<string>();
+    displayworkflows.forEach((workflow) => {
+      if (workflow.owner && workflow.owner !== "-") names.add(workflow.owner);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [displayworkflows]);
+
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    displayworkflows.forEach((workflow) => {
+      if (workflow.department && workflow.department !== "-") names.add(workflow.department);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [displayworkflows]);
+
+  const versionOptions = useMemo(() => {
+    const names = new Set<string>();
+    displayworkflows.forEach((workflow) => {
+      if (workflow.version && workflow.version !== "-") names.add(workflow.version);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [displayworkflows]);
+
+  const getEffectiveEnabledState = (workflow: WorkagentType) =>
+    workflowStates[workflow.id]?.enabled ?? workflow.enabled;
+
+  const getEffectiveStartStopState = (workflow: WorkagentType) =>
+    workflowStates[workflow.id]?.status ?? workflow.status;
+
+  const matchesCreatedDateFilter = (
+    createdValue: string,
+    dateFilter: CreatedDateFilter,
+  ) => {
+    if (dateFilter === "all") return true;
+    const createdDate = new Date(createdValue);
+    if (Number.isNaN(createdDate.getTime())) return false;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (dateFilter === "today") {
+      return createdDate >= startOfToday;
+    }
+    const daysByFilter: Record<Exclude<CreatedDateFilter, "all" | "today">, number> = {
+      "7d": 7,
+      "30d": 30,
+      "90d": 90,
+    };
+    const threshold = new Date(now);
+    threshold.setDate(threshold.getDate() - daysByFilter[dateFilter]);
+    return createdDate >= threshold;
+  };
+
+  const clearFilters = () => {
+    setSelectedCreator("all");
+    setSelectedOwner("all");
+    setSelectedDepartment("all");
+    setSelectedVersion("all");
+    setSelectedEnabledState("all");
+    setSelectedStartStopState("all");
+    setSelectedCreatedDate("all");
+  };
+
+  const activeFilterCount = [
+    selectedCreator,
+    selectedOwner,
+    selectedDepartment,
+    selectedVersion,
+    selectedEnabledState,
+    selectedStartStopState,
+    selectedCreatedDate,
+  ].filter((value) => value !== "all").length;
+
+  const activeFilterChips = [
+    selectedCreator !== "all"
+      ? {
+          key: "creator",
+          label: `creator: ${selectedCreator === "__none__" ? "unknown" : selectedCreator}`,
+          onRemove: () => setSelectedCreator("all"),
+        }
+      : null,
+    selectedOwner !== "all"
+      ? {
+          key: "owner",
+          label: `owner: ${selectedOwner === "__none__" ? "unknown" : selectedOwner}`,
+          onRemove: () => setSelectedOwner("all"),
+        }
+      : null,
+    selectedDepartment !== "all"
+      ? {
+          key: "department",
+          label: `department: ${selectedDepartment === "__none__" ? "none" : selectedDepartment}`,
+          onRemove: () => setSelectedDepartment("all"),
+        }
+      : null,
+    selectedVersion !== "all"
+      ? {
+          key: "version",
+          label: `version: ${selectedVersion}`,
+          onRemove: () => setSelectedVersion("all"),
+        }
+      : null,
+    selectedEnabledState !== "all"
+      ? {
+          key: "enabled",
+          label: `enabled: ${selectedEnabledState}`,
+          onRemove: () => setSelectedEnabledState("all"),
+        }
+      : null,
+    selectedStartStopState !== "all"
+      ? {
+          key: "status",
+          label: `start/stop: ${selectedStartStopState}`,
+          onRemove: () => setSelectedStartStopState("all"),
+        }
+      : null,
+    selectedCreatedDate !== "all"
+      ? {
+          key: "created",
+          label: `created: ${selectedCreatedDate === "today" ? "today" : `last ${selectedCreatedDate.replace("d", " days")}`}`,
+          onRemove: () => setSelectedCreatedDate("all"),
+        }
+      : null,
+  ].filter(
+    (
+      item,
+    ): item is { key: string; label: string; onRemove: () => void } => Boolean(item),
+  );
 
   const normalizedPromoteEmails = useMemo(
     () =>
@@ -562,7 +732,57 @@ export default function WorkflowsView({
         .includes(searchQuery.toLowerCase()) ||
       workflow.department.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return matchesSearch;
+    const creatorLabel = workflow.user || "";
+    const ownerLabel = workflow.owner || "";
+    const departmentLabel = workflow.department || "";
+    const versionLabel = workflow.version || "";
+    const isEnabled = getEffectiveEnabledState(workflow);
+    const isRunning = getEffectiveStartStopState(workflow);
+
+    const matchesCreator =
+      selectedCreator === "all" ||
+      (selectedCreator === "__none__" && (!creatorLabel || creatorLabel === "-")) ||
+      creatorLabel === selectedCreator;
+
+    const matchesOwner =
+      selectedOwner === "all" ||
+      (selectedOwner === "__none__" && (!ownerLabel || ownerLabel === "-")) ||
+      ownerLabel === selectedOwner;
+
+    const matchesDepartment =
+      selectedDepartment === "all" ||
+      (selectedDepartment === "__none__" && (!departmentLabel || departmentLabel === "-")) ||
+      departmentLabel === selectedDepartment;
+
+    const matchesVersion =
+      selectedVersion === "all" ||
+      versionLabel === selectedVersion;
+
+    const matchesEnabled =
+      selectedEnabledState === "all" ||
+      (selectedEnabledState === "enabled" && isEnabled) ||
+      (selectedEnabledState === "disabled" && !isEnabled);
+
+    const matchesStartStop =
+      selectedStartStopState === "all" ||
+      (selectedStartStopState === "running" && isRunning) ||
+      (selectedStartStopState === "stopped" && !isRunning);
+
+    const matchesCreatedDate = matchesCreatedDateFilter(
+      workflow.createdAtRaw || workflow.created,
+      selectedCreatedDate,
+    );
+
+    return (
+      matchesSearch &&
+      matchesCreator &&
+      matchesOwner &&
+      matchesDepartment &&
+      matchesVersion &&
+      matchesEnabled &&
+      matchesStartStop &&
+      matchesCreatedDate
+    );
   });
 
   useEffect(() => {
@@ -579,50 +799,335 @@ export default function WorkflowsView({
     (can("enable_disable_agent") ? 1 : 0);
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8 md:py-6">
-        <div className="mb-4 flex items-center gap-3">
-          <h1 className="text-xl font-semibold md:text-2xl">{t("Agent Control Panel")}</h1>
-        </div>
-
-        <div className="mb-6 inline-flex rounded-lg border bg-muted/30 p-1">
-          <button
-            type="button"
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === "UAT"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setActiveTab("UAT")}
-          >
-            UAT
-          </button>
-          <button
-            type="button"
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === "PROD"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setActiveTab("PROD")}
-          >
-            PROD
-          </button>
-        </div>
-
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={t("Search agents...")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm"
-          />
+      <div className="flex h-full w-full flex-col overflow-hidden">
+        <div className="flex-shrink-0 border-b px-4 py-3 sm:px-6 md:px-8 md:py-4">
+          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">{t("Agent Control Panel")}</h1>
+            <div className="inline-flex rounded-lg border border-border bg-muted/30 p-1">
+              <button
+                type="button"
+                className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === "UAT"
+                    ? "bg-[var(--button-primary)] text-[var(--button-primary-foreground)] shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+                onClick={() => setActiveTab("UAT")}
+              >
+                UAT
+              </button>
+              <button
+                type="button"
+                className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === "PROD"
+                    ? "bg-[var(--button-primary)] text-[var(--button-primary-foreground)] shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+                onClick={() => setActiveTab("PROD")}
+              >
+                PROD
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder={t("Search agents...")}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-64 rounded-lg border bg-card py-2 pl-10 pr-4 text-sm"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={() => setShowFilters(true)}
+            >
+              <Filter className="h-4 w-4" />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-8">
+      {activeFilterChips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-3 sm:px-6 md:px-8">
+          {activeFilterChips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={chip.onRemove}
+              className="inline-flex items-center gap-1 rounded-full border bg-background px-3 py-1 text-xs text-foreground hover:bg-muted"
+            >
+              <span>{chip.label}</span>
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="text-xs text-primary hover:underline"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
+      {showFilters && (
+        <>
+          <div
+            className="fixed inset-0 z-[60] bg-black/40 transition-opacity"
+            onClick={() => setShowFilters(false)}
+          />
+          <div className="fixed inset-x-0 top-0 z-[70] flex h-full w-full items-start justify-center p-4">
+            <div className="flex h-full max-h-[720px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-background shadow-xl transition-transform">
+              <div className="flex items-center justify-between border-b px-5 py-4">
+                <h2 className="text-lg font-semibold">Filters</h2>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={clearFilters}
+                    className="text-sm text-primary hover:underline"
+                  >
+                    Clear Filters
+                  </button>
+                  <button
+                    onClick={() => setShowFilters(false)}
+                    className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+                    aria-label="Close filters"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-1 overflow-hidden">
+                <div className="w-44 border-r bg-muted/40 p-3 text-sm">
+                  <div className="space-y-4">
+                    <div>
+                      <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        People
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => setActiveFilterTab("creator")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "creator"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Creator
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("owner")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "owner"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Owner
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("department")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "department"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Department
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Deployment
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => setActiveFilterTab("version")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "version"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Version
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("deployment")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "deployment"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          States
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Timeline
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => setActiveFilterTab("timeline")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "timeline"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Created Date
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-auto p-5">
+                  {activeFilterTab === "creator" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">Creator</h3>
+                      <select
+                        value={selectedCreator}
+                        onChange={(e) => setSelectedCreator(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">All creators</option>
+                        <option value="__none__">Unknown creator</option>
+                        {creatorOptions.map((creator) => (
+                          <option key={creator} value={creator}>
+                            {creator}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "owner" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">Owner</h3>
+                      <select
+                        value={selectedOwner}
+                        onChange={(e) => setSelectedOwner(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">All owners</option>
+                        <option value="__none__">Unknown owner</option>
+                        {ownerOptions.map((owner) => (
+                          <option key={owner} value={owner}>
+                            {owner}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "department" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">Department</h3>
+                      <select
+                        value={selectedDepartment}
+                        onChange={(e) => setSelectedDepartment(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">All departments</option>
+                        <option value="__none__">No department</option>
+                        {departmentOptions.map((department) => (
+                          <option key={department} value={department}>
+                            {department}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "version" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">Version</h3>
+                      <select
+                        value={selectedVersion}
+                        onChange={(e) => setSelectedVersion(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">All versions</option>
+                        {versionOptions.map((version) => (
+                          <option key={version} value={version}>
+                            {version}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "deployment" && (
+                    <div className="space-y-6">
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">Enabled State</h3>
+                        <select
+                          value={selectedEnabledState}
+                          onChange={(e) => setSelectedEnabledState(e.target.value)}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        >
+                          <option value="all">All</option>
+                          <option value="enabled">Enabled</option>
+                          <option value="disabled">Disabled</option>
+                        </select>
+                      </div>
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">Start/Stop State</h3>
+                        <select
+                          value={selectedStartStopState}
+                          onChange={(e) => setSelectedStartStopState(e.target.value)}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        >
+                          <option value="all">All</option>
+                          <option value="running">Running</option>
+                          <option value="stopped">Stopped</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "timeline" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">Created Date</h3>
+                      <select
+                        value={selectedCreatedDate}
+                        onChange={(e) =>
+                          setSelectedCreatedDate(e.target.value as CreatedDateFilter)
+                        }
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">Any time</option>
+                        <option value="today">Today</option>
+                        <option value="7d">Last 7 days</option>
+                        <option value="30d">Last 30 days</option>
+                        <option value="90d">Last 90 days</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full">
             <thead className="border-b bg-muted/50">
@@ -702,6 +1207,7 @@ export default function WorkflowsView({
                     key={workflow.id}
                     className="cursor-pointer transition-colors hover:bg-muted/50"
                     onClick={() => onWorkagentClick?.(workflow)}
+                    onDoubleClick={() => handleRowDoubleClick(workflow)}
                   >
                     <td className="px-6 py-4">
                       <div className="font-semibold">{workflow.name}</div>
@@ -816,14 +1322,20 @@ export default function WorkflowsView({
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={promotingById[workflow.id]}
+                            disabled={
+                              promotingById[workflow.id] ||
+                              workflow.pendingProdApproval
+                            }
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (workflow.pendingProdApproval) return;
                               handleOpenPromoteDialog(workflow.id);
                             }}
                           >
                             <ArrowUpToLine className="h-3.5 w-3.5" />
-                            {promotingById[workflow.id]
+                            {workflow.pendingProdApproval
+                              ? t("Pending")
+                              : promotingById[workflow.id]
                               ? t("Moving...")
                               : t("Move")}
                           </button>
@@ -836,7 +1348,11 @@ export default function WorkflowsView({
                     )}
                     {can("view_project_page") && (
                       <td className="px-6 py-4 text-xs">
-                        {workflow.movedToProd ? (
+                        {workflow.pendingProdApproval ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                            {t("Pending Approval")}
+                          </span>
+                        ) : workflow.movedToProd ? (
                           <span className="rounded-full border border-green-200 bg-green-50 px-2 py-1 text-green-700">
                             {t("Yes")}
                           </span>
@@ -1015,7 +1531,22 @@ export default function WorkflowsView({
           </DialogHeader>
           <div className="space-y-4">
             <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-              {t("Select visibility for PROD deployment.")}
+              {requiresProdApproval
+                ? t(
+                    "This action will stop the agent in UAT first, then send the PROD move for approval.",
+                  )
+                : t(
+                    "This action will stop the agent in UAT first and move it directly to PROD.",
+                  )}
+            </div>
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              {requiresProdApproval
+                ? t(
+                    "Until approval is completed, this deployment will remain stopped in UAT.",
+                  )
+                : t(
+                    "The UAT deployment will be marked stopped in the database at the same time as the PROD move.",
+                  )}
             </div>
             <div className="space-y-2 rounded-md border p-3">
               <div className="flex items-center gap-2">

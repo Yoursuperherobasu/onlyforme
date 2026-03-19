@@ -326,7 +326,18 @@ async def _enforce_creation_scope(
     if visibility == "private":
         payload.public_scope = None
         payload.public_dept_ids = None
-        if payload.org_id and payload.dept_id:
+        if user_role == "root":
+            payload.org_id = None
+            payload.dept_id = None
+        elif user_role == "super_admin":
+            if payload.org_id and payload.org_id in org_ids:
+                payload.dept_id = None
+            else:
+                if not org_ids:
+                    raise HTTPException(status_code=403, detail="No active organization scope found")
+                payload.org_id = sorted(org_ids, key=str)[0]
+                payload.dept_id = None
+        elif payload.org_id and payload.dept_id:
             if user_role in {"department_admin", "developer", "business_user"}:
                 if not any(payload.org_id == org_id and payload.dept_id == dept_id for org_id, dept_id in dept_pairs):
                     raise HTTPException(
@@ -552,6 +563,8 @@ def _can_delete_mcp(
             return False
         visibility = _normalize_visibility(getattr(row, "visibility", None))
         public_scope = _normalize_public_scope(getattr(row, "public_scope", None))
+        if visibility == "public" and public_scope == "organization":
+            return False
         dept_ids = {str(d) for _, d in dept_pairs}
         scoped_public_depts = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
         if visibility == "public" and public_scope == "department":
@@ -626,30 +639,49 @@ async def get_mcp_visibility_options(
 
     organizations = []
     if role == "root":
-        org_rows = (await session.exec(select(Organization.id, Organization.name))).all()
+        org_rows = (
+            await session.exec(
+                select(Organization.id, Organization.name).where(Organization.status == "active")
+            )
+        ).all()
         organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
     elif org_ids:
         org_rows = (
-            await session.exec(select(Organization.id, Organization.name).where(Organization.id.in_(list(org_ids))))
+            await session.exec(
+                select(Organization.id, Organization.name).where(
+                    Organization.id.in_(list(org_ids)),
+                    Organization.status == "active",
+                )
+            )
         ).all()
         organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
 
     dept_ids = {dept_id for _, dept_id in dept_pairs}
     departments = []
     if role == "root":
-        dept_rows = (await session.exec(select(Department.id, Department.name, Department.org_id))).all()
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(Department.status == "active")
+            )
+        ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
     elif role == "super_admin" and org_ids:
         dept_rows = (
             await session.exec(
-                select(Department.id, Department.name, Department.org_id).where(Department.org_id.in_(list(org_ids)))
+                select(Department.id, Department.name, Department.org_id).where(
+                    Department.org_id.in_(list(org_ids)),
+                    Department.status == "active",
+                )
             )
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
     elif dept_ids:
         dept_rows = (
             await session.exec(
-                select(Department.id, Department.name, Department.org_id).where(Department.id.in_(list(dept_ids)))
+                select(Department.id, Department.name, Department.org_id).where(
+                    Department.id.in_(list(dept_ids)),
+                    Department.status == "active",
+                )
             )
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
@@ -669,7 +701,7 @@ async def create_mcp_server(
 ):
     """Register a new MCP server directly (admin flows)."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "edit_mcp_registry")
+    await _require_mcp_permission(current_user, "add_new_mcp")
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
     await _ensure_mcp_name_available(session, body.server_name)
@@ -922,7 +954,7 @@ async def update_mcp_server(
 ):
     """Update an existing MCP server."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "edit_mcp_registry")
+    await _require_mcp_permission(current_user, "edit_mcp")
     row = await session.get(McpRegistry, server_id)
     if row is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
@@ -983,6 +1015,9 @@ async def update_mcp_server(
     body.reviewed_by = row.reviewed_by
     body.requested_by = row.requested_by
     body.request_to = row.request_to
+    if visibility == "private":
+        body.created_by = current_user.username
+        body.created_by_id = current_user.id
 
     current_public_dept_ids = [str(v) for v in (row.public_dept_ids or [])]
     desired_public_dept_ids = [str(v) for v in (body.public_dept_ids or [])]
@@ -1105,7 +1140,7 @@ async def delete_mcp_server(
 ):
     """Delete a registered MCP server."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "add_new_mcp")
+    await _require_mcp_permission(current_user, "delete_mcp")
     row = await session.get(McpRegistry, server_id)
     if row is None:
         raise HTTPException(status_code=404, detail="MCP server not found")

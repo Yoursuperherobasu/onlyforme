@@ -185,7 +185,6 @@ class InterfaceComponentTypes(str, Enum, metaclass=ContainsEnumMeta):
     TextInput = "TextInput"
     TextOutput = "TextOutput"
     DataOutput = "DataOutput"
-    WebhookInput = "Webhook"
 
 
 # Component type groupings
@@ -193,7 +192,6 @@ CHAT_COMPONENTS = [InterfaceComponentTypes.ChatInput, InterfaceComponentTypes.Ch
 RECORDS_COMPONENTS = [InterfaceComponentTypes.DataOutput]
 INPUT_COMPONENTS = [
     InterfaceComponentTypes.ChatInput,
-    InterfaceComponentTypes.WebhookInput,
     InterfaceComponentTypes.TextInput,
 ]
 OUTPUT_COMPONENTS = [

@@ -1,5 +1,7 @@
 import * as Form from "@radix-ui/react-form";
 import { useContext, useEffect, useState } from "react";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import IconComponent from "@/components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -88,9 +90,11 @@ export default function UserManagementModal({
         onSuccess: (roleNames) => {
           const fallbackRoles = ["super_admin", "department_admin", "developer", "business_user"];
           const merged = (roleNames || []).length > 0 ? (roleNames || []) : fallbackRoles;
-          const withSelected = merged.includes(selectedRole)
-            ? merged
-            : [...merged, selectedRole];
+          const filtered = merged.filter((role) => role !== "consumer");
+          const withSelected =
+            selectedRole && selectedRole !== "consumer" && !filtered.includes(selectedRole)
+              ? [...filtered, selectedRole]
+              : filtered;
           setAvailableRoles(withSelected);
         },
         onError: () => {
@@ -185,7 +189,9 @@ export default function UserManagementModal({
     if (isRootAdmin) {
       return ["super_admin"];
     }
-    return Array.from(new Set([...baseRoles, effectiveRole].filter(Boolean)));
+    return Array.from(
+      new Set([...baseRoles, effectiveRole].filter((role) => Boolean(role) && role !== "consumer")),
+    );
   })();
 
   function validateDepartmentAdminSelection(): boolean {
@@ -253,6 +259,69 @@ export default function UserManagementModal({
     return true;
   }
 
+  function getSubmitData() {
+    const parsedBulkUsernames = enableBulkDepartmentAdd
+      ? parseBulkUsernames(username)
+      : [username.trim()];
+    const submitData: any = {
+      username: parsedBulkUsernames[0] ?? "",
+      ...(enableBulkDepartmentAdd ? { usernames: parsedBulkUsernames } : {}),
+      is_active: isActive,
+      role: effectiveRole,
+    };
+
+    if (isCreatingDepartmentAdmin) {
+      submitData.department_name = departmentName;
+      submitData.department_admin_email = "";
+      delete submitData.department_id;
+    } else if (isDepartmentAdminCreator) {
+      submitData.department_admin_email = userData?.username || "";
+      submitData.department_name = (userData as any)?.department_name || "";
+      if ((userData as any)?.department_id) {
+        submitData.department_id = (userData as any).department_id;
+      } else {
+        delete submitData.department_id;
+      }
+    } else if (requiresDepartmentAdminSelection) {
+      submitData.department_id = departmentId;
+      submitData.department_admin_email = "";
+    }
+    if (requiresOrganizationBootstrap) {
+      submitData.organization_name = organizationName.trim();
+      submitData.organization_description = organizationDescription.trim();
+    }
+
+    return submitData;
+  }
+
+  async function canProceedWithDepartmentChange(): Promise<boolean> {
+    if (
+      !data?.id ||
+      !requiresDepartmentAdminSelection ||
+      !departmentId ||
+      String(departmentId) === String(data?.department_id ?? "")
+    ) {
+      return true;
+    }
+
+    try {
+      const response = await api.get(`${getURL("USERS")}/${data.id}/department-change-check`, {
+        params: { target_department_id: departmentId },
+      });
+      if (response.data?.can_change === false) {
+        setDepartmentError(response.data?.detail || "Department change is blocked.");
+        return false;
+      }
+      setDepartmentError("");
+      return true;
+    } catch (error: any) {
+      setDepartmentError(
+        error?.response?.data?.detail || error?.message || "Department change check failed.",
+      );
+      return false;
+    }
+  }
+
   return (
     <BaseModal size="medium-h-full" open={open} setOpen={setOpen}>
       <BaseModal.Trigger asChild={asChild}>{children}</BaseModal.Trigger>
@@ -266,59 +335,28 @@ export default function UserManagementModal({
       </BaseModal.Header>
       <BaseModal.Content>
         <Form.Root
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
+            event.preventDefault();
             if (!validateUsernameInput(username, enableBulkDepartmentAdd)) {
-              event.preventDefault();
               return;
             }
             const submitRequiresDepartmentAdminSelection =
               userData?.role === "super_admin" && effectiveRole !== "department_admin";
             if (submitRequiresDepartmentAdminSelection && !validateDepartmentAdminSelection()) {
-              event.preventDefault();
               return;
             }
             if (requiresOrganizationBootstrap && !organizationName.trim()) {
               setOrganizationError("Organization name is required.");
-              event.preventDefault();
               return;
             }
-            const parsedBulkUsernames = enableBulkDepartmentAdd
-              ? parseBulkUsernames(username)
-              : [username.trim()];
-            const submitData = {
-              ...inputState,
-              username: parsedBulkUsernames[0] ?? "",
-              ...(enableBulkDepartmentAdd ? { usernames: parsedBulkUsernames } : {}),
-              is_active: isActive,
-              role: effectiveRole,
-            };
+            if (!(await canProceedWithDepartmentChange())) {
+              return;
+            }
+            const submitData = getSubmitData();
 
-            if (isCreatingDepartmentAdmin) {
-              submitData.department_name = departmentName;
-              submitData.department_admin_email = "";
-              delete submitData.department_id;
-            } else if (isDepartmentAdminCreator) {
-              submitData.department_admin_email = userData?.username || "";
-              submitData.department_name =
-                (userData as any)?.department_name || "";
-              if ((userData as any)?.department_id) {
-                submitData.department_id = (userData as any).department_id;
-              } else {
-                delete submitData.department_id;
-              }
-            } else if (requiresDepartmentAdminSelection) {
-              submitData.department_id = departmentId;
-              submitData.department_admin_email = "";
-            }
-            if (requiresOrganizationBootstrap) {
-              submitData.organization_name = organizationName.trim();
-              submitData.organization_description = organizationDescription.trim();
-            }
-            
             resetForm();
             onConfirm(1, submitData);
             setOpen(false);
-            event.preventDefault();
           }}
         >
           <div className="grid gap-5">
@@ -531,6 +569,7 @@ export default function UserManagementModal({
                 </div>
               </Form.Field>
             )}
+
           </div>
 
           <div className="float-right">

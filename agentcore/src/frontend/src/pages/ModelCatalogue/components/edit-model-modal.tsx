@@ -222,6 +222,41 @@ export default function EditModelModal({
 
   useEffect(() => {
     if (!open) return;
+    if (visibilityScope === "organization") {
+      const firstOrg =
+        visibilityOptions.organizations[0]?.id ||
+        visibilityOptions.departments[0]?.org_id ||
+        "";
+      if (!orgId && firstOrg) setOrgId(firstOrg);
+      return;
+    }
+    if (visibilityScope !== "department") return;
+    const firstDept = departmentsForSelectedOrg[0] || visibilityOptions.departments[0];
+    if (!firstDept) return;
+    if (canMultiDept) {
+      const hasSelectedDept = publicDeptIds.some((id) =>
+        departmentsForSelectedOrg.some((dept) => dept.id === id),
+      );
+      if (!orgId) setOrgId(firstDept.org_id);
+      if (!hasSelectedDept) setPublicDeptIds([firstDept.id]);
+      return;
+    }
+    if (!deptId) setDeptId(firstDept.id);
+    if (!orgId) setOrgId(firstDept.org_id);
+  }, [
+    open,
+    visibilityScope,
+    canMultiDept,
+    orgId,
+    deptId,
+    publicDeptIds,
+    departmentsForSelectedOrg,
+    visibilityOptions.organizations,
+    visibilityOptions.departments,
+  ]);
+
+  useEffect(() => {
+    if (!open) return;
     const key = buildTestKey();
     if (testPayloadKey && key !== testPayloadKey) {
       setTestResult(null);

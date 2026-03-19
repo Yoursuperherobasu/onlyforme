@@ -32,6 +32,9 @@ router = APIRouter(tags=["Files"], prefix="/files")
 # Set the static name of the MCP servers file
 MCP_SERVERS_FILE = "_mcp_servers"
 SAMPLE_DATA_DIR = Path(__file__).parent / "sample_data"
+_SECRET_TOKEN_RE = re.compile(
+    r"(gsk_[A-Za-z0-9_\-]+|sk-ant-[A-Za-z0-9_\-]+|sk-or-[A-Za-z0-9_\-]+|sk-[A-Za-z0-9_\-]+|xai-[A-Za-z0-9_\-]+|hf_[A-Za-z0-9_\-]+|AIza[0-9A-Za-z_\-]+)"
+)
 
 
 async def _build_file_visibility_filters(session: DbSession, current_user: CurrentActiveUser):
@@ -178,9 +181,22 @@ async def _resolve_upload_scope(
 
     role = normalize_role(getattr(current_user, "role", "") or "")
     if normalized_visibility == "PRIVATE":
+        org_memberships = (
+            await session.exec(
+                select(UserOrganizationMembership.org_id).where(
+                    UserOrganizationMembership.user_id == current_user.id,
+                    UserOrganizationMembership.status.in_(["accepted", "active"]),
+                )
+            )
+        ).all()
+        allowed_orgs = {r if isinstance(r, uuid.UUID) else r[0] for r in org_memberships}
         if role in {"department_admin", "developer", "business_user"}:
             resolved_org_id, resolved_dept_id = await _resolve_default_scope(session, current_user)
             return KBVisibilityEnum.PRIVATE, resolved_org_id, resolved_dept_id, None
+        if role == "super_admin":
+            if not allowed_orgs:
+                raise HTTPException(status_code=403, detail="No active organization scope found for user")
+            return KBVisibilityEnum.PRIVATE, sorted(allowed_orgs, key=str)[0], None, None
         return KBVisibilityEnum.PRIVATE, None, None, None
 
     if normalized_visibility == "PUBLIC":
@@ -255,6 +271,17 @@ def sanitize_knowledge_base_name(raw_name: str) -> str:
     clean_name = clean_name.replace("\\", "_").replace("/", "_")
     clean_name = re.sub(r"[^A-Za-z0-9 _.-]", "_", clean_name)
     return re.sub(r"\s+", " ", clean_name).strip(" .")
+
+
+def _safe_upload_error_detail(exc: Exception, fallback: str) -> str:
+    raw_message = str(exc or "").strip()
+    if not raw_message:
+        return fallback
+    if _SECRET_TOKEN_RE.search(raw_message):
+        return fallback
+    if len(raw_message) > 240:
+        return fallback
+    return raw_message
 
 
 async def _can_access_existing_kb(session: DbSession, current_user: CurrentActiveUser, kb: KnowledgeBase) -> bool:
@@ -414,7 +441,11 @@ async def upload_user_file(
     try:
         max_file_size_upload = settings_service.settings.max_file_size_upload
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Settings error: {e}") from e
+        logger.exception("Knowledge hub upload failed while reading settings")
+        raise HTTPException(
+            status_code=500,
+            detail=_safe_upload_error_detail(e, "Upload settings are unavailable right now."),
+        ) from e
 
     # Validate that a file is actually provided
     if not file or not file.filename:
@@ -503,7 +534,12 @@ async def upload_user_file(
                 file, storage_service, current_user, file_name=storage_file_name
             )
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error saving file: {e}") from e
+            logger.exception("Knowledge hub upload failed while saving file")
+            await session.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=_safe_upload_error_detail(e, "Unable to save the uploaded file."),
+            ) from e
 
         # Compute the file size based on the path
         file_size = await storage_service.get_file_size(
@@ -527,10 +563,16 @@ async def upload_user_file(
         await session.commit()
         await session.refresh(new_file)
     except HTTPException:
+        await session.rollback()
         raise
     except Exception as e:
         # Optionally, you could also delete the file from disk if the DB insert fails.
-        raise HTTPException(status_code=500, detail=f"Database error: {e}") from e
+        logger.exception("Knowledge hub upload failed while writing database records")
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=_safe_upload_error_detail(e, "Unable to complete the upload."),
+        ) from e
 
     return UploadFileResponse(agent_id=str(current_user.id), file_path=Path(new_file.path))
 

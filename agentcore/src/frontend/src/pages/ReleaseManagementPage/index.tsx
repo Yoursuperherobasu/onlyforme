@@ -1,9 +1,10 @@
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useContext, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Loading from "@/components/ui/loading";
 import { Textarea } from "@/components/ui/textarea";
+import { AuthContext } from "@/contexts/authContext";
 import {
   Tooltip,
   TooltipContent,
@@ -364,6 +365,9 @@ function Label({ children }: { children: React.ReactNode }) {
 ══════════════════════════════════════════════ */
 export default function ReleaseManagementPage() {
   const { t } = useTranslation();
+  const { permissions } = useContext(AuthContext);
+  const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canPublishRelease = can("publish_release");
 
   const [bumpType, setBumpType] = useState<BumpType>("patch");
   const [notes, setNotes] = useState("");
@@ -516,7 +520,8 @@ export default function ReleaseManagementPage() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
 
           {/* ── LEFT SIDEBAR: Create Release ── */}
-          <aside className="flex w-[320px] flex-shrink-0 flex-col overflow-y-auto border-r border-border/50 bg-card/40">
+          {canPublishRelease && (
+            <aside className="flex w-[320px] flex-shrink-0 flex-col overflow-y-auto border-r border-border/50 bg-card/40">
 
             <div className="px-5 pt-5 pb-4">
               <p className="text-sm font-semibold">{t("New Release")}</p>
@@ -667,13 +672,14 @@ export default function ReleaseManagementPage() {
                 {t("Bumps version and closes the active window.")}
               </p>
             </div>
-          </aside>
+            </aside>
+          )}
 
           {/* ── RIGHT MAIN AREA ── */}
           <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
 
             {/* Manual entry table — shown only when relevant */}
-            {inputMode === "manual" && (
+            {canPublishRelease && inputMode === "manual" && (
               <div className="flex-shrink-0 border-b border-border/50 bg-muted/5">
                 <div className="flex items-center justify-between px-6 py-3">
                   <div>
