@@ -264,14 +264,7 @@ async def restore_role_default_permissions(
             detail="Default restore is only available for system roles with configured defaults.",
         )
 
-    available_perms = (
-        await session.exec(
-            select(Permission).where(Permission.key.in_(set(default_permissions)))
-        )
-    ).all()
-    available_keys = {perm.key for perm in available_perms}
-    valid_keys = [key for key in default_permissions if key in available_keys]
-
+    valid_keys = await _resolve_assignable_permission_keys(session, default_permissions)
     await _replace_role_permissions(session, role.id, valid_keys)
     await invalidate_role_permissions_cache(role.name)
 
@@ -300,21 +293,12 @@ async def restore_default_role_permissions(
     ).all()
     role_by_name = {role.name: role for role in roles}
 
-    perm_rows = (
-        await session.exec(
-            select(Permission).where(Permission.key.in_({
-                p for perms in ROLE_PERMISSIONS.values() for p in perms
-            }))
-        )
-    ).all()
-    perm_by_key = {perm.key: perm.id for perm in perm_rows}
-
     restored_roles: list[str] = []
     for role_name, perm_keys in ROLE_PERMISSIONS.items():
         role = role_by_name.get(role_name)
         if not role:
             continue
-        valid_keys = [key for key in perm_keys if key in perm_by_key]
+        valid_keys = await _resolve_assignable_permission_keys(session, perm_keys)
         await _replace_role_permissions(session, role.id, valid_keys)
         await invalidate_role_permissions_cache(role.name)
         restored_roles.append(role.name)
@@ -326,7 +310,7 @@ async def restore_default_role_permissions(
 
 
 async def _replace_role_permissions(session: DbSession, role_id: UUID, permissions: list[str]) -> None:
-    unique_permissions = list(dict.fromkeys(permissions))
+    unique_permissions = await _resolve_assignable_permission_keys(session, permissions)
     if not unique_permissions:
         # Remove existing
         await session.exec(delete(RolePermission).where(RolePermission.role_id == role_id))
@@ -349,6 +333,45 @@ async def _replace_role_permissions(session: DbSession, role_id: UUID, permissio
     for perm in perm_rows:
         session.add(RolePermission(role_id=role_id, permission_id=perm.id))
     await session.commit()
+
+
+async def _resolve_assignable_permission_keys(session: DbSession, permissions: list[str]) -> list[str]:
+    requested_keys = list(dict.fromkeys(permissions))
+    if not requested_keys:
+        return []
+
+    candidate_keys: list[str] = []
+    for key in requested_keys:
+        if key not in candidate_keys:
+            candidate_keys.append(key)
+        for alias in PERMISSION_ALIASES.get(key, []):
+            if alias not in candidate_keys:
+                candidate_keys.append(alias)
+
+    perm_rows = (
+        await session.exec(select(Permission).where(Permission.key.in_(candidate_keys)))
+    ).all()
+    perm_by_key = {perm.key: perm for perm in perm_rows}
+
+    resolved: list[str] = []
+    missing_keys: list[str] = []
+    for key in requested_keys:
+        if key in perm_by_key:
+            resolved.append(key)
+            continue
+        alias_match = next((alias for alias in PERMISSION_ALIASES.get(key, []) if alias in perm_by_key), None)
+        if alias_match:
+            resolved.append(alias_match)
+            continue
+        missing_keys.append(key)
+
+    if missing_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown permissions: {', '.join(missing_keys)}",
+        )
+
+    return list(dict.fromkeys(resolved))
 
 
 async def _get_permissions_for_role(session: DbSession, role_id: UUID) -> list[str]:

@@ -104,7 +104,10 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
     page: "MCP Servers",
     sections: [
       { name: "Page Access", keys: ["view_mcp_page"] },
-      { name: "Actions", keys: ["add_new_mcp", "retire_mcp", "request_new_mcp"] },
+      {
+        name: "Actions",
+        keys: ["add_new_mcp", "edit_mcp", "delete_mcp", "request_new_mcp"],
+      },
     ],
   },
   {
@@ -186,6 +189,11 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   view_vector_db_page: ["view_vectordb_page"],
   retire_vector_db: ["delete_vector_db_catalogue"],
   view_mcp_servers_page: ["view_mcp_page"],
+  retire_mcp: ["delete_mcp", "delete_mcp_registry"],
+  delete_mcp_registry: ["delete_mcp", "retire_mcp"],
+  delete_mcp_server: ["delete_mcp"],
+  edit_mcp_registry: ["edit_mcp"],
+  edit_mcp_server: ["edit_mcp"],
   view_model_catalogue_page: ["view_models"],
   view_agent_catalogue_page: ["view_published_agents"],
   view_guardrails_page: ["view_guardrail_page"],
@@ -583,11 +591,6 @@ export default function AccessControlPage() {
                               <span className="block text-xs text-muted-foreground font-mono">
                                 {perm.key}
                               </span>
-                              {perm.description && (
-                                <span className="block text-xs text-muted-foreground">
-                                  {perm.description}
-                                </span>
-                              )}
                             </span>
                           </label>
                         ))}

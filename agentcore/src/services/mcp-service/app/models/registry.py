@@ -110,6 +110,7 @@ class McpRegistryUpdate(BaseModel):
     approval_status: str | None = None
     requested_by: UUID | None = None
     request_to: UUID | None = None
+    created_by: str | None = None
     created_by_id: UUID | None = None
 
 

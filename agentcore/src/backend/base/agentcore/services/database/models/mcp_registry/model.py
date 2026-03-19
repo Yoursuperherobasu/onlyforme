@@ -155,6 +155,8 @@ class McpRegistryUpdate(BaseModel):
     reviewed_by: UUID | None = None
     review_comments: str | None = None
     review_attachments: dict | None = None
+    created_by: str | None = None
+    created_by_id: UUID | None = None
 
 
 # ---------------------------------------------------------------------------

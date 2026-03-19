@@ -441,7 +441,7 @@ export default function ModelCatalogue(): JSX.Element {
                       "Model ID",
                       "Environment",
                       "Visibility",
-                      ...(isDepartmentAdmin ? ["Requested By"] : []),
+                      ...(isDepartmentAdmin ? ["Created By"] : []),
                       ...(isSuperAdmin ? ["Department Scope"] : []),
                       "Type",
                       "Status",
