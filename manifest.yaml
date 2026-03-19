@@ -124,3 +124,8 @@ deployments:
   version_number: v1
   environment: prod
   deployment_id: ecdde86b-5861-4d78-9b88-d25915a5353e
+- agent_id: 7c07f82f-6eba-4458-aea0-7857bb4ca5d9
+  agent_name: llm
+  version_number: v1
+  environment: uat
+  deployment_id: 82603495-b110-419f-8115-afd38d4bc143
