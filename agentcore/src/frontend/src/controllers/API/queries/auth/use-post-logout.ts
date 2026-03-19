@@ -2,6 +2,7 @@ import useAuthStore from "@/stores/authStore";
 import useAgentStore from "@/stores/agentStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { useFolderStore } from "@/stores/foldersStore";
+import { useUtilityStore } from "@/stores/utilityStore";
 import type { useMutationFunctionType } from "@/types/api";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
@@ -20,6 +21,7 @@ export const useLogout: useMutationFunctionType<undefined, void> = (
     useAgentStore.getState().resetAgentState();
     useAgentsManagerStore.getState().resetStore();
     useFolderStore.getState().resetStore();
+    useUtilityStore.getState().setHealthCheckTimeout(null);
 
     queryClient.invalidateQueries({ queryKey: ["useGetRefreshAgentsQuery"] });
     queryClient.invalidateQueries({ queryKey: ["useGetFolders"] });

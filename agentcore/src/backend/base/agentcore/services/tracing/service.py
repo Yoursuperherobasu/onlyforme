@@ -380,6 +380,10 @@ class TracingService(Service):
         try:
             from agentcore.api.evaluation import run_saved_evaluators_for_new_trace
 
+            # Pass trace input/output directly so the evaluator doesn't need
+            # to re-fetch from Langfuse (which may not have ingested yet).
+            trace_input = trace_context.all_inputs
+            trace_output = trace_context.all_outputs
             asyncio.create_task(
                 run_saved_evaluators_for_new_trace(
                     trace_id=str(trace_context.run_id),
@@ -389,6 +393,8 @@ class TracingService(Service):
                     session_id=trace_context.session_id,
                     project_name=trace_context.observability_project_name or trace_context.project_name,
                     timestamp=datetime.now(timezone.utc),
+                    trace_input=trace_input,
+                    trace_output=trace_output,
                 )
             )
             logger.info("Evaluator task scheduled successfully")

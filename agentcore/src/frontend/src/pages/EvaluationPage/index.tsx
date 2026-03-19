@@ -2,6 +2,9 @@ import { ChevronDown, Play, Plus } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import type { LangfuseEnvironment } from "../ObservabilityPage/types";
+import { TraceDetailDialog } from "../ObservabilityPage/components/DetailDialogs";
+import { fetchTraceDetail } from "../ObservabilityPage/api";
+import type { TraceDetailResponse } from "../ObservabilityPage/types";
 import { api } from "@/controllers/API/api";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -195,6 +198,27 @@ export default function EvaluationPage() {
 
   const [agentList, setAgentList] = useState<any[]>([]);
   const { data: registryModels = [] } = useGetRegistryModels({ model_type: "llm", active_only: true });
+
+  // Trace detail dialog state (for viewing trace from scores table)
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [traceDetail, setTraceDetail] = useState<TraceDetailResponse | undefined>(undefined);
+  const [traceDetailLoading, setTraceDetailLoading] = useState(false);
+  const [traceDetailError, setTraceDetailError] = useState(false);
+
+  useEffect(() => {
+    if (!selectedTraceId) {
+      setTraceDetail(undefined);
+      return;
+    }
+    let cancelled = false;
+    setTraceDetailLoading(true);
+    setTraceDetailError(false);
+    fetchTraceDetail(selectedTraceId, { environment: selectedEnvironment })
+      .then((data) => { if (!cancelled) setTraceDetail(data); })
+      .catch(() => { if (!cancelled) setTraceDetailError(true); })
+      .finally(() => { if (!cancelled) setTraceDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedTraceId, selectedEnvironment]);
 
   // Per-tab fetch guards — prevent redundant refetches on every tab revisit
   const hasFetchedScoresRef = useRef(false);
@@ -966,9 +990,17 @@ export default function EvaluationPage() {
       if (filterSessionId) payload.session_id = filterSessionId;
       if (filterTraceId) payload.trace_id = filterTraceId;
 
-      await createEvaluator(payload, { environment: selectedEnvironment });
+      if (editingEvaluator) {
+        await updateEvaluator(editingEvaluator, payload);
+        if (runOnExisting) {
+          await runEvaluator(editingEvaluator, { environment: selectedEnvironment });
+        }
+      } else {
+        await createEvaluator(payload, { environment: selectedEnvironment });
+      }
       setIsJudgeDialogOpen(false);
       resetForms();
+      setEditingEvaluator(null);
       // Refresh saved evaluators list
       try {
         const items = await listEvaluators();
@@ -1221,14 +1253,26 @@ export default function EvaluationPage() {
     if (!confirmed) return;
 
     try {
-      const result = await deleteEvaluationDataset(selectedDatasetName);
+      const deletedDatasetName = selectedDatasetName;
+      const result = await deleteEvaluationDataset(deletedDatasetName, {
+        org_id: selectedDataset?.org_id || undefined,
+        dept_id: selectedDataset?.dept_id || undefined,
+      });
       if (result.status === "deleted") {
-        setSuccessData({ title: t("Dataset '{{name}}' deleted", { name: selectedDatasetName }) });
+        setSuccessData({ title: t("Dataset '{{name}}' deleted", { name: deletedDatasetName }) });
       } else {
         setNoticeData({
-          title: `Dataset '${selectedDatasetName}' purged (container retained by Langfuse SDK).`,
+          title: `Dataset '${deletedDatasetName}' purged${result.errors?.length ? " with some cleanup warnings" : ""}.`,
         });
       }
+      setDatasets((current) =>
+        current.filter((dataset) => dataset.name !== deletedDatasetName),
+      );
+      setSelectedDatasetName("");
+      setDatasetItems([]);
+      setDatasetRuns([]);
+      setSelectedRunDetail(null);
+      setDatasetExperimentJob(null);
       setIsDatasetItemsDialogOpen(false);
       await fetchDatasets(false);
     } catch (error) {
@@ -1539,8 +1583,16 @@ export default function EvaluationPage() {
                       ? new Date(score.created_at).toLocaleString()
                       : "-"}
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs text-blue-600 dark:text-blue-400">
-                    <span title={score.trace_id}>{score.trace_id || "-"}</span>
+                  <td className="px-6 py-4 font-mono text-xs">
+                    {score.trace_id ? (
+                      <button
+                        className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        title={`View trace: ${score.trace_id}`}
+                        onClick={() => setSelectedTraceId(score.trace_id)}
+                      >
+                        {score.trace_id}
+                      </button>
+                    ) : "-"}
                   </td>
                   <td className="px-6 py-4 font-medium">
                     {score.agent_name || "-"}
@@ -1591,16 +1643,26 @@ export default function EvaluationPage() {
   };
 
   const renderDatasets = () => {
-    const agentOptions = (agentList || [])
-      .map((agent: any) => {
-        const id = agent?.metadata?.agent_id || agent?.id;
-        if (!id) return null;
-        return {
-          id: String(id),
-          label: agent?.metadata?.display_name || agent?.name || String(id),
-        };
-      })
-      .filter(Boolean) as Array<{ id: string; label: string }>;
+    const agentOptions = Array.from(
+      new Map(
+        (agentList || [])
+          .map((agent: any) => {
+            const id = agent?.metadata?.agent_id || agent?.id;
+            if (!id) return null;
+            return [
+              String(id),
+              {
+                id: String(id),
+                label:
+                  agent?.metadata?.display_name || agent?.name || String(id),
+              },
+            ] as const;
+          })
+          .filter(Boolean) as Array<
+          readonly [string, { id: string; label: string }]
+        >,
+      ).values(),
+    );
 
     return (
       <div className="flex flex-col gap-6">
@@ -2500,7 +2562,7 @@ export default function EvaluationPage() {
       </div>
 
       {/* Run Judge Dialog */}
-      <Dialog open={isJudgeDialogOpen} onOpenChange={setIsJudgeDialogOpen}>
+      <Dialog open={isJudgeDialogOpen} onOpenChange={(open) => { setIsJudgeDialogOpen(open); if (!open) resetForms(); }}>
         <DialogContent className="max-w-2xl w-full max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Run LLM Judge</DialogTitle>
@@ -3199,7 +3261,7 @@ export default function EvaluationPage() {
       </Dialog>
 
       {/* Create Score Dialog */}
-      <Dialog open={isScoreDialogOpen} onOpenChange={setIsScoreDialogOpen}>
+      <Dialog open={isScoreDialogOpen} onOpenChange={(open) => { setIsScoreDialogOpen(open); if (!open) resetForms(); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Manual Score</DialogTitle>
@@ -3263,6 +3325,16 @@ export default function EvaluationPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Trace Detail Dialog — opened when clicking a trace ID in the scores table */}
+      <TraceDetailDialog
+        selectedTrace={selectedTraceId}
+        onClose={() => setSelectedTraceId(null)}
+        traceDetail={traceDetail}
+        isLoading={traceDetailLoading}
+        isFetching={traceDetailLoading}
+        isError={traceDetailError}
+      />
     </div>
   );
 }

@@ -264,7 +264,6 @@ export default function UserManagementModal({
       ? parseBulkUsernames(username)
       : [username.trim()];
     const submitData: any = {
-      ...inputState,
       username: parsedBulkUsernames[0] ?? "",
       ...(enableBulkDepartmentAdd ? { usernames: parsedBulkUsernames } : {}),
       is_active: isActive,

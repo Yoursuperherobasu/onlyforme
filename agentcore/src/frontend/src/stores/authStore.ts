@@ -3,8 +3,11 @@ import { create } from "zustand";
 import {
   AGENTCORE_ACCESS_TOKEN,
   AGENTCORE_API_TOKEN,
+  AGENTCORE_REFRESH_TOKEN,
 } from "@/constants/constants";
 import type { AuthStoreType } from "@/types/zustand/auth";
+import { removeLocalStorage } from "@/utils/local-storage-util";
+import { removeAuthCookie } from "@/utils/utils";
 
 const cookies = new Cookies();
 const useAuthStore = create<AuthStoreType>((set) => ({
@@ -43,10 +46,18 @@ const useAuthStore = create<AuthStoreType>((set) => ({
     set({ authenticationErrorCount }),
 
   logout: async () => {
+    removeAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN);
+    removeAuthCookie(cookies, AGENTCORE_REFRESH_TOKEN);
+    removeAuthCookie(cookies, AGENTCORE_API_TOKEN);
+    removeLocalStorage(AGENTCORE_ACCESS_TOKEN);
+    removeLocalStorage(AGENTCORE_REFRESH_TOKEN);
+    removeLocalStorage(AGENTCORE_API_TOKEN);
+
     set({
       isAuthenticated: false,
       accessToken: null,
       apiKey: null,
+      authenticationErrorCount: 0,
       role: null,
       permissions: [],
       userData: null,

@@ -1026,6 +1026,14 @@ export const setAuthCookie = (
   });
 };
 
+export const removeAuthCookie = (cookies: Cookies, tokenName: string) => {
+  cookies.remove(tokenName, {
+    path: "/",
+    secure: true,
+    sameSite: "strict",
+  });
+};
+
 export const getBooleanFromStorage = (
   key: string,
   defaultValue: boolean,

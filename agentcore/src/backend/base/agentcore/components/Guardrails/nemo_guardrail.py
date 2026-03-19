@@ -254,6 +254,7 @@ class NemoGuardrailComponent(Node):
             logger.warning(f"NeMo guardrail node blocked content: guardrail_id={result.get('guardrail_id')}")
             self._decision = decision
             self._decision_evaluated = True
+            asyncio.ensure_future(self._log_guardrail_execution(decision))
             return decision
 
         decision["blocked"] = False

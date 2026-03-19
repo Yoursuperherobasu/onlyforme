@@ -223,9 +223,6 @@ function ApiInterceptor() {
       return await remakeRequest(error);
     } catch (refreshError) {
       console.error(refreshError);
-      setErrorData({
-        title: "Session expired. Please login again.",
-      });
       try {
         await mutationLogoutAsync(undefined);
       } catch {

@@ -569,30 +569,6 @@ async def _hard_delete_user_dependencies(
     actor_user_id: UUID,
 ) -> None:
     user_id = target_user.id
-    agent_ids = await _owned_agent_ids_for_user(session, user_id)
-    uat_deployment_ids: list[UUID] = []
-    prod_deployment_ids: list[UUID] = []
-
-    if agent_ids:
-        uat_deployment_ids = list(
-            (
-                await session.exec(
-                    select(AgentDeploymentUAT.id).where(
-                        AgentDeploymentUAT.agent_id.in_(agent_ids),
-                    )
-                )
-            ).all()
-        )
-        prod_deployment_ids = list(
-            (
-                await session.exec(
-                    select(AgentDeploymentProd.id).where(
-                        AgentDeploymentProd.agent_id.in_(agent_ids),
-                    )
-                )
-            ).all()
-        )
-
     await invalidate_user_auth(
         user_id,
         email=target_user.email or target_user.username,
@@ -655,7 +631,37 @@ async def _hard_delete_user_dependencies(
         .values(invited_by=None)
     )
 
-    # Remove agent-scoped dependencies first.
+    await _hard_delete_user_assets(
+        session,
+        target_user=target_user,
+    )
+
+    await session.exec(delete(UserDepartmentMembership).where(UserDepartmentMembership.user_id == user_id))
+    await session.exec(delete(UserOrganizationMembership).where(UserOrganizationMembership.user_id == user_id))
+
+    await session.delete(target_user)
+
+
+async def _hard_delete_user_assets(
+    session: DbSession,
+    *,
+    target_user: User,
+) -> None:
+    user_id = target_user.id
+    agent_ids = await _owned_agent_ids_for_user(session, user_id)
+    uat_deployment_ids: list[UUID] = []
+
+    if agent_ids:
+        uat_deployment_ids = list(
+            (
+                await session.exec(
+                    select(AgentDeploymentUAT.id).where(
+                        AgentDeploymentUAT.agent_id.in_(agent_ids),
+                    )
+                )
+            ).all()
+        )
+
     has_control_panel_uat = await _table_exists(session, "control_panel_uat")
     has_publish_record = await _table_exists(session, "publish_record")
 
@@ -666,7 +672,38 @@ async def _hard_delete_user_dependencies(
                 control_panel_uat_table.c.deployment_id.in_(uat_deployment_ids)
             )
         )
+
     if agent_ids:
+        trigger_config_table = table(
+            "trigger_config",
+            column("id"),
+            column("agent_id"),
+        )
+        trigger_execution_log_table = table(
+            "trigger_execution_log",
+            column("trigger_config_id"),
+        )
+        trigger_config_ids = list(
+            (
+                await session.execute(
+                    select(trigger_config_table.c.id).where(
+                        trigger_config_table.c.agent_id.in_(agent_ids)
+                    )
+                )
+            ).scalars().all()
+        )
+        if trigger_config_ids:
+            await session.execute(
+                delete(trigger_execution_log_table).where(
+                    trigger_execution_log_table.c.trigger_config_id.in_(trigger_config_ids)
+                )
+            )
+        await session.execute(
+            delete(trigger_config_table).where(
+                trigger_config_table.c.agent_id.in_(agent_ids)
+            )
+        )
+
         await session.exec(delete(ApprovalRequest).where(ApprovalRequest.agent_id.in_(agent_ids)))
         if has_publish_record:
             publish_record_table = table("publish_record", column("agent_id"))
@@ -687,6 +724,116 @@ async def _hard_delete_user_dependencies(
         await session.exec(delete(AgentDeploymentUAT).where(AgentDeploymentUAT.agent_id.in_(agent_ids)))
         await session.exec(delete(Agent).where(Agent.id.in_(agent_ids)))
 
+    knowledge_base_table = table("knowledge_base", column("id"), column("created_by"))
+    knowledge_base_ids = list(
+        (
+            await session.execute(
+                select(knowledge_base_table.c.id).where(
+                    knowledge_base_table.c.created_by == user_id
+                )
+            )
+        ).scalars().all()
+    )
+    if knowledge_base_ids:
+        await session.exec(delete(File).where(File.knowledge_base_id.in_(knowledge_base_ids)))
+        await session.execute(
+            delete(knowledge_base_table).where(
+                knowledge_base_table.c.id.in_(knowledge_base_ids)
+            )
+        )
+
+    model_registry_table = table("model_registry", column("id"), column("created_by_id"))
+    model_ids = list(
+        (
+            await session.execute(
+                select(model_registry_table.c.id).where(
+                    model_registry_table.c.created_by_id == user_id
+                )
+            )
+        ).scalars().all()
+    )
+    if model_ids:
+        model_approval_request_table = table("model_approval_request", column("model_id"))
+        model_audit_log_table = table("model_audit_log", column("model_id"))
+        await session.execute(
+            delete(model_approval_request_table).where(
+                model_approval_request_table.c.model_id.in_(model_ids)
+            )
+        )
+        await session.execute(
+            delete(model_audit_log_table).where(
+                model_audit_log_table.c.model_id.in_(model_ids)
+            )
+        )
+        guardrail_catalogue_table = table("guardrail_catalogue", column("model_registry_id"))
+        await session.execute(
+            delete(guardrail_catalogue_table).where(
+                guardrail_catalogue_table.c.model_registry_id.in_(model_ids)
+            )
+        )
+        await session.execute(
+            delete(model_registry_table).where(
+                model_registry_table.c.id.in_(model_ids)
+            )
+        )
+
+    mcp_registry_table = table("mcp_registry", column("id"), column("created_by_id"))
+    mcp_ids = list(
+        (
+            await session.execute(
+                select(mcp_registry_table.c.id).where(
+                    mcp_registry_table.c.created_by_id == user_id
+                )
+            )
+        ).scalars().all()
+    )
+    if mcp_ids:
+        mcp_approval_request_table = table("mcp_approval_request", column("mcp_id"))
+        mcp_audit_log_table = table("mcp_audit_log", column("mcp_id"))
+        await session.execute(
+            delete(mcp_approval_request_table).where(
+                mcp_approval_request_table.c.mcp_id.in_(mcp_ids)
+            )
+        )
+        await session.execute(
+            delete(mcp_audit_log_table).where(
+                mcp_audit_log_table.c.mcp_id.in_(mcp_ids)
+            )
+        )
+        await session.execute(
+            delete(mcp_registry_table).where(
+                mcp_registry_table.c.id.in_(mcp_ids)
+            )
+        )
+
+    connector_catalogue_table = table("connector_catalogue", column("created_by"))
+    await session.execute(
+        delete(connector_catalogue_table).where(
+            connector_catalogue_table.c.created_by == user_id
+        )
+    )
+
+    vector_db_catalogue_table = table("vector_db_catalogue", column("created_by"))
+    await session.execute(
+        delete(vector_db_catalogue_table).where(
+            vector_db_catalogue_table.c.created_by == user_id
+        )
+    )
+
+    evaluator_table = table("evaluator", column("user_id"))
+    await session.execute(
+        delete(evaluator_table).where(
+            evaluator_table.c.user_id == user_id
+        )
+    )
+
+    package_request_table = table("package_request", column("requested_by"))
+    await session.execute(
+        delete(package_request_table).where(
+            package_request_table.c.requested_by == user_id
+        )
+    )
+
     # Remove direct user-owned rows / references.
     await session.exec(delete(AgentEditLock).where(AgentEditLock.locked_by == user_id))
     await session.exec(delete(AgentApiKey).where(AgentApiKey.created_by == user_id))
@@ -696,10 +843,6 @@ async def _hard_delete_user_dependencies(
     await session.exec(delete(AgentRegistryRating).where(AgentRegistryRating.user_id == user_id))
     await session.exec(delete(File).where(File.user_id == user_id))
     await session.exec(delete(Project).where(Project.user_id == user_id))
-    await session.exec(delete(UserDepartmentMembership).where(UserDepartmentMembership.user_id == user_id))
-    await session.exec(delete(UserOrganizationMembership).where(UserOrganizationMembership.user_id == user_id))
-
-    await session.delete(target_user)
 
 
 @router.post("/", response_model=UserRead, status_code=201)
@@ -1340,7 +1483,12 @@ async def read_all_users(
     if user_ids:
         dept_rows = (
             await session.exec(
-                select(UserDepartmentMembership.user_id, UserDepartmentMembership.department_id)
+                select(
+                    UserDepartmentMembership.user_id,
+                    UserDepartmentMembership.department_id,
+                    Department.name,
+                )
+                .join(Department, Department.id == UserDepartmentMembership.department_id)
                 .where(
                     UserDepartmentMembership.user_id.in_(user_ids),
                     UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
@@ -1348,9 +1496,12 @@ async def read_all_users(
             )
         ).all()
     dept_map: dict[UUID, UUID] = {}
-    for uid, dept_id_value in dept_rows:
+    dept_name_map: dict[UUID, str] = {}
+    for uid, dept_id_value, dept_name in dept_rows:
         if uid not in dept_map:
             dept_map[uid] = dept_id_value
+        if uid not in dept_name_map:
+            dept_name_map[uid] = dept_name
 
     creator_map: dict[UUID, str] = {}
     if creator_ids:
@@ -1365,6 +1516,7 @@ async def read_all_users(
             UserRead(
                 **user.model_dump(),
                 organization_name=org_map.get(user.id),
+                department_name=dept_name_map.get(user.id) or user.department_name,
                 department_id=dept_map.get(user.id),
                 created_by_username=creator_map.get(user.created_by) if user.created_by else None,
             )
@@ -1415,6 +1567,93 @@ async def get_department_change_check(
         }
 
     return {"can_change": True, "detail": None}
+
+
+async def _move_user_to_department(
+    session: DbSession,
+    *,
+    actor: User,
+    target_user: User,
+    target_department_id: UUID,
+) -> None:
+    actor_role = normalize_role(actor.role)
+    if actor_role not in {"root", "super_admin"}:
+        raise HTTPException(status_code=403, detail="Only root or super admin can change departments.")
+
+    department_query = select(Department).where(
+        Department.id == target_department_id,
+        Department.status == "active",
+    )
+    if actor_role == "super_admin":
+        org_ids = await _get_admin_org_ids(session, actor)
+        if not org_ids:
+            raise HTTPException(status_code=403, detail="Permission denied")
+        department_query = department_query.where(Department.org_id.in_(list(org_ids)))
+
+    target_department = (await session.exec(department_query)).first()
+    if not target_department:
+        raise HTTPException(status_code=400, detail="Invalid target department.")
+
+    target_role = normalize_role(target_user.role)
+    if target_role in {"root", "super_admin", "department_admin"}:
+        raise HTTPException(status_code=400, detail="Department change is not supported for admin users.")
+
+    target_role_entity = await _get_role_entity(session, target_role)
+
+    await _hard_delete_user_assets(
+        session,
+        target_user=target_user,
+    )
+
+    await session.exec(
+        update(UserDepartmentMembership)
+        .where(
+            UserDepartmentMembership.user_id == target_user.id,
+            UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+        )
+        .values(
+            status="inactive",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+
+    await session.exec(
+        update(UserOrganizationMembership)
+        .where(
+            UserOrganizationMembership.user_id == target_user.id,
+            UserOrganizationMembership.org_id != target_department.org_id,
+            UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+        )
+        .values(
+            status="inactive",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+
+    await _ensure_org_membership(
+        session,
+        user_id=target_user.id,
+        org_id=target_department.org_id,
+        role_id=target_role_entity.id,
+        actor_user_id=actor.id,
+    )
+    await _ensure_department_membership(
+        session,
+        user_id=target_user.id,
+        org_id=target_department.org_id,
+        department_id=target_department.id,
+        role_id=target_role_entity.id,
+        actor_user_id=actor.id,
+    )
+
+    target_department_admin = await session.get(User, target_department.admin_user_id)
+    target_user.department_name = target_department.name
+    target_user.department_admin = target_department.admin_user_id
+    target_user.department_admin_email = (
+        target_department_admin.username if target_department_admin else None
+    )
+    target_user.updated_at = datetime.now(timezone.utc)
+    session.add(target_user)
 
 
 @router.patch("/{user_id}", response_model=UserRead)
@@ -1468,6 +1707,13 @@ async def patch_user(
                     status_code=409,
                     detail="You cannot change the department of a user who has agents published in UAT or PROD. Remove those published agent dependencies first.",
                 )
+            await _move_user_to_department(
+                session,
+                actor=user,
+                target_user=user_db,
+                target_department_id=requested_department_id,
+            )
+            user_update.department_id = None
 
         # Root promoting/editing a super admin must also ensure org membership mapping.
         if normalize_role(user.role) == "root" and user_update.role == "super_admin":
@@ -1524,6 +1770,15 @@ async def patch_user(
 
         if not update_password:
             user_update.password = user_db.password
+        user_data = user_update.model_dump(exclude_unset=True)
+        user_field_changes = any(
+            hasattr(user_db, attr) and value is not None
+            for attr, value in user_data.items()
+        )
+        if not user_field_changes:
+            await session.commit()
+            await session.refresh(user_db)
+            return user_db
         return await update_user(user_db, user_update, session)
     raise HTTPException(status_code=404, detail="User not found")
 
