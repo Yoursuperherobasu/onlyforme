@@ -541,29 +541,48 @@ async def get_knowledge_base_visibility_options(
 
     organizations = []
     if role == "root":
-        org_rows = (await session.exec(select(Organization.id, Organization.name))).all()
+        org_rows = (
+            await session.exec(
+                select(Organization.id, Organization.name).where(Organization.status == "active")
+            )
+        ).all()
         organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
     elif org_ids:
         org_rows = (
-            await session.exec(select(Organization.id, Organization.name).where(Organization.id.in_(list(org_ids))))
+            await session.exec(
+                select(Organization.id, Organization.name).where(
+                    Organization.id.in_(list(org_ids)),
+                    Organization.status == "active",
+                )
+            )
         ).all()
         organizations = [{"id": str(r[0]), "name": r[1]} for r in org_rows]
 
     departments = []
     if role == "root":
-        dept_rows = (await session.exec(select(Department.id, Department.name, Department.org_id))).all()
+        dept_rows = (
+            await session.exec(
+                select(Department.id, Department.name, Department.org_id).where(Department.status == "active")
+            )
+        ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
     elif role == "super_admin" and org_ids:
         dept_rows = (
             await session.exec(
-                select(Department.id, Department.name, Department.org_id).where(Department.org_id.in_(list(org_ids)))
+                select(Department.id, Department.name, Department.org_id).where(
+                    Department.org_id.in_(list(org_ids)),
+                    Department.status == "active",
+                )
             )
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
     elif dept_ids:
         dept_rows = (
             await session.exec(
-                select(Department.id, Department.name, Department.org_id).where(Department.id.in_(list(dept_ids)))
+                select(Department.id, Department.name, Department.org_id).where(
+                    Department.id.in_(list(dept_ids)),
+                    Department.status == "active",
+                )
             )
         ).all()
         departments = [{"id": str(r[0]), "name": r[1], "org_id": str(r[2])} for r in dept_rows]
