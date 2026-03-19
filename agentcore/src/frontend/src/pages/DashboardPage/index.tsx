@@ -185,7 +185,7 @@ const sections: SectionConfig[] = [
     id: "governance",
     label: "Governance & Guardrail",
     headline: "Governance & Guardrail KPIs",
-    description: "Policy enforcement, unsafe content interception, breach attempts, and agents operating without guardrails.",
+    description: "Policy enforcement and agents operating without guardrails.",
     kpis: [
       { name: "Guardrail Violation Rate", value: "0%" },
       { name: "Escalation to Human Review", value: "0" },
@@ -208,7 +208,7 @@ const departmentSections: SectionConfig[] = [
     id: "usage",
     label: "Department Usage",
     headline: "Department Usage KPIs",
-    description: "Active agents, success rates, token consumption, and response performance across your department.",
+    description: "Active agents and response performance across your department.",
     kpis: [
       { name: "Active Agents in Dept (UAT)", value: "0" },
       { name: "Active Agents in Dept (PROD)", value: "0" },
@@ -222,7 +222,7 @@ const departmentSections: SectionConfig[] = [
     id: "approval",
     label: "Approval & Governance",
     headline: "Approval & Governance KPIs",
-    description: "Pending approval queue depth, rejection rates, and average time-to-decision for agent change requests.",
+    description: "Pending approval queue depth, rejection rates, and average approval time.",
     kpis: [
       { name: "Pending Approvals", value: "0" },
       { name: "Rejection Rate", value: "0%" },
@@ -241,7 +241,7 @@ const departmentSections: SectionConfig[] = [
     id: "hitl",
     label: "HITL Governance",
     headline: "HITL Governance KPIs",
-    description: "Human-in-the-loop invocation frequency, response time benchmarks, and daily escalation patterns.",
+    description: "Human-in-the-loop invocation frequency, response time benchmarks, and escalation patterns.",
     kpis: [
       { name: "Agents with HITL", value: "0" },
       { name: "HITL Invocation Rate", value: "0%" },
@@ -266,23 +266,12 @@ const departmentSections: SectionConfig[] = [
 ];
 
 const developerSections: SectionConfig[] = [
-  {
-    id: "quality",
-    label: "Agent Quality",
-    headline: "Agent Quality KPIs (Langfuse Evaluations)",
-    description: "LLM evaluation scores � hallucination rates and RAG relevance from Langfuse.",
-    kpis: [
-      { name: "Hallucination Score", value: "0%" },
-      { name: "RAG Relevance Score", value: "0" },
   
-    ],
-    charts: [],
-  },
   {
     id: "performance",
     label: "Performance",
     headline: "Performance KPIs",
-    description: "Agent response latency profiles � average, P95, and P99 percentiles to surface tail latency regressions.",
+    description: "Agent response latency profiles - P95, and P99 percentiles to surface tail latency regressions.",
     kpis: [
       { name: "Avg Agent Latency", value: "0ms", scope: "global" },
       { name: "Latency P95", value: "0ms", scope: "global" },
@@ -311,7 +300,7 @@ const businessSections: SectionConfig[] = [
     id: "experience",
     label: "Experience",
     headline: "Experience KPIs",
-    description: "End-user experience signals � response speed, satisfaction scores, and escalation frequency to human agents.",
+    description: "End-user experience signals - response speed, satisfaction scores, and escalation frequency to human agents.",
     kpis: [
       { name: "Avg Response Time", value: "0ms", scope: "global" },
       { name: "User Satisfaction Score", value: "0" },
@@ -329,7 +318,7 @@ const rootSections: SectionConfig[] = [
     id: "maturity",
     label: "AI Maturity Indicators",
     headline: "AI Maturity Indicators",
-    description: "Governance capability adoption � guardrails, RAG, and HITL coverage as signals of enterprise AI maturity.",
+    description: "Governance capability - adoption guardrails, RAG, and HITL coverage as signals of AI maturity.",
     kpis: [
       { name: "% Agents with Guardrails", value: "0%" },
       { name: "% Agents with RAG", value: "0%" },
@@ -517,30 +506,7 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
   );
 }
 
-// --- Maturity Progress (only shown for maturity section, existing KPIs) ----
 
-function MaturityProgressBars({ kpis, accent }: { kpis: SectionKpi[]; accent: string }) {
-  return (
-    <div className="mt-4 rounded-xl border border-border bg-background/60 p-4 space-y-4">
-      <p className="text-xxs font-semibold uppercase tracking-wider text-muted-foreground">Adoption Depth</p>
-      {kpis.map((kpi) => {
-        const m = kpi.value.match(/(\d+)/);
-        const pct = m ? Math.min(parseInt(m[1]), 100) : 0;
-        return (
-          <div key={kpi.name}>
-            <div className="mb-1 flex justify-between text-sm">
-              <span className="text-muted-foreground">{kpi.name}</span>
-              <span className="font-bold text-foreground">{kpi.value}</span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800">
-              <div className="h-2 rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: accent }} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // --- Section Card ----------------------------------------------------------
 
@@ -623,7 +589,7 @@ function SectionCard({
         </div>
       </button>
 
-      {/* -- Collapsed Preview � KPI chips visible when closed -- */}
+      {/* -- Collapsed Preview - KPI chips visible when closed -- */}
       {!expanded && !isEmpty && displayKpis.length > 0 && (
         <div
           className="border-t border-border px-5 py-3 flex flex-wrap gap-2"
@@ -651,7 +617,7 @@ function SectionCard({
       {expanded && !isEmpty && (
         <div className="border-t border-border bg-card px-6 pb-6">
 
-          {/* KPI grid � uses section accent color consistently */}
+          {/* KPI grid - uses section accent color consistently */}
           {displayKpis.length > 0 && (
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
               {displayKpis.map((kpi, i) => (
@@ -694,10 +660,7 @@ function SectionCard({
             </div>
           )}
 
-          {/* Maturity progress bars */}
-          {isMaturity && displayKpis.length > 0 && (
-            <MaturityProgressBars kpis={displayKpis} accent={theme.accent} />
-          )}
+          
 
           {/* Charts */}
           {charts.length > 0 && (
@@ -1022,14 +985,14 @@ export default function DashboardAdmin(): JSX.Element {
   };
 
   const headerSubtitle = isDepartmentAdmin
-    ? "Department Admin � Operational Governance"
+    ? "Department Admin - Operational Governance"
     : isDeveloper
-      ? "Developer � Build & Optimize"
+      ? "Developer - Build & Optimize"
       : isBusinessUser
-        ? "Business User � Productivity & Experience"
+        ? "Business User - Productivity & Experience"
         : isRootAdmin
-          ? "Executive � Strategic Oversight"
-          : "Super Admin � Full Platform View";
+          ? "Executive - Strategic Oversight"
+          : "Super Admin - Full Organization View";
 
   const approvalRangeSelector = (
     <Select value={approvalRange} onValueChange={(v) => setApprovalRange(v as "7d" | "30d" | "12w")}>
@@ -1056,7 +1019,7 @@ export default function DashboardAdmin(): JSX.Element {
                 <span className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
                   {headerSubtitle}
                 </span>
-                <span className="text-muted-foreground text-xxs">�</span>
+                <span className="text-muted-foreground text-xxs">-</span>
                 <span className="text-xxs text-muted-foreground">
                   {sectionsToRender.length} section{sectionsToRender.length !== 1 ? "s" : ""}
                 </span>
