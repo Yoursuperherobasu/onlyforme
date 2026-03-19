@@ -142,16 +142,37 @@ export default function VectorDBView(): JSX.Element {
   /* ---------------------------------- JSX ---------------------------------- */
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
+    <div className="h-full w-full overflow-auto">
       {/* Header */}
-      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
-        <div>
-          <div className="mb-1 flex items-center gap-3">
-            <h1 className="text-lg font-semibold md:text-xl">{t("Vector Store Observatory")}</h1>
+      <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
+        <div className="flex items-center gap-6">
+          <div>
+            <div className="mb-1 flex items-center gap-3">
+              <h1 className="text-lg font-semibold md:text-xl">{t("Vector Store Observatory")}</h1>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t("View Pinecone namespaces across UAT and PROD environments")}
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {t("View Pinecone namespaces across UAT and PROD environments")}
-          </p>
+
+          {/* Environment Filter - inline with heading */}
+          <div className="min-w-[160px]">
+            <Select
+              value={envFilter}
+              onValueChange={(value) => setEnvFilter(value as EnvFilter)}
+            >
+              <SelectTrigger className="w-full bg-card">
+                <SelectValue placeholder={t("All Envs")} />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(ENV_LABELS) as EnvFilter[]).map((env) => (
+                  <SelectItem key={env} value={env}>
+                    {t(ENV_LABELS[env])}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
@@ -168,7 +189,7 @@ export default function VectorDBView(): JSX.Element {
       </div>
 
       {/* Stats Cards */}
-      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8">
+      <div className="border-b px-4 py-4 sm:px-6 md:px-8">
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <div className="rounded-lg border bg-card p-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -201,34 +222,8 @@ export default function VectorDBView(): JSX.Element {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-          <div className="min-w-[200px]">
-            <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {t("Environment")}
-            </p>
-            <Select
-              value={envFilter}
-              onValueChange={(value) => setEnvFilter(value as EnvFilter)}
-            >
-              <SelectTrigger className="w-full bg-card">
-                <SelectValue placeholder={t("All Envs")} />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(ENV_LABELS) as EnvFilter[]).map((env) => (
-                  <SelectItem key={env} value={env}>
-                    {t(ENV_LABELS[env])}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </div>
-
       {/* Table */}
-      <div className="flex-1 overflow-auto p-4 sm:p-6">
+      <div className="p-4 sm:p-6">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
