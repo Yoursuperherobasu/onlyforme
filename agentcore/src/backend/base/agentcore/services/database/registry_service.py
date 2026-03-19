@@ -106,6 +106,21 @@ async def sync_agent_registry(
     except Exception as tag_err:
         logger.warning(f"Failed to fetch agent tags for registry sync: {tag_err}")
 
+    # Fallback: read from Agent.tags JSON column if junction table returned empty
+    if not agent_tags:
+        try:
+            from agentcore.services.database.models.agent.model import Agent
+
+            agent_row = (
+                await session.exec(select(Agent.tags).where(Agent.id == agent_id))
+            ).first()
+            if agent_row and isinstance(agent_row, list):
+                agent_tags = agent_row
+            elif agent_row and hasattr(agent_row, "__iter__"):
+                agent_tags = list(agent_row)
+        except Exception as fallback_err:
+            logger.warning(f"Fallback tag fetch from Agent.tags also failed: {fallback_err}")
+
     # ── 2. Candidate found → upsert keyed by deployment_id ────────
     #    Each deployment version gets its own registry row instead of
     #    overwriting the previous version's entry.

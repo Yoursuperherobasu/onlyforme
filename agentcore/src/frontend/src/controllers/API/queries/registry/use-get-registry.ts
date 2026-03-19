@@ -21,6 +21,9 @@ export interface RegistryEntry {
   department_name?: string | null;
   organization_name?: string | null;
   version_number?: string | null;
+  version_label?: string | null;
+  promoted_from_uat_id?: string | null;
+  source_uat_version_number?: string | null;
   listed_at: string;
   created_at: string;
   updated_at: string;

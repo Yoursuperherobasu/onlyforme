@@ -37,6 +37,15 @@ const buildDraftSnapshot = (): AgentType | null => {
   };
 };
 
+const formatPublishedVersionLabel = (record: {
+  agent_name: string;
+  environment: "uat" | "prod";
+  version_number: string;
+}) => {
+  const agentName = String(record.agent_name || "Unnamed agent").trim();
+  return `${agentName} - ${record.version_number}`;
+};
+
 const PublishVersionDropdown = (): JSX.Element | null => {
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -144,14 +153,16 @@ const PublishVersionDropdown = (): JSX.Element | null => {
     }
   };
 
-  const activeLabel = activePublishedVersion
-    ? `${activePublishedVersion.environment.toUpperCase()} ${activePublishedVersion.versionNumber}`
-    : "Draft";
-
   const activeRecord = activePublishedVersion
     ? allVersions.find((record) => record.id === activePublishedVersion.deployId) ??
       null
     : null;
+
+  const activeLabel = activeRecord
+    ? formatPublishedVersionLabel(activeRecord)
+    : activePublishedVersion
+      ? activePublishedVersion.versionNumber
+      : "Draft";
 
   const handleOpenDeleteVersion = () => {
     if (!activeRecord) {
@@ -176,7 +187,7 @@ const PublishVersionDropdown = (): JSX.Element | null => {
         `${getURL("PUBLISH")}/${activeRecord.environment}/${activeRecord.id}`,
       );
       setSuccessData({
-        title: `Deleted ${activeRecord.environment.toUpperCase()} ${activeRecord.version_number}`,
+        title: `Deleted ${activeRecord.version_number}`,
       });
       await queryClient.refetchQueries({
         queryKey: ["useGetPublishVersions", currentAgentId],
@@ -199,15 +210,15 @@ const PublishVersionDropdown = (): JSX.Element | null => {
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5"
+            className="max-w-[340px] gap-1.5"
             data-testid="publish-version-dropdown"
           >
             <span className="text-xs text-muted-foreground">Version</span>
-            <span className="font-medium">{activeLabel}</span>
+            <span className="truncate font-medium">{activeLabel}</span>
             <IconComponent name="ChevronDown" className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[210px]">
+        <DropdownMenuContent align="end" className="min-w-[320px]">
           <DropdownMenuItem
             onClick={handleSelectDraft}
             disabled={!draftAgentRef.current && !currentAgent}
@@ -220,8 +231,11 @@ const PublishVersionDropdown = (): JSX.Element | null => {
               key={record.id}
               disabled={loadingVersionId === record.id}
               onClick={() => handleSelectVersion(record)}
+              className="flex items-center justify-between gap-3"
             >
-              {record.environment.toUpperCase()} {record.version_number}
+              <span className="truncate">
+                {formatPublishedVersionLabel(record)}
+              </span>
               {record.is_active ? " • Active" : ""}
             </DropdownMenuItem>
           ))}
@@ -244,7 +258,7 @@ const PublishVersionDropdown = (): JSX.Element | null => {
         onConfirm={handleDeleteVersion}
         description={
           activeRecord
-            ? `${activeRecord.environment.toUpperCase()} ${activeRecord.version_number} version`
+            ? formatPublishedVersionLabel(activeRecord)
             : "version"
         }
         errorMessage={deleteVersionError ?? undefined}
