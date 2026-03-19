@@ -563,6 +563,8 @@ def _can_delete_mcp(
             return False
         visibility = _normalize_visibility(getattr(row, "visibility", None))
         public_scope = _normalize_public_scope(getattr(row, "public_scope", None))
+        if visibility == "public" and public_scope == "organization":
+            return False
         dept_ids = {str(d) for _, d in dept_pairs}
         scoped_public_depts = {str(v) for v in (getattr(row, "public_dept_ids", None) or [])}
         if visibility == "public" and public_scope == "department":
@@ -680,7 +682,7 @@ async def create_mcp_server(
 ):
     """Register a new MCP server directly (admin flows)."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "edit_mcp_registry")
+    await _require_mcp_permission(current_user, "add_new_mcp")
 
     visibility, public_scope, public_dept_ids, shared_user_ids = await _enforce_creation_scope(session, current_user, body)
     await _ensure_mcp_name_available(session, body.server_name)
@@ -933,7 +935,7 @@ async def update_mcp_server(
 ):
     """Update an existing MCP server."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "edit_mcp_registry")
+    await _require_mcp_permission(current_user, "edit_mcp")
     row = await session.get(McpRegistry, server_id)
     if row is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
@@ -1119,7 +1121,7 @@ async def delete_mcp_server(
 ):
     """Delete a registered MCP server."""
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_mcp_permission(current_user, "add_new_mcp")
+    await _require_mcp_permission(current_user, "delete_mcp")
     row = await session.get(McpRegistry, server_id)
     if row is None:
         raise HTTPException(status_code=404, detail="MCP server not found")

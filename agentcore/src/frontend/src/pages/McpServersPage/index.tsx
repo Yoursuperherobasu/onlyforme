@@ -250,7 +250,7 @@ export default function MCPServersPage() {
   const isSuperAdmin = normalizedRole === "super_admin";
   const isDepartmentAdmin = normalizedRole === "department_admin";
   const isMcpAdmin = isRoot || isSuperAdmin || isDepartmentAdmin;
-  const canSeeActions = isMcpAdmin && (can("edit_mcp_registry") || can("delete_mcp_registry"));
+  const canSeeActions = isMcpAdmin && (can("edit_mcp") || can("delete_mcp"));
   const currentUserId = userData?.id;
   const userDeptId = userData?.department_id ?? null;
   const userDeptIds = userDeptId ? [userDeptId] : [];
@@ -271,7 +271,7 @@ export default function MCPServersPage() {
   const isMultiDeptMcp = (server: McpRegistryType) => (server.public_dept_ids?.length ?? 0) > 1;
 
   const canEditMcp = (server: McpRegistryType) => {
-    if (!isMcpAdmin || !can("edit_mcp_registry")) return false;
+    if (!isMcpAdmin || !can("edit_mcp")) return false;
     if (server.approval_status === "pending") return false;
     if (isRoot || isSuperAdmin) return true;
     if (isDepartmentAdmin) {
@@ -288,11 +288,12 @@ export default function MCPServersPage() {
   };
 
   const canDeleteMcp = (server: McpRegistryType) => {
-    if (!isMcpAdmin || !can("delete_mcp_registry")) return false;
+    if (!isMcpAdmin || !can("delete_mcp")) return false;
     if (server.approval_status === "pending") return false;
     if (isRoot || isSuperAdmin) return true;
     if (isDepartmentAdmin) {
       if (isMultiDeptMcp(server)) return false;
+      if (server.visibility === "public" && server.public_scope === "organization") return false;
       return Boolean(
         currentUserId &&
           (isDeptScopedForUser(server) ||
@@ -400,7 +401,7 @@ export default function MCPServersPage() {
                     </th>
                     {isDepartmentAdmin ? (
                       <th className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                        {t("Requested By")}
+                        {t("Created By")}
                       </th>
                     ) : null}
                     {isSuperAdmin ? (
