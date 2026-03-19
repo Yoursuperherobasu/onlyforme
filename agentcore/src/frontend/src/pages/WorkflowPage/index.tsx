@@ -794,7 +794,8 @@ export default function WorkflowsView({
   }, [searchQuery, setSearch]);
 
   const tableColumnCount =
-    7 +
+    6 +
+    (activeTab === "PROD" ? 1 : 0) +
     (can("view_project_page") ? (activeTab === "UAT" ? 2 : 1) : 0) +
     (canViewScheduler ? 1 : 0) +
     (can("start_stop_agent") ? 1 : 0) +
@@ -1151,9 +1152,11 @@ export default function WorkflowsView({
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   {t("Department")}
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  {t("Visibility")}
-                </th>
+                {activeTab === "PROD" && (
+                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                    {t("Visibility")}
+                  </th>
+                )}
                 <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
                   {t("Created At")}
                 </th>
@@ -1264,17 +1267,19 @@ export default function WorkflowsView({
 
                     <td className="px-6 py-4 text-sm">{workflow.department}</td>
 
-                    <td className="px-6 py-4 text-sm">
-                      <span
-                        className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${
-                          workflow.visibility === "PUBLIC"
-                            ? "border-green-200 bg-green-50 text-green-700"
-                            : "border-slate-200 bg-slate-50 text-slate-700"
-                        }`}
-                      >
-                        {workflow.visibility ?? "-"}
-                      </span>
-                    </td>
+                    {activeTab === "PROD" && (
+                      <td className="px-6 py-4 text-sm">
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${
+                            workflow.visibility === "PUBLIC"
+                              ? "border-green-200 bg-green-50 text-green-700"
+                              : "border-slate-200 bg-slate-50 text-slate-700"
+                          }`}
+                        >
+                          {workflow.visibility ?? "-"}
+                        </span>
+                      </td>
+                    )}
 
                     <td className="px-6 py-4 text-sm text-muted-foreground">
                       {workflow.created}
