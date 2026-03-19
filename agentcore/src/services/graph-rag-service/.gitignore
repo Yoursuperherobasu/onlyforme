@@ -6,7 +6,7 @@ notebooks
 
 # frontend
 src/frontend
-
+.venvrag/
 # C extensions
 *.so
 .venvguard/

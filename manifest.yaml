@@ -129,3 +129,8 @@ deployments:
   version_number: v1
   environment: uat
   deployment_id: 82603495-b110-419f-8115-afd38d4bc143
+- agent_id: d2c44cba-b517-4f00-a56c-e2ade631edd4
+  agent_name: sch
+  version_number: v2
+  environment: prod
+  deployment_id: bf3a617b-e376-430e-a0de-d1d630a71bc8
