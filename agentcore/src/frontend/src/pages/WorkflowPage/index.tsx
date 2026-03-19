@@ -29,6 +29,7 @@ import {
   useToggleControlPanelAgent,
 } from "@/controllers/API/queries/control-panel";
 import CustomLoader from "@/customization/components/custom-loader";
+import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import EmbedModal from "@/modals/EmbedModal/embed-modal";
 import ExportApiModal from "@/modals/exportApiModal";
 import ExportModal from "@/modals/exportModal";
@@ -139,7 +140,8 @@ export default function WorkflowsView({
   const [exportAgentData, setExportAgentData] = useState<AgentType | undefined>(
     undefined,
   );
-  const { permissions } = useContext(AuthContext);
+  const { permissions, userData } = useContext(AuthContext);
+  const navigate = useCustomNavigate();
   const isAuth = true;
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -150,6 +152,18 @@ export default function WorkflowsView({
   const canViewScheduler = can("view_control_panel");
   const canDirectPromoteToProd = can("prod_publish_approval_not_required");
   const requiresProdApproval = !canDirectPromoteToProd;
+
+  const handleRowDoubleClick = (workflow: WorkagentType) => {
+    const agentId = workflow.agentId;
+    if (!agentId) return;
+    const isCreator =
+      userData?.email && workflow.userEmail && userData.email === workflow.userEmail;
+    if (isCreator) {
+      navigate(`/agent/${agentId}`);
+    } else {
+      navigate(`/agent/${agentId}?readonly=1`);
+    }
+  };
 
   const { data, isLoading } = useGetControlPanelAgents(
     {
@@ -1193,6 +1207,7 @@ export default function WorkflowsView({
                     key={workflow.id}
                     className="cursor-pointer transition-colors hover:bg-muted/50"
                     onClick={() => onWorkagentClick?.(workflow)}
+                    onDoubleClick={() => handleRowDoubleClick(workflow)}
                   >
                     <td className="px-6 py-4">
                       <div className="font-semibold">{workflow.name}</div>
