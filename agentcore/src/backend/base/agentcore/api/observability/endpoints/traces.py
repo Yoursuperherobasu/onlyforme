@@ -169,7 +169,20 @@ async def get_trace_detail(
                 break
 
         if not trace:
-            for cand_client in scoped_clients:
+            logger.info(f"get_trace_detail: searching {len(scoped_clients)} client(s) for trace_id variants={_tid_variants}")
+            for idx, cand_client in enumerate(scoped_clients):
+                _api = getattr(cand_client, 'api', None)
+                _api_attrs = [a for a in dir(_api) if not a.startswith('_')] if _api else []
+                logger.info(
+                    f"get_trace_detail: client[{idx}] type={type(cand_client).__name__}, "
+                    f"has_fetch_trace={hasattr(cand_client, 'fetch_trace')}, "
+                    f"is_v3={is_v3_client(cand_client)}, "
+                    f"has_api={hasattr(cand_client, 'api')}, "
+                    f"has_client={hasattr(cand_client, 'client')}, "
+                    f"api_type={type(_api).__name__ if _api else 'None'}, "
+                    f"api_has_trace={hasattr(_api, 'trace') if _api else False}, "
+                    f"api_attrs={_api_attrs[:15]}"
+                )
                 for _tid_v in _tid_variants:
                     if hasattr(cand_client, "fetch_trace"):
                         try:
@@ -177,25 +190,29 @@ async def get_trace_detail(
                             _t = resp.data if hasattr(resp, "data") else resp
                             if _t:
                                 s = _trace_quality_score(_t)
+                                logger.info(f"get_trace_detail: client[{idx}] fetch_trace({_tid_v}) found trace, quality={s}")
                                 if s > best_score:
                                     best_trace, best_client, best_score = _t, cand_client, s
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"get_trace_detail: client[{idx}] fetch_trace({_tid_v}) failed: {e}")
                     if is_v3_client(cand_client) and hasattr(cand_client, "api") and hasattr(cand_client.api, "trace"):
                         try:
                             _t = call_with_rate_limit_retry(cand_client.api.trace.get, _tid_v)
+                            logger.info(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) returned type={type(_t).__name__}, truthy={bool(_t)}")
                             if _t:
                                 s = _trace_quality_score(_t)
+                                logger.info(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) found trace, quality={s}")
                                 if s > best_score:
                                     best_trace, best_client, best_score = _t, cand_client, s
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.info(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) EXCEPTION: {type(e).__name__}: {e}")
 
         if best_trace is not None:
             trace = best_trace
             trace_client = best_client
 
         if not trace:
+            logger.warning(f"get_trace_detail: trace {trace_id} NOT FOUND across {len(scoped_clients)} clients, allowed_user_ids={allowed_user_ids}")
             raise HTTPException(status_code=404, detail="Trace not found")
         if trace_client is None:
             trace_client = _resolve_trace_client(trace, scoped_clients) or scoped_clients[0]
@@ -230,6 +247,7 @@ async def get_trace_detail(
         )
 
         resolved_trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default=trace_id) or trace_id)
+        logger.info(f"get_trace_detail: resolved_trace_id={resolved_trace_id}, trace_client_type={type(trace_client).__name__}")
 
         # Check for embedded observations
         _embedded_obs = get_attr(trace, "observations", default=None)
@@ -309,19 +327,43 @@ async def get_trace_detail(
             embedded_scores = get_attr(trace, "scores", default=[]) or []
             logger.info(f"Trace {resolved_trace_id}: {len(embedded_scores)} embedded scores, {len(fetched_scores or [])} fetched scores")
             for idx, raw_score in enumerate(embedded_scores):
-                # Skip string entries (score IDs, not actual score objects)
+                logger.info(f"  embedded score[{idx}]: raw_type={type(raw_score).__name__}, repr={repr(raw_score)[:300]}")
+                # Handle string entries — these are score IDs in Langfuse v3
                 if isinstance(raw_score, str):
-                    # Try parsing as JSON
+                    # Try parsing as JSON first
                     try:
                         parsed = json.loads(raw_score)
                         if isinstance(parsed, dict):
                             raw_score = parsed
                         else:
-                            logger.debug(f"  embedded score[{idx}]: skipping string score: {raw_score[:100]}")
-                            continue
+                            raise ValueError("not a dict")
                     except (json.JSONDecodeError, ValueError):
-                        logger.debug(f"  embedded score[{idx}]: skipping non-parseable string score: {raw_score[:100]}")
-                        continue
+                        # It's a score ID — fetch the actual score object
+                        score_id = raw_score.strip()
+                        if score_id and trace_client:
+                            fetched = False
+                            api_obj = getattr(trace_client, "api", None)
+                            if api_obj:
+                                # Try multiple score API variants
+                                for attr_name in ("score", "scores", "score_v_2"):
+                                    score_api = getattr(api_obj, attr_name, None)
+                                    if score_api and hasattr(score_api, "get"):
+                                        try:
+                                            fetched_score = call_with_rate_limit_retry(score_api.get, score_id)
+                                            if fetched_score:
+                                                raw_score = fetched_score
+                                                logger.info(f"  embedded score[{idx}]: fetched via api.{attr_name}.get(ID={score_id}), type={type(raw_score).__name__}")
+                                                fetched = True
+                                                break
+                                        except Exception as e:
+                                            logger.debug(f"  embedded score[{idx}]: api.{attr_name}.get({score_id}) failed: {e}")
+                            if not fetched:
+                                # Score ID couldn't be resolved — the score_v_2.get with trace_id filter
+                                # already found the scores via fetched_scores, so skip this embedded ID
+                                logger.debug(f"  embedded score[{idx}]: could not fetch score ID={score_id}")
+                                continue
+                        else:
+                            continue
 
                 # Unwrap nested score object (v3 API may wrap in a 'score' key)
                 score_obj = raw_score

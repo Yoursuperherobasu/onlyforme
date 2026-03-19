@@ -1489,29 +1489,78 @@ async def _run_dataset_item_with_agent(
     user_id: str,
     item_input: Any,
     session_id: str,
-) -> Any:
-    """Execute one dataset item input against a agent and return parsed output."""
-    from agentcore.api.endpoints import simple_run_agent
-    from agentcore.api.v1_schemas import SimplifiedAPIRequest
+) -> tuple[Any, str | None]:
+    """Execute one dataset item input against an agent and return (output, trace_id)."""
+    from agentcore.api.v1_schemas import InputValueRequest
+    from agentcore.api.utils import build_graph_from_data
+    from agentcore.services.deps import get_chat_service
+    from agentcore.processing.process import run_graph_internal
 
-    agent_stub = SimpleNamespace(
-        id=agent_payload["id"],
-        name=agent_payload["name"],
-        data=agent_payload["data"],
+    agent_id_str = str(agent_payload["id"])
+    graph_data = agent_payload["data"].copy()
+
+    graph = await build_graph_from_data(
+        agent_id=agent_id_str,
+        payload=graph_data,
+        user_id=str(user_id),
+        agent_name=agent_payload["name"],
+        chat_service=get_chat_service(),
     )
-    api_user_stub = SimpleNamespace(id=user_id)
-    run_response = await simple_run_agent(
-        agent=agent_stub,
-        input_request=SimplifiedAPIRequest(
+
+    inputs = [
+        InputValueRequest(
+            components=[],
             input_value=_to_text(item_input),
-            input_type="chat",
-            output_type="chat",
-            session_id=session_id,
-        ),
+            type="chat",
+        )
+    ]
+    outputs = [
+        vertex.id
+        for vertex in graph.vertices
+        if vertex.is_output and "chat" in vertex.id.lower()
+    ]
+
+    task_result, _ = await run_graph_internal(
+        graph=graph,
+        agent_id=agent_id_str,
+        session_id=session_id,
+        inputs=inputs,
+        outputs=outputs,
         stream=False,
-        api_key_user=api_user_stub,
     )
-    return _extract_agent_output_from_run_response(run_response)
+
+    # Extract the actual Langfuse/OTEL trace ID and the tracer's client
+    trace_id = None
+    tracer_client = None
+    try:
+        from agentcore.services.tracing.service import trace_context_var
+        trace_ctx = trace_context_var.get(None)
+        if trace_ctx:
+            lf_tracer = (getattr(trace_ctx, "tracers", None) or {}).get("langfuse")
+            if lf_tracer:
+                if hasattr(lf_tracer, "langfuse_trace_id"):
+                    trace_id = lf_tracer.langfuse_trace_id
+                # Get the tracer's Langfuse client for score submission
+                tracer_client = getattr(lf_tracer, "_client", None)
+            # Flush to ensure trace is sent to Langfuse
+            for tracer in (getattr(trace_ctx, "tracers", None) or {}).values():
+                if hasattr(tracer, "flush"):
+                    try:
+                        tracer.flush()
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.debug(f"Failed to extract Langfuse trace ID: {e}")
+
+    # Fallback to graph._run_id if OTEL trace ID not available
+    if not trace_id:
+        trace_id = getattr(graph, "_run_id", None)
+    logger.info(f"Dataset item agent run completed: agent={agent_payload.get('name')}, trace_id={trace_id}, has_tracer_client={tracer_client is not None}")
+
+    from agentcore.api.v1_schemas import RunResponse
+    run_response = RunResponse(outputs=task_result, session_id=session_id)
+    output = _extract_agent_output_from_run_response(run_response)
+    return output, trace_id, tracer_client
 
 
 def _get_dataset_experiment_concurrency() -> int:
@@ -1654,47 +1703,32 @@ async def _dataset_generate_with_model(
     model: str,
     model_api_key: str | None,
     item_input: Any,
+    model_registry_id: str | None = None,
 ) -> tuple[Any, str]:
-    """Generate output for one dataset item via configured LLM model."""
+    """Generate output for one dataset item via Model Service."""
+    if not model_registry_id:
+        raise RuntimeError("model_registry_id is required for dataset generation")
+
     messages = _build_generation_messages(item_input)
-    model_candidates = _build_litellm_model_candidates(model, model_api_key)
-    if not model_candidates:
-        raise RuntimeError("Invalid generation model configuration")
+    system_prompt = ""
+    user_prompt = ""
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_prompt = msg.get("content", "")
+        elif msg.get("role") == "user":
+            user_prompt = msg.get("content", "")
 
-    if LITELLM_AVAILABLE:
-        _ensure_litellm_logging_compatibility_patch()
-        last_error: Exception | None = None
-        for candidate_model in model_candidates:
-            kwargs: Dict[str, Any] = {
-                "model": candidate_model,
-                "messages": messages,
-                "no-log": True,
-            }
-            if model_api_key:
-                kwargs["api_key"] = model_api_key
-            api_base = _resolve_api_base_for_model(candidate_model)
-            if api_base:
-                kwargs["api_base"] = api_base
-            try:
-                response = await litellm.acompletion(**kwargs)
-                content = response.choices[0].message.content
-                return content if content is not None else "", candidate_model
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                logger.warning("LiteLLM generation failed for model={}: {}", candidate_model, str(exc))
-                if _is_litellm_retryable_model_error(exc):
-                    continue
-                raise
-        if last_error:
-            raise last_error
-        raise RuntimeError("LiteLLM generation failed without response")
-
-    content, used_model = await _call_openai_generation_completion(
-        model_candidates=model_candidates,
-        model_api_key=model_api_key,
-        messages=messages,
+    logger.info("Dataset generation: using Model Service for registry_id={}", model_registry_id)
+    content = await _call_model_service_completion(
+        model_registry_id=model_registry_id,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
     )
-    return content, used_model
+    if not content:
+        raise RuntimeError(
+            f"Model Service returned no response for registry_id={model_registry_id}"
+        )
+    return content, f"registry:{model_registry_id}"
 
 
 async def _dataset_llm_evaluate(
@@ -1705,6 +1739,7 @@ async def _dataset_llm_evaluate(
     item_input: Any,
     output: Any,
     expected_output: Any,
+    model_registry_id: str | None = None,
 ) -> tuple[float, str, str]:
     """Run LLM-as-a-judge for one dataset item output and return normalized score."""
     query_text = _to_text(item_input) or "[EMPTY]"
@@ -1737,53 +1772,20 @@ Respond ONLY with valid JSON:
 }}
 """
 
-    model_candidates = _build_litellm_model_candidates(model, model_api_key)
-    if not model_candidates:
-        raise RuntimeError("Invalid judge model configuration")
+    if not model_registry_id:
+        raise RuntimeError("model_registry_id is required for dataset LLM judge evaluation")
 
-    content: str | None = None
-    used_model = model_candidates[0]
-    if LITELLM_AVAILABLE:
-        _ensure_litellm_logging_compatibility_patch()
-        last_error: Exception | None = None
-        for candidate_model in model_candidates:
-            kwargs: Dict[str, Any] = {
-                "model": candidate_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "response_format": {"type": "json_object"},
-                "no-log": True,
-            }
-            if model_api_key:
-                kwargs["api_key"] = model_api_key
-            api_base = _resolve_api_base_for_model(candidate_model)
-            if api_base:
-                kwargs["api_base"] = api_base
-
-            try:
-                response = await litellm.acompletion(**kwargs)
-                content = response.choices[0].message.content
-                used_model = candidate_model
-                break
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                if _is_litellm_retryable_model_error(exc):
-                    continue
-                raise
-
-        if content is None:
-            if last_error:
-                raise last_error
-            raise RuntimeError("LLM evaluator failed without response")
-    else:
-        content, used_model = await _call_openai_judge_completion(
-            model_candidates=model_candidates,
-            model_api_key=model_api_key,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+    logger.info("Dataset LLM judge: using Model Service for registry_id={}", model_registry_id)
+    content = await _call_model_service_completion(
+        model_registry_id=model_registry_id,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
+    if not content:
+        raise RuntimeError(
+            f"Model Service returned no response for registry_id={model_registry_id}"
         )
+    used_model = f"registry:{model_registry_id}"
 
     payload = str(content or "").strip()
     if payload.startswith("```json"):
@@ -2280,6 +2282,8 @@ def _resolve_api_base_for_model(model: str) -> str | None:
 
     if provider == "openai":
         return os.getenv("OPENAI_API_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    if provider in ("azure", "azure_openai"):
+        return os.getenv("AZURE_OPENAI_API_BASE") or os.getenv("AZURE_API_BASE") or os.getenv("AZURE_OPENAI_ENDPOINT")
     if provider == "groq":
         return os.getenv("GROQ_API_BASE_URL") or os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1"
     if provider == "anthropic":
@@ -3138,11 +3142,9 @@ async def run_llm_judge_task(
     trace_input: Any | None = None,
     trace_output: Any | None = None,
 ):
-    """Background task to run LLM judge."""
-    # Model Service (via model_registry_id) is the primary path and doesn't need
-    # LiteLLM or OpenAI SDK. Only block if ALL backends are unavailable.
-    if not LITELLM_AVAILABLE and not OPENAI_AVAILABLE and not model_registry_id:
-        logger.error("No LLM backend available (Model Service, LiteLLM, or OpenAI SDK), cannot run judge")
+    """Background task to run LLM judge via Model Service."""
+    if not model_registry_id:
+        logger.error("No model_registry_id provided, cannot run judge for trace_ref={}", trace_id)
         return
 
     try:
@@ -3259,90 +3261,14 @@ Respond with a JSON object containing:
 
 Respond ONLY with valid JSON, no markdown formatting."""
 
-        # 3. Call LLM — prefer Model Service (handles all providers canonically),
-        #    fall back to LiteLLM/OpenAI SDK if service is unavailable.
-        content = None
-        used_model = model
-
-        # Try Model Service first when registry model ID is available
-        if model_registry_id:
-            logger.info(f"Calling LLM judge via Model Service: registry_id={model_registry_id}")
-            content = await _call_model_service_completion(
-                model_registry_id=model_registry_id,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-            )
-            if content:
-                used_model = f"registry:{model_registry_id}"
-
-        # Fallback to LiteLLM / OpenAI SDK
-        if content is None:
-            model_candidates = _build_litellm_model_candidates(model, model_api_key)
-            if not model_candidates:
-                logger.error(f"Judge failed: invalid empty model for trace_ref={trace_id}")
-                return
-
-            logger.info(f"Calling LLM judge with model candidates: {model_candidates}")
-
-            if LITELLM_AVAILABLE:
-                _ensure_litellm_logging_compatibility_patch()
-
-                try:
-                    litellm.suppress_debug_info = True
-                    litellm.turn_off_message_logging = True
-                    litellm.logging = False
-                except Exception:
-                    pass
-
-                response = None
-                used_model = model_candidates[0]
-                last_error: Exception | None = None
-
-                for candidate_model in model_candidates:
-                    acall_kwargs = dict(
-                        model=candidate_model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        response_format={"type": "json_object"},
-                    )
-                    acall_kwargs["no-log"] = True
-                    if model_api_key:
-                        acall_kwargs["api_key"] = model_api_key
-
-                    api_base = model_api_base or _resolve_api_base_for_model(candidate_model)
-                    if api_base:
-                        acall_kwargs["api_base"] = api_base
-
-                    try:
-                        response = await litellm.acompletion(**acall_kwargs)
-                        used_model = candidate_model
-                        break
-                    except Exception as e:
-                        last_error = e
-                        logger.warning("LLM judge call failed for model={}: {}", candidate_model, str(e))
-                        if _is_litellm_retryable_model_error(e):
-                            continue
-                        raise
-
-                if response is None:
-                    if last_error:
-                        raise last_error
-                    raise RuntimeError("LLM judge call failed without a response")
-
-                content = response.choices[0].message.content
-
-            elif OPENAI_AVAILABLE:
-                content, used_model = await _call_openai_judge_completion(
-                    model_candidates=model_candidates,
-                    model_api_key=model_api_key,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-            else:
-                logger.error("No LLM backend available (Model Service, LiteLLM, or OpenAI SDK)")
-                return
+        # 3. Call LLM via Model Service
+        logger.info(f"Calling LLM judge via Model Service: registry_id={model_registry_id}")
+        content = await _call_model_service_completion(
+            model_registry_id=model_registry_id,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+        used_model = f"registry:{model_registry_id}"
 
         # Clean up markdown code blocks if present
         if not content:
@@ -3568,11 +3494,13 @@ async def _run_dataset_experiment_async(
     agent_payload: dict[str, Any] | None,
     generation_model: str | None,
     generation_model_api_key: str | None,
+    generation_model_registry_id: str | None = None,
     judge_name: str | None,
     judge_preset_id: str | None,
     judge_criteria: str | None,
     judge_model: str | None,
     judge_model_api_key: str | None,
+    judge_model_registry_id: str | None = None,
 ) -> dict[str, Any]:
     """Run dataset experiment: load items from local DB, run agent/model, evaluate, store results."""
     dataset_uuid = UUID(dataset_id)
@@ -3627,22 +3555,41 @@ async def _run_dataset_experiment_async(
         item_scores: list[dict[str, Any]] = []
 
         # 3a. Run task (agent or model generation)
+        tracer_client = None
         try:
             if agent_payload:
                 session_id = f"dataset:{dataset_name}:{item.id}"
-                output = await _run_dataset_item_with_agent(
+                output, trace_id, tracer_client = await _run_dataset_item_with_agent(
                     agent_payload=agent_payload,
                     user_id=str(user_id),
                     item_input=item_input,
                     session_id=session_id,
                 )
-            elif generation_model:
+            elif generation_model or generation_model_registry_id:
                 generated_output, _ = await _dataset_generate_with_model(
-                    model=generation_model,
+                    model=generation_model or "",
                     model_api_key=generation_model_api_key,
                     item_input=item_input,
+                    model_registry_id=generation_model_registry_id,
                 )
                 output = generated_output
+                # Create a Langfuse trace for model generation experiments
+                if client:
+                    try:
+                        gen_trace_id = str(uuid4())
+                        if hasattr(client, "trace"):
+                            client.trace(
+                                id=gen_trace_id,
+                                name=f"experiment:{experiment_name}",
+                                input=item_input if isinstance(item_input, (str, dict)) else str(item_input),
+                                output=output if isinstance(output, (str, dict)) else str(output),
+                                user_id=str(user_id),
+                                session_id=f"dataset:{dataset_name}",
+                                metadata={"source": "dataset-experiment", "dataset": dataset_name, "experiment": experiment_name},
+                            )
+                        trace_id = gen_trace_id
+                    except Exception:
+                        pass
             else:
                 output = "[ERROR] No agent or generation model configured"
         except Exception as exc:
@@ -3670,15 +3617,16 @@ async def _run_dataset_experiment_async(
             metric_buckets["exact_match"].append(score_val)
 
         # LLM judge
-        if judge_criteria and judge_model:
+        if judge_criteria and (judge_model or judge_model_registry_id):
             try:
                 value, reason, used_model = await _dataset_llm_evaluate(
                     criteria=judge_criteria,
-                    model=judge_model,
+                    model=judge_model or "",
                     model_api_key=judge_model_api_key,
                     item_input=input_str,
                     output=output_str,
                     expected_output=expected_str,
+                    model_registry_id=judge_model_registry_id,
                 )
                 judge_comment = json.dumps({"reason": reason, "model": used_model, "criteria": judge_criteria})
                 item_scores.append({"name": llm_metric_name, "value": float(value), "source": "llm-judge", "comment": judge_comment})
@@ -3688,12 +3636,14 @@ async def _run_dataset_experiment_async(
                 item_scores.append({"name": llm_metric_name, "value": 0.0, "source": "llm-judge", "comment": f"LLM evaluator error: {exc}"})
                 metric_buckets[llm_metric_name].append(0.0)
 
-        # 3c. Submit scores to Langfuse if we have a trace_id and client
-        if trace_id and client:
+        # 3c. Submit scores to Langfuse if we have a trace_id
+        # Use the tracer's client (same Langfuse project as the trace) if available
+        score_client = tracer_client or client
+        if trace_id and score_client:
             for s in item_scores:
                 try:
                     _submit_score_to_langfuse(
-                        client,
+                        score_client,
                         trace_id=trace_id,
                         name=s["name"],
                         value=s["value"],
@@ -3701,9 +3651,9 @@ async def _run_dataset_experiment_async(
                     )
                 except Exception:
                     pass
-            if hasattr(client, "flush"):
+            if hasattr(score_client, "flush"):
                 try:
-                    client.flush()
+                    score_client.flush()
                 except Exception:
                     pass
 
@@ -3718,12 +3668,28 @@ async def _run_dataset_experiment_async(
             scores=item_scores,
         ))
 
-    # 4. Save all run items to DB
+    # 4. Final flush of Langfuse client to ensure all traces/scores are sent
+    if client:
+        try:
+            if hasattr(client, "flush"):
+                client.flush()
+        except Exception:
+            pass
+    # Also flush the global Langfuse client (used by tracing service)
+    try:
+        from agentcore.services.tracing.service import TracingService
+        global_lf = get_langfuse_client()
+        if global_lf and hasattr(global_lf, "flush"):
+            global_lf.flush()
+    except Exception:
+        pass
+
+    # 5. Save all run items to DB
     async with session_scope() as db:
         db.add_all(run_items_to_save)
         await db.commit()
 
-    # 5. Build metrics summary
+    # 6. Build metrics summary
     metrics_summary: dict[str, dict[str, Any]] = {}
     for metric_name, values in metric_buckets.items():
         if not values:
@@ -3755,11 +3721,13 @@ async def _run_dataset_experiment_job(
     agent_payload: dict[str, Any] | None,
     generation_model: str | None,
     generation_model_api_key: str | None,
+    generation_model_registry_id: str | None = None,
     judge_name: str | None,
     judge_preset_id: str | None,
     judge_criteria: str | None,
     judge_model: str | None,
     judge_model_api_key: str | None,
+    judge_model_registry_id: str | None = None,
 ) -> None:
     """Background task runner for dataset experiments."""
     _set_dataset_experiment_job(
@@ -3778,11 +3746,13 @@ async def _run_dataset_experiment_job(
             agent_payload=agent_payload,
             generation_model=generation_model,
             generation_model_api_key=generation_model_api_key,
+            generation_model_registry_id=generation_model_registry_id,
             judge_name=judge_name,
             judge_preset_id=judge_preset_id,
             judge_criteria=judge_criteria,
             judge_model=judge_model,
             judge_model_api_key=judge_model_api_key,
+            judge_model_registry_id=judge_model_registry_id,
         )
         _set_dataset_experiment_job(
             job_id,
@@ -4017,24 +3987,62 @@ async def get_scores(
                 else len(primary_rows)
             )
 
+        # Also fetch scores from local DB (dataset experiment run items)
+        try:
+            from agentcore.services.database.models.dataset_run_item.model import DatasetRunItem
+            from agentcore.services.database.models.dataset_run.model import DatasetRun
+            from agentcore.services.database.models.dataset.model import Dataset as DatasetModel
+
+            async with session_scope() as local_db:
+                # Build query for run items that have scores
+                query = (
+                    select(DatasetRunItem, DatasetRun, DatasetModel)
+                    .join(DatasetRun, DatasetRunItem.run_id == DatasetRun.id)
+                    .join(DatasetModel, DatasetRun.dataset_id == DatasetModel.id)
+                    .where(DatasetRunItem.scores.isnot(None))
+                )
+                if trace_id:
+                    query = query.where(DatasetRunItem.trace_id == trace_id)
+                query = query.order_by(DatasetRunItem.created_at.desc()).limit(limit)
+
+                results = (await local_db.exec(query)).all()
+
+                for run_item, run, dataset in results:
+                    if not run_item.scores:
+                        continue
+                    for score_entry in run_item.scores:
+                        score_name = score_entry.get("name", "score")
+                        if name and name.lower() not in score_name.lower():
+                            continue
+                        raw_scores.append({
+                            "id": f"local:{run_item.id}:{score_name}",
+                            "trace_id": run_item.trace_id or str(run_item.id),
+                            "name": score_name,
+                            "value": float(score_entry.get("value", 0.0)),
+                            "source": score_entry.get("source", "API"),
+                            "comment": score_entry.get("comment"),
+                            "timestamp": run_item.created_at.isoformat() if run_item.created_at else None,
+                            "_agent_name": f"experiment-item-run",
+                            "_dataset_name": dataset.name if dataset else None,
+                            "_run_name": run.name if run else None,
+                        })
+                        total += 1
+        except Exception as local_err:
+            logger.debug("Failed to fetch local DB scores: {}", str(local_err))
+
         # Parse to response model (including agent/agent name).
+        # NOTE: We do NOT fetch traces individually per score — that caused extreme latency.
+        # Instead, we extract agent name from the score's own metadata or trace_name field.
         items: list[ScoreResponse] = []
         for s in raw_scores:
             score_trace_id = str(get_attr(s, "trace_id", "traceId", default="") or "")
-            trace_dict = trace_lookup.get(score_trace_id)
-            if score_trace_id and not trace_dict:
-                try:
-                    trace_raw = _fetch_trace_by_id(client, score_trace_id)
-                    if trace_raw:
-                        trace_dict = parse_trace_data(trace_raw)
-                        trace_lookup[score_trace_id] = trace_dict
-                except Exception as trace_error:
-                    logger.debug("Failed to fetch trace {} for score enrichment: {}", score_trace_id, str(trace_error))
 
-            agent_name = _extract_trace_agent_name(trace_dict or {}) if trace_dict else None
-            if not agent_name and trace_dict:
-                trace_name = trace_dict.get("name")
-                agent_name = str(trace_name) if trace_name else None
+            # Extract agent name from score metadata without per-score Langfuse calls
+            local_agent_name = get_attr(s, "_agent_name") if isinstance(s, dict) else None
+            # Langfuse scores may carry trace name directly
+            agent_name = str(get_attr(s, "trace_name", "traceName", default="") or "") or None
+            if not agent_name:
+                agent_name = str(local_agent_name) if local_agent_name else None
 
             source = get_attr(s, "source")
             if hasattr(source, "value"):
@@ -5242,11 +5250,13 @@ async def run_dataset_experiment(
         agent_payload=agent_payload,
         generation_model=generation_model,
         generation_model_api_key=generation_model_api_key,
+        generation_model_registry_id=payload.generation_model_registry_id,
         judge_name=judge_cfg["judge_name"],
         judge_preset_id=judge_cfg.get("preset_id"),
         judge_criteria=judge_cfg["criteria"],
         judge_model=judge_cfg["model"],
         judge_model_api_key=judge_cfg["model_api_key"],
+        judge_model_registry_id=payload.judge_model_registry_id,
     )
 
     return DatasetExperimentEnqueueResponse(
@@ -5343,6 +5353,7 @@ async def run_saved_evaluators_for_new_trace(
     timestamp: datetime | None = None,
     trace_input: Any | None = None,
     trace_output: Any | None = None,
+    langfuse_client: Any | None = None,
 ) -> int:
     """Run all saved evaluators targeting new traces for a just-finished trace."""
     logger.info(
@@ -5359,18 +5370,23 @@ async def run_saved_evaluators_for_new_trace(
         logger.warning(f"Invalid user_id for new-trace evaluation: {user_id}")
         return 0
 
-    # Resolve Langfuse client via DB bindings first, then env-var fallback
-    client = None
-    try:
-        async with session_scope() as _scope_session:
-            from agentcore.services.database.models.user.model import User as UserModel
-            user_obj = await _scope_session.get(UserModel, user_uuid)
-            if user_obj:
-                _, client = await _get_scoped_langfuse_for_evaluation(
-                    _scope_session, user_obj,
-                )
-    except Exception as scope_err:
-        logger.debug("Scoped Langfuse client resolution failed: {}", str(scope_err))
+    # Use the tracer's Langfuse client if provided (same project as the trace).
+    # This ensures scores are submitted to the same Langfuse project as the trace.
+    client = langfuse_client
+    if client:
+        logger.info(f"Using tracer's Langfuse client for evaluator score submission (type={type(client).__name__})")
+    else:
+        # Fallback: resolve via DB bindings / env-var
+        try:
+            async with session_scope() as _scope_session:
+                from agentcore.services.database.models.user.model import User as UserModel
+                user_obj = await _scope_session.get(UserModel, user_uuid)
+                if user_obj:
+                    _, client = await _get_scoped_langfuse_for_evaluation(
+                        _scope_session, user_obj,
+                    )
+        except Exception as scope_err:
+            logger.debug("Scoped Langfuse client resolution failed: {}", str(scope_err))
 
     if not client:
         client = get_langfuse_client()
