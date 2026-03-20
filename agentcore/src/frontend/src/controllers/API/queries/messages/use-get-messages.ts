@@ -57,7 +57,17 @@ export const useGetMessagesQuery: useQueryFunctionType<
   const responseFn = async () => {
     const data = await getMessagesFn(id, params);
     const columns = extractColumnsFromRows(data.data, mode, excludedFields);
-    useMessagesStore.getState().setMessages(data.data);
+    // Guard: don't overwrite messages while a build is active.
+    // During a build, the SSE stream pushes messages into the store in
+    // real time.  An in-flight query (started before the build) would
+    // return stale/empty results and wipe out the streamed messages,
+    // causing the blank-chat-on-new-session bug.
+    const isBuildActive =
+      useMessagesStore.getState().displayLoadingMessage ||
+      useAgentStore.getState().isBuilding;
+    if (!isBuildActive) {
+      useMessagesStore.getState().setMessages(data.data);
+    }
     return { rows: data, columns };
   };
 

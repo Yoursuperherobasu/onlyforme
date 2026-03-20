@@ -9,6 +9,8 @@ from langchain_core.language_models.llms import LLM
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import BaseOutputParser
 
+from loguru import logger
+
 from agentcore.base.constants import STREAM_INFO_TEXT
 from agentcore.custom.custom_node.node import Node
 from agentcore.field_typing import LanguageModel
@@ -259,7 +261,14 @@ class LCModelNode(Node):
                     "callbacks": self.get_langchain_callbacks(),
                 }
             )
-            if stream:
+            # Stream when explicitly requested OR when an event_manager is
+            # available (Playground build path sets event_manager but the
+            # cached graph may still have stream=False on the component).
+            # Stream when explicitly requested OR when an event_manager is
+            # available (Playground build path sets event_manager but the
+            # cached graph may still have stream=False on the component).
+            should_stream = stream or (hasattr(self, "_event_manager") and self._event_manager is not None)
+            if should_stream:
                 lf_message, result, stream_ai_message = await self._handle_stream(runnable, inputs)
                 if stream_ai_message is not None:
                     message = stream_ai_message
@@ -359,8 +368,15 @@ class LCModelNode(Node):
 
         lf_message = None
         ai_message = None  # Will hold the full AIMessage if available
-        if self.is_connected_to_chat_output():
-            # Add a Message — use async streaming to avoid blocking the event loop
+        if hasattr(self, "_event_manager") and self._event_manager:
+            # Stream tokens directly via event_manager — the same mechanism
+            # used by Worker Node / Agent components.  This sends token SSE
+            # events directly to the queue, which the consumer flushes to the
+            # client immediately.  The previous send_message()-based path
+            # buffered all tokens because the async generator was consumed
+            # inside send_message's synchronous iteration context.
+            import asyncio
+
             if hasattr(self, "graph"):
                 session_id = self.graph.session_id
             elif hasattr(self, "_session_id"):
@@ -368,44 +384,10 @@ class LCModelNode(Node):
             else:
                 session_id = None
 
-            # Wrap the async generator to accumulate chunks for token usage
-            # extraction while still passing them through to send_message.
-            chunk_collector: list = []
-
-            async def _accumulate_and_yield(astream):
-                accumulated = None
-                async for chunk in astream:
-                    try:
-                        accumulated = chunk if accumulated is None else accumulated + chunk
-                    except TypeError:
-                        pass
-                    yield chunk
-                if accumulated is not None:
-                    chunk_collector.append(accumulated)
-
-            model_message = Message(
-                text=_accumulate_and_yield(runnable.astream(inputs)),
-                sender=MESSAGE_SENDER_AI,
-                sender_name="AI",
-                properties={"icon": self.icon, "state": "partial"},
-                session_id=session_id,
-            )
-            model_message.properties.source = self._build_source(self._id, self.display_name, self)
-            lf_message = await self.send_message(model_message)
-            result = lf_message.text
-            # Extract the accumulated AIMessage with response_metadata / usage_metadata
-            if chunk_collector and isinstance(chunk_collector[0], AIMessage):
-                ai_message = chunk_collector[0]
-        elif hasattr(self, "_event_manager") and self._event_manager:
-            # Stream tokens directly via event_manager even when not
-            # connected to ChatOutput (e.g. LLM → Agent → ChatOutput).
-            # ChatOutput will still emit its own add_message with the
-            # final text; the token events let the UI render progressively.
-            import asyncio
-
             message_id = str(uuid4())
             complete = ""
             accumulated = None
+            first_chunk = True
             async for chunk in runnable.astream(inputs):
                 # Accumulate chunks to build the full AIMessage with
                 # response_metadata (token usage arrives in the last chunk).
@@ -415,15 +397,47 @@ class LCModelNode(Node):
                     pass
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 complete += content
+
+                # On first chunk, send add_message event so the frontend
+                # creates the message bubble before tokens start arriving.
+                if first_chunk:
+                    agent_id = None
+                    if hasattr(self, "graph") and self.graph:
+                        agent_id = str(self.graph.agent_id) if self.graph.agent_id else None
+                    init_message = Message(
+                        text="",
+                        sender=MESSAGE_SENDER_AI,
+                        sender_name=self.display_name or "AI",
+                        properties={"icon": self.icon, "state": "partial"},
+                        session_id=session_id,
+                    )
+                    init_data = init_message.model_dump().get("data", init_message.model_dump())
+                    init_data["id"] = message_id
+                    if agent_id:
+                        init_data["agent_id"] = agent_id
+                    self._event_manager.on_message(data=init_data)
+                    await asyncio.sleep(0)
+                    first_chunk = False
+
                 self._event_manager.on_token(
                     data={"chunk": content, "id": message_id},
                 )
-                # Yield to the event loop so the queue consumer can
-                # deliver the token to the client immediately.
                 await asyncio.sleep(0)
             result = complete
             if isinstance(accumulated, AIMessage):
                 ai_message = accumulated
+
+            # Store the complete message to DB (single write at the end)
+            if self.is_connected_to_chat_output():
+                final_message = Message(
+                    text=complete,
+                    sender=MESSAGE_SENDER_AI,
+                    sender_name=self.display_name or "AI",
+                    properties={"icon": self.icon, "state": "complete"},
+                    session_id=session_id,
+                )
+                final_message.data["id"] = message_id
+                lf_message = await self.send_message(final_message)
         else:
             message = await runnable.ainvoke(inputs)
             result = message.content if hasattr(message, "content") else message

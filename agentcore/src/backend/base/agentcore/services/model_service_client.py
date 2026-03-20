@@ -760,6 +760,8 @@ class MicroserviceChatModel(BaseChatModel):
         payload["stream_options"] = {"include_usage": True}
 
         stream_usage: dict | None = None
+        # Accumulate tool call deltas from streaming chunks
+        tool_call_accum: dict[int, dict] = {}  # index → {id, name, arguments}
 
         with httpx.Client(timeout=300.0) as client:
             with client.stream(
@@ -790,8 +792,43 @@ class MicroserviceChatModel(BaseChatModel):
                                 if run_manager:
                                     run_manager.on_llm_new_token(content)
                                 yield gen_chunk
+
+                            # Accumulate tool call deltas
+                            tc_deltas = delta.get("tool_calls")
+                            if tc_deltas:
+                                for tc_delta in tc_deltas:
+                                    idx = tc_delta.get("index", 0)
+                                    if idx not in tool_call_accum:
+                                        tool_call_accum[idx] = {"id": "", "name": "", "arguments": ""}
+                                    if tc_delta.get("id"):
+                                        tool_call_accum[idx]["id"] = tc_delta["id"]
+                                    func = tc_delta.get("function", {})
+                                    if func.get("name"):
+                                        tool_call_accum[idx]["name"] += func["name"]
+                                    if func.get("arguments"):
+                                        tool_call_accum[idx]["arguments"] += func["arguments"]
                     except json.JSONDecodeError:
                         continue
+
+        # If tool calls were accumulated, yield them as a final chunk
+        if tool_call_accum:
+            tool_call_chunks = []
+            for idx in sorted(tool_call_accum.keys()):
+                tc = tool_call_accum[idx]
+                args_str = tc["arguments"]
+                try:
+                    args = json.loads(args_str) if args_str else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {"raw": args_str}
+                tool_call_chunks.append({
+                    "name": tc["name"],
+                    "args": json.dumps(args) if isinstance(args, dict) else str(args),
+                    "id": tc["id"],
+                    "index": idx,
+                    "type": "tool_call_chunk",
+                })
+            tc_msg = AIMessageChunk(content="", tool_call_chunks=tool_call_chunks)
+            yield ChatGenerationChunk(message=tc_msg)
 
         # Yield a final empty chunk with usage_metadata so callers can extract tokens
         if stream_usage:
@@ -816,38 +853,6 @@ class MicroserviceChatModel(BaseChatModel):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        # When tools are bound, fall back to non-streaming so tool_calls in the
-        # response are fully parsed before the ToolsAgentOutputParser sees them.
-        # Streaming tool-call deltas require schema changes not yet implemented.
-        if self.bound_tools:
-            result = await self._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
-            for gen in result.generations:
-                msg = gen.message
-                tool_calls = getattr(msg, "tool_calls", None) or []
-                # Build tool_call_chunks so the LCEL pipeline accumulates them
-                # into tool_calls on the final AIMessage that ToolsAgentOutputParser reads.
-                tool_call_chunks = [
-                    {
-                        "name": tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", ""),
-                        "args": json.dumps(
-                            tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
-                        ),
-                        "id": tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", ""),
-                        "index": i,
-                        "type": "tool_call_chunk",
-                    }
-                    for i, tc in enumerate(tool_calls)
-                ]
-                chunk_msg = AIMessageChunk(
-                    content=msg.content or "",
-                    tool_call_chunks=tool_call_chunks,
-                )
-                gen_chunk = ChatGenerationChunk(message=chunk_msg)
-                if run_manager and msg.content:
-                    await run_manager.on_llm_new_token(msg.content)
-                yield gen_chunk
-            return
-
         payload = self._build_payload(messages, stream=True)
         if stop:
             payload["stop"] = stop
@@ -855,6 +860,8 @@ class MicroserviceChatModel(BaseChatModel):
         payload["stream_options"] = {"include_usage": True}
 
         stream_usage: dict | None = None
+        # Accumulate tool call deltas from streaming chunks
+        tool_call_accum: dict[int, dict] = {}  # index → {id, name, arguments}
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
@@ -885,8 +892,43 @@ class MicroserviceChatModel(BaseChatModel):
                                 if run_manager:
                                     await run_manager.on_llm_new_token(content)
                                 yield gen_chunk
+
+                            # Accumulate tool call deltas
+                            tc_deltas = delta.get("tool_calls")
+                            if tc_deltas:
+                                for tc_delta in tc_deltas:
+                                    idx = tc_delta.get("index", 0)
+                                    if idx not in tool_call_accum:
+                                        tool_call_accum[idx] = {"id": "", "name": "", "arguments": ""}
+                                    if tc_delta.get("id"):
+                                        tool_call_accum[idx]["id"] = tc_delta["id"]
+                                    func = tc_delta.get("function", {})
+                                    if func.get("name"):
+                                        tool_call_accum[idx]["name"] += func["name"]
+                                    if func.get("arguments"):
+                                        tool_call_accum[idx]["arguments"] += func["arguments"]
                     except json.JSONDecodeError:
                         continue
+
+        # If tool calls were accumulated, yield them as a final chunk
+        if tool_call_accum:
+            tool_call_chunks = []
+            for idx in sorted(tool_call_accum.keys()):
+                tc = tool_call_accum[idx]
+                args_str = tc["arguments"]
+                try:
+                    args = json.loads(args_str) if args_str else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {"raw": args_str}
+                tool_call_chunks.append({
+                    "name": tc["name"],
+                    "args": json.dumps(args) if isinstance(args, dict) else str(args),
+                    "id": tc["id"],
+                    "index": idx,
+                    "type": "tool_call_chunk",
+                })
+            tc_msg = AIMessageChunk(content="", tool_call_chunks=tool_call_chunks)
+            yield ChatGenerationChunk(message=tc_msg)
 
         # Yield a final empty chunk with usage_metadata so callers can extract tokens
         if stream_usage:

@@ -233,6 +233,7 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
 
     # Stream content chunks and accumulate for usage extraction
     accumulated = None
+    finish_reason = "stop"
     async for chunk in provider.stream(model, messages):
         # Accumulate chunks so the final message carries usage metadata
         try:
@@ -258,6 +259,78 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
             )
             yield f"data: {stream_chunk.model_dump_json()}\n\n"
 
+        # Stream tool call deltas so the client can reconstruct tool calls
+        tool_call_chunks = getattr(chunk, "tool_call_chunks", None)
+        if tool_call_chunks:
+            tc_deltas = []
+            for tc_chunk in tool_call_chunks:
+                tc_dict: dict = {}
+                if isinstance(tc_chunk, dict):
+                    tc_dict = {
+                        "index": tc_chunk.get("index", 0),
+                        "id": tc_chunk.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": tc_chunk.get("name", ""),
+                            "arguments": tc_chunk.get("args", ""),
+                        },
+                    }
+                else:
+                    tc_dict = {
+                        "index": getattr(tc_chunk, "index", 0),
+                        "id": getattr(tc_chunk, "id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": getattr(tc_chunk, "name", ""),
+                            "arguments": getattr(tc_chunk, "args", ""),
+                        },
+                    }
+                tc_deltas.append(tc_dict)
+
+            tc_stream_chunk = ChatCompletionChunk(
+                model=request.model,
+                choices=[
+                    ChunkChoice(
+                        index=0,
+                        delta=DeltaMessage(tool_calls=tc_deltas),
+                    )
+                ],
+            )
+            yield f"data: {tc_stream_chunk.model_dump_json()}\n\n"
+            finish_reason = "tool_calls"
+
+    # If the accumulated message has tool_calls but none were streamed
+    # (some providers only expose them on the final accumulated message),
+    # send them now so the client can reconstruct them.
+    if accumulated is not None:
+        lc_tool_calls = getattr(accumulated, "tool_calls", None)
+        if lc_tool_calls and finish_reason != "tool_calls":
+            tc_list = []
+            for tc in lc_tool_calls:
+                tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
+                tc_name = tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "")
+                tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                tc_list.append({
+                    "index": 0,
+                    "id": tc_id,
+                    "type": "function",
+                    "function": {
+                        "name": tc_name,
+                        "arguments": json.dumps(tc_args) if isinstance(tc_args, dict) else str(tc_args),
+                    },
+                })
+            tc_final_chunk = ChatCompletionChunk(
+                model=request.model,
+                choices=[
+                    ChunkChoice(
+                        index=0,
+                        delta=DeltaMessage(tool_calls=tc_list),
+                    )
+                ],
+            )
+            yield f"data: {tc_final_chunk.model_dump_json()}\n\n"
+            finish_reason = "tool_calls"
+
     # Send final chunk with finish_reason
     final_chunk = ChatCompletionChunk(
         model=request.model,
@@ -265,7 +338,7 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
             ChunkChoice(
                 index=0,
                 delta=DeltaMessage(),
-                finish_reason="stop",
+                finish_reason=finish_reason,
             )
         ],
     )

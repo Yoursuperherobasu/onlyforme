@@ -60,6 +60,7 @@ class GoogleProvider(BaseProvider):
         kwargs: dict[str, Any] = {
             "model": model,
             "google_api_key": api_key,
+            "streaming": streaming,
         }
 
         if temperature is not None:

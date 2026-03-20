@@ -47,7 +47,7 @@ export default function ExportApiModal({
   const [loading, setLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const baseUrl = PROXY_TARGET;
+  const baseUrl = import.meta.env.VITE_API_URL || PROXY_TARGET;
   const envCode = environment === "uat" ? 1 : 2;
   const runUrl = `${baseUrl}/api/run/${agentId}?env=${envCode}&version=${version}`;
 
