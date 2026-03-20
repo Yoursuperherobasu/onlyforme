@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useRefreshAccessToken } from "@/controllers/API/queries/auth";
+import { useLogout, useRefreshAccessToken } from "@/controllers/API/queries/auth";
 import { CustomNavigate } from "@/customization/components/custom-navigate";
 import { customGetAccessToken } from "@/customization/utils/custom-get-access-token";
 import useAuthStore from "@/stores/authStore";
@@ -27,6 +27,7 @@ const getAccessTokenExpEpoch = (token: string | undefined): number | null => {
 export const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const { mutate: mutateRefresh } = useRefreshAccessToken();
+  const { mutate: mutateLogout } = useLogout();
 
   
   const testMockAutoLogin = sessionStorage.getItem("testMockAutoLogin");
@@ -40,8 +41,37 @@ export const ProtectedRoute = ({ children }) => {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
 
+    const clearScheduledRefresh = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    };
+
+    const logoutStaleSession = () => {
+      if (cancelled) return;
+      clearScheduledRefresh();
+      mutateLogout(undefined);
+    };
+
+    const refreshSession = () => {
+      if (cancelled) return;
+
+      mutateRefresh(undefined, {
+        onSuccess: () => {
+          if (!cancelled) {
+            scheduleRefresh();
+          }
+        },
+        onError: () => {
+          logoutStaleSession();
+        },
+      });
+    };
+
     const scheduleRefresh = () => {
       if (cancelled) return;
+      clearScheduledRefresh();
 
       const currentToken = customGetAccessToken();
       const tokenExp = getAccessTokenExpEpoch(currentToken);
@@ -57,19 +87,47 @@ export const ProtectedRoute = ({ children }) => {
             );
 
       timeoutId = setTimeout(() => {
-        mutateRefresh(undefined, {
-          onSettled: () => scheduleRefresh(),
-        });
+        refreshSession();
       }, nextRefreshInSeconds * 1000);
     };
 
+    const refreshIfNeeded = () => {
+      if (cancelled) return;
+
+      const currentToken = customGetAccessToken();
+      const tokenExp = getAccessTokenExpEpoch(currentToken);
+      const now = Math.floor(Date.now() / 1000);
+      const secondsUntilExpiry = tokenExp ? tokenExp - now : null;
+
+      if (secondsUntilExpiry === null || secondsUntilExpiry <= TOKEN_REFRESH_BUFFER_SECONDS) {
+        refreshSession();
+        return;
+      }
+
+      scheduleRefresh();
+    };
+
+    const onFocus = () => {
+      refreshIfNeeded();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshIfNeeded();
+      }
+    };
+
     scheduleRefresh();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       cancelled = true;
-      if (timeoutId) clearTimeout(timeoutId);
+      clearScheduledRefresh();
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isAuthenticated, mutateRefresh]);
+  }, [isAuthenticated, mutateLogout, mutateRefresh]);
 
   if (shouldRedirect || testMockAutoLogin) {
     const currentPath = window.location.pathname;
