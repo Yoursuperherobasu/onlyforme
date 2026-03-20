@@ -104,6 +104,12 @@ def resolve_backend_secrets_from_key_vault() -> None:
         "PINECONE_SERVICE_API_KEY": "AGENTCORE_KEY_VAULT_PINECONE_SERVICE_API_KEY_SECRET_NAME",
         "GRAPH_RAG_SERVICE_API_KEY": "AGENTCORE_KEY_VAULT_GRAPH_RAG_SERVICE_API_KEY_SECRET_NAME",
         "RABBITMQ_URL": "AGENTCORE_KEY_VAULT_RABBITMQ_URL_SECRET_NAME",
+        "BACKEND_SERVICE_API_KEY": "AGENTCORE_KEY_VAULT_BACKEND_SERVICE_API_KEY_SECRET_NAME",
+        "PACKAGE_INVENTORY_API_KEY": "AGENTCORE_KEY_VAULT_PACKAGE_INVENTORY_API_KEY_SECRET_NAME",
+        "AZURE_AI_SEARCH_ENDPOINT": "AGENTCORE_KEY_VAULT_AZURE_AI_SEARCH_ENDPOINT_SECRET_NAME",
+        "AZURE_AI_SEARCH_API_KEY": "AGENTCORE_KEY_VAULT_AZURE_AI_SEARCH_API_KEY_SECRET_NAME",
+        "GRAFANA_API_KEY": "AGENTCORE_KEY_VAULT_GRAFANA_API_KEY_SECRET_NAME",
+        "AZURE_PROMETHEUS_CLIENT_SECRET": "AGENTCORE_KEY_VAULT_PROMETHEUS_CLIENT_SECRET_SECRET_NAME",
     }
 
     for env_name, secret_name_env in mappings.items():
@@ -117,21 +123,4 @@ def resolve_backend_secrets_from_key_vault() -> None:
             raise RuntimeError(msg)
         os.environ[env_name] = secret_value
 
-    # Optional secrets — only loaded if the env var pointing to the secret name is set.
-    # These don't break startup if missing (e.g. BACKEND_SERVICE_API_KEY is only needed
-    # on deployments that accept cross-region gateway calls).
-    optional_mappings = {
-        "BACKEND_SERVICE_API_KEY": "AGENTCORE_KEY_VAULT_BACKEND_SERVICE_API_KEY_SECRET_NAME",
-        "AZURE_AI_SEARCH_ENDPOINT": "AGENTCORE_KEY_VAULT_AZURE_AI_SEARCH_ENDPOINT_SECRET_NAME",
-        "AZURE_AI_SEARCH_API_KEY": "AGENTCORE_KEY_VAULT_AZURE_AI_SEARCH_API_KEY_SECRET_NAME",
-        "GRAFANA_API_KEY": "AGENTCORE_KEY_VAULT_GRAFANA_API_KEY_SECRET_NAME",
-        "AZURE_PROMETHEUS_CLIENT_SECRET": "AGENTCORE_KEY_VAULT_PROMETHEUS_CLIENT_SECRET_SECRET_NAME",
-    }
-
-    for env_name, secret_name_env in optional_mappings.items():
-        secret_name = (os.getenv(secret_name_env) or "").strip()
-        if not secret_name:
-            continue
-        secret_value = kv_store.get_secret(secret_name)
-        if secret_value:
-            os.environ[env_name] = secret_value
+    
