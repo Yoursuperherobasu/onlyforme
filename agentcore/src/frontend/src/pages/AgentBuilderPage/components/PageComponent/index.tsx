@@ -22,6 +22,7 @@ import {
   useState,
 } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
+import { useParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { DefaultEdge } from "@/CustomEdges";
 import NoteNode from "@/CustomNodes/NoteNode";
@@ -33,11 +34,14 @@ import {
 } from "@/constants/constants";
 import { useGetBuildsQuery } from "@/controllers/API/queries/_builds";
 import CustomLoader from "@/customization/components/custom-loader";
+import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
 import { useGetApprovalDetails } from "@/controllers/API/queries/approvals";
 import useAutoSaveAgent from "@/hooks/agents/use-autosave-agent";
 import useUploadAgent from "@/hooks/agents/use-upload-agent";
 import { useAddComponent } from "@/hooks/use-add-component";
+import ForwardedIconComponent from "@/components/common/genericIconComponent";
+import { Button } from "@/components/ui/button";
 import { nodeColorsName } from "@/utils/styleUtils";
 import { isSupportedNodeTypes } from "@/utils/utils";
 import GenericNode from "../../../../CustomNodes/GenericNode";
@@ -152,6 +156,8 @@ export default function Page({
   showToolbarInView?: boolean;
   toolbarReadOnly?: boolean;
 }): JSX.Element {
+  const navigate = useCustomNavigate();
+  const { folderId } = useParams();
   const uploadAgent = useUploadAgent();
   const autoSaveAgent = useAutoSaveAgent();
   const types = useTypesStore((state) => state.types);
@@ -781,6 +787,13 @@ export default function Page({
   };
   const allowViewportInteractions = !view || !!enableViewportInteractions;
   const shouldShowToolbar = !view || !!showToolbarInView;
+  const handleBack = () => {
+    if (folderId) {
+      navigate(`/agents/folder/${folderId}`);
+      return;
+    }
+    navigate("/agents");
+  };
 
   return (
     <div className="h-full w-full bg-canvas" ref={reactFlowWrapper}>
@@ -789,6 +802,24 @@ export default function Page({
           <div id="react-agent-id" className="h-full w-full bg-canvas relative">
             {!view && (
               <>
+                <Panel
+                  className="react-flow__controls !left-0 !top-11 !m-2 rounded-md"
+                  position="top-left"
+                >
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="flex items-center !gap-1.5 shadow-sm"
+                    onClick={handleBack}
+                    data-testid="back-button"
+                  >
+                    <ForwardedIconComponent
+                      name="ArrowLeft"
+                      className="text-primary"
+                    />
+                    <span className="text-mmd font-normal">Back</span>
+                  </Button>
+                </Panel>
                 <MemoizedLogCanvasControls />
                 <MemoizedCanvasControls
                   setIsAddingNote={setIsAddingNote}
