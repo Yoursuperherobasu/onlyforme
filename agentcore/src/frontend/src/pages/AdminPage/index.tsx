@@ -10,8 +10,6 @@ import {
   useGetUsers,
   useUpdateUser,
 } from "@/controllers/API/queries/auth";
-import { api } from "@/controllers/API/api";
-import { getURL } from "@/controllers/API/helpers/constants";
 import CustomLoader from "@/customization/components/custom-loader";
 import IconComponent from "../../components/common/genericIconComponent";
 import ShadTooltip from "../../components/common/shadTooltipComponent";
@@ -28,10 +26,8 @@ import {
 } from "../../components/ui/table";
 import {
   USER_ADD_ERROR_ALERT,
-  USER_ADD_SUCCESS_ALERT,
   USER_DEL_SUCCESS_ALERT,
   USER_EDIT_ERROR_ALERT,
-  USER_EDIT_SUCCESS_ALERT,
 } from "../../constants/alerts_constants";
 import {
   ADMIN_HEADER_DESCRIPTION,
@@ -85,23 +81,32 @@ export default function AdminPage() {
   const { mutate: mutateGetOrganizations } = useGetOrganizations();
   const { permissions, role } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
+  const canViewAdminPage = Boolean(userData && can("view_admin_page"));
 
   const userList = useRef([]);
 
   useEffect(() => {
-    setTimeout(() => {
+    if (!canViewAdminPage) return;
+
+    const timeoutId = window.setTimeout(() => {
       fetchUsers();
-    }, 500);
-  }, []);
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [canViewAdminPage]);
 
   useEffect(() => {
+    if (!canViewAdminPage) return;
+
     mutateGetDepartments(undefined, {
       onSuccess: (items) => setDepartments(Array.isArray(items) ? items : []),
+      onError: () => setDepartments([]),
     });
     mutateGetOrganizations(undefined, {
       onSuccess: (items) => setOrganizations(Array.isArray(items) ? items : []),
+      onError: () => setOrganizations([]),
     });
-  }, []);
+  }, [canViewAdminPage]);
 
   const [filterUserList, setFilterUserList] = useState(userList.current);
 
@@ -131,6 +136,28 @@ export default function AdminPage() {
       }
     }
     return [String(detail)];
+  }
+
+  function isSmtpNotificationConfigError(error: any): boolean {
+    return normalizeErrorMessages(error).some((message) =>
+      message.toLowerCase().includes("smtp credentials are not configured"),
+    );
+  }
+
+  function showUserMutationError(error: any, fallbackTitle: string) {
+    const messages = normalizeErrorMessages(error);
+    if (isSmtpNotificationConfigError(error)) {
+      setErrorData({
+        title: "SMTP is not configured",
+        list: messages,
+      });
+      return;
+    }
+
+    setErrorData({
+      title: fallbackTitle,
+      list: messages,
+    });
   }
 
   function isAlreadyExistsError(error: any): boolean {
@@ -240,18 +267,7 @@ export default function AdminPage() {
     setUserToDelete(user);
     setDeleteDialogOpen(true);
     setDeleteDialogError([]);
-    setDeleteDialogChecking(true);
-
-    try {
-      const response = await api.get(`${getURL("USERS")}/${user.id}/delete-check`);
-      if (!response.data?.can_delete && response.data?.detail) {
-        setDeleteDialogError([response.data.detail]);
-      }
-    } catch (error) {
-      setDeleteDialogError(normalizeErrorMessages(error));
-    } finally {
-      setDeleteDialogChecking(false);
-    }
+    setDeleteDialogChecking(false);
   }
 
   function closeDeleteUserDialog() {
@@ -289,17 +305,16 @@ export default function AdminPage() {
     mutateUpdateUser(
       { user_id: userId, user: user },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
           resetFilter();
           setSuccessData({
-            title: USER_EDIT_SUCCESS_ALERT,
+            title: result?.emailSent
+              ? `User ${user.username} edited and email sent.`
+              : `User ${user.username} edited, email not sent.`,
           });
         },
         onError: (error) => {
-          setErrorData({
-            title: USER_EDIT_ERROR_ALERT,
-            list: normalizeErrorMessages(error),
-          });
+          showUserMutationError(error, USER_EDIT_ERROR_ALERT);
         },
       },
     );
@@ -312,24 +327,23 @@ export default function AdminPage() {
     mutateUpdateUser(
       { user_id: userId, user: userEdit },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
           resetFilter();
           setSuccessData({
-            title: USER_EDIT_SUCCESS_ALERT,
+            title: result?.emailSent
+              ? `User ${user.username} edited and email sent.`
+              : `User ${user.username} edited, email not sent.`,
           });
         },
         onError: (error) => {
-          setErrorData({
-            title: USER_EDIT_ERROR_ALERT,
-            list: normalizeErrorMessages(error),
-          });
+          showUserMutationError(error, USER_EDIT_ERROR_ALERT);
         },
       },
     );
   }
 
   function overwriteExistingUser(existingUserId: string, user: UserInputType) {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<{ warningMessage?: string; emailSent?: boolean }>((resolve, reject) => {
       mutateUpdateUser(
         {
           user_id: existingUserId,
@@ -350,8 +364,11 @@ export default function AdminPage() {
           } as any,
         },
         {
-          onSuccess: () => {
-            resolve();
+          onSuccess: (result) => {
+            resolve({
+              warningMessage: result?.warningMessage,
+              emailSent: result?.emailSent,
+            });
           },
           onError: (updateError) => {
             reject(updateError);
@@ -362,9 +379,13 @@ export default function AdminPage() {
   }
 
   function addUserAsync(user: UserInputType) {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<{ warningMessage?: string; emailSent?: boolean }>((resolve, reject) => {
       mutateAddUser(user, {
-        onSuccess: () => resolve(),
+        onSuccess: (result) =>
+          resolve({
+            warningMessage: result?.warningMessage,
+            emailSent: result?.emailSent,
+          }),
         onError: (error) => reject(error),
       });
     });
@@ -379,10 +400,11 @@ export default function AdminPage() {
     });
   }
 
-  async function createOrOverwriteUser(user: UserInputType): Promise<void> {
+  async function createOrOverwriteUser(
+    user: UserInputType,
+  ): Promise<{ warningMessage?: string; emailSent?: boolean }> {
     try {
-      await addUserAsync(user);
-      return;
+      return await addUserAsync(user);
     } catch (error) {
       if (!isAlreadyExistsError(error)) {
         throw error;
@@ -395,8 +417,7 @@ export default function AdminPage() {
       );
 
       if (existingUser?.id) {
-        await overwriteExistingUser(existingUser.id, user);
-        return;
+        return await overwriteExistingUser(existingUser.id, user);
       }
 
       const res = await getUsersAsync({
@@ -416,8 +437,7 @@ export default function AdminPage() {
       );
 
       if (matched?.id) {
-        await overwriteExistingUser(matched.id, user);
-        return;
+        return await overwriteExistingUser(matched.id, user);
       }
 
       throw error;
@@ -436,13 +456,21 @@ export default function AdminPage() {
     const usernames = Array.from(new Set(candidates));
     const errors: string[] = [];
     let successCount = 0;
+    let successWithWarningCount = 0;
+    let successWithEmailCount = 0;
 
     for (const username of usernames) {
       const payload: UserInputType = { ...user, username };
       delete payload.usernames;
       try {
-        await createOrOverwriteUser(payload);
+        const result = await createOrOverwriteUser(payload);
         successCount += 1;
+        if (result?.emailSent) {
+          successWithEmailCount += 1;
+        }
+        if (result?.warningMessage) {
+          successWithWarningCount += 1;
+        }
       } catch (error) {
         const normalized = normalizeErrorMessages(error);
         errors.push(`${username}: ${normalized.join(" | ")}`);
@@ -455,12 +483,27 @@ export default function AdminPage() {
       setSuccessData({
         title:
           usernames.length > 1
-            ? `${successCount} user(s) added/updated successfully.`
-            : USER_ADD_SUCCESS_ALERT,
+            ? successWithWarningCount > 0
+              ? `${successCount} user(s) added/updated, ${successWithWarningCount} email(s) not sent.`
+              : `${successWithEmailCount} user(s) added/updated and email sent.`
+            : successWithWarningCount > 0
+              ? `User ${usernames[0]} added, email not sent.`
+              : `User ${usernames[0]} added and email sent.`,
       });
     }
 
     if (errors.length > 0) {
+      const smtpError = errors.find((message) =>
+        message.toLowerCase().includes("smtp credentials are not configured"),
+      );
+      if (smtpError) {
+        setErrorData({
+          title: "SMTP is not configured",
+          list: [smtpError],
+        });
+        return;
+      }
+
       setErrorData({
         title: USER_ADD_ERROR_ALERT,
         list: errors,
