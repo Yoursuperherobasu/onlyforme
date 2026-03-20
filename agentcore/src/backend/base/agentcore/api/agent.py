@@ -492,7 +492,9 @@ async def read_agent(
     user_agent = (await session.exec(select(Agent).where(Agent.id == agent_id))).first()
     if not user_agent or not await _can_access_agent(session, current_user, user_agent):
         raise HTTPException(status_code=404, detail="agent not found")
-    return AgentRead.model_validate(user_agent, from_attributes=True)
+    agent_read = AgentRead.model_validate(user_agent, from_attributes=True)
+    agent_read.tags = await get_tags_for_agent(session, user_agent.id)
+    return agent_read
 
 
 @router.post("/{agent_id}/session/acquire", status_code=200)
@@ -630,6 +632,10 @@ async def update_agent(
         if incoming_tags is not None:
             org_id = await _get_user_org_id(session, current_user.id)
             await sync_agent_tags(session, db_agent.id, incoming_tags, org_id, current_user.id)
+            # Also keep the Agent.tags JSON column in sync so that
+            # registry_service and read endpoints always have tags available.
+            db_agent.tags = incoming_tags
+            session.add(db_agent)
             await session.commit()
 
         await _save_agent_to_fs(db_agent)

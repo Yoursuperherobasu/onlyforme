@@ -9,6 +9,9 @@ export interface ControlPanelAgentItem {
   agent_name: string;
   agent_description?: string | null;
   version_number: string;
+  version_label: string;
+  promoted_from_uat_id?: string | null;
+  source_uat_version_number?: string | null;
   status: string;
   visibility: "PUBLIC" | "PRIVATE" | string;
   is_active: boolean;

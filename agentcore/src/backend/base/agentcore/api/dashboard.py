@@ -651,6 +651,18 @@ async def get_department_approval_pending_series(
     assigned_agent_ids = select(AgentPublishRecipient.agent_id).where(
         AgentPublishRecipient.dept_id.in_(list(dept_ids))
     )
+    current_pending = (
+        await session.exec(
+            select(func.count())
+            .where(
+                ApprovalRequest.decision.is_(None),
+                or_(
+                    ApprovalRequest.dept_id.in_(list(dept_ids)),
+                    ApprovalRequest.agent_id.in_(assigned_agent_ids),
+                ),
+            )
+        )
+    ).one()
     baseline_pending = (
         await session.exec(
             select(func.count())
@@ -717,6 +729,12 @@ async def get_department_approval_pending_series(
         if pending < 0:
             pending = 0
         series.append(TimeseriesPoint(date=day.isoformat(), value=pending))
+
+    if series:
+        series[-1] = TimeseriesPoint(
+            date=series[-1].date,
+            value=int(current_pending or 0),
+        )
 
     return PendingSeriesResponse(range=range_key, series=series)
 
@@ -1175,7 +1193,7 @@ async def get_root_maturity_kpis(
         return proxied
 
     role = str(getattr(current_user, "role", "")).lower()
-    if role != "root":
+    if role not in {"root", "leader_executive"}:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
 
     total_agents = (

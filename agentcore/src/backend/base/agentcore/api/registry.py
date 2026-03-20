@@ -76,6 +76,9 @@ class RegistryEntryResponse(BaseModel):
     department_name: str | None = None
     organization_name: str | None = None
     version_number: str | None = None
+    version_label: str | None = None
+    promoted_from_uat_id: UUID | None = None
+    source_uat_version_number: str | None = None
     listed_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -106,6 +109,9 @@ class RegistryPreviewResponse(BaseModel):
     title: str
     deployment_env: str
     version_number: str | None = None
+    version_label: str | None = None
+    promoted_from_uat_id: UUID | None = None
+    source_uat_version_number: str | None = None
     snapshot: dict
 
 
@@ -301,7 +307,9 @@ async def browse_registry(
             if r.deployment_env == RegistryDeploymentEnvEnum.UAT
         }
         prod_version_map: dict[UUID, str] = {}
+        prod_promoted_from_map: dict[UUID, UUID | None] = {}
         uat_version_map: dict[UUID, str] = {}
+        source_uat_version_map: dict[UUID, str] = {}
         if lister_ids:
             users = (await session.exec(
                 select(User).where(User.id.in_(lister_ids))  # type: ignore[union-attr]
@@ -324,12 +332,36 @@ async def browse_registry(
         if prod_deploy_ids:
             prod_rows = (
                 await session.exec(
-                    select(AgentDeploymentProd.id, AgentDeploymentProd.version_number).where(
+                    select(
+                        AgentDeploymentProd.id,
+                        AgentDeploymentProd.version_number,
+                        AgentDeploymentProd.promoted_from_uat_id,
+                    ).where(
                         AgentDeploymentProd.id.in_(prod_deploy_ids)
                     )
                 )
             ).all()
-            prod_version_map = {dep_id: f"v{version}" for dep_id, version in prod_rows}
+            prod_version_map = {dep_id: f"v{version}" for dep_id, version, _ in prod_rows}
+            prod_promoted_from_map = {
+                dep_id: promoted_from_uat_id
+                for dep_id, _, promoted_from_uat_id in prod_rows
+            }
+            promoted_from_uat_ids = [
+                promoted_from_uat_id
+                for _, _, promoted_from_uat_id in prod_rows
+                if promoted_from_uat_id is not None
+            ]
+            if promoted_from_uat_ids:
+                source_rows = (
+                    await session.exec(
+                        select(AgentDeploymentUAT.id, AgentDeploymentUAT.version_number).where(
+                            AgentDeploymentUAT.id.in_(promoted_from_uat_ids)
+                        )
+                    )
+                ).all()
+                source_uat_version_map = {
+                    dep_id: f"v{version}" for dep_id, version in source_rows
+                }
         if uat_deploy_ids:
             uat_rows = (
                 await session.exec(
@@ -346,6 +378,17 @@ async def browse_registry(
                 if r.deployment_env == RegistryDeploymentEnvEnum.PROD
                 else uat_version_map.get(r.agent_deployment_id)
             )
+            promoted_from_uat_id = (
+                prod_promoted_from_map.get(r.agent_deployment_id)
+                if r.deployment_env == RegistryDeploymentEnvEnum.PROD
+                else None
+            )
+            source_uat_version_number = (
+                source_uat_version_map.get(promoted_from_uat_id)
+                if promoted_from_uat_id is not None
+                else None
+            )
+            version_label = version_number
             items.append(
                 RegistryEntryResponse(
                     id=r.id,
@@ -365,6 +408,9 @@ async def browse_registry(
                     department_name=lister_dept_map.get(r.listed_by),
                     organization_name=lister_org_map.get(r.listed_by),
                     version_number=version_number,
+                    version_label=version_label,
+                    promoted_from_uat_id=promoted_from_uat_id,
+                    source_uat_version_number=source_uat_version_number,
                     listed_at=r.listed_at,
                     created_at=r.created_at,
                     updated_at=r.updated_at,
@@ -439,16 +485,25 @@ async def get_registry_entry(
 
         # Fetch deployment details based on environment
         version_number: str | None = None
+        version_label: str | None = None
         agent_description: str | None = None
         publish_description: str | None = None
         deployed_by: UUID | None = None
         deployed_by_username: str | None = None
         deployed_at: datetime | None = None
+        promoted_from_uat_id: UUID | None = None
+        source_uat_version_number: str | None = None
 
         if entry.deployment_env == RegistryDeploymentEnvEnum.PROD:
             deploy_record = await session.get(AgentDeploymentProd, entry.agent_deployment_id)
             if deploy_record:
                 version_number = f"v{deploy_record.version_number}"
+                promoted_from_uat_id = deploy_record.promoted_from_uat_id
+                if promoted_from_uat_id:
+                    source_uat_record = await session.get(AgentDeploymentUAT, promoted_from_uat_id)
+                    if source_uat_record:
+                        source_uat_version_number = f"v{source_uat_record.version_number}"
+                version_label = version_number
                 agent_description = deploy_record.agent_description
                 publish_description = deploy_record.publish_description
                 deployed_by = deploy_record.deployed_by
@@ -457,6 +512,7 @@ async def get_registry_entry(
             deploy_record = await session.get(AgentDeploymentUAT, entry.agent_deployment_id)
             if deploy_record:
                 version_number = f"v{deploy_record.version_number}"
+                version_label = version_number
                 agent_description = deploy_record.agent_description
                 publish_description = deploy_record.publish_description
                 deployed_by = deploy_record.deployed_by
@@ -488,6 +544,9 @@ async def get_registry_entry(
             created_at=entry.created_at,
             updated_at=entry.updated_at,
             version_number=version_number,
+            version_label=version_label,
+            promoted_from_uat_id=promoted_from_uat_id,
+            source_uat_version_number=source_uat_version_number,
             agent_description=agent_description,
             publish_description=publish_description,
             deployed_by=deployed_by,
@@ -525,6 +584,9 @@ async def get_registry_preview(
             )
 
         version_number: str | None = None
+        version_label: str | None = None
+        promoted_from_uat_id: UUID | None = None
+        source_uat_version_number: str | None = None
         snapshot: dict | None = None
 
         if entry.deployment_env == RegistryDeploymentEnvEnum.PROD:
@@ -543,6 +605,12 @@ async def get_registry_preview(
 
         snapshot = deploy_record.agent_snapshot
         version_number = f"v{deploy_record.version_number}"
+        promoted_from_uat_id = getattr(deploy_record, "promoted_from_uat_id", None)
+        if promoted_from_uat_id:
+            source_uat_record = await session.get(AgentDeploymentUAT, promoted_from_uat_id)
+            if source_uat_record:
+                source_uat_version_number = f"v{source_uat_record.version_number}"
+        version_label = version_number
 
         if not snapshot:
             raise HTTPException(
@@ -555,6 +623,9 @@ async def get_registry_preview(
             title=entry.title,
             deployment_env=entry.deployment_env.value,
             version_number=version_number,
+            version_label=version_label,
+            promoted_from_uat_id=promoted_from_uat_id,
+            source_uat_version_number=source_uat_version_number,
             snapshot=snapshot,
         )
 

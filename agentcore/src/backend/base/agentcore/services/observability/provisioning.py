@@ -814,17 +814,13 @@ class LangfuseProvisioningService:
             ) from exc
 
         hashed_secret_key = bcrypt.hashpw(secret_key.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        # Compatible fast-hash fallback used for lookup acceleration.
-        if self.hash_strategy_version == "v1":
-            seed = f"{self.langfuse_salt}:{secret_key}".encode("utf-8")
-            fast_hashed_secret_key = hashlib.sha256(seed).hexdigest()
-        else:
-            digest = hmac.new(
-                key=self.langfuse_salt.encode("utf-8"),
-                msg=secret_key.encode("utf-8"),
-                digestmod=hashlib.sha256,
-            ).hexdigest()
-            fast_hashed_secret_key = digest
+        # Must match Langfuse's createShaHash(privateKey, salt):
+        #   SHA256(privateKey + SHA256_hex(salt))
+        # See: langfuse/packages/shared/src/server/auth/apiKeys.ts
+        salt_hash_hex = hashlib.sha256(self.langfuse_salt.encode("utf-8")).hexdigest()
+        fast_hashed_secret_key = hashlib.sha256(
+            (secret_key + salt_hash_hex).encode("utf-8")
+        ).hexdigest()
         return hashed_secret_key, fast_hashed_secret_key
 
     def _verify_langfuse_credentials(self, public_key: str, secret_key: str) -> None:

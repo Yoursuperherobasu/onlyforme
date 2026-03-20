@@ -976,7 +976,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             <h1 className="text-lg font-semibold md:text-xl">Connectors</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Configure and manage connections for agents (databases, Azure Blob, SharePoint, Outlook)
+            Configure data source connections for agents
           </p>
         </div>
         <div className="flex items-center gap-3">

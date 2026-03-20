@@ -1,4 +1,4 @@
-import { Copy, Eye, Search, Star, X } from "lucide-react";
+import { Copy, Eye, Filter, Search, Star, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -28,12 +28,27 @@ interface AgentCatalogueViewProps {
   setSearch?: (search: string) => void;
 }
 
+type FilterTab = "creator" | "department" | "version" | "rating" | "tags";
+
+const formatRegistryBadgeLabel = (agent: RegistryEntry) => {
+  if (agent.version_label) return agent.version_label;
+  if (!agent.version_number) return "";
+  return agent.version_number;
+};
+
 export default function AgentCatalogueView({
   setSearch,
 }: AgentCatalogueViewProps): JSX.Element {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [activeFilterTab, setActiveFilterTab] =
+    useState<FilterTab>("creator");
+  const [selectedCreator, setSelectedCreator] = useState("all");
+  const [selectedDepartment, setSelectedDepartment] = useState("all");
+  const [selectedVersion, setSelectedVersion] = useState("all");
+  const [selectedRating, setSelectedRating] = useState("all");
+  const [selectedTagFilter, setSelectedTagFilter] = useState("all");
   const [selectedEntry, setSelectedEntry] = useState<RegistryEntry | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [ratingOpen, setRatingOpen] = useState(false);
@@ -50,7 +65,6 @@ export default function AgentCatalogueView({
   const { data: registryData, isLoading: isLoadingRegistry } = useGetRegistry(
     {
       search: searchQuery || undefined,
-      tag: selectedTagFilter || undefined,
       page: 1,
       page_size: 60,
       deployment_env: "PROD",
@@ -66,10 +80,54 @@ export default function AgentCatalogueView({
   );
   const rateMutation = usePostRegistryRate();
 
-  const filteredAgents = useMemo(
-    () => registryData?.items || [],
-    [registryData?.items],
-  );
+  const filteredAgents = useMemo(() => {
+    return (registryData?.items || []).filter((agent) => {
+      const creatorName = (
+        agent.listed_by_username?.trim() ||
+        agent.listed_by_email?.trim() ||
+        ""
+      );
+      const departmentName = agent.department_name?.trim() || "";
+      const versionName = agent.version_label?.trim() || agent.version_number?.trim() || "";
+      const tags = agent.tags || [];
+      const ratingValue = Number(agent.rating || 0);
+
+      const matchesCreator =
+        selectedCreator === "all" ||
+        (selectedCreator === "__none__"
+          ? !creatorName
+          : creatorName === selectedCreator);
+      const matchesDepartment =
+        selectedDepartment === "all" ||
+        (selectedDepartment === "__none__"
+          ? !departmentName
+          : departmentName === selectedDepartment);
+      const matchesVersion =
+        selectedVersion === "all" || versionName === selectedVersion;
+      const matchesRating =
+        selectedRating === "all" ||
+        (selectedRating === "4+" && ratingValue >= 4) ||
+        (selectedRating === "3+" && ratingValue >= 3) ||
+        (selectedRating === "below3" && ratingValue < 3);
+      const matchesTag =
+        selectedTagFilter === "all" || tags.includes(selectedTagFilter);
+
+      return (
+        matchesCreator &&
+        matchesDepartment &&
+        matchesVersion &&
+        matchesRating &&
+        matchesTag
+      );
+    });
+  }, [
+    registryData?.items,
+    selectedCreator,
+    selectedDepartment,
+    selectedRating,
+    selectedTagFilter,
+    selectedVersion,
+  ]);
 
   const availableTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -78,6 +136,100 @@ export default function AgentCatalogueView({
     });
     return Array.from(tagSet).sort();
   }, [registryData?.items]);
+
+  const creatorOptions = useMemo(() => {
+    const names = new Set<string>();
+    (registryData?.items || []).forEach((agent) => {
+      const creator =
+        agent.listed_by_username?.trim() || agent.listed_by_email?.trim() || "";
+      if (creator) names.add(creator);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [registryData?.items]);
+
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    (registryData?.items || []).forEach((agent) => {
+      const department = agent.department_name?.trim() || "";
+      if (department) names.add(department);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [registryData?.items]);
+
+  const versionOptions = useMemo(() => {
+    const names = new Set<string>();
+    (registryData?.items || []).forEach((agent) => {
+      const version = agent.version_label?.trim() || agent.version_number?.trim() || "";
+      if (version) names.add(version);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [registryData?.items]);
+
+  const clearFilters = () => {
+    setSelectedCreator("all");
+    setSelectedDepartment("all");
+    setSelectedVersion("all");
+    setSelectedRating("all");
+    setSelectedTagFilter("all");
+  };
+
+  const activeFilterChips = useMemo(() => {
+    const chips: Array<{ key: string; label: string; onRemove: () => void }> =
+      [];
+    if (selectedCreator !== "all") {
+      chips.push({
+        key: "creator",
+        label:
+          selectedCreator === "__none__"
+            ? "Creator: Unknown"
+            : `Creator: ${selectedCreator}`,
+        onRemove: () => setSelectedCreator("all"),
+      });
+    }
+    if (selectedDepartment !== "all") {
+      chips.push({
+        key: "department",
+        label:
+          selectedDepartment === "__none__"
+            ? "Department: None"
+            : `Department: ${selectedDepartment}`,
+        onRemove: () => setSelectedDepartment("all"),
+      });
+    }
+    if (selectedVersion !== "all") {
+      chips.push({
+        key: "version",
+        label: `Version: ${selectedVersion}`,
+        onRemove: () => setSelectedVersion("all"),
+      });
+    }
+    if (selectedRating !== "all") {
+      const ratingLabelMap: Record<string, string> = {
+        "4+": "Rating: 4.0+",
+        "3+": "Rating: 3.0+",
+        below3: "Rating: Below 3.0",
+      };
+      chips.push({
+        key: "rating",
+        label: ratingLabelMap[selectedRating] ?? `Rating: ${selectedRating}`,
+        onRemove: () => setSelectedRating("all"),
+      });
+    }
+    if (selectedTagFilter !== "all") {
+      chips.push({
+        key: "tag",
+        label: `Tag: ${selectedTagFilter}`,
+        onRemove: () => setSelectedTagFilter("all"),
+      });
+    }
+    return chips;
+  }, [
+    selectedCreator,
+    selectedDepartment,
+    selectedRating,
+    selectedTagFilter,
+    selectedVersion,
+  ]);
 
   useEffect(() => {
     if (!setSearch) return;
@@ -162,37 +314,236 @@ export default function AgentCatalogueView({
               className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm sm:w-64"
             />
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setActiveFilterTab("creator");
+              setShowFilters(true);
+            }}
+          >
+            <Filter className="mr-1.5 h-4 w-4" />
+            {t("Filters")}
+          </Button>
         </div>
       </div>
 
-      {availableTags.length > 0 && (
-        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b px-4 py-3 sm:px-6 md:px-8">
-          <span className="text-xs font-medium text-muted-foreground">{t("Filter by tag")}:</span>
-          {availableTags.map((tag) => (
-            <Badge
-              key={tag}
-              variant={selectedTagFilter === tag ? "default" : "outline"}
-              className="cursor-pointer text-xs"
-              onClick={() =>
-                setSelectedTagFilter(selectedTagFilter === tag ? null : tag)
-              }
-            >
-              {tag}
-              {selectedTagFilter === tag && (
-                <X className="ml-1 h-3 w-3" />
-              )}
-            </Badge>
-          ))}
-          {selectedTagFilter && (
+      {activeFilterChips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-3 sm:px-6 md:px-8">
+          {activeFilterChips.map((chip) => (
             <button
+              key={chip.key}
               type="button"
-              onClick={() => setSelectedTagFilter(null)}
-              className="text-xs text-muted-foreground underline hover:text-foreground"
+              onClick={chip.onRemove}
+              className="inline-flex items-center gap-1 rounded-full border bg-background px-3 py-1 text-xs text-foreground hover:bg-muted"
             >
-              {t("Clear")}
+              <span>{chip.label}</span>
+              <X className="h-3 w-3" />
             </button>
-          )}
+          ))}
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="text-xs text-primary hover:underline"
+          >
+            {t("Clear all")}
+          </button>
         </div>
+      )}
+
+      {showFilters && (
+        <>
+          <div
+            className="fixed inset-0 z-[60] bg-black/40 transition-opacity"
+            onClick={() => setShowFilters(false)}
+          />
+          <div className="fixed inset-x-0 top-0 z-[70] flex h-full w-full items-start justify-center p-4">
+            <div className="flex h-full max-h-[720px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-background shadow-xl transition-transform">
+              <div className="flex items-center justify-between border-b px-5 py-4">
+                <h2 className="text-lg font-semibold">{t("Filters")}</h2>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={clearFilters}
+                    className="text-sm text-primary hover:underline"
+                  >
+                    {t("Clear Filters")}
+                  </button>
+                  <button
+                    onClick={() => setShowFilters(false)}
+                    className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+                    aria-label="Close filters"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-1 overflow-hidden">
+                <div className="w-44 border-r bg-muted/40 p-3 text-sm">
+                  <div className="space-y-4">
+                    <div>
+                      <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {t("People")}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => setActiveFilterTab("creator")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "creator"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Creator")}
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("department")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "department"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Department")}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {t("Registry")}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => setActiveFilterTab("version")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "version"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Version")}
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("rating")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "rating"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Rating")}
+                        </button>
+                        <button
+                          onClick={() => setActiveFilterTab("tags")}
+                          className={`rounded-md px-3 py-2 text-left ${
+                            activeFilterTab === "tags"
+                              ? "bg-background font-semibold shadow-sm"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {t("Tags")}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-auto p-5">
+                  {activeFilterTab === "creator" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">{t("Creator")}</h3>
+                      <select
+                        value={selectedCreator}
+                        onChange={(e) => setSelectedCreator(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">{t("All creators")}</option>
+                        <option value="__none__">{t("Unknown creator")}</option>
+                        {creatorOptions.map((creator) => (
+                          <option key={creator} value={creator}>
+                            {creator}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "department" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">{t("Department")}</h3>
+                      <select
+                        value={selectedDepartment}
+                        onChange={(e) => setSelectedDepartment(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">{t("All departments")}</option>
+                        <option value="__none__">{t("No department")}</option>
+                        {departmentOptions.map((department) => (
+                          <option key={department} value={department}>
+                            {department}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "version" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">{t("Version")}</h3>
+                      <select
+                        value={selectedVersion}
+                        onChange={(e) => setSelectedVersion(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">{t("All versions")}</option>
+                        {versionOptions.map((version) => (
+                          <option key={version} value={version}>
+                            {version}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "rating" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">{t("Rating")}</h3>
+                      <select
+                        value={selectedRating}
+                        onChange={(e) => setSelectedRating(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">{t("All ratings")}</option>
+                        <option value="4+">{t("4.0 and above")}</option>
+                        <option value="3+">{t("3.0 and above")}</option>
+                        <option value="below3">{t("Below 3.0")}</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {activeFilterTab === "tags" && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">{t("Tags")}</h3>
+                      <select
+                        value={selectedTagFilter}
+                        onChange={(e) => setSelectedTagFilter(e.target.value)}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="all">{t("All tags")}</option>
+                        {availableTags.map((tag) => (
+                          <option key={tag} value={tag}>
+                            {tag}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       <div className="flex-1 overflow-auto p-4 sm:p-6">
@@ -221,7 +572,7 @@ export default function AgentCatalogueView({
                           </h3>
                           {agent.version_number && (
                             <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-xxs font-semibold text-muted-foreground">
-                              {agent.version_number}
+                              {formatRegistryBadgeLabel(agent)}
                             </span>
                           )}
                         </div>
@@ -270,26 +621,40 @@ export default function AgentCatalogueView({
                       {agent.summary || t("No description available.")}
                     </p>
 
-                    <div className="mb-4 flex flex-wrap gap-2">
-                      {(agent.tags || []).map((tag: string, idx: number) => (
-                        <button
-                          type="button"
-                          key={`${agent.id}-${idx}`}
-                          className={`rounded-md border px-2.5 py-1 text-xs transition-colors hover:bg-primary/10 ${
-                            selectedTagFilter === tag
-                              ? "border-primary bg-primary/10 font-medium"
-                              : "bg-muted"
-                          }`}
-                          onClick={() =>
-                            setSelectedTagFilter(
-                              selectedTagFilter === tag ? null : tag,
-                            )
-                          }
-                        >
-                          {tag}
-                        </button>
-                      ))}
-                    </div>
+                    {(agent.tags || []).length > 0 && (
+                      <div
+                        className="relative mb-4 flex flex-wrap gap-1.5 group/tags"
+                      >
+                        {(agent.tags || []).slice(0, 3).map((tag: string, idx: number) => (
+                          <Badge
+                            key={`${agent.id}-${idx}`}
+                            variant="outline"
+                            className="text-xs px-2 py-0.5"
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                        {(agent.tags || []).length > 3 && (
+                          <Badge variant="outline" className="text-xs px-2 py-0.5 cursor-default">
+                            +{(agent.tags || []).length - 3}
+                          </Badge>
+                        )}
+                        {/* Full tags tooltip on hover */}
+                        {(agent.tags || []).length > 3 && (
+                          <div className="absolute bottom-full left-0 mb-1 hidden group-hover/tags:flex flex-wrap gap-1 bg-popover border rounded-lg p-2 shadow-lg z-50 w-max max-w-[300px]">
+                            {(agent.tags || []).map((tag: string, idx: number) => (
+                              <Badge
+                                key={`tooltip-${agent.id}-${idx}`}
+                                variant="outline"
+                                className="text-xs px-2 py-0.5"
+                              >
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between border-t pt-4">
                       <ShadTooltip

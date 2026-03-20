@@ -139,12 +139,12 @@ const sections: SectionConfig[] = [
     headline: "Platform Health & Reliability KPIs",
     description: "Infrastructure uptime, API latency percentiles, error rates, and AKS cluster resource saturation.",
     kpis: [
-      { name: "Platform Uptime %", value: "--", scope: "global" },
-      { name: "API Latency P95", value: "--", scope: "global" },
-      { name: "API Latency P99", value: "--", scope: "global" },
-      { name: "Error Rate %", value: "--", scope: "global" },
-      { name: "AKS Pod Scaling Events", value: "--" },
-      { name: "CPU/Memory Saturation %", value: "--", scope: "global" },
+      { name: "Platform Uptime %", value: "0%", scope: "global" },
+      { name: "API Latency P95", value: "0ms", scope: "global" },
+      { name: "API Latency P99", value: "0ms", scope: "global" },
+      { name: "Error Rate %", value: "0%", scope: "global" },
+      { name: "AKS Pod Scaling Events", value: "0" },
+      { name: "CPU/Memory Saturation %", value: "0%", scope: "global" },
     ],
     charts: [
       {
@@ -185,11 +185,11 @@ const sections: SectionConfig[] = [
     id: "governance",
     label: "Governance & Guardrail",
     headline: "Governance & Guardrail KPIs",
-    description: "Policy enforcement, unsafe content interception, breach attempts, and agents operating without guardrails.",
+    description: "Policy enforcement and agents operating without guardrails.",
     kpis: [
-      { name: "Guardrail Violation Rate", value: "0.7%" },
-      { name: "Escalation to Human Review", value: "96" },
-      { name: "% Agents Without Guardrails", value: "12%" },
+      { name: "Guardrail Violation Rate", value: "0%" },
+      { name: "Escalation to Human Review", value: "0" },
+      { name: "% Agents Without Guardrails", value: "0%" },
     ],
     charts: [],
   },
@@ -208,11 +208,11 @@ const departmentSections: SectionConfig[] = [
     id: "usage",
     label: "Department Usage",
     headline: "Department Usage KPIs",
-    description: "Active agents, success rates, token consumption, and response performance across your department.",
+    description: "Active agents and response performance across your department.",
     kpis: [
-      { name: "Active Agents in Dept (UAT)", value: "42" },
-      { name: "Active Agents in Dept (PROD)", value: "18" },
-      { name: "Avg Response Time", value: "--", scope: "global" },
+      { name: "Active Agents in Dept (UAT)", value: "0" },
+      { name: "Active Agents in Dept (PROD)", value: "0" },
+      { name: "Avg Response Time", value: "0ms", scope: "global" },
     ],
     charts: [
       { title: "Response Time Trend", subtitle: "Avg response time over time", type: "area", data: [], scope: "global" },
@@ -222,21 +222,18 @@ const departmentSections: SectionConfig[] = [
     id: "approval",
     label: "Approval & Governance",
     headline: "Approval & Governance KPIs",
-    description: "Pending approval queue depth, rejection rates, and average time-to-decision for agent change requests.",
+    description: "Pending approval queue depth, rejection rates, and average approval time.",
     kpis: [
-      { name: "Pending Approvals", value: "--" },
-      { name: "Rejection Rate", value: "--" },
-      { name: "Avg Approval Time", value: "--" },
+      { name: "Pending Approvals", value: "0" },
+      { name: "Rejection Rate", value: "0%" },
+      { name: "Avg Approval Time", value: "0min" },
     ],
     charts: [
       {
         title: "Pending Approvals",
         subtitle: "Queue trend",
         type: "area",
-        data: [
-          { label: "Mon", value: 22 }, { label: "Tue", value: 24 }, { label: "Wed", value: 28 },
-          { label: "Thu", value: 31 }, { label: "Fri", value: 27 }, { label: "Sat", value: 19 }, { label: "Sun", value: 21 },
-        ],
+        data: [],
       },
     ],
   },
@@ -244,30 +241,24 @@ const departmentSections: SectionConfig[] = [
     id: "hitl",
     label: "HITL Governance",
     headline: "HITL Governance KPIs",
-    description: "Human-in-the-loop invocation frequency, response time benchmarks, and daily escalation patterns.",
+    description: "Human-in-the-loop invocation frequency, response time benchmarks, and escalation patterns.",
     kpis: [
-      { name: "Agents with HITL", value: "--" },
-      { name: "HITL Invocation Rate", value: "3.6%" },
-      { name: "Avg HITL Response Time", value: "12 min" },
+      { name: "Agents with HITL", value: "0" },
+      { name: "HITL Invocation Rate", value: "0%" },
+      { name: "Avg HITL Response Time", value: "0min" },
     ],
     charts: [
       {
         title: "Invocation Rate",
         subtitle: "Daily trend",
         type: "area",
-        data: [
-          { label: "Mon", value: 3.9 }, { label: "Tue", value: 3.7 }, { label: "Wed", value: 3.5 },
-          { label: "Thu", value: 3.8 }, { label: "Fri", value: 3.6 }, { label: "Sat", value: 3.2 }, { label: "Sun", value: 3.4 },
-        ],
+        data: [],
       },
       {
         title: "Response Time",
         subtitle: "Minutes by day",
         type: "bar",
-        data: [
-          { label: "Mon", value: 14 }, { label: "Tue", value: 12 }, { label: "Wed", value: 11 },
-          { label: "Thu", value: 13 }, { label: "Fri", value: 12 },
-        ],
+        data: [],
       },
     ],
   },
@@ -275,27 +266,16 @@ const departmentSections: SectionConfig[] = [
 ];
 
 const developerSections: SectionConfig[] = [
-  {
-    id: "quality",
-    label: "Agent Quality",
-    headline: "Agent Quality KPIs (Langfuse Evaluations)",
-    description: "LLM evaluation scores � hallucination rates and RAG relevance from Langfuse.",
-    kpis: [
-      { name: "Hallucination Score", value: "2.1%" },
-      { name: "RAG Relevance Score", value: "0.84" },
   
-    ],
-    charts: [],
-  },
   {
     id: "performance",
     label: "Performance",
     headline: "Performance KPIs",
-    description: "Agent response latency profiles � average, P95, and P99 percentiles to surface tail latency regressions.",
+    description: "Agent response latency profiles - P95, and P99 percentiles to surface tail latency regressions.",
     kpis: [
-      { name: "Avg Agent Latency", value: "--", scope: "global" },
-      { name: "Latency P95", value: "--", scope: "global" },
-      { name: "Latency P99", value: "--", scope: "global" },
+      { name: "Avg Agent Latency", value: "0ms", scope: "global" },
+      { name: "Latency P95", value: "0ms", scope: "global" },
+      { name: "Latency P99", value: "0ms", scope: "global" },
     ],
     charts: [
       {
@@ -320,11 +300,11 @@ const businessSections: SectionConfig[] = [
     id: "experience",
     label: "Experience",
     headline: "Experience KPIs",
-    description: "End-user experience signals � response speed, satisfaction scores, and escalation frequency to human agents.",
+    description: "End-user experience signals - response speed, satisfaction scores, and escalation frequency to human agents.",
     kpis: [
-      { name: "Avg Response Time", value: "--", scope: "global" },
-      { name: "User Satisfaction Score", value: "--" },
-      { name: "Escalation to Human", value: "--" },
+      { name: "Avg Response Time", value: "0ms", scope: "global" },
+      { name: "User Satisfaction Score", value: "0" },
+      { name: "Escalation to Human", value: "0" },
     ],
     charts: [
       { title: "Response Time", subtitle: "Daily trend", type: "area", data: [], scope: "global" },
@@ -338,11 +318,11 @@ const rootSections: SectionConfig[] = [
     id: "maturity",
     label: "AI Maturity Indicators",
     headline: "AI Maturity Indicators",
-    description: "Governance capability adoption � guardrails, RAG, and HITL coverage as signals of enterprise AI maturity.",
+    description: "Governance capability - adoption guardrails, RAG, and HITL coverage as signals of AI maturity.",
     kpis: [
-      { name: "% Agents with Guardrails", value: "88%" },
-      { name: "% Agents with RAG", value: "64%" },
-      { name: "% Agents with HITL", value: "41%" },
+      { name: "% Agents with Guardrails", value: "0%" },
+      { name: "% Agents with RAG", value: "0%" },
+      { name: "% Agents with HITL", value: "0%" },
     ],
     charts: [],
   },
@@ -526,30 +506,7 @@ function ChartBlock({ chart, accentColor }: { chart: SectionChart; accentColor: 
   );
 }
 
-// --- Maturity Progress (only shown for maturity section, existing KPIs) ----
 
-function MaturityProgressBars({ kpis, accent }: { kpis: SectionKpi[]; accent: string }) {
-  return (
-    <div className="mt-4 rounded-xl border border-border bg-background/60 p-4 space-y-4">
-      <p className="text-xxs font-semibold uppercase tracking-wider text-muted-foreground">Adoption Depth</p>
-      {kpis.map((kpi) => {
-        const m = kpi.value.match(/(\d+)/);
-        const pct = m ? Math.min(parseInt(m[1]), 100) : 0;
-        return (
-          <div key={kpi.name}>
-            <div className="mb-1 flex justify-between text-sm">
-              <span className="text-muted-foreground">{kpi.name}</span>
-              <span className="font-bold text-foreground">{kpi.value}</span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800">
-              <div className="h-2 rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: accent }} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // --- Section Card ----------------------------------------------------------
 
@@ -632,7 +589,7 @@ function SectionCard({
         </div>
       </button>
 
-      {/* -- Collapsed Preview � KPI chips visible when closed -- */}
+      {/* -- Collapsed Preview - KPI chips visible when closed -- */}
       {!expanded && !isEmpty && displayKpis.length > 0 && (
         <div
           className="border-t border-border px-5 py-3 flex flex-wrap gap-2"
@@ -660,7 +617,7 @@ function SectionCard({
       {expanded && !isEmpty && (
         <div className="border-t border-border bg-card px-6 pb-6">
 
-          {/* KPI grid � uses section accent color consistently */}
+          {/* KPI grid - uses section accent color consistently */}
           {displayKpis.length > 0 && (
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
               {displayKpis.map((kpi, i) => (
@@ -703,10 +660,7 @@ function SectionCard({
             </div>
           )}
 
-          {/* Maturity progress bars */}
-          {isMaturity && displayKpis.length > 0 && (
-            <MaturityProgressBars kpis={displayKpis} accent={theme.accent} />
-          )}
+          
 
           {/* Charts */}
           {charts.length > 0 && (
@@ -791,6 +745,7 @@ export default function DashboardAdmin(): JSX.Element {
   const isBusinessUser    = normalizedRole === "business_user";
   const isRootAdmin       = normalizedRole === "root";
   const isSuperAdmin      = normalizedRole === "super_admin";
+  const isLeaderExecutive = normalizedRole === "leader_executive";
 
   // ── Region selector (root admin only) ──────────────────────────────────
   const regions = useRegionStore((s) => s.regions);
@@ -847,17 +802,17 @@ export default function DashboardAdmin(): JSX.Element {
   const [businessResponseTimeSeries, setBusinessResponseTimeSeries] = useState<PendingSeriesPoint[] | null>(null);
 
   // Fallbacks
-  const lifecycleKpiFallback:   SectionKpi[] = [{ name: "Agents in UAT", value: "--" }, { name: "UAT to PROD Conversion Rate", value: "--" }, { name: "Deprecated Agent Count", value: "--" }];
-  const governanceKpiFallback:  SectionKpi[] = [{ name: "Guardrail Violation Rate", value: "--" }, { name: "Escalation to Human Review", value: "--" }, { name: "% Agents Without Guardrails", value: "--" }];
-  const deptUsageKpiFallback:   SectionKpi[] = [{ name: "Active Agents in Dept (UAT)", value: "--" }, { name: "Active Agents in Dept (PROD)", value: "--" }, { name: "Avg Response Time", value: "--" }];
-  const deptApprovalKpiFallback:SectionKpi[] = [{ name: "Pending Approvals", value: "--" }, { name: "Rejection Rate", value: "--" }, { name: "Avg Approval Time", value: "--" }];
-  const deptHitlKpiFallback:    SectionKpi[] = [{ name: "Agents with HITL", value: "--" }, { name: "HITL Invocation Rate", value: "--" }, { name: "Avg HITL Response Time", value: "--" }];
-  const devCodeKpiFallback:     SectionKpi[] = [{ name: "Avg. Version Count of Agents", value: "--" }];
-  const businessMaturityFallback:SectionKpi[]= [{ name: "% Agents with Guardrails", value: "--" }, { name: "% Agents with RAG", value: "--" }, { name: "% Agents with HITL", value: "--" }];
-  const rootMaturityFallback:   SectionKpi[] = [{ name: "% Agents with Guardrails", value: "--" }, { name: "% Agents with RAG", value: "--" }, { name: "% Agents with HITL", value: "--" }];
-  const platformKpiFallback:    SectionKpi[] = [{ name: "Platform Uptime %", value: "--" }, { name: "API Latency P95", value: "--" }, { name: "API Latency P99", value: "--" }, { name: "Error Rate %", value: "--" }, { name: "AKS Pod Scaling Events", value: "--" }, { name: "CPU/Memory Saturation %", value: "--" }];
-  const devPerformanceFallback: SectionKpi[] = [{ name: "Avg Agent Latency", value: "--" }, { name: "Latency P95", value: "--" }, { name: "Latency P99", value: "--" }];
-  const businessExperienceFallback:SectionKpi[]=[{ name: "Avg Response Time", value: "--" }, { name: "Escalation to Human", value: "--" }, { name: "User Satisfaction Score", value: "--" }];
+  const lifecycleKpiFallback:   SectionKpi[] = [{ name: "Agents in UAT", value: "0" }, { name: "UAT to PROD Conversion Rate", value: "0%" }, { name: "Deprecated Agent Count", value: "0" }];
+  const governanceKpiFallback:  SectionKpi[] = [{ name: "Guardrail Violation Rate", value: "0%" }, { name: "Escalation to Human Review", value: "0" }, { name: "% Agents Without Guardrails", value: "0%" }];
+  const deptUsageKpiFallback:   SectionKpi[] = [{ name: "Active Agents in Dept (UAT)", value: "0" }, { name: "Active Agents in Dept (PROD)", value: "0" }, { name: "Avg Response Time", value: "0ms" }];
+  const deptApprovalKpiFallback:SectionKpi[] = [{ name: "Pending Approvals", value: "0" }, { name: "Rejection Rate", value: "0%" }, { name: "Avg Approval Time", value: "0min" }];
+  const deptHitlKpiFallback:    SectionKpi[] = [{ name: "Agents with HITL", value: "0" }, { name: "HITL Invocation Rate", value: "0%" }, { name: "Avg HITL Response Time", value: "0min" }];
+  const devCodeKpiFallback:     SectionKpi[] = [{ name: "Avg. Version Count of Agents", value: "0" }];
+  const businessMaturityFallback:SectionKpi[]= [{ name: "% Agents with Guardrails", value: "0%" }, { name: "% Agents with RAG", value: "0%" }, { name: "% Agents with HITL", value: "0%" }];
+  const rootMaturityFallback:   SectionKpi[] = [{ name: "% Agents with Guardrails", value: "0%" }, { name: "% Agents with RAG", value: "0%" }, { name: "% Agents with HITL", value: "0%" }];
+  const platformKpiFallback:    SectionKpi[] = [{ name: "Platform Uptime %", value: "0%" }, { name: "API Latency P95", value: "0ms" }, { name: "API Latency P99", value: "0ms" }, { name: "Error Rate %", value: "0%" }, { name: "AKS Pod Scaling Events", value: "0" }, { name: "CPU/Memory Saturation %", value: "0%" }];
+  const devPerformanceFallback: SectionKpi[] = [{ name: "Avg Agent Latency", value: "0ms" }, { name: "Latency P95", value: "0ms" }, { name: "Latency P99", value: "0ms" }];
+  const businessExperienceFallback:SectionKpi[]=[{ name: "Avg Response Time", value: "0ms" }, { name: "Escalation to Human", value: "0" }, { name: "User Satisfaction Score", value: "0" }];
   const approvalRangeOptions = [{ value: "7d", label: "Last 7 days" }, { value: "30d", label: "Last 30 days" }, { value: "12w", label: "Last 12 weeks" }];
 
   useEffect(() => { const id = setInterval(() => setRefreshTick((t) => t + 1), 15000); return () => clearInterval(id); }, []);
@@ -873,7 +828,7 @@ export default function DashboardAdmin(): JSX.Element {
       .then(([u, p95, p99, er, cpu, mem, sc]) => {
         const uv = gv(u?.data?.prometheus), p95v = gv(p95?.data?.prometheus), p99v = gv(p99?.data?.prometheus), erv = gv(er?.data?.prometheus), cpuv = gv(cpu?.data?.prometheus), memv = gv(mem?.data?.prometheus);
         const dv = gsv(sc?.data, "Desired Replicas (HPA)"); let se = 0; for (let i = 1; i < dv.length; i++) if (dv[i] !== dv[i-1]) se++;
-        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "--" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "--" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "--" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "--" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${Math.round(cpuv)}% / ${Math.round(memv)}%` : "--" }]);
+        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "0%" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "0ms" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "0ms" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "0%" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${Math.round(cpuv)}% / ${Math.round(memv)}%` : "0%" }]);
       }).catch(() => setPlatformKpis(platformKpiFallback));
   }, [isSuperAdmin, refreshTick]);
   useEffect(() => {
@@ -900,7 +855,7 @@ export default function DashboardAdmin(): JSX.Element {
     if (!isDeveloper) return;
     Promise.all([api.get(`/api/metrics-dashboard/query-preset/avg_agent_latency`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p95`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p99`)]).then(([avg, p95, p99]) => {
       const gv = (p: any) => { const r = p?.data?.result; const v = Array.isArray(r) && r.length > 0 ? r[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; return Number.isFinite(n) ? n : null; };
-      setDevPerformanceKpis([{ name: "Avg Agent Latency", value: gv(avg?.data?.prometheus) != null ? `${Math.round(gv(avg?.data?.prometheus)!)}ms` : "--" }, { name: "Latency P95", value: gv(p95?.data?.prometheus) != null ? `${Math.round(gv(p95?.data?.prometheus)!)}ms` : "--" }, { name: "Latency P99", value: gv(p99?.data?.prometheus) != null ? `${Math.round(gv(p99?.data?.prometheus)!)}ms` : "--" }]);
+      setDevPerformanceKpis([{ name: "Avg Agent Latency", value: gv(avg?.data?.prometheus) != null ? `${Math.round(gv(avg?.data?.prometheus)!)}ms` : "0ms" }, { name: "Latency P95", value: gv(p95?.data?.prometheus) != null ? `${Math.round(gv(p95?.data?.prometheus)!)}ms` : "0ms" }, { name: "Latency P99", value: gv(p99?.data?.prometheus) != null ? `${Math.round(gv(p99?.data?.prometheus)!)}ms` : "0ms" }]);
     }).catch(() => setDevPerformanceKpis(devPerformanceFallback));
   }, [isDeveloper, refreshTick]);
   useEffect(() => {
@@ -916,7 +871,7 @@ export default function DashboardAdmin(): JSX.Element {
   useEffect(() => { if (!isBusinessUser) return; api.get(`/api/metrics-dashboard/query-preset/avg_response_time`).then((r) => { const res = r?.data?.prometheus?.data?.result; const v = Array.isArray(res) && res.length > 0 ? res[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; if (!Number.isFinite(n)) { setBusinessExperienceKpis((p) => p ?? businessExperienceFallback); return; } setBusinessExperienceKpis((prev) => { const next = prev ? [...prev] : [...businessExperienceFallback]; const idx = next.findIndex((k) => k.name === "Avg Response Time"); if (idx >= 0) next[idx] = { ...next[idx], value: `${Math.round(n!)}ms` }; else next.push({ name: "Avg Response Time", value: `${Math.round(n!)}ms` }); return next; }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; const now = Math.floor(Date.now() / 1000); api.get(`/api/metrics-dashboard/query-preset-range/response_time_trend`, { params: { start: now - 604800, end: now, step: "3600s" } }).then((r) => setBusinessResponseTimeSeries((r?.data?.series?.[0]?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => ({ date: new Date(Number(v?.[0] ?? 0) * 1000).toISOString().slice(0, 10), value: Number.isFinite(Number(v?.[1] ?? 0)) ? Number(v[1]) : 0 })))).catch(() => setBusinessResponseTimeSeries([])); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/business-experience").then((r) => { const next = r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? []; setBusinessExperienceKpis((prev) => { const m = new Map((prev ?? businessExperienceFallback).map((k) => [k.name, k.value])); for (const k of next) m.set(k.name, k.value); return Array.from(m.entries()).map(([name, value]) => ({ name, value })); }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
-  useEffect(() => { if (!isRootAdmin) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity", regionConfig).then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, refreshTick, selectedRegionCode]);
+  useEffect(() => { if (!isRootAdmin && !isLeaderExecutive) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity", regionConfig).then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, isLeaderExecutive, refreshTick, selectedRegionCode]);
   useEffect(() => {
     if (!isDepartmentAdmin) return;
     api
@@ -987,7 +942,7 @@ export default function DashboardAdmin(): JSX.Element {
 
   // -- Resolve KPIs + charts for each section ----------------------------
 
-  const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : isRootAdmin ? rootSections : sections;
+  const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : (isRootAdmin || isLeaderExecutive) ? rootSections : sections;
 
   const resolveSection = (section: SectionConfig): { kpis: SectionKpi[]; charts: SectionChart[] } => {
     let kpis = [...section.kpis];
@@ -1006,7 +961,7 @@ export default function DashboardAdmin(): JSX.Element {
     if (isDepartmentAdmin && section.id === "hitl") applyOverride(deptHitlKpis);
     if (isDeveloper && section.id === "code") applyOverride(devCodeKpis);
     if (isDeveloper && section.id === "performance") applyOverride(devPerformanceKpis);
-    if (isRootAdmin && section.id === "maturity") applyOverride(rootMaturityKpis);
+    if ((isRootAdmin || isLeaderExecutive) && section.id === "maturity") applyOverride(rootMaturityKpis);
     if (isBusinessUser && section.id === "maturity") applyOverride(businessMaturityKpis);
     if (isBusinessUser && section.id === "experience") applyOverride(businessExperienceKpis);
 
@@ -1031,14 +986,14 @@ export default function DashboardAdmin(): JSX.Element {
   };
 
   const headerSubtitle = isDepartmentAdmin
-    ? "Department Admin � Operational Governance"
+    ? "Department Admin - Operational Governance"
     : isDeveloper
-      ? "Developer � Build & Optimize"
+      ? "Developer - Build & Optimize"
       : isBusinessUser
-        ? "Business User � Productivity & Experience"
+        ? "Business User - Productivity & Experience"
         : isRootAdmin
-          ? "Executive � Strategic Oversight"
-          : "Super Admin � Full Platform View";
+          ? "Executive - Strategic Oversight"
+          : "Super Admin - Full Organization View";
 
   const approvalRangeSelector = (
     <Select value={approvalRange} onValueChange={(v) => setApprovalRange(v as "7d" | "30d" | "12w")}>
@@ -1065,7 +1020,7 @@ export default function DashboardAdmin(): JSX.Element {
                 <span className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
                   {headerSubtitle}
                 </span>
-                <span className="text-muted-foreground text-xxs">�</span>
+                <span className="text-muted-foreground text-xxs">-</span>
                 <span className="text-xxs text-muted-foreground">
                   {sectionsToRender.length} section{sectionsToRender.length !== 1 ? "s" : ""}
                 </span>
@@ -1137,9 +1092,6 @@ export default function DashboardAdmin(): JSX.Element {
     </div>
   );
 }
-
-
-
 
 
 

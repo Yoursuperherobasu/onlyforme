@@ -18,6 +18,7 @@ def _role_priority(role: str | None) -> int:
     priorities = {
         "root": 500,
         "super_admin": 400,
+        "leader_executive": 350,
         "department_admin": 300,
         "developer": 200,
         "business_user": 200,

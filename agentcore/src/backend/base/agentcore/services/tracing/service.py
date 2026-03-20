@@ -371,8 +371,15 @@ class TracingService(Service):
             logger.info("⏭️ Skipping evaluator scheduling: missing user_id or run_id")
             return
 
+        # Extract the real Langfuse/OTEL trace ID from the tracer
+        effective_trace_id = str(trace_context.run_id)
+        lf_tracer = (trace_context.tracers or {}).get("langfuse")
+        if lf_tracer and hasattr(lf_tracer, "langfuse_trace_id") and lf_tracer.langfuse_trace_id:
+            effective_trace_id = lf_tracer.langfuse_trace_id
+            logger.info(f"Using Langfuse OTEL trace_id={effective_trace_id} for evaluator scheduling (run_id={trace_context.run_id})")
+
         logger.info(
-            f"SCHEDULING EVALUATORS: trace={trace_context.run_id}, "
+            f"SCHEDULING EVALUATORS: trace={effective_trace_id}, "
             f"agent={trace_context.agent_name}, agent_id={trace_context.agent_id}, "
             f"user={trace_context.user_id}, session={trace_context.session_id}"
         )
@@ -382,11 +389,14 @@ class TracingService(Service):
 
             # Pass trace input/output directly so the evaluator doesn't need
             # to re-fetch from Langfuse (which may not have ingested yet).
+            # Also pass the tracer's Langfuse client so scores go to the same project.
             trace_input = trace_context.all_inputs
             trace_output = trace_context.all_outputs
+            tracer_lf_client = getattr(lf_tracer, "_client", None) if lf_tracer else None
+            logger.info(f"Evaluator scheduling: lf_tracer={'present' if lf_tracer else 'None'}, tracer_client={'present' if tracer_lf_client else 'None'}")
             asyncio.create_task(
                 run_saved_evaluators_for_new_trace(
-                    trace_id=str(trace_context.run_id),
+                    trace_id=effective_trace_id,
                     user_id=str(trace_context.user_id),
                     agent_id=trace_context.agent_id,
                     agent_name=trace_context.agent_name,
@@ -395,6 +405,7 @@ class TracingService(Service):
                     timestamp=datetime.now(timezone.utc),
                     trace_input=trace_input,
                     trace_output=trace_output,
+                    langfuse_client=tracer_lf_client,
                 )
             )
             logger.info("Evaluator task scheduled successfully")

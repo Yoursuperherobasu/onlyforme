@@ -21,7 +21,8 @@
       "Bash(find /d/final_code/aimldevteam/agentcore -name *design* -o -name *theme* -o -name *principle*)",
       "Bash(find /d/final_code/aimldevteam/agentcore -path *node_modules -prune -o -name designprinciples* -o -name design-principles* -o -name *design-system*)",
       "Bash(find /d/final_code/aimldevteam/agentcore/src/frontend/src/customization/components -type f -name *.tsx -o -name *.ts)",
-      "Bash(find /d/final_code/aimldevteam/agentcore -name README* -o -name DESIGN* -o -name design*)"
+      "Bash(find /d/final_code/aimldevteam/agentcore -name README* -o -name DESIGN* -o -name design*)",
+      "Bash(find /d/final_code/aimldevteam/agentcore -type f -name *registry*)"
     ]
   }
 }

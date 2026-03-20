@@ -737,27 +737,35 @@ def fetch_scores_for_trace(client: Any, trace_id: str, user_id: str | None = Non
             added += 1
         return added
 
-    logger.info(f"fetch_scores_for_trace: trace_id={trace_id}, has_api={hasattr(client, 'api')}")
+    logger.info(f"fetch_scores_for_trace: trace_id={trace_id}, client_type={type(client).__name__}, has_api={hasattr(client, 'api')}")
+
+    # Also try with and without dashes for trace_id
+    trace_id_variants = [trace_id]
+    if "-" in trace_id:
+        trace_id_variants.append(trace_id.replace("-", ""))
+    elif len(trace_id) == 32:
+        trace_id_variants.append(f"{trace_id[:8]}-{trace_id[8:12]}-{trace_id[12:16]}-{trace_id[16:20]}-{trace_id[20:]}")
 
     # v3 API: score_v_2.get
     if hasattr(client, "api") and hasattr(client.api, "score_v_2"):
-        try:
-            kwargs: dict[str, Any] = {"trace_id": trace_id, "limit": limit}
+        for tid_variant in trace_id_variants:
             try:
-                kwargs["fields"] = "score,trace"
-                payload = call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
-            except TypeError:
-                kwargs.pop("fields", None)
-                payload = call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
-            logger.info(f"  score_v_2.get returned: type={type(payload).__name__}, repr={repr(payload)[:500]}")
-            _append_scores(payload, already_filtered_by_trace=True)
-            if scores:
-                logger.info(f"  score_v_2.get: found {len(scores)} scores")
-                scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-                return scores
-            logger.info(f"  score_v_2.get: 0 scores after parsing")
-        except Exception as e:
-            logger.info(f"  score_v_2.get failed: {e}")
+                kwargs: dict[str, Any] = {"trace_id": tid_variant, "limit": limit}
+                try:
+                    kwargs["fields"] = "score,trace"
+                    payload = call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
+                except TypeError:
+                    kwargs.pop("fields", None)
+                    payload = call_with_rate_limit_retry(client.api.score_v_2.get, **kwargs)
+                logger.info(f"  score_v_2.get(trace_id={tid_variant}) returned: type={type(payload).__name__}, repr={repr(payload)[:500]}")
+                _append_scores(payload, already_filtered_by_trace=True)
+                if scores:
+                    logger.info(f"  score_v_2.get: found {len(scores)} scores")
+                    scores.sort(key=lambda s: s.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                    return scores
+                logger.info(f"  score_v_2.get(trace_id={tid_variant}): 0 scores after parsing")
+            except Exception as e:
+                logger.info(f"  score_v_2.get(trace_id={tid_variant}) failed: {e}")
 
     # Legacy: fetch_scores
     if hasattr(client, "fetch_scores"):

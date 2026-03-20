@@ -124,7 +124,10 @@ class OrchAgentSummary(BaseModel):
     agent_name: str
     agent_description: str | None = None
     version_number: int
+    version_label: str
     environment: str
+    promoted_from_uat_id: UUID | None = None
+    source_uat_version_number: int | None = None
 
 
 class OrchChatRequest(BaseModel):
@@ -692,6 +695,23 @@ async def list_orch_agents(
         filtered_uat_records = [
             rec for rec in uat_records if str(rec.id) not in promoted_uat_ids_in_prod
         ]
+        source_uat_version_map: dict[UUID, int] = {}
+        promoted_from_uat_ids = [
+            rec.promoted_from_uat_id
+            for rec in prod_records
+            if rec.promoted_from_uat_id is not None
+        ]
+        if promoted_from_uat_ids:
+            source_rows = (
+                await session.exec(
+                    select(AgentDeploymentUAT.id, AgentDeploymentUAT.version_number).where(
+                        AgentDeploymentUAT.id.in_(promoted_from_uat_ids)
+                    )
+                )
+            ).all()
+            source_uat_version_map = {
+                dep_id: version_number for dep_id, version_number in source_rows
+            }
 
         records_with_env: list[tuple[AgentDeploymentProd | AgentDeploymentUAT, str]] = (
             [(rec, "prod") for rec in prod_records]
@@ -711,7 +731,14 @@ async def list_orch_agents(
                 agent_name=r.agent_name,
                 agent_description=r.agent_description,
                 version_number=r.version_number,
+                version_label=f"v{r.version_number}",
                 environment=env_name,
+                promoted_from_uat_id=getattr(r, "promoted_from_uat_id", None),
+                source_uat_version_number=(
+                    source_uat_version_map.get(getattr(r, "promoted_from_uat_id", None))
+                    if env_name == "prod"
+                    else None
+                ),
             )
             for r, env_name in records_with_env
         ]
