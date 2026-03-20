@@ -3,6 +3,12 @@
 # Usage:
 # 1) Include this stage before image build/deploy.
 # 2) Set PACKAGE_INVENTORY_API_URL and PACKAGE_INVENTORY_API_KEY as pipeline vars.
+#    Local example:
+#      PACKAGE_INVENTORY_API_URL=http://localhost:7860
+#      PACKAGE_INVENTORY_API_KEY=agentcore-package-inventory-key-local-001
+#    Production:
+#      PACKAGE_INVENTORY_API_URL=https://<your-backend-base-url>
+#      PACKAGE_INVENTORY_API_KEY=<same secret configured on backend>
 # 3) Ensure backend endpoint /api/package-inventory/snapshots is reachable.
 # -----------------------------------------------------------------------------
 
@@ -75,6 +81,8 @@ stages:
     # Step 3: Push snapshot to backend package inventory API
     - script: |
         set -euo pipefail
+        : "${PACKAGE_INVENTORY_API_URL:?PACKAGE_INVENTORY_API_URL pipeline variable is required}"
+        : "${PACKAGE_INVENTORY_API_KEY:?PACKAGE_INVENTORY_API_KEY pipeline variable is required}"
         curl --fail-with-body -sS -X POST \
           -H "Content-Type: application/json" \
           -H "x-api-key: $(PACKAGE_INVENTORY_API_KEY)" \

@@ -169,7 +169,7 @@ export default function EditModelModal({
       setCustomHeaders(pc.custom_headers ? JSON.stringify(pc.custom_headers, null, 2) : "");
 
       const dp = model.default_params ?? {};
-      setTemperature(dp.temperature ?? 0.7);
+      setTemperature(dp.temperature ?? "");
       setMaxTokens(dp.max_tokens ?? "");
       setDimensions(dp.dimensions ?? "");
     } else {
@@ -189,7 +189,7 @@ export default function EditModelModal({
       setAzureDeployment("");
       setAzureApiVersion(DEFAULT_AZURE_API_VERSION);
       setCustomHeaders("");
-      setTemperature(0.7);
+      setTemperature("");
       setMaxTokens("");
       setDimensions("");
     }
@@ -857,7 +857,7 @@ export default function EditModelModal({
                     <Label>Temperature (0-2)</Label>
                     <Input
                       type="number"
-                      step="0.01"
+                      step="0.1"
                       min="0"
                       max="2"
                       placeholder="Optional"

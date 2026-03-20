@@ -135,6 +135,7 @@ class ConversationProdTable(ConversationProdBase, table=True):  # type: ignore[c
         index=True,
         description="Link to the specific PROD deployment version",
     )
+    ltm_summarized_at: datetime | None = Field(default=None, nullable=True)
     files: list[str] = Field(sa_column=Column(JSON))
     properties: dict | Properties = Field(default_factory=lambda: Properties().model_dump(), sa_column=Column(JSON))  # type: ignore[assignment]
     category: str = Field(sa_column=Column(Text))

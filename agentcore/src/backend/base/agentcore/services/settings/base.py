@@ -171,14 +171,14 @@ class Settings(BaseSettings):
     """Pinecone cloud provider for LTM index."""
     ltm_pinecone_region: str = "us-east-1"
     """Pinecone cloud region for LTM index."""
-    # LTM Neo4j (separate free-tier instance)
-    ltm_neo4j_uri: str = ""
-    """Neo4j connection URI for LTM (separate from the main RAG Neo4j)."""
-    ltm_neo4j_username: str = ""
+    # LTM Neo4j — uses NEO4J_* env vars directly
+    ltm_neo4j_uri: str = Field(default="", validation_alias="NEO4J_URI")
+    """Neo4j connection URI for LTM."""
+    ltm_neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
     """Neo4j username for LTM."""
-    ltm_neo4j_password: str = ""
+    ltm_neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
     """Neo4j password for LTM."""
-    ltm_neo4j_database: str = "neo4j"
+    ltm_neo4j_database: str = Field(default="neo4j", validation_alias="NEO4J_DATABASE")
     """Neo4j database name for LTM."""
     ltm_neo4j_graph_kb_id: str = "ltm"
     """Neo4j graph_kb_id for isolating LTM entities."""
@@ -218,6 +218,29 @@ class Settings(BaseSettings):
     """User agent for the API calls."""
     backend_only: bool = False
     """If set to True, Agentcore will not serve the frontend."""
+
+    # SMTP Email
+    smtp_host: str = Field(default="", validation_alias="SMTP_HOST")
+    smtp_server: str = Field(default="", validation_alias="SMTP_SERVER")
+    mail_server: str = Field(default="", validation_alias="MAIL_SERVER")
+    smtp_port: int = Field(default=0, validation_alias="SMTP_PORT")
+    mail_port: int = Field(default=0, validation_alias="MAIL_PORT")
+    smtp_username: str = Field(default="", validation_alias="SMTP_USERNAME")
+    smtp_user: str = Field(default="", validation_alias="SMTP_USER")
+    mail_username: str = Field(default="", validation_alias="MAIL_USERNAME")
+    smtp_password: str = Field(default="", validation_alias="SMTP_PASSWORD")
+    mail_password: str = Field(default="", validation_alias="MAIL_PASSWORD")
+    smtp_from_email: str = Field(default="", validation_alias="SMTP_FROM_EMAIL")
+    smtp_from: str = Field(default="", validation_alias="SMTP_FROM")
+    mail_from: str = Field(default="", validation_alias="MAIL_FROM")
+    mail_from_email: str = Field(default="", validation_alias="MAIL_FROM_EMAIL")
+    smtp_from_name: str = Field(default="", validation_alias="SMTP_FROM_NAME")
+    mail_from_name: str = Field(default="", validation_alias="MAIL_FROM_NAME")
+    smtp_use_tls: bool = Field(default=True, validation_alias="SMTP_USE_TLS")
+    mail_use_tls: bool = Field(default=True, validation_alias="MAIL_USE_TLS")
+    smtp_use_ssl: bool = Field(default=False, validation_alias="SMTP_USE_SSL")
+    mail_use_ssl: bool = Field(default=False, validation_alias="MAIL_USE_SSL")
+    smtp_timeout_seconds: int = Field(default=20, validation_alias="SMTP_TIMEOUT_SECONDS")
 
     # Telemetry
     do_not_track: bool = True
@@ -281,6 +304,10 @@ class Settings(BaseSettings):
     """API key for authenticating service-to-service calls to this backend (e.g. region-gateway → backend).
     Resolved from Key Vault secret 'agentcore-backend-service-api-key'. When set, incoming requests
     with a matching x-api-key header are authenticated as a service caller without requiring JWT."""
+
+    package_inventory_api_key: str = ""
+    """API key for authenticating CI/CD package inventory snapshot ingestion requests
+    (sent as x-api-key header to /api/package-inventory/snapshots)."""
 
     # Model Microservice
     model_service_url: str = ""

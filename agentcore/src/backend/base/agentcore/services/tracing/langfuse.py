@@ -160,6 +160,11 @@ class LangFuseTracer(BaseTracer):
     def ready(self) -> bool:
         return self._ready
 
+    @property
+    def langfuse_trace_id(self) -> str | None:
+        """Return the actual Langfuse/OTEL trace ID (hex format)."""
+        return getattr(self, "_langfuse_trace_id", None)
+
     def _setup_langfuse(self) -> None:
         """Initialize Langfuse v3 client using official OTEL-based API."""
         try:
@@ -277,6 +282,18 @@ class LangFuseTracer(BaseTracer):
             self._propagate_context.__enter__()
 
             self._ready = True
+
+            # Extract the actual Langfuse/OTEL trace ID (hex format)
+            self._langfuse_trace_id = None
+            try:
+                from opentelemetry import trace as otel_trace
+                current_span = otel_trace.get_current_span()
+                if current_span and current_span.get_span_context().is_valid:
+                    self._langfuse_trace_id = format(current_span.get_span_context().trace_id, '032x')
+                    logger.info(f"Langfuse OTEL trace_id={self._langfuse_trace_id}")
+            except Exception:
+                pass
+
             logger.info(f"Langfuse v3 tracer ready: agent={self.agent_name}, user={self.user_id}, session={self.session_id}")
 
         except ImportError:

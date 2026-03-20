@@ -51,8 +51,6 @@ async def retrieve_from_pinecone(query: str, agent_id: str, top_k: int = 5, env:
             vector=query_embedding,
             top_k=top_k,
             include_metadata=True,
-            # Extra safety: filter by agent_id in metadata
-            filter={"agent_id": {"$eq": agent_id}},
         )
 
         summaries = []

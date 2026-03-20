@@ -145,7 +145,7 @@ export default function RequestModelModal({
     setChargeCode("");
     setProjectName("");
     setReason("");
-    setTemperature(0.7);
+    setTemperature("");
     setMaxTokens("");
     setDimensions("");
     setTestResult(null);

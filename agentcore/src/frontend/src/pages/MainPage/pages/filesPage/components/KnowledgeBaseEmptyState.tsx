@@ -1,34 +1,14 @@
-import ForwardedIconComponent from "@/components/common/genericIconComponent";
-import { Button } from "@/components/ui/button";
+import { Database } from "lucide-react";
 
-const KnowledgeBaseEmptyState = ({
-  handleCreateKnowledge,
-}: {
-  handleCreateKnowledge: () => void;
-}) => {
+const KnowledgeBaseEmptyState = () => {
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-8 pb-8">
-      <div className="flex flex-col items-center gap-2">
-        <h3 className="text-2xl font-semibold">Welcome to Knowledge Bases!</h3>
-        <p className="text-lg text-secondary-foreground">
-          Upload files to create reusable knowledge bases that your agents can
-          search and reference.
+    <div className="flex h-full w-full items-center justify-center">
+      <div className="text-center">
+        <Database className="mx-auto h-12 w-12 text-muted-foreground/50" />
+        <h3 className="mt-4 text-lg font-semibold">No knowledge bases found</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Get started by uploading your first knowledge base
         </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button
-          onClick={handleCreateKnowledge}
-          className="!px-3 md:!px-4 md:!pl-3.5"
-        >
-          <ForwardedIconComponent
-            name="Plus"
-            aria-hidden="true"
-            className="h-4 w-4"
-          />
-          <span className="whitespace-nowrap font-semibold">
-            Upload Knowledge Base
-          </span>
-        </Button>
       </div>
     </div>
   );

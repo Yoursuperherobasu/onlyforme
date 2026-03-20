@@ -8,8 +8,8 @@ LTM_DEFAULTS = {
     "enabled": True,
     "message_threshold": 2,
     "time_interval_minutes": 2,
-    "max_summary_tokens": 500,
-    "max_context_chars": 2000,
+    "max_summary_tokens": 100,
+    "max_context_chars": 300,
     "pinecone_top_k": 5,
     "neo4j_top_k": 10,
 }

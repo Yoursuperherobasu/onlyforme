@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hmac
-import os
 import re
 from datetime import date, datetime, timezone
 from typing import Any
@@ -12,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
 
 from agentcore.api.utils import DbSession
+from agentcore.services.deps import get_settings_service
 from agentcore.services.database.models.package.model import Package
 
 router = APIRouter(prefix="/package-inventory", tags=["Package Inventory"])
@@ -68,7 +68,8 @@ async def ingest_snapshot(
     session: DbSession,
     api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> dict[str, Any]:
-    expected_api_key = os.getenv("PACKAGE_INVENTORY_API_KEY")
+    settings_service = get_settings_service()
+    expected_api_key = getattr(settings_service.settings, "package_inventory_api_key", "")
     if not expected_api_key:
         raise HTTPException(
             status_code=503,

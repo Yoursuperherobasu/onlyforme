@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import secrets
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import and_, distinct, exists, func, or_, asc, desc, delete, update, inspect
 from sqlalchemy.sql import column, table
 from sqlalchemy.orm import aliased
@@ -36,6 +36,7 @@ from agentcore.services.database.models.user.model import User, UserCreate, User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.deps import get_settings_service
+from agentcore.services.notifications import send_user_notification_email
 from agentcore.services.observability import (
     LangfuseProvisioningError,
     get_langfuse_provisioning_service,
@@ -68,6 +69,107 @@ def _normalize_identity(value: str | None) -> str | None:
     if not stripped:
         return None
     return stripped.lower() if "@" in stripped else stripped
+
+
+def _format_notification_email_status(
+    response: Response,
+    *,
+    sent: bool,
+    detail: str | None = None,
+) -> None:
+    response.headers["X-Agentcore-Notification-Email-Status"] = "sent" if sent else "not_sent"
+    if sent:
+        return
+    response.headers["X-Agentcore-Warning-Title"] = "Email not sent"
+    response.headers["X-Agentcore-Warning"] = (
+        detail
+        or "Notification email could not be sent."
+    )
+
+
+def _notification_recipient_for_user(target_user: User) -> str | None:
+    email = _normalize_identity(getattr(target_user, "email", None))
+    if email:
+        return email
+    username = _normalize_identity(getattr(target_user, "username", None))
+    if username and "@" in username:
+        return username
+    return None
+
+
+def _display_name_for_user(target_user: User) -> str:
+    return (
+        _strip_or_none(getattr(target_user, "display_name", None))
+        or _strip_or_none(getattr(target_user, "username", None))
+        or "User"
+    )
+
+
+def _friendly_role_name(role_name: str | None) -> str:
+    normalized = normalize_role(role_name or "")
+    return normalized.replace("_", " ").title() if normalized else "-"
+
+
+def _build_add_user_email_details(target_user: User) -> list[str]:
+    details = [
+        f"Username: {target_user.username}",
+        f"Role: {_friendly_role_name(target_user.role)}",
+        f"Status: {'Active' if target_user.is_active else 'Inactive'}",
+    ]
+    if target_user.department_name:
+        details.append(f"Department: {target_user.department_name}")
+    return details
+
+
+def _build_update_user_email_details(
+    *,
+    previous_values: dict[str, str | bool | None],
+    current_user: User,
+    requested_updates: dict,
+) -> list[str]:
+    field_labels = {
+        "username": "Username",
+        "email": "Email",
+        "display_name": "Display name",
+        "role": "Role",
+        "is_active": "Status",
+        "department_name": "Department",
+        "department_id": "Department",
+        "department_admin_email": "Department admin email",
+        "organization_name": "Organization",
+        "organization_description": "Organization description",
+        "country": "Country",
+    }
+    details: list[str] = []
+    seen_labels: set[str] = set()
+
+    for key in requested_updates:
+        if key == "password":
+            continue
+        label = field_labels.get(key)
+        if not label or label in seen_labels:
+            continue
+        seen_labels.add(label)
+
+        if key == "role":
+            before_value = _friendly_role_name(previous_values.get("role"))
+            after_value = _friendly_role_name(current_user.role)
+        elif key == "is_active":
+            before_value = "Active" if previous_values.get("is_active") else "Inactive"
+            after_value = "Active" if current_user.is_active else "Inactive"
+        elif key in {"department_name", "department_id"}:
+            before_value = str(previous_values.get("department_name") or "-")
+            after_value = str(current_user.department_name or "-")
+        elif key == "organization_name":
+            before_value = str(previous_values.get("organization_name") or "-")
+            after_value = str(requested_updates.get("organization_name") or previous_values.get("organization_name") or "-")
+        else:
+            before_value = str(previous_values.get(key) or "-")
+            after_value = str(getattr(current_user, key, None) or requested_updates.get(key) or "-")
+
+        details.append(f"{label}: {before_value} -> {after_value}")
+
+    return details or ["Profile information updated."]
 
 
 async def _resolve_existing_user_for_create(
@@ -849,6 +951,7 @@ async def _hard_delete_user_assets(
 @router.post("/", response_model=UserRead, status_code=201)
 async def add_user(
     user: UserCreate,
+    response: Response,
     session: DbSession,
     current_user: User = Depends(PermissionChecker(["view_admin_page"])),
 ) -> User:
@@ -1126,6 +1229,25 @@ async def add_user(
         session.add(new_user)
         await session.commit()
         await session.refresh(new_user)
+        settings = get_settings_service().settings
+        email_sent, email_detail = await send_user_notification_email(
+            settings=settings,
+            recipient_email=_notification_recipient_for_user(new_user),
+            recipient_name=_display_name_for_user(new_user),
+            subject="Your AgentCore account has been created",
+            headline="Your AgentCore account is ready",
+            intro_text="Your account has been created or reactivated in AgentCore.",
+            summary_text="You are receiving this email because an administrator created or updated your access.",
+            actor_name=_display_name_for_user(current_user),
+            changed_fields=_build_add_user_email_details(new_user),
+            organization_name=organization_name,
+            department_name=new_user.department_name,
+        )
+        _format_notification_email_status(
+            response,
+            sent=email_sent,
+            detail=email_detail,
+        )
 
     except HTTPException:
         await session.rollback()
@@ -1666,10 +1788,16 @@ async def patch_user(
     user_id: UUID,
     user_update: UserUpdate,
     user: CurrentActiveUser,
+    response: Response,
     session: DbSession,
 ) -> User:
     """Update an existing user's data."""
     update_password = bool(user_update.password)
+    non_password_updates = {
+        key: value
+        for key, value in user_update.model_dump(exclude_unset=True).items()
+        if key != "password"
+    }
 
     if user.id != user_id:
         visible_user_ids = await _visible_user_ids_for_admin(session, user)
@@ -1690,6 +1818,17 @@ async def patch_user(
             user_update.is_superuser = user_update.role in {"super_admin", "department_admin", "root"}
 
     if user_db := await get_user_by_id(session, user_id):
+        previous_values = {
+            "username": user_db.username,
+            "email": user_db.email,
+            "display_name": user_db.display_name,
+            "role": user_db.role,
+            "is_active": user_db.is_active,
+            "department_name": user_db.department_name,
+            "department_admin_email": user_db.department_admin_email,
+            "country": user_db.country,
+            "organization_name": _strip_or_none(user_update.organization_name),
+        }
         requested_department_id = user_update.department_id
         current_department_id = (
             await session.exec(
@@ -1783,8 +1922,51 @@ async def patch_user(
         if not user_field_changes:
             await session.commit()
             await session.refresh(user_db)
+            if non_password_updates:
+                email_sent, email_detail = await send_user_notification_email(
+                    settings=get_settings_service().settings,
+                    recipient_email=_notification_recipient_for_user(user_db),
+                    recipient_name=_display_name_for_user(user_db),
+                    subject="Your AgentCore profile was updated",
+                    headline="Your AgentCore profile was updated",
+                    intro_text="Your account details were updated in AgentCore.",
+                    summary_text="No additional field changes were detected, but this action was recorded.",
+                    actor_name=_display_name_for_user(user),
+                    changed_fields=["Profile information reviewed."],
+                    organization_name=_strip_or_none(user_update.organization_name),
+                    department_name=user_db.department_name,
+                )
+                _format_notification_email_status(
+                    response,
+                    sent=email_sent,
+                    detail=email_detail,
+                )
             return user_db
-        return await update_user(user_db, user_update, session)
+        updated_user = await update_user(user_db, user_update, session)
+        if non_password_updates:
+            email_sent, email_detail = await send_user_notification_email(
+                settings=get_settings_service().settings,
+                recipient_email=_notification_recipient_for_user(updated_user),
+                recipient_name=_display_name_for_user(updated_user),
+                subject="Your AgentCore profile was updated",
+                headline="Your AgentCore profile was updated",
+                intro_text="Your account details were updated in AgentCore.",
+                summary_text="Please review the changed fields below.",
+                actor_name=_display_name_for_user(user),
+                changed_fields=_build_update_user_email_details(
+                    previous_values=previous_values,
+                    current_user=updated_user,
+                    requested_updates=non_password_updates,
+                ),
+                organization_name=_strip_or_none(user_update.organization_name),
+                department_name=updated_user.department_name,
+            )
+            _format_notification_email_status(
+                response,
+                sent=email_sent,
+                detail=email_detail,
+            )
+        return updated_user
     raise HTTPException(status_code=404, detail="User not found")
 
 

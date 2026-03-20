@@ -133,6 +133,7 @@ class ConversationTable(ConversationBase, table=True):  # type: ignore[call-arg]
     agent_id: UUID | None = Field(default=None)
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID | None = Field(default=None, foreign_key="department.id", nullable=True, index=True)
+    ltm_summarized_at: datetime | None = Field(default=None, nullable=True)
     files: list[str] = Field(sa_column=Column(JSON))
     properties: dict | Properties = Field(default_factory=lambda: Properties().model_dump(), sa_column=Column(JSON))  # type: ignore[assignment]
     category: str = Field(sa_column=Column(Text))
