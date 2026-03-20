@@ -697,17 +697,6 @@ class MemoryComponent(Node):
 
         if enable_ltm and agent_id and current_text:
             logger.info(f"[LTM] LTM enabled for agent={agent_id}")
-            # Process pending messages (uses LLM from settings — no wiring needed)
-            try:
-                from agentcore.services.deps import get_ltm_service
-                ltm_svc = get_ltm_service()
-                should = await ltm_svc.should_process(agent_id)
-                logger.info(f"[LTM] should_process={should} for agent={agent_id}")
-                if should:
-                    await ltm_svc.process_with_llm(agent_id)
-            except Exception as e:
-                logger.warning(f"[LTM] Inline processing failed: {e}")
-
             # Retrieve LTM context
             try:
                 from agentcore.services.ltm import LTM_DEFAULTS
@@ -796,6 +785,15 @@ class MemoryComponent(Node):
             f"already_stored={already_stored}"
         )
         logger.debug(f"[STM] Final enriched payload to LLM:\n{enriched_text}")
+
+        # Notify LTM service to increment counter (fires pipeline as background task when threshold hit)
+        if enable_ltm and agent_id:
+            try:
+                from agentcore.services.deps import get_ltm_service
+                ltm_svc = get_ltm_service()
+                await ltm_svc.on_message_stored(agent_id, session_id)
+            except Exception as e:
+                logger.warning(f"[LTM] Counter increment failed: {e}")
 
         self.status = enriched_message
         return enriched_message

@@ -171,14 +171,14 @@ class Settings(BaseSettings):
     """Pinecone cloud provider for LTM index."""
     ltm_pinecone_region: str = "us-east-1"
     """Pinecone cloud region for LTM index."""
-    # LTM Neo4j (separate free-tier instance)
-    ltm_neo4j_uri: str = ""
-    """Neo4j connection URI for LTM (separate from the main RAG Neo4j)."""
-    ltm_neo4j_username: str = ""
+    # LTM Neo4j — uses NEO4J_* env vars directly
+    ltm_neo4j_uri: str = Field(default="", validation_alias="NEO4J_URI")
+    """Neo4j connection URI for LTM."""
+    ltm_neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
     """Neo4j username for LTM."""
-    ltm_neo4j_password: str = ""
+    ltm_neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
     """Neo4j password for LTM."""
-    ltm_neo4j_database: str = "neo4j"
+    ltm_neo4j_database: str = Field(default="neo4j", validation_alias="NEO4J_DATABASE")
     """Neo4j database name for LTM."""
     ltm_neo4j_graph_kb_id: str = "ltm"
     """Neo4j graph_kb_id for isolating LTM entities."""
