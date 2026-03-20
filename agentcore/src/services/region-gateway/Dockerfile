@@ -8,10 +8,10 @@ WORKDIR /app
 
 RUN pip install --upgrade pip && pip install uv
 
-COPY pyproject.toml uv.lock* ./
-RUN uv pip install --system .
-
+COPY pyproject.toml ./
 COPY app ./app
+
+RUN uv pip install --system .
 
 EXPOSE 8006
 

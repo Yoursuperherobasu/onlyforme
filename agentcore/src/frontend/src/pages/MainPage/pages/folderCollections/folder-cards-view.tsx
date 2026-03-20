@@ -1,10 +1,11 @@
-import { Plus, Folder, MoreVertical, Edit2, Trash2, FileText, X, Info, Copy, Check } from "lucide-react";
+import { Plus, Folder, MoreVertical, Edit2, Trash2, FileText, X, Info, Copy, Check, Search, Bot, Tag } from "lucide-react";
 import { useFolderStore } from "@/stores/foldersStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import { usePostFolders } from "@/controllers/API/queries/folders";
 import useAlertStore from "@/stores/alertStore";
 import { track } from "@/customization/utils/analytics";
 import type { FolderType } from "@/pages/MainPage/entities";
+import type { AgentType } from "@/types/agent";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import TagInput from "@/components/common/tagInputComponent";
@@ -50,7 +51,9 @@ export default function FolderCardsView({
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   const headerRef = useRef<HTMLDivElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState("all");
   const [selectedCreator, setSelectedCreator] = useState("all");
   const [sortByDate, setSortByDate] = useState<"newest" | "oldest">("newest");
@@ -91,7 +94,24 @@ export default function FolderCardsView({
     return map;
   }, [agents]);
 
+  const agentsByFolder = useMemo(() => {
+    const map = new Map<string, AgentType[]>();
+    if (!agents || agents.length === 0) return map;
+    for (const agent of agents) {
+      const key = agent.project_id;
+      if (!key) continue;
+      const folderAgents = map.get(key);
+      if (folderAgents) {
+        folderAgents.push(agent);
+      } else {
+        map.set(key, [agent]);
+      }
+    }
+    return map;
+  }, [agents]);
+
   const getAgentCount = (folderId: string) => agentCountByFolder.get(folderId) || 0;
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
   const departmentOptions = useMemo(() => {
     const names = new Set<string>();
@@ -113,49 +133,95 @@ export default function FolderCardsView({
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [displayFolders]);
 
-  const filteredFolders = displayFolders.filter((folder) => {
-    const searchLower = searchQuery.toLowerCase();
-    const matchesSearch =
-      folder.name.toLowerCase().includes(searchLower) ||
-      folder.description?.toLowerCase().includes(searchLower) ||
-      folder.tags?.some((tag) => tag.toLowerCase().includes(searchLower));
+  const filteredFolders = displayFolders
+    .map((folder) => {
+      const folderAgents = folder.id ? agentsByFolder.get(folder.id) ?? [] : [];
+      const matchedAgents =
+        normalizedSearchQuery.length === 0
+          ? []
+          : folderAgents.filter((agent) => {
+              const matchesAgentName = agent.name
+                .toLowerCase()
+                .includes(normalizedSearchQuery);
+              const matchesAgentDescription = agent.description
+                ?.toLowerCase()
+                .includes(normalizedSearchQuery);
+              const matchesAgentTags = agent.tags?.some((tag) =>
+                tag.toLowerCase().includes(normalizedSearchQuery),
+              );
+              return (
+                matchesAgentName ||
+                matchesAgentDescription ||
+                matchesAgentTags
+              );
+            });
 
-    const matchesDepartment =
-      selectedDepartment === "all" ||
-      (selectedDepartment === "__none__" && !folder.department_name) ||
-      folder.department_name === selectedDepartment;
+      const matchesProjectSearch =
+        normalizedSearchQuery.length === 0 ||
+        folder.name.toLowerCase().includes(normalizedSearchQuery) ||
+        folder.description?.toLowerCase().includes(normalizedSearchQuery) ||
+        folder.tags?.some((tag) =>
+          tag.toLowerCase().includes(normalizedSearchQuery),
+        );
+      const matchesSearch =
+        normalizedSearchQuery.length === 0 ||
+        matchesProjectSearch ||
+        matchedAgents.length > 0;
 
-    const creatorLabel = folder.is_own_project ? "You" : folder.created_by_email || "";
-    const matchesCreator =
-      selectedCreator === "all" ||
-      (selectedCreator === "__none__" && !creatorLabel) ||
-      creatorLabel === selectedCreator;
+      const matchesDepartment =
+        selectedDepartment === "all" ||
+        (selectedDepartment === "__none__" && !folder.department_name) ||
+        folder.department_name === selectedDepartment;
 
-    const count = getAgentCount(folder.id);
-    const matchesAgentCount =
-      agentCountFilter === "all" ||
-      (agentCountFilter === "0" && count === 0) ||
-      (agentCountFilter === "1-5" && count >= 1 && count <= 5) ||
-      (agentCountFilter === "6-10" && count >= 6 && count <= 10) ||
-      (agentCountFilter === "11+" && count >= 11);
+      const creatorLabel = folder.is_own_project ? "You" : folder.created_by_email || "";
+      const matchesCreator =
+        selectedCreator === "all" ||
+        (selectedCreator === "__none__" && !creatorLabel) ||
+        creatorLabel === selectedCreator;
 
-    const matchesTags =
-      selectedTagFilter.length === 0 ||
-      selectedTagFilter.every((tag) => folder.tags?.includes(tag));
+      const count = getAgentCount(folder.id);
+      const matchesAgentCount =
+        agentCountFilter === "all" ||
+        (agentCountFilter === "0" && count === 0) ||
+        (agentCountFilter === "1-5" && count >= 1 && count <= 5) ||
+        (agentCountFilter === "6-10" && count >= 6 && count <= 10) ||
+        (agentCountFilter === "11+" && count >= 11);
 
-    return matchesSearch && matchesDepartment && matchesCreator && matchesAgentCount && matchesTags;
-  });
+      const matchesTags =
+        selectedTagFilter.length === 0 ||
+        selectedTagFilter.every((tag) => folder.tags?.includes(tag));
+
+      if (
+        !matchesSearch ||
+        !matchesDepartment ||
+        !matchesCreator ||
+        !matchesAgentCount ||
+        !matchesTags
+      ) {
+        return null;
+      }
+
+      return { folder, matchedAgents };
+    })
+    .filter(
+      (
+        item,
+      ): item is {
+        folder: FolderType;
+        matchedAgents: AgentType[];
+      } => item !== null,
+    );
 
   const sortedFolders = [...filteredFolders].sort((a, b) => {
     if (sortByAgents !== "none") {
-      const aCount = getAgentCount(a.id);
-      const bCount = getAgentCount(b.id);
+      const aCount = getAgentCount(a.folder.id);
+      const bCount = getAgentCount(b.folder.id);
       if (aCount !== bCount) {
         return sortByAgents === "most" ? bCount - aCount : aCount - bCount;
       }
     }
-    const aDate = a.updated_at || a.created_at;
-    const bDate = b.updated_at || b.created_at;
+    const aDate = a.folder.updated_at || a.folder.created_at;
+    const bDate = b.folder.updated_at || b.folder.created_at;
     const dateDiff = (() => {
       if (!aDate && !bDate) return 0;
       if (!aDate) return 1;
@@ -169,6 +235,15 @@ export default function FolderCardsView({
   // Split folders into recent (top 4) and older
   const recentFolders = sortedFolders.slice(0, 4);
   const olderFolders = sortedFolders.slice(4);
+  const searchDropdownResults = sortedFolders.slice(0, 6);
+
+  const formatMatchedAgentNames = (matchedAgents: AgentType[]) => {
+    const visibleNames = matchedAgents.slice(0, 2).map((agent) => agent.name);
+    const remainingCount = matchedAgents.length - visibleNames.length;
+    return remainingCount > 0
+      ? `${visibleNames.join(", ")} +${remainingCount} more`
+      : visibleNames.join(", ");
+  };
 
   // Format date
   const formatDate = (dateString: string) => {
@@ -217,6 +292,22 @@ export default function FolderCardsView({
     if (headerRef.current) {
       setHeaderHeight(headerRef.current.offsetHeight);
     }
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target as Node)
+      ) {
+        setShowSearchDropdown(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, []);
 
   // Handle creating new folder
@@ -272,21 +363,128 @@ export default function FolderCardsView({
           
           <div className="flex flex-wrap items-center gap-3">
             {/* Search Bar */}
-            <div className="relative">
+            <div ref={searchContainerRef} className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="Search projects..."
+                placeholder="Search projects & agents..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-10 w-64 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                onFocus={() =>
+                  normalizedSearchQuery && setShowSearchDropdown(true)
+                }
+                onChange={(e) => {
+                  const nextValue = e.target.value;
+                  setSearchQuery(nextValue);
+                  setShowSearchDropdown(nextValue.trim().length > 0);
+                }}
+                className="h-10 w-72 rounded-lg border border-input bg-background pl-9 pr-9 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-shadow"
               />
               {searchQuery && (
                 <button
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setShowSearchDropdown(false);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
+              )}
+              {showSearchDropdown && normalizedSearchQuery && (
+                <div className="absolute left-0 top-full z-50 mt-2 w-96 overflow-hidden rounded-xl border bg-popover shadow-2xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-2">
+                  {/* Dropdown header */}
+                  <div className="border-b px-4 py-2.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {searchDropdownResults.length > 0
+                        ? `${searchDropdownResults.length} result${searchDropdownResults.length !== 1 ? "s" : ""} found`
+                        : "No results"}
+                    </p>
+                  </div>
+
+                  {searchDropdownResults.length > 0 ? (
+                    <div className="max-h-[360px] overflow-y-auto p-1.5">
+                      {searchDropdownResults.map(({ folder, matchedAgents }, idx) => (
+                        <button
+                          key={folder.id}
+                          type="button"
+                          onClick={() => {
+                            setShowSearchDropdown(false);
+                            onFolderClick(folder.id);
+                          }}
+                          className="group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent"
+                        >
+                          {/* Icon */}
+                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                            <Folder className="h-4 w-4" />
+                          </div>
+
+                          {/* Content */}
+                          <div className="flex min-w-0 flex-1 flex-col gap-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-sm font-medium text-foreground">
+                                {folder.name}
+                              </span>
+                              <span className="shrink-0 text-[11px] text-muted-foreground">
+                                {getAgentCount(folder.id)} agent{getAgentCount(folder.id) !== 1 ? "s" : ""}
+                              </span>
+                            </div>
+
+                            {folder.description && (
+                              <p className="truncate text-xs text-muted-foreground">
+                                {folder.description}
+                              </p>
+                            )}
+
+                            {matchedAgents.length > 0 && (
+                              <div
+                                className="flex items-center gap-1.5 text-xs text-primary"
+                                title={matchedAgents
+                                  .map((agent) => agent.name)
+                                  .join(", ")}
+                              >
+                                <Bot className="h-3 w-3 shrink-0" />
+                                <span className="truncate">
+                                  {formatMatchedAgentNames(matchedAgents)}
+                                </span>
+                              </div>
+                            )}
+
+                            {folder.tags && folder.tags.length > 0 && (
+                              <div className="flex items-center gap-1 overflow-hidden">
+                                <Tag className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                {folder.tags.slice(0, 3).map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                                {folder.tags.length > 3 && (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    +{folder.tags.length - 3}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                      <Search className="h-8 w-8 text-muted-foreground/40" />
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          No matching projects or agents
+                        </p>
+                        <p className="text-xs text-muted-foreground/70">
+                          Try a different search term
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -557,7 +755,7 @@ export default function FolderCardsView({
             )}
 
             {/* Recent Folder Cards*/}
-            {recentFolders.map((folder) => {
+            {recentFolders.map(({ folder, matchedAgents }) => {
               const agentCount = getAgentCount(folder.id);
               const isPopoverOpen = infoPopoverFolderId === folder.id;
               return (
@@ -661,6 +859,20 @@ export default function FolderCardsView({
                           ))}
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {normalizedSearchQuery && matchedAgents.length > 0 && (
+                    <div
+                      className="mb-2 w-full rounded-md border border-primary/20 bg-primary/5 px-2 py-1.5 text-left"
+                      title={matchedAgents.map((agent) => agent.name).join(", ")}
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Matched agents
+                      </p>
+                      <p className="text-xs font-medium text-foreground line-clamp-2">
+                        {formatMatchedAgentNames(matchedAgents)}
+                      </p>
                     </div>
                   )}
 
@@ -808,7 +1020,7 @@ export default function FolderCardsView({
 
               {/* Table Body */}
               <div className="divide-y">
-                {olderFolders.map((folder) => {
+                {olderFolders.map(({ folder, matchedAgents }) => {
                   const agentCount = getAgentCount(folder.id);
                   const isExpanded = expandedTableRow === folder.id;
                   
@@ -831,6 +1043,14 @@ export default function FolderCardsView({
                             <p className="text-xs text-muted-foreground mt-1">
                               {agentCount} {agentCount === 1 ? "agent" : "agents"}
                             </p>
+                            {normalizedSearchQuery && matchedAgents.length > 0 && (
+                              <p
+                                className="mt-1 truncate text-xs font-medium text-primary"
+                                title={matchedAgents.map((agent) => agent.name).join(", ")}
+                              >
+                                Matched: {formatMatchedAgentNames(matchedAgents)}
+                              </p>
+                            )}
                           </div>
                         </div>
 
