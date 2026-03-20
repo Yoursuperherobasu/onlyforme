@@ -6,8 +6,8 @@ These can be overridden via .env / Settings, but if not set, these defaults appl
 
 LTM_DEFAULTS = {
     "enabled": True,
-    "message_threshold": 20,
-    "time_interval_minutes": 30,
+    "message_threshold": 2,
+    "time_interval_minutes": 5,
     "max_summary_tokens": 500,
     "max_context_chars": 2000,
     "pinecone_top_k": 5,
