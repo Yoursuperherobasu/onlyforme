@@ -788,12 +788,17 @@ const KnowledgeBasesTab = ({
         ? [
             {
               headerName: "Department Scope",
+              headerTooltip: "Department Scope",
               field: "department_name",
               flex: 1.2,
               sortable: false,
               editable: false,
               cellClass: baseCellClass,
               valueGetter: (params: any) => {
+                if (params.data?.rowType !== "kb") return "";
+                return formatDepartmentScope(params.data);
+              },
+              tooltipValueGetter: (params: any) => {
                 if (params.data?.rowType !== "kb") return "";
                 return formatDepartmentScope(params.data);
               },
@@ -1155,75 +1160,80 @@ const KnowledgeBasesTab = ({
     </BaseModal>
   );
 
-  if (knowledgeBases.length === 0) {
-    return (
-      <>
-        <KnowledgeBaseEmptyState
-          handleCreateKnowledge={handleOpenUploadModal}
-        />
-        {uploadModal}
-      </>
-    );
-  }
-
   return (
-    <div className="flex h-full flex-col pb-4">
-      <div className="flex justify-between">
-        <div className="flex w-full xl:w-5/12">
-          <Input
-            icon="Search"
-            data-testid="search-kb-input"
-            type="text"
-            placeholder="Search knowledge bases..."
-            className="mr-2 w-full"
-            value={quickFilterText || ""}
-            onChange={(event) => setQuickFilterText(event.target.value)}
-          />
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      {/* Header - Fixed */}
+      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
+        <div>
+          <div className="mb-1 flex items-center gap-3">
+            <h1 className="text-lg font-semibold md:text-xl">Knowledge Hub</h1>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Manage knowledge sources for agents
+          </p>
         </div>
-        <Button
-          className="flex items-center gap-2 font-semibold"
-          onClick={handleOpenUploadModal}
-        >
-          <ForwardedIconComponent name="Plus" /> Upload Knowledge Base
-        </Button>
+
+        <div className="flex items-center gap-3">
+          <div className="flex w-full sm:w-64">
+            <Input
+              icon="Search"
+              data-testid="search-kb-input"
+              type="text"
+              placeholder="Search knowledge bases..."
+              className="w-full"
+              value={quickFilterText || ""}
+              onChange={(event) => setQuickFilterText(event.target.value)}
+            />
+          </div>
+          <Button
+            className="flex items-center gap-2 font-semibold"
+            onClick={handleOpenUploadModal}
+          >
+            <ForwardedIconComponent name="Plus" /> Upload Knowledge Base
+          </Button>
+        </div>
       </div>
 
-      <div className="flex h-full flex-col pt-4">
-        <div className="relative h-full">
-          <TableComponent
-            rowHeight={45}
-            headerHeight={45}
-            cellSelection={false}
-            tableOptions={{
-              hide_options: true,
-            }}
-            suppressRowClickSelection={!isShiftPressed}
-            rowSelection="multiple"
-            onSelectionChanged={handleSelectionChange}
-            columnDefs={columnDefs}
-            rowData={displayRows}
-            className={cn(
-              "ag-no-border ag-knowledge-table group w-full",
-              isShiftPressed && quantitySelected > 0 && "no-select-cells",
-            )}
-            pagination
-            ref={tableRef}
-            quickFilterText={quickFilterText}
-            gridOptions={{
-              stopEditingWhenCellsLoseFocus: true,
-              ensureDomOrder: true,
-              colResizeDefault: "shift",
-              isRowSelectable: (params: any) =>
-                params.data?.rowType === "kb" && !!params.data?.can_delete,
-            }}
-          />
+      <div className="flex h-full flex-col overflow-hidden p-4 sm:p-6">
+        {knowledgeBases.length === 0 ? (
+          <KnowledgeBaseEmptyState />
+        ) : (
+          <div className="relative h-full">
+            <TableComponent
+              rowHeight={45}
+              headerHeight={45}
+              cellSelection={false}
+              tableOptions={{
+                hide_options: true,
+              }}
+              suppressRowClickSelection={!isShiftPressed}
+              rowSelection="multiple"
+              onSelectionChanged={handleSelectionChange}
+              columnDefs={columnDefs}
+              rowData={displayRows}
+              className={cn(
+                "ag-no-border ag-knowledge-table group w-full",
+                isShiftPressed && quantitySelected > 0 && "no-select-cells",
+              )}
+              pagination
+              ref={tableRef}
+              quickFilterText={quickFilterText}
+              gridOptions={{
+                stopEditingWhenCellsLoseFocus: true,
+                ensureDomOrder: true,
+                colResizeDefault: "shift",
+                isRowSelectable: (params: any) =>
+                  params.data?.rowType === "kb" && !!params.data?.can_delete,
+              }}
+            />
 
-          <KnowledgeBaseSelectionOverlay
-            selectedFiles={selectedFiles}
-            quantitySelected={quantitySelected}
-            onClearSelection={clearSelection}
-          />
-        </div>
+            <KnowledgeBaseSelectionOverlay
+              selectedFiles={selectedFiles}
+              quantitySelected={quantitySelected}
+              onClearSelection={clearSelection}
+            />
+          </div>
+        )}
       </div>
 
       <DeleteConfirmationModal

@@ -102,10 +102,11 @@ function ManagedTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-card">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
+    <div className="rounded-lg border border-border bg-card">
+      <div className="max-h-[56vh] overflow-auto">
+        <table className="w-full">
+          <thead className="sticky top-0 z-10 bg-card">
+            <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
             <th className="px-4 py-3 text-left font-medium">{t("Package")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Service")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Declared")}</th>
@@ -119,10 +120,10 @@ function ManagedTable({
             {showHistoryDates && (
               <th className="px-4 py-3 text-left font-medium">{t("Status")}</th>
             )}
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((pkg) => (
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((pkg) => (
             <tr
               key={pkg.id}
               className="border-b last:border-0 transition-colors hover:bg-muted/30"
@@ -160,8 +161,9 @@ function ManagedTable({
               )}
             </tr>
           ))}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
       <div className="border-t px-4 py-2 text-xs text-muted-foreground">
         {t("Showing {{count}} of {{total}} packages", {
           count: filtered.length,
@@ -210,10 +212,11 @@ function TransitiveTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-card">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
+    <div className="rounded-lg border border-border bg-card">
+      <div className="max-h-[56vh] overflow-auto">
+        <table className="w-full">
+          <thead className="sticky top-0 z-10 bg-card">
+            <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
             <th className="px-4 py-3 text-left font-medium">{t("Package")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Service")}</th>
             <th className="px-4 py-3 text-left font-medium">{t("Version")}</th>
@@ -225,10 +228,10 @@ function TransitiveTable({
               <th className="px-4 py-3 text-left font-medium">{t("End Date")}</th>
             )}
             <th className="px-4 py-3 text-left font-medium">{t("Status")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((pkg) => (
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((pkg) => (
             <tr
               key={pkg.id}
               className="border-b last:border-0 transition-colors hover:bg-muted/30"
@@ -321,8 +324,9 @@ function TransitiveTable({
               </td>
             </tr>
           ))}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
       <div className="border-t px-4 py-2 text-xs text-muted-foreground">
         {t("Showing {{count}} of {{total}} packages", {
           count: filtered.length,
@@ -404,81 +408,25 @@ export default function PackagesPage() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* ── Fixed Header ─────────────────────────────────────────── */}
-      <div className="flex flex-shrink-0 flex-col gap-3 border-b px-8 py-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold">{t("Dependency Governance")}</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            {canRequestPackages && (
-              <Button onClick={() => setIsRequestModalOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                {t("Request Package")}
-              </Button>
-            )}
-            {role !== "root" && (
-              <Button variant="outline" onClick={() => setIsMyRequestsOpen(true)}>
-                {t("My Requests")}
-              </Button>
-            )}
-          </div>
+      <div className="flex flex-shrink-0 items-center justify-between gap-4 border-b bg-background px-8 py-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold">{t("Package Management")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("View, request, and manage packages used across platform services")}
+          </p>
         </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-1">
-            {TABS.map((tab) => {
-              const isActive = activeTab === tab.key;
-              return (
-                <button
-                  key={tab.key}
-                  onClick={() => {
-                    setActiveTab(tab.key);
-                    setSearchQuery("");
-                  }}
-                  className={`relative flex items-center gap-2 rounded-t-md px-4 py-2.5 text-sm font-medium transition-colors ${
-                    isActive
-                      ? "bg-background text-foreground after:absolute after:bottom-[-1px] after:left-0 after:h-[2px] after:w-full after:bg-primary"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {t(tab.label)}
-                  {counts[tab.key] > 0 && (
-                    <Badge variant={isActive ? "secondaryStatic" : "gray"} size="sm">
-                      {counts[tab.key]}
-                    </Badge>
-                  )}
-                  <InfoTooltip text={t(tab.tooltip)} />
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                placeholder={
-                  activeTab === "managed"
-                    ? t("Search managed packages...")
-                    : t("Search transitive packages...")
-                }
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            </div>
-            <select
-              value={selectedService}
-              onChange={(e) => setSelectedService(e.target.value)}
-              className="h-[42px] rounded-lg border border-border bg-card px-3 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              {serviceOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {t(opt.label)}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="flex items-center gap-3">
+          {canRequestPackages && (
+            <Button onClick={() => setIsRequestModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              {t("Request Package")}
+            </Button>
+          )}
+          {role !== "root" && (
+            <Button variant="outline" onClick={() => setIsMyRequestsOpen(true)}>
+              {t("My Requests")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -491,45 +439,104 @@ export default function PackagesPage() {
         open={isMyRequestsOpen}
         onOpenChange={setIsMyRequestsOpen}
       />
-      {activeTab === "transitive" && (
-        <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-4 border-b bg-muted/20 px-8 py-3">
-          <div className="text-xs text-muted-foreground">
-            {includeFullGraph
-              ? t("Scope: Full lock graph (includes optional extras)")
-              : t("Scope: Managed closure (strict)")}
-          </div>
-          <div className="flex flex-wrap items-center gap-6">
-            <label className="flex items-center gap-2 text-xs text-foreground">
-              <Switch
-                checked={includeHistory}
-                onCheckedChange={(checked) => setIncludeHistory(Boolean(checked))}
-              />
-              <span>{t("Include historical snapshots")}</span>
-            </label>
-            <label className="flex items-center gap-2 text-xs text-foreground">
-              <Switch
-                checked={includeFullGraph}
-                onCheckedChange={(checked) => setIncludeFullGraph(Boolean(checked))}
-              />
-              <span>{t("Include optional extras / full lock graph")}</span>
-            </label>
-          </div>
-        </div>
-      )}
-      {activeTab === "managed" && (
-        <div className="flex flex-shrink-0 items-center justify-end gap-6 border-b bg-muted/20 px-8 py-3">
-          <label className="flex items-center gap-2 text-xs text-foreground">
-            <Switch
-              checked={includeManagedHistory}
-              onCheckedChange={(checked) => setIncludeManagedHistory(Boolean(checked))}
-            />
-            <span>{t("Include historical snapshots")}</span>
-          </label>
-        </div>
-      )}
 
-      {/* ── Scrollable Content ───────────────────────────────────── */}
+      {/* Scrollable Content */}
       <div className="flex-1 overflow-auto p-4 sm:p-6">
+        <div className="mb-4 space-y-3 sm:mb-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex w-fit flex-wrap items-center gap-1 rounded-lg border bg-background p-1">
+              {TABS.map((tab) => {
+                const isActive = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => {
+                      setActiveTab(tab.key);
+                      setSearchQuery("");
+                    }}
+                    className={`relative flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                      isActive
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {t(tab.label)}
+                    {counts[tab.key] > 0 && (
+                      <Badge variant={isActive ? "secondaryStatic" : "gray"} size="sm">
+                        {counts[tab.key]}
+                      </Badge>
+                    )}
+                    <InfoTooltip text={t(tab.tooltip)} />
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:justify-end">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  placeholder={
+                    activeTab === "managed"
+                      ? t("Search managed packages...")
+                      : t("Search transitive packages...")
+                  }
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring sm:w-72"
+                />
+              </div>
+              <select
+                value={selectedService}
+                onChange={(e) => setSelectedService(e.target.value)}
+                className="h-[42px] min-w-[190px] rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {serviceOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {t(opt.label)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {activeTab === "transitive" && (
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border bg-muted/10 px-4 py-3">
+              <p className="text-xs text-muted-foreground">
+                {includeFullGraph
+                  ? t("Scope: Full lock graph (includes optional extras)")
+                  : t("Scope: Managed closure (strict)")}
+              </p>
+              <div className="flex flex-wrap items-center gap-6">
+                <label className="flex items-center gap-2 text-xs text-foreground">
+                  <Switch
+                    checked={includeHistory}
+                    onCheckedChange={(checked) => setIncludeHistory(Boolean(checked))}
+                  />
+                  <span>{t("Include historical snapshots")}</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-foreground">
+                  <Switch
+                    checked={includeFullGraph}
+                    onCheckedChange={(checked) => setIncludeFullGraph(Boolean(checked))}
+                  />
+                  <span>{t("Include optional extras / full lock graph")}</span>
+                </label>
+              </div>
+            </div>
+          )}
+          {activeTab === "managed" && (
+            <div className="flex justify-end rounded-lg border bg-muted/10 px-4 py-3">
+              <label className="flex items-center gap-2 text-xs text-foreground">
+                <Switch
+                  checked={includeManagedHistory}
+                  onCheckedChange={(checked) => setIncludeManagedHistory(Boolean(checked))}
+                />
+                <span>{t("Include historical snapshots")}</span>
+              </label>
+            </div>
+          )}
+        </div>
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <ForwardedIconComponent
