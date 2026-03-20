@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { CustomAPIGenerator } from "@/customization/components/custom-api-generator";
-import { CustomLink } from "@/customization/components/custom-link";
 import useSaveAgent from "@/hooks/agents/use-save-agent";
 import useAuthStore from "@/stores/authStore";
 import useAgentStore from "@/stores/agentStore";
@@ -112,15 +111,8 @@ export default function ApiModal({
         <BaseModal.Header
           description={
             <span className="pr-2">
-              API access requires an API key. You can{" "}
-              <CustomLink
-                to="/settings/api-keys"
-                className="text-accent-pink-foreground"
-              >
-                {" "}
-                create an API key
-              </CustomLink>{" "}
-              in settings.
+              API access requires an API key. Contact your administrator to
+              provision one for you.
             </span>
           }
         >

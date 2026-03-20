@@ -319,7 +319,7 @@ describe("SidebarMenuButtons", () => {
       const manageButton = screen.getByTestId("sidebar-manage-servers-button");
       await user.click(manageButton);
 
-      expect(mockNavigate).toHaveBeenCalledWith("/settings/mcp-servers");
+      expect(mockNavigate).toHaveBeenCalledWith("/mcp-servers");
       expect(mockNavigate).toHaveBeenCalledTimes(1);
     });
 
