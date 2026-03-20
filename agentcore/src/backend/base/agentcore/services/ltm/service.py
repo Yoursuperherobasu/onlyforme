@@ -129,13 +129,12 @@ class LTMService(Service):
             count = self._message_counts[agent_id_str]
             logger.debug(f"[LTM] on_message_stored (in-memory fallback): {e}")
 
-        # Fire the pipeline exactly when threshold is hit (not for every message above it)
-        if count == settings.ltm_message_threshold:
+        # Fire the pipeline when threshold is reached or exceeded, but only if not already running
+        if count >= settings.ltm_message_threshold and agent_id_str not in self._agents_in_progress:
             logger.info(
                 f"[LTM] Threshold reached ({count}/{settings.ltm_message_threshold}), "
                 f"scheduling pipeline for agent={agent_id_str}"
             )
-            import asyncio
             asyncio.create_task(self.process_with_llm(agent_id_str))
 
     async def _time_based_sweep(self) -> None:
@@ -211,13 +210,9 @@ class LTMService(Service):
             logger.info(f"[LTM] Skipping — agent {agent_id} already in progress")
             return
 
-        if not await self.should_process(agent_id):
-            logger.info(f"[LTM] Skipping — should_process returned False (2nd check)")
-            return
-
         self._agents_in_progress.add(agent_id)
         try:
-            messages, env = await self._get_recent_messages(agent_id)
+            messages, env, message_ids = await self._get_recent_messages(agent_id)
             if not messages:
                 logger.info(f"[LTM] No recent messages found for agent={agent_id}, resetting counter")
                 await self._reset_counter(agent_id)
@@ -244,7 +239,7 @@ class LTMService(Service):
             await self._store_to_pinecone(agent_id, summary, env=env)
 
             # 6. Mark messages as summarized in DB (permanent — survives Redis flush/TTL/restart)
-            await self._mark_messages_summarized(messages)
+            await self._mark_messages_summarized(message_ids, env)
 
             # 7. Reset counter
             await self._reset_counter(agent_id)
@@ -255,16 +250,16 @@ class LTMService(Service):
         finally:
             self._agents_in_progress.discard(agent_id)
 
-    async def _get_recent_messages(self, agent_id: str) -> tuple[list, str]:
+    async def _get_recent_messages(self, agent_id: str) -> tuple[list, str, list]:
         """Fetch messages not yet LTM-summarized for this agent (all sessions).
 
         DB query filters WHERE ltm_summarized_at IS NULL — permanent dedup guarantee.
         """
-        all_messages, env = await self._query_messages_by_priority(agent_id)
+        all_messages, env, row_ids = await self._query_messages_by_priority(agent_id)
         logger.info(f"[LTM] Found {len(all_messages)} unsummarized messages for agent={agent_id}")
-        return all_messages, env
+        return all_messages, env, row_ids
 
-    async def _query_messages_by_priority(self, agent_id: str) -> tuple[list, str]:
+    async def _query_messages_by_priority(self, agent_id: str) -> tuple[list, str, list]:
         """Query all messages for this agent from orch_conversation first, then dev conversation.
 
         For orch_conversation, resolves environment (PROD/UAT) by checking
@@ -305,10 +300,9 @@ class LTMService(Service):
                         f"[LTM] Fetched {len(rows)} messages from orch_conversation [pre-filter] "
                         f"(env={env}) for agent={agent_id}"
                     )
-                    return [
-                        await Message.create(**r.model_dump())
-                        for r in rows
-                    ], env
+                    row_ids = [r.id for r in rows]
+                    messages = [await Message.create(**r.model_dump()) for r in rows]
+                    return messages, env, row_ids
         except Exception as e:
             logger.debug(f"[LTM] Skipping orch_conversation: {e}")
 
@@ -333,10 +327,9 @@ class LTMService(Service):
                         f"[LTM] Fetched {len(rows)} messages from conversation_prod (PROD) [pre-filter] "
                         f"for agent={agent_id}"
                     )
-                    return [
-                        await Message.create(**r.model_dump())
-                        for r in rows
-                    ], "PROD"
+                    row_ids = [r.id for r in rows]
+                    messages = [await Message.create(**r.model_dump()) for r in rows]
+                    return messages, "PROD", row_ids
         except Exception as e:
             logger.debug(f"[LTM] Skipping conversation_prod: {e}")
 
@@ -361,10 +354,9 @@ class LTMService(Service):
                         f"[LTM] Fetched {len(rows)} messages from conversation_uat (UAT) [pre-filter] "
                         f"for agent={agent_id}"
                     )
-                    return [
-                        await Message.create(**r.model_dump())
-                        for r in rows
-                    ], "UAT"
+                    row_ids = [r.id for r in rows]
+                    messages = [await Message.create(**r.model_dump()) for r in rows]
+                    return messages, "UAT", row_ids
         except Exception as e:
             logger.debug(f"[LTM] Skipping conversation_uat: {e}")
 
@@ -389,14 +381,13 @@ class LTMService(Service):
                         f"[LTM] Fetched {len(rows)} messages from conversation (Dev) [pre-filter] "
                         f"for agent={agent_id}"
                     )
-                    return [
-                        await Message.create(**r.model_dump())
-                        for r in rows
-                    ], "Dev"
+                    row_ids = [r.id for r in rows]
+                    messages = [await Message.create(**r.model_dump()) for r in rows]
+                    return messages, "Dev", row_ids
         except Exception as e:
             logger.debug(f"[LTM] Skipping conversation: {e}")
 
-        return [], "Dev"
+        return [], "Dev", []
 
     async def _resolve_orch_environment(self, rows: list, session) -> str:
         """Resolve PROD vs UAT from orch_conversation deployment_id.
@@ -435,18 +426,15 @@ class LTMService(Service):
 
         return "Orchestrator"
 
-    async def _mark_messages_summarized(self, messages: list) -> None:
-        """Mark messages as LTM-summarized in DB. Permanent — survives Redis flushes/TTL/restarts."""
-        if not messages:
-            return
-        ids = [
-            UUID(str(m.id)) if not isinstance(m.id, UUID) else m.id
-            for m in messages
-            if getattr(m, "id", None)
-        ]
+    async def _mark_messages_summarized(self, ids: list, env: str) -> None:
+        """Mark messages as LTM-summarized in DB. Permanent — survives Redis flushes/TTL/restarts.
+
+        Updates only the specific table the messages came from (determined by env).
+        """
         if not ids:
             return
 
+        uuid_ids = [UUID(str(i)) if not isinstance(i, UUID) else i for i in ids]
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         try:
             from sqlalchemy import update
@@ -456,12 +444,19 @@ class LTMService(Service):
             from agentcore.services.database.models.conversation_prod.model import ConversationProdTable
             from agentcore.services.database.models.conversation_uat.model import ConversationUATTable
 
+            env_table_map = {
+                "PROD": ConversationProdTable,
+                "UAT": ConversationUATTable,
+                "Orchestrator": OrchConversationTable,
+                "Dev": ConversationTable,
+            }
+            model = env_table_map.get(env, ConversationTable)
+
             async with session_scope() as session:
-                for model in (ConversationTable, OrchConversationTable, ConversationProdTable, ConversationUATTable):
-                    await session.execute(
-                        update(model).where(model.id.in_(ids)).values(ltm_summarized_at=now)
-                    )
-            logger.info(f"[LTM] Marked {len(ids)} messages as summarized in DB")
+                await session.execute(
+                    update(model).where(model.id.in_(uuid_ids)).values(ltm_summarized_at=now)
+                )
+            logger.info(f"[LTM] Marked {len(uuid_ids)} messages as summarized in DB (table={model.__tablename__})")
         except Exception as e:
             logger.error(f"[LTM] Failed to mark messages summarized: {e}")
 
