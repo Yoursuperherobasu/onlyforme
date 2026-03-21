@@ -369,12 +369,13 @@ class LCModelNode(Node):
         lf_message = None
         ai_message = None  # Will hold the full AIMessage if available
         if hasattr(self, "_event_manager") and self._event_manager:
-            # Stream tokens directly via event_manager — the same mechanism
-            # used by Worker Node / Agent components.  This sends token SSE
-            # events directly to the queue, which the consumer flushes to the
-            # client immediately.  The previous send_message()-based path
-            # buffered all tokens because the async generator was consumed
-            # inside send_message's synchronous iteration context.
+            # Use the same streaming pattern as the Worker Node / Agent:
+            # 1. Store an initial empty message via send_message() — this
+            #    creates the message bubble in the UI with all required fields
+            #    (agent_id, session_id, etc.) so the chat view filter passes.
+            # 2. Stream tokens via event_manager.on_token() referencing that
+            #    message's DB-assigned ID.
+            # 3. After streaming, update the stored message with complete text.
             import asyncio
 
             if hasattr(self, "graph"):
@@ -384,60 +385,41 @@ class LCModelNode(Node):
             else:
                 session_id = None
 
-            message_id = str(uuid4())
+            # Step 1: Create and store initial message bubble
+            init_message = Message(
+                text="",
+                sender=MESSAGE_SENDER_AI,
+                sender_name=self.display_name or "AI",
+                properties={"icon": self.icon, "state": "partial"},
+                session_id=session_id,
+            )
+            stored_msg = await self.send_message(init_message)
+            msg_id = str(stored_msg.id)
+
+            # Step 2: Stream tokens
             complete = ""
             accumulated = None
-            first_chunk = True
             async for chunk in runnable.astream(inputs):
-                # Accumulate chunks to build the full AIMessage with
-                # response_metadata (token usage arrives in the last chunk).
                 try:
                     accumulated = chunk if accumulated is None else accumulated + chunk
                 except TypeError:
                     pass
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 complete += content
-
-                # On first chunk, send add_message event so the frontend
-                # creates the message bubble before tokens start arriving.
-                if first_chunk:
-                    agent_id = None
-                    if hasattr(self, "graph") and self.graph:
-                        agent_id = str(self.graph.agent_id) if self.graph.agent_id else None
-                    init_message = Message(
-                        text="",
-                        sender=MESSAGE_SENDER_AI,
-                        sender_name=self.display_name or "AI",
-                        properties={"icon": self.icon, "state": "partial"},
-                        session_id=session_id,
-                    )
-                    init_data = init_message.model_dump().get("data", init_message.model_dump())
-                    init_data["id"] = message_id
-                    if agent_id:
-                        init_data["agent_id"] = agent_id
-                    self._event_manager.on_message(data=init_data)
-                    await asyncio.sleep(0)
-                    first_chunk = False
-
                 self._event_manager.on_token(
-                    data={"chunk": content, "id": message_id},
+                    data={"chunk": content, "id": msg_id},
                 )
                 await asyncio.sleep(0)
             result = complete
             if isinstance(accumulated, AIMessage):
                 ai_message = accumulated
 
-            # Store the complete message to DB (single write at the end)
-            if self.is_connected_to_chat_output():
-                final_message = Message(
-                    text=complete,
-                    sender=MESSAGE_SENDER_AI,
-                    sender_name=self.display_name or "AI",
-                    properties={"icon": self.icon, "state": "complete"},
-                    session_id=session_id,
-                )
-                final_message.data["id"] = message_id
-                lf_message = await self.send_message(final_message)
+            # Step 3: Update the stored message in DB with complete text
+            stored_msg.text = complete
+            stored_msg.properties.state = "complete"
+            from agentcore.memory import aupdate_messages
+            await aupdate_messages(stored_msg)
+            lf_message = stored_msg
         else:
             message = await runnable.ainvoke(inputs)
             result = message.content if hasattr(message, "content") else message
