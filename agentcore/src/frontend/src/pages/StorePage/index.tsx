@@ -5,7 +5,6 @@ import { useParams } from "react-router-dom";
 import PaginatorComponent from "@/components/common/paginatorComponent";
 import StoreCardComponent from "@/components/common/storeCardComponent";
 import { CustomLink } from "@/customization/components/custom-link";
-import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { useUtilityStore } from "@/stores/utilityStore";
 import IconComponent from "../../components/common/genericIconComponent";
 import PageLayout from "../../components/common/pageLayout";
@@ -13,7 +12,6 @@ import ShadTooltip from "../../components/common/shadTooltipComponent";
 import { SkeletonCardComponent } from "../../components/common/skeletonCardComponent";
 import { TagsSelector } from "../../components/common/tagsSelectorComponent";
 import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
 import {
   Select,
   SelectContent,
@@ -41,7 +39,6 @@ import useAlertStore from "../../stores/alertStore";
 import useAgentsManagerStore from "../../stores/agentsManagerStore";
 import { useStoreStore } from "../../stores/storeStore";
 import type { storeComponent } from "../../types/store";
-import { cn } from "../../utils/utils";
 import InputSearchComponent from "../MainPage/components/inputSearchComponent";
 
 export default function StorePage(): JSX.Element {
@@ -70,8 +67,6 @@ export default function StorePage(): JSX.Element {
   const [selectFilter, setSelectFilter] = useState("all");
 
   const tags = useUtilityStore((state) => state.tags);
-
-  const navigate = useCustomNavigate();
 
   useEffect(() => {
     if (!loadingApiKey) {
@@ -168,23 +163,7 @@ export default function StorePage(): JSX.Element {
       betaIcon
       title={t(STORE_TITLE)}
       description={t(STORE_DESC)}
-      button={
-        <Button
-          data-testid="api-key-button-store"
-          disabled={loading}
-          className={cn(
-            `${!validApiKey ? "animate-pulse border-error" : ""}`,
-            loading ? "cursor-not-allowed" : "",
-          )}
-          variant="primary"
-          onClick={() => {
-            navigate("/settings/general/api");
-          }}
-        >
-          <IconComponent name="Key" className="mr-2 w-4" />
-          {t("API Key")}
-        </Button>
-      }
+      button={null}
     >
       <div className="flex h-full w-full flex-col justify-between">
         <div className="flex w-full flex-col gap-4 p-0">

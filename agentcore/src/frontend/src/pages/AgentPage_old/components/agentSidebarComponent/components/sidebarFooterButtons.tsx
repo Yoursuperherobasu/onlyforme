@@ -72,7 +72,7 @@ const SidebarMenuButtons = ({
           unstyled
           disabled={isLoading}
           onClick={() => {
-            navigate("/settings/mcp-servers");
+            navigate("/mcp-servers");
           }}
           data-testid="sidebar-manage-servers-button"
           className="flex items-center w-full h-full gap-3 hover:bg-muted"

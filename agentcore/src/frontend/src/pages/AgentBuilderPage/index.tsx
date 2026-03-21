@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { useBlocker, useParams, useSearchParams } from "react-router-dom";
-import { Copy } from "lucide-react";
+import { ArrowLeft, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useGetAgent } from "@/controllers/API/queries/agents/use-get-agent";
@@ -251,16 +251,17 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
               >
                 <AgentSearchProvider>
                   <AgentSidebarComponent isLoading={isLoading} readOnly />
-                  <main className="flex w-full overflow-hidden">
+                  <main className="relative flex w-full overflow-hidden">
                     <div className="flex h-full w-full flex-col overflow-hidden">
-                      <div className="flex items-center gap-2 border-b bg-background px-3 py-2">
-                        <Button variant="outline" size="sm" onClick={handleBackToProject}>
-                          Back to Project
-                        </Button>
-                        <span className="truncate text-sm text-muted-foreground">
-                          {currentAgent.name}
-                        </span>
-                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="absolute left-4 top-12 z-40 gap-2 bg-background shadow-lg"
+                        onClick={handleBackToProject}
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                        Back
+                      </Button>
                       <div className="h-full w-full">
                         <Page
                           view

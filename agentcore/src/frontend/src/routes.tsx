@@ -10,7 +10,6 @@ import { ProtectedAccessControlRoute } from "./components/authorization/authAcce
 import { ProtectedPermissionRoute } from "./components/authorization/permissionGuard";
 import { ProtectedRoute } from "./components/authorization/authGuard";
 import { ProtectedLoginRoute } from "./components/authorization/authLoginGuard";
-import { AuthSettingsGuard } from "./components/authorization/authSettingsGuard";
 import ContextWrapper from "./contexts";
 import CustomDashboardWrapperPage from "./customization/components/custom-DashboardWrapperPage";
 import { CustomNavigate } from "./customization/components/custom-navigate";
@@ -32,16 +31,10 @@ import HomePage from "./pages/MainPage/pages/homePage";
 import KnowledgePage from "./pages/MainPage/pages/knowledgePage";
 
 import CollectionPage from "./pages/MainPage/pages/main-page";
-import SettingsPage from "./pages/SettingsPage";
-import ApiKeysPage from "./pages/SettingsPage/pages/ApiKeysPage";
-
-import GlobalVariablesPage from "./pages/SettingsPage/pages/GlobalVariablesPage";
 import HelpSupportPage from "./pages/SettingsPage/pages/HelpSupportPage";
 import MCPServersPage from "./pages/McpServersPage";
-import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import PackagesPage from "./pages/SettingsPage/pages/PackagesPage";
 import ReleaseManagementPage from "./pages/ReleaseManagementPage";
-import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import ViewPage from "./pages/ViewPage";
 import ApprovalPage from "./pages/ApprovalPage";
 import ApprovalPreviewPage from "./pages/ApprovalPreviewPage";
@@ -338,32 +331,9 @@ const router = createBrowserRouter(
                   </Route>
                 </Route>
                 <Route
-                  path="settings"
-                  element={
-                    
-                      <SettingsPage />
-                    
-                  }
-                >
-                  <Route
-                    index
-                    element={<CustomNavigate replace to={"global-variables"} />}
-                  />
-                  <Route
-                    path="global-variables"
-                    element={<GlobalVariablesPage />}
-                  />
-                  
-                  <Route path="api-keys" element={<ApiKeysPage />} />
-                 
-                  <Route path="shortcuts" element={<ShortcutsPage />} />
-                  <Route path="messages" element={<MessagesPage />} />
-                  <Route
-                    path="help-support"
-                    element={<CustomNavigate replace to={"/help-support"} />}
-                  />
-                  {CustomRoutesStore()}
-                </Route>
+                  path="settings/*"
+                  element={<CustomNavigate replace to="/" />}
+                />
                 {CustomRoutesStorePages()}
                 <Route path="account">
                   <Route path="delete" element={<DeleteAccountPage />}></Route>

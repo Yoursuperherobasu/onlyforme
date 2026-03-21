@@ -747,7 +747,7 @@ const SideBarFoldersButtonsComponent = ({
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"
-              isActive={pathname.startsWith("/help-support") || pathname.startsWith("/settings/help-support")}
+              isActive={pathname.startsWith("/help-support")}
               onClick={() => _navigate("/help-support")}
               className="text-[var(--sidebar-foreground)] hover:!bg-[var(--button-primary)] hover:!text-[var(--tabs-label)] data-[active=true]:!bg-[var(--button-primary)] data-[active=true]:!text-[var(--tabs-label)] transition-colors"
             >

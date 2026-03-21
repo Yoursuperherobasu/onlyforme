@@ -120,7 +120,7 @@ const McpEmptyState = () => {
       <p className="text-muted-foreground mb-2">{t("No MCP Servers Registered")}</p>
       <p className="text-xs text-muted-foreground">
         {t("Manage MCP servers from the")}{" "}
-        <CustomLink className="underline" to="/settings/mcp-servers">
+        <CustomLink className="underline" to="/mcp-servers">
           {t("MCP Servers page")}
         </CustomLink>
         .

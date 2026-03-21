@@ -60,12 +60,6 @@ export const HelpDropdownView = ({
           onClick={() => openLink(urls.docs)}
         />
         <DropdownControlButton
-          iconName="keyboard"
-          testId="canvas_controls_dropdown_shortcuts"
-          label="Shortcuts"
-          onClick={() => navigateTo("/settings/shortcuts")}
-        />
-        <DropdownControlButton
           iconName="bug"
           testId="canvas_controls_dropdown_report_a_bug"
           externalLink

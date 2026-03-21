@@ -139,19 +139,6 @@ export const AccountMenu = () => {
             </div>
           </div>
           <div>
-            <HeaderMenuItemButton
-              onClick={() => {
-                navigate("/settings");
-              }}
-            >
-              <span
-                data-testid="menu_settings_button"
-                id="menu_settings_button"
-              >
-                {t("Settings")}
-              </span>
-            </HeaderMenuItemButton>
-
             {can("view_admin_page") && (
               <div>
                 <HeaderMenuItemButton
