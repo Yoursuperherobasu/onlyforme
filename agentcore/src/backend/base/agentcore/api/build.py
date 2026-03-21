@@ -223,21 +223,25 @@ async def get_agent_events_response(
         main_queue, event_manager, event_task, _ = queue_service.get_queue_data(job_id)
 
         # Signal that a consumer has connected so generate_agent_events() can
-        # proceed past its wait gate and start astream().  This is done BEFORE
-        # the streaming/polling branch so both paths unblock the producer.
+        # proceed past its wait gate and start astream().
         _consumer_ready_ev: asyncio.Event | None = event_manager.__dict__.get("_consumer_ready")
-        if _consumer_ready_ev is not None:
-            _consumer_ready_ev.set()
 
         if event_delivery in (EventDeliveryType.STREAMING, EventDeliveryType.DIRECT):
             if event_task is None:
                 logger.error(f"No event task found for job {job_id}")
                 raise HTTPException(status_code=404, detail="No event task found for job")
+            # Pass _consumer_ready to the response so it fires inside
+            # consume_and_yield — when the reader is truly pulling events.
             return await create_agent_response(
                 queue=main_queue,
                 event_manager=event_manager,
                 event_task=event_task,
+                consumer_ready=_consumer_ready_ev,
             )
+
+        # Polling mode — signal immediately since there is no streaming reader.
+        if _consumer_ready_ev is not None:
+            _consumer_ready_ev.set()
 
         # Polling mode - get all available events
         try:
@@ -290,18 +294,28 @@ async def create_agent_response(
     queue: asyncio.Queue,
     event_manager: EventManager,
     event_task: asyncio.Task,
+    consumer_ready: asyncio.Event | None = None,
 ) -> DisconnectHandlerStreamingResponse:
     """Create a streaming response for the agent build process."""
 
     async def consume_and_yield() -> AsyncIterator[str]:
+        # Signal that the consumer is truly reading from the queue.
+        if consumer_ready is not None:
+            consumer_ready.set()
+
         while True:
             try:
                 event_id, value, put_time = await queue.get()
                 if value is None:
                     break
-                get_time = time.time()
                 yield value.decode("utf-8")
-                logger.debug(f"Event {event_id} consumed in {get_time - put_time:.4f}s")
+                # Small sleep forces the event loop to process pending I/O
+                # (TCP socket writes) between chunks.  Without this, the
+                # socket write buffer accumulates all events and the client
+                # receives everything at once instead of progressively.
+                # asyncio.sleep(0) isn't sufficient — the TCP stack needs
+                # a real delay to flush the kernel buffer.
+                await asyncio.sleep(0.01)
             except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error consuming event: {exc}")
                 break
@@ -313,7 +327,12 @@ async def create_agent_response(
 
     return DisconnectHandlerStreamingResponse(
         consume_and_yield(),
-        media_type="application/x-ndjson",
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
         on_disconnect=on_disconnect,
     )
 
@@ -455,7 +474,9 @@ async def generate_agent_events(
     _consumer_ready_ev: asyncio.Event | None = event_manager.__dict__.get("_consumer_ready")
     if _consumer_ready_ev is not None:
         try:
+            logger.info(f"[{run_id}] Waiting for SSE consumer to connect...")
             await asyncio.wait_for(_consumer_ready_ev.wait(), timeout=5.0)
+            logger.info(f"[{run_id}] SSE consumer connected, proceeding with build")
             # Brief yield so consume_and_yield() can start iterating the queue
             # before any events fire.
             await asyncio.sleep(0.05)
@@ -498,6 +519,14 @@ async def generate_agent_events(
         # Store event_manager on adapter so node_function can access it
         # via vertex.graph._event_manager (must NOT be in state — not serializable)
         graph._event_manager = event_manager
+
+        # Enable streaming on all components that support it.
+        # The run endpoint applies this via process_tweaks(stream=True), but the
+        # Playground build path bypasses that, so we must set it here directly.
+        for vertex in graph.vertices:
+            if hasattr(vertex, "params"):
+                vertex.params["stream"] = True
+        logger.info("Applied stream=True to all vertices for Playground streaming")
 
         initial_state = {
             "vertices_results": {},

@@ -179,6 +179,15 @@ export default function IOModal({
     (state) => state.setCurrentSessionId,
   );
 
+  // Disable the messages query while a build is active. During a build the
+  // SSE stream is the source of truth; if React Query refetches here it will
+  // get empty results (new session has no DB rows yet) and overwrite the
+  // messages that the SSE stream already pushed into the store.
+  const displayLoadingMessage = useMessagesStore(
+    (state) => state.displayLoadingMessage,
+  );
+  const queryEnabled = open && !isBuilding && !displayLoadingMessage;
+
   const { isFetched: messagesFetched, refetch: refetchMessages } =
     useGetMessagesQuery(
       {
@@ -188,7 +197,7 @@ export default function IOModal({
           session_id: visibleSession,
         },
       },
-      { enabled: open },
+      { enabled: queryEnabled },
     );
 
   const chatValue = useUtilityStore((state) => state.chatValueStore);
@@ -211,6 +220,18 @@ export default function IOModal({
       if (isBuilding) return;
       setChatValue("");
       setDisplayLoadingMessage(true);
+
+      // For new sessions: set visibleSession immediately so the chat view
+      // filter (visibleSession === message.session_id) matches incoming SSE
+      // messages.  Without this, visibleSession stays undefined until an
+      // effect fires, but by then isBuilding may be true and the effect
+      // skips the update — leaving visibleSession undefined and all
+      // messages filtered out (blank chat).
+      if (!visibleSession && sessionId) {
+        setvisibleSession(sessionId);
+        setNewChatOnPlayground(false);
+      }
+
       for (let i = 0; i < repeat; i++) {
         await buildAgent({
           input_value: chatValue,
@@ -225,7 +246,7 @@ export default function IOModal({
         });
       }
     },
-    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent, setDisplayLoadingMessage],
+    [isBuilding, setIsBuilding, chatValue, chatInput?.id, sessionId, buildAgent, setDisplayLoadingMessage, visibleSession, setvisibleSession, setNewChatOnPlayground],
   );
 
   // ─── Effects ─────────────────────────────────────────────────────
@@ -309,7 +330,15 @@ export default function IOModal({
       visibleSession &&
       prevVisibleSessionRef.current !== visibleSession
     ) {
-      refetchMessages();
+      // Skip refetch when a message is being processed (first message of a
+      // new session).  During that window the SSE stream is the source of
+      // truth — a refetch returns empty results from the API and overwrites
+      // the streamed user/AI messages, causing the blank-chat bug.
+      const isBuildActive =
+        useMessagesStore.getState().displayLoadingMessage || isBuilding;
+      if (!isBuildActive) {
+        refetchMessages();
+      }
     }
 
     prevVisibleSessionRef.current = visibleSession;
