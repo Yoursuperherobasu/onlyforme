@@ -217,6 +217,22 @@ async def get_current_user_by_jwt(
             detail="User not found or is inactive.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Check if user account has expired
+    if user.expires_at is not None:
+        now = datetime.now(timezone.utc)
+        expires_at = user.expires_at if user.expires_at.tzinfo else user.expires_at.replace(tzinfo=timezone.utc)
+        if now >= expires_at:
+            user.is_active = False
+            db.add(user)
+            await db.commit()
+            logger.info(f"User {user.username} account has expired, auto-deactivated.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account has expired.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     return user
 
 
@@ -463,6 +479,16 @@ async def create_refresh_token(refresh_token: str, db: AsyncSession):
         if user_exists is None or not user_exists.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
+        # Check if user account has expired
+        if user_exists.expires_at is not None:
+            now = datetime.now(timezone.utc)
+            expires_at = user_exists.expires_at if user_exists.expires_at.tzinfo else user_exists.expires_at.replace(tzinfo=timezone.utc)
+            if now >= expires_at:
+                user_exists.is_active = False
+                db.add(user_exists)
+                await db.commit()
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account has expired")
+
         return await create_user_tokens(UUID(str(user_id)), db)
 
     except JWTError as e:
@@ -478,6 +504,25 @@ async def authenticate_user(username: str, password: str, db: AsyncSession) -> U
 
     if not user:
         return None
+
+    # Check if user account has expired
+    if user.expires_at is not None:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        expires_at = user.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if now >= expires_at:
+            # Auto-deactivate expired user
+            user.is_active = False
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account has expired",
+            )
 
     if not user.is_active:
         if not user.last_login_at:

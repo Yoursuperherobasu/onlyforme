@@ -605,6 +605,7 @@ export const CONTROL_NEW_USER = {
   department_name: "",
   organization_name: "",
   organization_description: "",
+  expires_at: null as string | null,
 };
 
 export const tabsCode = [];

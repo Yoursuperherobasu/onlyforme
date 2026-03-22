@@ -443,6 +443,7 @@ export type UserInputType = {
   id?: string;
   create_at?: string;
   updated_at?: string;
+  expires_at?: string | null;
 };
 
 export type ApiKeyType = {

@@ -302,6 +302,22 @@ async def azure_sso_login(
     if user and not (root_email and normalized_email == root_email):
         resolved_role = normalize_role(getattr(user, "role", "consumer"))
 
+    # Check if user account has expired
+    if user and not is_new_user and user.expires_at is not None:
+        from datetime import datetime as _dt, timezone as _tz
+
+        _now = _dt.now(_tz.utc)
+        _exp = user.expires_at if user.expires_at.tzinfo else user.expires_at.replace(tzinfo=_tz.utc)
+        if _now >= _exp:
+            user.is_active = False
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account has expired",
+            )
+
     if user and not is_new_user and not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -6,6 +6,7 @@ import {
   AGENTCORE_REFRESH_TOKEN,
 } from "@/constants/constants";
 import { useGetUserData } from "@/controllers/API/queries/auth";
+import { useLogout } from "@/controllers/API/queries/auth/use-post-logout";
 import { useGetGlobalVariablesMutation } from "@/controllers/API/queries/variables/use-get-mutation-global-variables";
 import useAuthStore from "@/stores/authStore";
 import { setLocalStorage } from "@/utils/local-storage-util";
@@ -50,6 +51,7 @@ export function AuthProvider({ children }): React.ReactElement {
   const setAuthContext = useAuthStore((state) => state.setAuthContext);
 
   const { mutate: mutateLoggedUser } = useGetUserData();
+  const { mutate: mutateLogout } = useLogout();
   const { mutate: mutateGetGlobalVariables } = useGetGlobalVariablesMutation();
 
   useEffect(() => {
@@ -71,6 +73,15 @@ export function AuthProvider({ children }): React.ReactElement {
       {},
       {
         onSuccess: async (user) => {
+          // Auto-logout if user account has expired
+          if (user.expires_at) {
+            const expiresAt = new Date(user.expires_at);
+            if (!isNaN(expiresAt.getTime()) && Date.now() >= expiresAt.getTime()) {
+              mutateLogout(undefined);
+              return;
+            }
+          }
+
           setUserData(user);
           setAuthContext({
             role: user.role,
@@ -79,7 +90,7 @@ export function AuthProvider({ children }): React.ReactElement {
           setRole(user.role);
           setPermissions(user.permissions || []);
 
-          
+
           checkHasStore();
           fetchApiData();
         },
@@ -88,7 +99,7 @@ export function AuthProvider({ children }): React.ReactElement {
         },
       },
     );
-  }, [mutateLoggedUser, setAuthContext, checkHasStore, fetchApiData]);
+  }, [mutateLoggedUser, mutateLogout, setAuthContext, checkHasStore, fetchApiData]);
 
   useEffect(() => {
     // Always attempt whoami on mount; backend can read httpOnly cookies.

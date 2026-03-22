@@ -202,6 +202,7 @@ export type Users = {
   organization_id?: string | null;
   organization_name?: string | null;
   created_by_username?: string | null;
+  expires_at?: string | null;
   optins?: {
     github_starred?: boolean;
     discord_clicked?: boolean;

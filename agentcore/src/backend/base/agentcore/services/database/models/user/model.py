@@ -51,6 +51,7 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
         description="FK to the user who created this account",
     )
     country: str | None = Field(default=None, nullable=True, max_length=100, index=True)
+    expires_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     agents: list["Agent"] = Relationship(back_populates="user")
     # [VARIABLE REMOVED] variables relationship removed — migrating to Azure Key Vault
     folders: list["Project"] = Relationship(
@@ -81,6 +82,7 @@ class UserCreate(SQLModel):
     department_admin: UUID | None = None
     created_by: UUID | None = None
     country: str | None = None
+    expires_at: datetime | None = None
 
 class UserRead(SQLModel):
     id: UUID = Field(default_factory=uuid4)
@@ -108,6 +110,7 @@ class UserRead(SQLModel):
     country: str | None = Field(default=None)
     department_id: UUID | None = Field(default=None)
     organization_name: str | None = Field(default=None)
+    expires_at: datetime | None = Field(default=None)
 
 
 class UserUpdate(SQLModel):
@@ -134,3 +137,4 @@ class UserUpdate(SQLModel):
     department_id: UUID | None = None
     organization_name: str | None = None
     organization_description: str | None = None
+    expires_at: datetime | None = None

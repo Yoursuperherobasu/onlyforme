@@ -5,6 +5,7 @@ import { getURL } from "@/controllers/API/helpers/constants";
 import IconComponent from "@/components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
+import { DateTimePicker } from "../../components/ui/date-time-picker";
 import { CONTROL_NEW_USER } from "../../constants/constants";
 import { AuthContext } from "../../contexts/authContext";
 import {
@@ -37,6 +38,7 @@ export default function UserManagementModal({
     data?.role ?? "business_user",
   );
   const [availableRoles, setAvailableRoles] = useState<string[]>([]);
+  const [expiresAt, setExpiresAt] = useState<string>(data?.expires_at ?? "");
   const [departmentId, setDepartmentId] = useState("");
   const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([]);
   const [departmentName, setDepartmentName] = useState("");
@@ -74,6 +76,7 @@ export default function UserManagementModal({
         setDepartmentName(data.department_name ?? "");
         setOrganizationName(data.organization_name ?? "");
         setOrganizationDescription(data.organization_description ?? "");
+        setExpiresAt(data.expires_at ? data.expires_at.slice(0, 16) : "");
         setDepartmentError("");
         setOrganizationError("");
 
@@ -124,6 +127,7 @@ export default function UserManagementModal({
     setUserName("");
     setIsActive(false);
     setSelectedRole(defaultRole);
+    setExpiresAt("");
     setDepartmentId("");
     setDepartmentName("");
     setOrganizationName("");
@@ -268,6 +272,7 @@ export default function UserManagementModal({
       ...(enableBulkDepartmentAdd ? { usernames: parsedBulkUsernames } : {}),
       is_active: isActive,
       role: effectiveRole,
+      expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
     };
 
     if (isCreatingDepartmentAdmin) {
@@ -469,6 +474,26 @@ export default function UserManagementModal({
                 </div>
               </Form.Field>
             </div>
+
+            <Form.Field name="expires_at">
+              <div className="flex flex-col">
+                <Form.Label className="data-[invalid]:label-invalid mb-2">
+                  Expiry Date{" "}
+                  <span className="text-xs text-muted-foreground">(optional)</span>
+                </Form.Label>
+                <DateTimePicker
+                  value={expiresAt}
+                  onChange={(value) => setExpiresAt(value)}
+                  min={new Date().toISOString().slice(0, 16)}
+                  placeholder="No expiry — pick a date"
+                />
+                <div className="mt-1.5">
+                  <span className="text-xs text-muted-foreground">
+                    {expiresAt ? "User will be deactivated after this date." : "No expiry set — user will not expire."}
+                  </span>
+                </div>
+              </div>
+            </Form.Field>
 
             {isCreatingDepartmentAdmin && (
               <Form.Field name="department_name">

@@ -350,6 +350,7 @@ export default function AdminPage() {
           user: {
             is_active: user.is_active,
             role: user.role,
+            expires_at: user.expires_at ?? null,
             ...(user.organization_name
               ? { organization_name: user.organization_name }
               : {}),
@@ -800,6 +801,7 @@ export default function AdminPage() {
                       <TableHead className="h-10">{t("Active")}</TableHead>
                       <TableHead className="h-10">{t("Created At")}</TableHead>
                       <TableHead className="h-10">{t("Updated At")}</TableHead>
+                      <TableHead className="h-10">{t("Expires At")}</TableHead>
                       <TableHead className="h-10 w-[100px] text-right"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -847,35 +849,46 @@ export default function AdminPage() {
                             </ShadTooltip>
                           </TableCell>
                           <TableCell className="relative left-1 truncate py-2 text-align-last-left">
-                            <ConfirmationModal
-                              size="x-small"
-                              title={t("Edit")}
-                              titleHeader={`${user.username}`}
-                              modalContentTitle={t("Attention!")}
-                              cancelText={t("Cancel")}
-                              confirmationText={t("Confirm")}
-                              icon={"UserCog2"}
-                              data={user}
-                              index={index}
-                              onConfirm={(index, user) => {
-                                handleDisableUser(
-                                  user.is_active,
-                                  user.id,
-                                  user,
-                                );
-                              }}
-                            >
-                              <ConfirmationModal.Content>
-                                <span>
-                                  {t("Are you completely confident about the changes you are making to this user?")}
-                                </span>
-                              </ConfirmationModal.Content>
-                              <ConfirmationModal.Trigger>
-                                <div className="flex w-fit">
-                                  <CheckBoxDiv checked={user.is_active} />
+                            {user.expires_at && new Date(user.expires_at) <= new Date() ? (
+                              <ShadTooltip content={t("User has expired. Clear expiry date to re-activate.")}>
+                                <div className="flex w-fit items-center gap-1">
+                                  <CheckBoxDiv checked={false} />
+                                  <span className="text-xs font-semibold text-destructive">
+                                    {t("Expired")}
+                                  </span>
                                 </div>
-                              </ConfirmationModal.Trigger>
-                            </ConfirmationModal>
+                              </ShadTooltip>
+                            ) : (
+                              <ConfirmationModal
+                                size="x-small"
+                                title={t("Edit")}
+                                titleHeader={`${user.username}`}
+                                modalContentTitle={t("Attention!")}
+                                cancelText={t("Cancel")}
+                                confirmationText={t("Confirm")}
+                                icon={"UserCog2"}
+                                data={user}
+                                index={index}
+                                onConfirm={(index, user) => {
+                                  handleDisableUser(
+                                    user.is_active,
+                                    user.id,
+                                    user,
+                                  );
+                                }}
+                              >
+                                <ConfirmationModal.Content>
+                                  <span>
+                                    {t("Are you completely confident about the changes you are making to this user?")}
+                                  </span>
+                                </ConfirmationModal.Content>
+                                <ConfirmationModal.Trigger>
+                                  <div className="flex w-fit">
+                                    <CheckBoxDiv checked={user.is_active} />
+                                  </div>
+                                </ConfirmationModal.Trigger>
+                              </ConfirmationModal>
+                            )}
                           </TableCell>
                           <TableCell className="truncate py-2">
                             {
@@ -890,6 +903,35 @@ export default function AdminPage() {
                                 .toISOString()
                                 .split("T")[0]
                             }
+                          </TableCell>
+                          <TableCell className="truncate py-2">
+                            {user.expires_at ? (
+                              <ShadTooltip
+                                content={
+                                  new Date(user.expires_at) <= new Date()
+                                    ? "Expired"
+                                    : `Expires: ${new Date(user.expires_at).toLocaleString()}`
+                                }
+                              >
+                                <span
+                                  className={`cursor-default ${
+                                    new Date(user.expires_at) <= new Date()
+                                      ? "font-semibold text-destructive"
+                                      : ""
+                                  }`}
+                                >
+                                  {new Date(user.expires_at) <= new Date()
+                                    ? "Expired"
+                                    : new Date(user.expires_at)
+                                        .toISOString()
+                                        .split("T")[0]}
+                                </span>
+                              </ShadTooltip>
+                            ) : (
+                              <span className="cursor-default text-muted-foreground">
+                                {t("No Expiry")}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="flex w-[100px] py-2 text-right">
                             <div className="flex">
