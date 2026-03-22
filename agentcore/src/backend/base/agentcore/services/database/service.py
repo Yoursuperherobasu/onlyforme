@@ -225,7 +225,22 @@ class DatabaseService(Service):
     def init_alembic(alembic_cfg) -> None:
         logger.info("Initializing alembic")
         command.ensure_version(alembic_cfg)
-        command.upgrade(alembic_cfg, "heads")
+        try:
+            command.upgrade(alembic_cfg, "heads")
+        except Exception as exc:
+            # Tables already exist (e.g. DuplicateTable on restart).
+            # Stamp to head so Alembic records the current state without
+            # trying to re-run CREATE TABLE statements.
+            from psycopg.errors import DuplicateTable
+            from sqlalchemy.exc import ProgrammingError
+            if isinstance(exc, ProgrammingError) and isinstance(exc.__cause__, DuplicateTable):
+                logger.warning(
+                    f"Tables already exist during Alembic init ({exc.__cause__}). "
+                    "Stamping to head instead of re-running migrations."
+                )
+                command.stamp(alembic_cfg, "heads")
+            else:
+                raise
 
     def _run_migrations(self, should_initialize_alembic, fix) -> None:
         # First we need to check if alembic has been initialized
@@ -293,19 +308,6 @@ class DatabaseService(Service):
                 if row is None:
                     logger.debug("alembic_version table is empty")
                     should_initialize_alembic = True
-                else:
-                    # Check if the stored revision is in our current migration chain
-                    from alembic.script import ScriptDirectory
-
-                    agentcore_dir = Path(__file__).parent.parent.parent
-                    script_dir = ScriptDirectory(str(agentcore_dir / "alembic"))
-                    known_revisions = {r.revision for r in script_dir.walk_revisions()}
-                    current_rev = row[0]
-                    if current_rev not in known_revisions:
-                        logger.warning(
-                            f"Stale alembic revision '{current_rev}' not in current migration chain — will re-initialize"
-                        )
-                        should_initialize_alembic = True
             except Exception:  # noqa: BLE001
                 logger.debug("Alembic not initialized")
                 should_initialize_alembic = True

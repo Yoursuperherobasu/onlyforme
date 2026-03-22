@@ -1315,7 +1315,16 @@ class Node(ExecutableNode):
             list[Tool]: List of tools provided by this component
         """
         component_toolkit: type[ComponentToolkit] = _get_component_toolkit()
-        return component_toolkit(component=self).get_tools(callbacks=self.get_langchain_callbacks())
+        # Use component name as tool name so the LLM sees a meaningful name
+        # instead of the generic "build_output" method name
+        tool_name = getattr(self, "name", None) or getattr(self, "display_name", None)
+        return component_toolkit(component=self).get_tools(
+            tool_name=tool_name,
+            tool_description=self.description,
+            callbacks=self.get_langchain_callbacks(),
+        )
+        # component_toolkit: type[ComponentToolkit] = _get_component_toolkit()
+        # return component_toolkit(component=self).get_tools(callbacks=self.get_langchain_callbacks())
 
     def _extract_tools_tags(self, tools_metadata: list[dict]) -> list[str]:
         """Extract the first tag from each tool's metadata."""

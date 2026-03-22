@@ -22,6 +22,11 @@ if TYPE_CHECKING:
     from agentcore.graph_langgraph import LangGraphVertex
 
 
+# These component names are user-editable templates, not real built-ins.
+# We must never overwrite user-pasted code for these types.
+_USER_EDITABLE_COMPONENT_NAMES = {"CustomComponent", "Custom Code"}
+
+
 def _get_builtin_source_code(vertex: LangGraphVertex) -> str | None:
     """For built-in agentcore components, get the latest source code.
 
@@ -33,6 +38,12 @@ def _get_builtin_source_code(vertex: LangGraphVertex) -> str | None:
     """
     comp_name = vertex.base_name  # e.g. "HumanApproval" (from node ID prefix)
     display_name = vertex.display_name  # e.g. "Human Approval"
+
+    # Never refresh user-editable template components — they hold user-pasted code
+    # that would be overwritten with the blank template, losing the user's customization
+    # and causing the tool to appear as "CustomComponent" instead of its real name.
+    if comp_name in _USER_EDITABLE_COMPONENT_NAMES or display_name in _USER_EDITABLE_COMPONENT_NAMES:
+        return None
 
     # ── Strategy 1: Look up in the component cache ──
     # The cache is populated from the actual .py source files at startup,

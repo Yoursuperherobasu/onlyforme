@@ -418,9 +418,11 @@ class LangGraphVertex:
                 continue
 
             # Skip if already resolved by _resolve_vertex_dependencies in nodes.py
+            # Exception: list fields (e.g. "tools") must keep processing to collect all connected sources.
             current_value = resolved_params.get(field_name)
-            if current_value is not None and not isinstance(current_value, str):
-                # Already populated with real data (not a string reference), skip to avoid duplication
+            if current_value is not None and not isinstance(current_value, str) and not isinstance(current_value, list):
+                # Already populated with real data (not a string reference or accumulating list),
+                # skip to avoid duplication.
                 logger.debug(
                     f"[_resolve_params] {self.id}.{field_name}: "
                     f"already resolved (type={type(current_value).__name__}), skipping"
