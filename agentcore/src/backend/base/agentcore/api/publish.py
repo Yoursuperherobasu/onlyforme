@@ -1647,6 +1647,20 @@ async def uat_deploy_action(
         msg = f"UAT v{record.version_number} updated: {', '.join(changes)}"
         logger.info(f"{msg} | deploy_id={deploy_id} user={current_user.id}")
 
+        # ─── Sync manifest.yaml on publish/unpublish/activate/deactivate ──
+        from agentcore.services.manifest import add_manifest_entry, remove_manifest_entry
+        effective_status = record.status.value if hasattr(record.status, "value") else str(record.status)
+        if record.is_active and effective_status == "PUBLISHED":
+            add_manifest_entry(
+                agent_id=str(record.agent_id),
+                agent_name=record.agent_name,
+                version_number=f"v{record.version_number}",
+                environment="uat",
+                deployment_id=str(record.id),
+            )
+        else:
+            remove_manifest_entry(deployment_id=str(record.id))
+
         return PublishActionResponse(
             success=True,
             message=msg,
@@ -2265,7 +2279,7 @@ async def publish_agent(
                 published_at=new_record.deployed_at,
             )
 
-            # ─── HTTP notify (for downstream deployment orchestration + manifest.yaml) ──
+            # ─── HTTP notify (manifest update + downstream deployment orchestration) ──
             try:
                 import httpx
                 from agentcore.services.deps import get_settings_service

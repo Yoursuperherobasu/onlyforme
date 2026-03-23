@@ -28,6 +28,7 @@ def _load_manifest(path: Path) -> dict:
 
 
 def _save_manifest(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
@@ -59,8 +60,15 @@ def add_manifest_entry(
             "environment": environment,
             "deployment_id": deployment_id,
         })
-        _save_manifest(path, {"deployments": deployments})
+        updated = {"deployments": deployments}
+        _save_manifest(path, updated)
         logger.info(f"[MANIFEST] Added entry for deployment_id={deployment_id} (total: {len(deployments)})")
+
+        try:
+            from agentcore.services.git_manifest import push_manifest_to_git
+            push_manifest_to_git(updated, f"manifest: add deployment {deployment_id}")
+        except Exception as git_err:
+            logger.warning(f"[MANIFEST] Git sync failed (add): {git_err}")
     except Exception as err:
         logger.warning(f"[MANIFEST] Failed to add entry: {err}")
 
@@ -79,7 +87,14 @@ def remove_manifest_entry(*, deployment_id: str) -> None:
             logger.debug(f"[MANIFEST] No entry found for {deployment_id}, nothing to remove.")
             return
 
-        _save_manifest(path, {"deployments": deployments})
+        updated = {"deployments": deployments}
+        _save_manifest(path, updated)
         logger.info(f"[MANIFEST] Removed entry for deployment_id={deployment_id} (remaining: {len(deployments)})")
+
+        try:
+            from agentcore.services.git_manifest import push_manifest_to_git
+            push_manifest_to_git(updated, f"manifest: remove deployment {deployment_id}")
+        except Exception as git_err:
+            logger.warning(f"[MANIFEST] Git sync failed (remove): {git_err}")
     except Exception as err:
         logger.warning(f"[MANIFEST] Failed to remove entry: {err}")
