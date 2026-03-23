@@ -77,6 +77,90 @@ router = APIRouter(prefix="/publish", tags=["Publish"])
 ADMIN_ROLES = {"admin", "super_admin", "root", "department_admin"}
 
 
+async def _validate_resources_for_prod(snapshot: dict, session) -> None:
+    """Block PROD publish if any model or MCP server is not registered for PROD."""
+    nodes = snapshot.get("nodes", [])
+
+    for node in nodes:
+        node_type = node.get("data", {}).get("type", "")
+        template = node.get("data", {}).get("node", {}).get("template", {})
+
+        # ── Check LLM Models ──
+        if node_type in ("RegistryModelComponent", "RegistryEmbeddingsComponent"):
+            rm = template.get("registry_model", {})
+            registry_value = rm.get("value", "") if isinstance(rm, dict) else ""
+            if not registry_value or "|" not in registry_value:
+                continue
+            parts = [p.strip() for p in registry_value.split("|")]
+            if len(parts) < 3:
+                continue
+            model_id, model_display = parts[2], parts[0]
+
+            from agentcore.services.database.models.model_registry.model import ModelRegistry
+
+            model = await session.get(ModelRegistry, model_id)
+            if model is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot publish to PROD: model '{model_display}' (ID: {model_id}) not found in registry.",
+                )
+            envs = [e.lower() for e in (model.environments or [model.environment])]
+            if "prod" not in envs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Cannot publish to PROD: model '{model.display_name}' "
+                        f"is registered for {envs} only. "
+                        f"Register it for PROD or use UAT+PROD when registering."
+                    ),
+                )
+            if not model.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot publish to PROD: model '{model.display_name}' is inactive.",
+                )
+
+        # ── Check MCP Servers ──
+        if node_type == "MCPTools":
+            from agentcore.services.database.models.mcp_registry.model import McpRegistry
+
+            mcp_value = template.get("mcp_server", {})
+            server_name = ""
+            if isinstance(mcp_value, dict):
+                server_name = mcp_value.get("value", "") or mcp_value.get("name", "")
+            elif mcp_value:
+                server_name = str(mcp_value)
+            server_name = server_name.strip()
+            if not server_name:
+                continue
+
+            mcp = (
+                await session.exec(
+                    select(McpRegistry).where(McpRegistry.server_name == server_name)
+                )
+            ).first()
+            if mcp is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot publish to PROD: MCP server '{server_name}' not found in registry.",
+                )
+            envs = [e.lower() for e in (mcp.environments or [mcp.deployment_env or "uat"])]
+            if "prod" not in envs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Cannot publish to PROD: MCP server '{mcp.server_name}' "
+                        f"is registered for {envs} only. "
+                        f"Register it for PROD before publishing."
+                    ),
+                )
+            if not mcp.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot publish to PROD: MCP server '{mcp.server_name}' is inactive.",
+                )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Request / Response Schemas
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2347,6 +2431,8 @@ async def publish_agent(
                     )
 
             if is_admin:
+                # Validate all models and MCP servers are available for PROD
+                await _validate_resources_for_prod(snapshot, session)
                 # Admin/manager: direct deploy
                 new_record = AgentDeploymentProd(
                     agent_id=agent_id,
@@ -2496,6 +2582,8 @@ async def publish_agent(
                 )
 
             else:
+                # Validate all models and MCP servers are available for PROD
+                await _validate_resources_for_prod(snapshot, session)
                 # Developer: create PENDING_APPROVAL + approval_request
                 new_record = AgentDeploymentProd(
                     agent_id=agent_id,

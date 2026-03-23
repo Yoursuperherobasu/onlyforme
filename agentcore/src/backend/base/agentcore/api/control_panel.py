@@ -1135,6 +1135,10 @@ async def promote_uat_to_prod(
                 ),
             )
 
+        # Validate all models and MCP servers are available for PROD
+        from agentcore.api.publish import _validate_resources_for_prod
+        await _validate_resources_for_prod((uat_dep.agent_snapshot or {}), session)
+
         new_record = AgentDeploymentProd(
             agent_id=uat_dep.agent_id,
             org_id=uat_dep.org_id,
