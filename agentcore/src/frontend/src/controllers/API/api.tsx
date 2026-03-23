@@ -20,6 +20,8 @@ import { BuildStatus, type EventDeliveryType } from "../../constants/enums";
 import { checkDuplicateRequestAndStoreRequest } from "./helpers/check-duplicate-requests";
 import { useLogout, useRefreshAccessToken } from "./queries/auth";
 
+let refreshAccessTokenPromise: Promise<unknown> | null = null;
+
 /* =========================================================
    AXIOS INSTANCE
 ========================================================= */
@@ -38,9 +40,6 @@ const _cookies = new Cookies();
 function ApiInterceptor() {
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const accessToken = useAuthStore((state) => state.accessToken);
-  const authenticationErrorCount = useAuthStore(
-    (state) => state.authenticationErrorCount,
-  );
   const setAuthenticationErrorCount = useAuthStore(
     (state) => state.setAuthenticationErrorCount,
   );
@@ -199,9 +198,13 @@ function ApiInterceptor() {
   function checkErrorCount() {
     if (isLoginPage) return;
 
-    setAuthenticationErrorCount(authenticationErrorCount + 1);
+    const currentErrorCount =
+      useAuthStore.getState().authenticationErrorCount ?? 0;
+    const nextErrorCount = currentErrorCount + 1;
 
-    if (authenticationErrorCount > 3) {
+    setAuthenticationErrorCount(nextErrorCount);
+
+    if (nextErrorCount > 3) {
       setAuthenticationErrorCount(0);
       mutationLogout();
       return false;
@@ -218,7 +221,15 @@ function ApiInterceptor() {
       }
     }
     try {
-      await mutationRenewAccessTokenAsync(undefined);
+      if (!refreshAccessTokenPromise) {
+        refreshAccessTokenPromise = mutationRenewAccessTokenAsync(undefined).finally(
+          () => {
+            refreshAccessTokenPromise = null;
+          },
+        );
+      }
+
+      await refreshAccessTokenPromise;
       setAuthenticationErrorCount(0);
       return await remakeRequest(error);
     } catch (refreshError) {

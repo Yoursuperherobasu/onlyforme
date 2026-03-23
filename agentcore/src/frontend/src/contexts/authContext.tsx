@@ -1,4 +1,5 @@
 import { createContext, useCallback, useEffect, useState } from "react";
+import type { AxiosError } from "axios";
 import { Cookies } from "react-cookie";
 import {
   AGENTCORE_ACCESS_TOKEN,
@@ -47,12 +48,22 @@ export function AuthProvider({ children }): React.ReactElement {
 
   const checkHasStore = useStoreStore((state) => state.checkHasStore);
   const fetchApiData = useStoreStore((state) => state.fetchApiData);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const storeAccessToken = useAuthStore((state) => state.accessToken);
   const setIsAuthenticated = useAuthStore((state) => state.setIsAuthenticated);
   const setAuthContext = useAuthStore((state) => state.setAuthContext);
+  const clearAuthStore = useAuthStore((state) => state.logout);
 
   const { mutate: mutateLoggedUser } = useGetUserData();
-  const { mutate: mutateLogout } = useLogout();
+  const { mutate: mutateLogout, mutateAsync: mutateLogoutAsync } = useLogout();
   const { mutate: mutateGetGlobalVariables } = useGetGlobalVariablesMutation();
+
+  const clearLocalAuthState = useCallback(() => {
+    setAccessToken(null);
+    setRole(null);
+    setPermissions([]);
+    setUserData(null);
+  }, []);
 
   useEffect(() => {
     const storedAccessToken = getAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN);
@@ -68,11 +79,25 @@ export function AuthProvider({ children }): React.ReactElement {
     }
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticated) {
+      clearLocalAuthState();
+      return;
+    }
+
+    setAccessToken(storeAccessToken);
+  }, [clearLocalAuthState, isAuthenticated, storeAccessToken]);
+
   const getUser = useCallback(() => {
     mutateLoggedUser(
       {},
       {
         onSuccess: async (user) => {
+          if (!user) {
+            clearLocalAuthState();
+            return;
+          }
+
           // Auto-logout if user account has expired
           if (user.expires_at) {
             const expiresAt = new Date(user.expires_at);
@@ -83,6 +108,7 @@ export function AuthProvider({ children }): React.ReactElement {
           }
 
           setUserData(user);
+          useAuthStore.getState().setUserData(user);
           setAuthContext({
             role: user.role,
             permissions: user.permissions,
@@ -94,12 +120,37 @@ export function AuthProvider({ children }): React.ReactElement {
           checkHasStore();
           fetchApiData();
         },
-        onError: () => {
-          setUserData(null);
+        onError: async (error) => {
+          clearLocalAuthState();
+          useAuthStore.getState().setUserData(null);
+
+          const status = (error as AxiosError)?.response?.status;
+          const isTransportFailure =
+            !(error as AxiosError)?.response &&
+            Boolean((error as AxiosError)?.message);
+
+          if (status === 401 || status === 403 || isTransportFailure) {
+            try {
+              await mutateLogoutAsync(undefined);
+            } catch {
+              await clearAuthStore();
+            }
+            setIsAuthenticated(false);
+          }
         },
       },
     );
-  }, [mutateLoggedUser, mutateLogout, setAuthContext, checkHasStore, fetchApiData]);
+  }, [
+    mutateLoggedUser,
+    mutateLogout,
+    mutateLogoutAsync,
+    setAuthContext,
+    checkHasStore,
+    fetchApiData,
+    clearAuthStore,
+    clearLocalAuthState,
+    setIsAuthenticated,
+  ]);
 
   useEffect(() => {
     // Always attempt whoami on mount; backend can read httpOnly cookies.
