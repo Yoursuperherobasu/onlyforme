@@ -52,6 +52,7 @@ from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.auth.utils import generate_agent_api_key
+from agentcore.services.approval_notifications import upsert_approval_notification
 
 router = APIRouter(prefix="/control-panel", tags=["Control Panel"])
 
@@ -1186,6 +1187,14 @@ async def promote_uat_to_prod(
             )
             session.add(approval)
             await session.flush()
+            await upsert_approval_notification(
+                session,
+                recipient_user_id=department.admin_user_id,
+                entity_type="agent_publish_request",
+                entity_id=str(approval.id),
+                title=f'Agent "{new_record.agent_name}" awaiting your approval.',
+                link="/approval",
+            )
             new_record.approval_id = approval.id
             session.add(new_record)
 

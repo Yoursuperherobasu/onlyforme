@@ -431,10 +431,10 @@ export default function ModelCatalogue(): JSX.Element {
           </div>
         ) : (
           <>
-            <div className="rounded-lg border bg-card overflow-x-auto">
+            <div className="overflow-x-auto rounded-lg border border-border bg-card">
               <table className="w-full">
                 <thead className="bg-muted/50">
-                  <tr>
+                  <tr className="border-b border-border">
                     {[
                       "Model",
                       "Provider",
@@ -449,7 +449,21 @@ export default function ModelCatalogue(): JSX.Element {
                     ].map((h) => (
                       <th
                         key={h}
-                        className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider"
+                        className={`px-4 py-4 text-left text-xs font-medium uppercase tracking-wider ${
+                          h === "Model"
+                            ? "w-[22%] min-w-[220px]"
+                            : h === "Model ID"
+                              ? "w-[18%] min-w-[220px]"
+                              : h === "Provider"
+                                ? "w-[10%] min-w-[120px]"
+                                : h === "Department Scope"
+                                  ? "w-[8%] min-w-[110px]"
+                                  : h === "Environment" || h === "Visibility" || h === "Type" || h === "Status"
+                                    ? "w-[7%] min-w-[90px]"
+                                    : h === "Actions"
+                                      ? "w-[5%] min-w-[64px]"
+                                      : ""
+                        }`}
                       >
                         {t(h)}
                       </th>
@@ -473,38 +487,49 @@ export default function ModelCatalogue(): JSX.Element {
                     filteredModels.map((model) => (
                       <tr key={model.id} className="group hover:bg-muted/50">
                         {/* Model Name */}
-                        <td className="px-6 py-4">
-                          <div className="font-semibold">
+                        <td className="w-[22%] min-w-[220px] px-4 py-4 align-middle">
+                          <div
+                            className="max-w-[300px] line-clamp-2 font-semibold leading-6"
+                            title={model.display_name}
+                          >
                             {model.display_name}
                           </div>
                           {model.description && (
-                            <div className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                            <div
+                              className="mt-0.5 max-w-[300px] text-xs text-muted-foreground line-clamp-1"
+                              title={model.description}
+                            >
                               {model.description}
                             </div>
                           )}
                         </td>
 
                         {/* Provider */}
-                        <td className="px-6 py-4">
+                        <td className="w-[10%] min-w-[120px] px-4 py-4">
                           <div className="flex items-center gap-2">
                             <div className="flex h-8 w-8 items-center justify-center rounded border">
                               {getProviderLogo(model.provider)}
                             </div>
-                            <span className="text-sm">
+                            <span className="truncate text-sm">
                               {t(getProviderName(model.provider))}
                             </span>
                           </div>
                         </td>
 
                         {/* Model ID */}
-                        <td className="px-6 py-4 text-sm font-mono text-muted-foreground">
-                          {model.model_name}
+                        <td className="w-[18%] min-w-[220px] px-4 py-4 align-middle">
+                          <div
+                            className="max-w-[260px] truncate text-sm font-mono text-muted-foreground"
+                            title={model.model_name}
+                          >
+                            {model.model_name}
+                          </div>
                         </td>
 
                         {/* Environment */}
-                        <td className="px-6 py-4">
+                        <td className="w-[7%] min-w-[90px] px-4 py-4">
                           <span
-                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium uppercase ${
+                            className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium uppercase ${
                               getEnvironmentBadgeClass(model)
                             }`}
                           >
@@ -513,9 +538,9 @@ export default function ModelCatalogue(): JSX.Element {
                         </td>
 
                         {/* Visibility */}
-                        <td className="px-6 py-4">
+                        <td className="w-[7%] min-w-[90px] px-4 py-4">
                           <span
-                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                            className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
                               VISIBILITY_BADGE_CLASSES[model.visibility_scope ?? "private"] ??
                               "bg-gray-100 text-gray-700"
                             }`}
@@ -529,9 +554,9 @@ export default function ModelCatalogue(): JSX.Element {
                         </td>
 
                         {isDepartmentAdmin && (
-                          <td className="px-6 py-4 text-sm text-muted-foreground">
+                          <td className="px-4 py-4 text-sm text-muted-foreground">
                             <div
-                              className="max-w-[170px] truncate"
+                              className="max-w-[150px] truncate"
                               title={model.created_by || "-"}
                             >
                               {model.created_by || "-"}
@@ -540,8 +565,28 @@ export default function ModelCatalogue(): JSX.Element {
                         )}
 
                         {isSuperAdmin && (
-                          <td className="px-6 py-4 text-sm text-muted-foreground">
-                            {(() => {
+                          <td className="w-[8%] min-w-[110px] px-4 py-4 text-sm text-muted-foreground">
+                            <div
+                              className="max-w-[140px] truncate"
+                              title={(() => {
+                                if (model.visibility_scope === "organization") {
+                                  return "All departments";
+                                }
+                                if (model.public_dept_ids && model.public_dept_ids.length > 0) {
+                                  const names = model.public_dept_ids.map((id) => deptById.get(id)?.name ?? id);
+                                  return names.join(", ");
+                                }
+                                if (model.dept_id) {
+                                  const dept = deptById.get(model.dept_id);
+                                  if (dept) {
+                                    return dept.name;
+                                  }
+                                  return model.dept_id;
+                                }
+                                return "-";
+                              })()}
+                            >
+                              {(() => {
                               if (model.visibility_scope === "organization") {
                                 return "All departments";
                               }
@@ -560,13 +605,14 @@ export default function ModelCatalogue(): JSX.Element {
                               }
                               return "-";
                             })()}
+                            </div>
                           </td>
                         )}
 
                         {/* Type */}
-                        <td className="px-6 py-4">
+                        <td className="w-[7%] min-w-[90px] px-4 py-4">
                           <span
-                            className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                            className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
                               model.model_type === "embedding"
                                 ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
                                 : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
@@ -577,24 +623,24 @@ export default function ModelCatalogue(): JSX.Element {
                         </td>
 
                         {/* Status */}
-                        <td className="px-6 py-4">
+                        <td className="w-[7%] min-w-[90px] px-4 py-4">
                           {model.approval_status === "pending" ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-yellow-600">
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-yellow-600">
                               <Clock className="h-3.5 w-3.5" />
                               {t("Pending Approval")}
                             </span>
                           ) : model.approval_status === "rejected" ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600">
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
                               <XCircle className="h-3.5 w-3.5" />
                               {t("Rejected")}
                             </span>
                           ) : model.is_active ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-green-600">
                               <CheckCircle className="h-3.5 w-3.5" />
                               {t("Active")}
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground">
                               <XCircle className="h-3.5 w-3.5" />
                               {t("Inactive")}
                             </span>
@@ -602,7 +648,7 @@ export default function ModelCatalogue(): JSX.Element {
                         </td>
 
                         {canSeeActions ? (
-                          <td className="px-6 py-4">
+                          <td className="w-[5%] min-w-[64px] px-4 py-4">
                             {canEditModel(model) || canDeleteModel(model) ? (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>

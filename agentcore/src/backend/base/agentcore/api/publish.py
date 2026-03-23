@@ -64,6 +64,7 @@ from agentcore.services.database.models.agent_bundle.model import (
     BundleTypeEnum,
     DeploymentEnvEnum,
 )
+from agentcore.services.approval_notifications import upsert_approval_notification
 
 router = APIRouter(prefix="/publish", tags=["Publish"])
 
@@ -2536,6 +2537,14 @@ async def publish_agent(
                 )
                 session.add(approval)
                 await session.flush()
+                await upsert_approval_notification(
+                    session,
+                    recipient_user_id=resolved_department_admin_id,
+                    entity_type="agent_publish_request",
+                    entity_id=str(approval.id),
+                    title=f'Agent "{published_agent_name}" awaiting your approval.',
+                    link="/approval",
+                )
 
                 # Link approval back to deployment record
                 new_record.approval_id = approval.id

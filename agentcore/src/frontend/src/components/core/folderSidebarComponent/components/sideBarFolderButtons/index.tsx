@@ -686,7 +686,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="BookOpen"
                 className="h-4 w-4"
               />
-              {t("Knowledge Hub")}
+              {t("Knowledge Base")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}

@@ -43,6 +43,7 @@ from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.approval_notifications import upsert_approval_notification
 
 logger = logging.getLogger(__name__)
 
@@ -483,6 +484,16 @@ async def _create_model_approval_request(
     )
     session.add(req)
     await session.flush()
+    model_row = await session.get(ModelRegistry, model_id)
+    model_label = getattr(model_row, "name", None) or getattr(model_row, "model_name", None) or "Model"
+    await upsert_approval_notification(
+        session,
+        recipient_user_id=request_to,
+        entity_type="model_request",
+        entity_id=str(req.id),
+        title=f'Model "{model_label}" awaiting your approval.',
+        link="/approval",
+    )
     return req
 
 

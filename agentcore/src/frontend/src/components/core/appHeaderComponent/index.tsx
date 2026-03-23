@@ -11,6 +11,11 @@ import { CustomProductSelector } from "@/customization/components/custom-product
 import { ENABLE_AGENTCORE } from "@/customization/feature-flags";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useTheme from "@/customization/hooks/use-custom-theme";
+import {
+  useGetApprovalNotifications,
+  useMarkAllApprovalNotificationsRead,
+  useMarkApprovalNotificationRead,
+} from "@/controllers/API/queries/approvals";
 import useAlertStore from "@/stores/alertStore";
 import AgentMenu from "./components/AgentMenu";
 import FullLogo from "@/assets/agentcore.svg?react";
@@ -30,6 +35,12 @@ export default function AppHeader(): JSX.Element {
   });
 
   useTheme();
+  const { data: approvalNotifications = [] } = useGetApprovalNotifications({
+    refetchInterval: 10000,
+    refetchOnWindowFocus: true,
+  });
+  const { mutate: markApprovalNotificationRead } = useMarkApprovalNotificationRead();
+  const { mutate: markAllApprovalNotificationsRead } = useMarkAllApprovalNotificationsRead();
 
   useEffect(() => {
     // Listen for sidebar state changes via custom event
@@ -75,7 +86,7 @@ export default function AppHeader(): JSX.Element {
 
   const getNotificationBadge = () => {
     const baseClasses = "absolute h-1 w-1 rounded-full bg-destructive";
-    return notificationCenter
+    return notificationCenter || approvalNotifications.length > 0
       ? `${baseClasses} right-[0.3rem] top-[5px]`
       : "hidden";
   };
@@ -136,41 +147,44 @@ export default function AppHeader(): JSX.Element {
         <AlertDropdown
           notificationRef={notificationContentRef}
           onClose={() => setActiveState(null)}
+          serverNotifications={approvalNotifications}
+          markServerNotificationRead={(id) =>
+            markApprovalNotificationRead({ notificationId: id })
+          }
+          markAllServerNotificationsRead={() => markAllApprovalNotificationsRead(undefined)}
         >
-          <ShadTooltip
-            content="Notifications and errors"
-            side="bottom"
-            styleClasses="z-10"
+          <Button
+            ref={notificationRef}
+            unstyled
+            onClick={() =>
+              setActiveState((prev) =>
+                prev === "notifications" ? null : "notifications",
+              )
+            }
+            data-testid="notification_button"
           >
-            <AlertDropdown onClose={() => setActiveState(null)}>
-              <Button
-                ref={notificationRef}
-                unstyled
-                onClick={() =>
-                  setActiveState((prev) =>
-                    prev === "notifications" ? null : "notifications",
-                  )
-                }
-                data-testid="notification_button"
-              >
-                <div className="hit-area-hover group relative items-center rounded-md px-2 py-2 text-muted-foreground">
-                  <span className={getNotificationBadge()} />
-                  <ForwardedIconComponent
-                    name="Bell"
-                    className={`side-bar-button-size h-4 w-4 ${
-                      activeState === "notifications"
-                        ? "text-primary"
-                        : "text-muted-foreground group-hover:text-primary"
-                    }`}
-                    strokeWidth={2}
-                  />
-                  <span className="hidden whitespace-nowrap">
-                    Notifications
-                  </span>
-                </div>
-              </Button>
-            </AlertDropdown>
-          </ShadTooltip>
+            <ShadTooltip
+              content="Notifications and errors"
+              side="bottom"
+              styleClasses="z-10"
+            >
+              <div className="hit-area-hover group relative items-center rounded-md px-2 py-2 text-muted-foreground">
+                <span className={getNotificationBadge()} />
+                <ForwardedIconComponent
+                  name="Bell"
+                  className={`side-bar-button-size h-4 w-4 ${
+                    activeState === "notifications"
+                      ? "text-primary"
+                      : "text-muted-foreground group-hover:text-primary"
+                  }`}
+                  strokeWidth={2}
+                />
+                <span className="hidden whitespace-nowrap">
+                  Notifications
+                </span>
+              </div>
+            </ShadTooltip>
+          </Button>
         </AlertDropdown>
         <Separator
           orientation="vertical"

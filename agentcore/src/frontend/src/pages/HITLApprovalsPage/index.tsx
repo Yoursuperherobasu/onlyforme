@@ -137,7 +137,7 @@ function DetailModal({
   if (!item) return null;
 
   const actions = item.interrupt_data?.actions ?? [];
-  const question = item.interrupt_data?.question ?? "\u2014";
+  const question = item.interrupt_data?.question ?? "-";
   const context = item.interrupt_data?.context ?? "";
   const isPending = item.status === "pending";
   // For deployed runs, check if current user is the assignee.
@@ -532,9 +532,16 @@ export default function HITLApprovalsPage(): JSX.Element {
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div>
-              <h1 className="text-lg font-semibold text-foreground">
-                {t("HITL Approvals")}
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-semibold text-foreground">
+                  {t("HITL Approvals")}
+                </h1>
+                {pendingCount > 0 && (
+                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                    {t("{{count}} pending", { count: pendingCount })}
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground">
                 {t("Paused agent runs awaiting human review")}
               </p>
@@ -642,7 +649,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                 ) : (
                   filteredItems.map((item) => {
                     const actions = item.interrupt_data?.actions ?? [];
-                    const question = item.interrupt_data?.question ?? "\u2014";
+                    const question = item.interrupt_data?.question ?? "-";
                     const isPending = item.status === "pending";
                     const isActing = actingThreadId === item.thread_id;
 
@@ -655,19 +662,20 @@ export default function HITLApprovalsPage(): JSX.Element {
                         {/* Agent */}
                         <td className="px-4 py-3">
                           <p className="text-sm font-medium text-foreground">
-                            {item.agent_name ?? "\u2014"}
+                            {item.agent_name ?? "-"}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {item.agent_id.slice(0, 8)}…
+                            {item.agent_id.slice(0, 8)}...
                           </p>
                         </td>
 
                         {/* Question */}
                         <td className="max-w-xs px-4 py-3">
-                          <p className="truncate text-sm text-foreground">
-                            {question.length > 80
-                              ? question.slice(0, 80) + "\u2026"
-                              : question}
+                          <p
+                            className="truncate text-sm text-foreground"
+                            title={question}
+                          >
+                            {question}
                           </p>
                         </td>
 
@@ -675,17 +683,18 @@ export default function HITLApprovalsPage(): JSX.Element {
                         <td className="max-w-[200px] px-4 py-3">
                           {item.interrupt_data?.auto_eval_reason ? (
                             <div className="flex items-center">
-                              <p className="truncate text-xs text-muted-foreground">
-                                {item.interrupt_data.auto_eval_reason.length > 60
-                                  ? item.interrupt_data.auto_eval_reason.slice(0, 60) + "..."
-                                  : item.interrupt_data.auto_eval_reason}
+                              <p
+                                className="truncate text-xs text-muted-foreground"
+                                title={item.interrupt_data.auto_eval_reason}
+                              >
+                                {item.interrupt_data.auto_eval_reason}
                               </p>
                               {item.interrupt_data.confidence != null && (
                                 <ConfidenceBadge confidence={item.interrupt_data.confidence} />
                               )}
                             </div>
                           ) : (
-                            <span className="text-xs text-muted-foreground/50">—</span>
+                            <span className="text-xs text-muted-foreground/50">-</span>
                           )}
                         </td>
 
@@ -706,11 +715,14 @@ export default function HITLApprovalsPage(): JSX.Element {
                         {/* Assigned To */}
                         <td className="px-4 py-3">
                           {item.assigned_to_name ? (
-                            <p className="text-sm text-foreground">
+                            <p
+                              className="max-w-[180px] truncate text-sm text-foreground"
+                              title={item.assigned_to_name}
+                            >
                               {item.assigned_to_name}
                             </p>
                           ) : (
-                            <span className="text-xs text-muted-foreground/50">—</span>
+                            <span className="text-xs text-muted-foreground/50">-</span>
                           )}
                         </td>
 

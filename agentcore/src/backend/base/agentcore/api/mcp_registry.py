@@ -44,6 +44,7 @@ from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.approval_notifications import upsert_approval_notification
 
 logger = logging.getLogger(__name__)
 
@@ -809,6 +810,14 @@ async def create_mcp_server(
         requested_environments=body.environments,
     )
     session.add(approval)
+    await upsert_approval_notification(
+        session,
+        recipient_user_id=approver_id,
+        entity_type="mcp_request",
+        entity_id=str(approval.id),
+        title=f'MCP server "{body.server_name}" awaiting your approval.',
+        link="/approval",
+    )
     await _append_mcp_audit(
         session,
         mcp_id=created_id,
@@ -904,6 +913,14 @@ async def request_mcp_server(
         requested_environments=body.environments,
     )
     session.add(approval)
+    await upsert_approval_notification(
+        session,
+        recipient_user_id=approver_id,
+        entity_type="mcp_request",
+        entity_id=str(approval.id),
+        title=f'MCP server "{body.server_name}" awaiting your approval.',
+        link="/approval",
+    )
     await _append_mcp_audit(
         session,
         mcp_id=created_id,
@@ -1092,6 +1109,14 @@ async def update_mcp_server(
             requested_public_dept_ids=desired_public_dept_ids or None,
         )
         session.add(approval)
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=approver_id,
+            entity_type="mcp_request",
+            entity_id=str(approval.id),
+            title=f'MCP server "{row.server_name}" awaiting your approval.',
+            link="/approval",
+        )
         await _append_mcp_audit(
             session,
             mcp_id=server_id,

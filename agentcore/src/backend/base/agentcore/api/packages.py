@@ -25,6 +25,7 @@ from agentcore.services.auth.permissions import get_permissions_for_role
 from agentcore.services.database.models.package.model import Package
 from agentcore.services.database.models.package_request.model import PackageRequest
 from agentcore.services.database.models.user.model import User
+from agentcore.services.approval_notifications import notify_root_approvers, upsert_approval_notification
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 ACTIVE_END_DATE = date(9999, 12, 31)
@@ -144,6 +145,14 @@ async def create_package_request(
         updated_at=now,
     )
     session.add(row)
+    await session.flush()
+    await notify_root_approvers(
+        session,
+        entity_type="package_request",
+        entity_id=str(row.id),
+        title=f'Package "{row.package_name}" awaiting your approval.',
+        link="/approval",
+    )
     await session.commit()
     await session.refresh(row)
     requested_by_user = await session.get(User, row.requested_by)
@@ -214,6 +223,15 @@ async def approve_package_request(
     row.review_comments = payload.comments.strip() if payload.comments else None
     row.updated_at = now
     session.add(row)
+    if row.requested_by and row.requested_by != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=row.requested_by,
+            entity_type="package_request_result",
+            entity_id=str(row.id),
+            title=f'Package "{row.package_name}" was approved.',
+            link="/approval",
+        )
     await session.commit()
     await session.refresh(row)
     requested_by_user = await session.get(User, row.requested_by)
@@ -241,6 +259,15 @@ async def reject_package_request(
     row.review_comments = payload.comments.strip() if payload.comments else None
     row.updated_at = now
     session.add(row)
+    if row.requested_by and row.requested_by != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=row.requested_by,
+            entity_type="package_request_result",
+            entity_id=str(row.id),
+            title=f'Package "{row.package_name}" was rejected.',
+            link="/approval",
+        )
     await session.commit()
     await session.refresh(row)
     requested_by_user = await session.get(User, row.requested_by)

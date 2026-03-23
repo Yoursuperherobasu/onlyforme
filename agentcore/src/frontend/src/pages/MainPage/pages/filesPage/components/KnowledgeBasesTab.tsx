@@ -626,7 +626,7 @@ const KnowledgeBasesTab = ({
             const fileCount = params.data.file_count ?? 0;
             return (
               <div className="flex w-full items-center justify-between">
-                <div className="flex items-center gap-2 font-medium">
+                <div className="flex min-w-0 items-center gap-2 font-medium">
                   <button
                     className="flex items-center"
                     onClick={(e) => {
@@ -646,8 +646,13 @@ const KnowledgeBasesTab = ({
                     name="Folder"
                     className="h-4 w-4"
                   />
-                  <span className="text-sm font-medium">{params.value}</span>
-                  <span className="text-xs text-muted-foreground">
+                  <span
+                    className="truncate text-sm font-medium"
+                    title={params.value}
+                  >
+                    {params.value}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
                     ({fileCount} file{fileCount !== 1 ? "s" : ""})
                   </span>
                 </div>
@@ -676,7 +681,7 @@ const KnowledgeBasesTab = ({
             params.data.path?.split(".").pop()?.toLowerCase() ?? "";
           return (
             <div className="flex w-full items-center justify-between">
-              <div className="flex items-center gap-3 pl-10 font-medium">
+              <div className="flex min-w-0 items-center gap-3 pl-10 font-medium">
                 <ForwardedIconComponent
                   name={FILE_ICONS[type]?.icon ?? "File"}
                   className={cn(
@@ -684,7 +689,10 @@ const KnowledgeBasesTab = ({
                     FILE_ICONS[type]?.color ?? undefined,
                   )}
                 />
-                <span className="text-sm">
+                <span
+                  className="truncate text-sm"
+                  title={params.value}
+                >
                   {params.value}
                   {type ? `.${type}` : ""}
                 </span>

@@ -33,7 +33,6 @@ export default function ApprovalPage() {
   const [activeTab, setActiveTab] = useState<ApprovalTabType>("agent");
   const navigate = useCustomNavigate();
   const { permissions, role } = useContext(AuthContext);
-  const setNoticeData = useAlertStore((state) => state.setNoticeData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -124,16 +123,6 @@ export default function ApprovalPage() {
               ? t("No cancelled requests found")
               : t("No agents found");
 
-  useEffect(() => {
-    if (pendingCount > 0) {
-      setNoticeData({
-        title: t("{{count}} publish request(s) awaiting your approval.", {
-          count: pendingCount,
-        }),
-      });
-    }
-  }, [pendingCount, setNoticeData, t]);
-
   /* ================= EVENT HANDLERS ================= */
   const handleApproveClick = (agent: ApprovalAgent) => {
     openModal(agent, "approve");
@@ -195,6 +184,11 @@ export default function ApprovalPage() {
         <div>
           <div className="mb-1 flex items-center gap-3">
             <h1 className="text-lg font-semibold md:text-xl">{t("Review & Approval")}</h1>
+            {pendingCount > 0 && (
+              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+                {t("{{count}} pending", { count: pendingCount })}
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             {t("Review and approve model, MCP, AI agent, and package requests")}
