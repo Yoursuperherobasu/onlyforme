@@ -317,6 +317,7 @@ async def simple_run_agent(
     event_manager: EventManager | None = None,
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
+    skip_node_persist: bool = False,
 ):
     validate_input_and_tweaks(input_request)
     try:
@@ -351,6 +352,12 @@ async def simple_run_agent(
             graph.uat_deployment_id = str(uat_deployment.id)
             graph.uat_org_id = str(uat_deployment.org_id) if uat_deployment.org_id else None
             graph.uat_dept_id = str(uat_deployment.dept_id) if uat_deployment.dept_id else None
+
+        # When called internally from orchestrator, skip node-level conversation persistence.
+        # The orchestrator handles its own saving to orch_conversation.
+        if skip_node_persist:
+            graph.skip_dev_logging = True
+            graph.orch_skip_node_persist = True
 
         inputs = None
         if input_request.input_value is not None:
@@ -458,6 +465,7 @@ async def run_agent_generator(
     client_consumed_queue: asyncio.Queue,
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
+    skip_node_persist: bool = False,
 ) -> None:
     """Executes a agent asynchronously and manages event streaming to the client.
 
@@ -494,6 +502,7 @@ async def run_agent_generator(
             event_manager=event_manager,
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
+            skip_node_persist=skip_node_persist,
         )
         event_manager.on_end(data={"result": result.model_dump()})
         await client_consumed_queue.get()
@@ -507,6 +516,7 @@ async def run_agent_generator(
 @router.post("/run/{agent_id_or_name}", response_model=None, response_model_exclude_none=True)
 async def simplified_run_agent(
     *,
+    request: Request,
     agent_id_or_name: str,
     response: Response,
     background_tasks: BackgroundTasks,
@@ -595,9 +605,17 @@ async def simplified_run_agent(
         else uat_deployment.id if uat_deployment
         else None
     )
-    auto_generated_key = await _enforce_agent_api_key(agent_api_key, agent.id, env, deployment_id, version)
-    if auto_generated_key:
-        response.headers["X-Generated-Api-Key"] = auto_generated_key
+    # Skip API key enforcement for trusted internal calls (e.g. from orchestrator).
+    # The secret must match AGENTCORE_INTERNAL_SECRET env var; if unset, bypass never activates.
+    _internal_secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
+    _is_internal = bool(
+        _internal_secret
+        and request.headers.get("X-Internal-Secret") == _internal_secret
+    )
+    if not _is_internal:
+        auto_generated_key = await _enforce_agent_api_key(agent_api_key, agent.id, env, deployment_id, version)
+        if auto_generated_key:
+            response.headers["X-Generated-Api-Key"] = auto_generated_key
 
     start_time = time.perf_counter()
 
@@ -649,6 +667,7 @@ async def simplified_run_agent(
                 client_consumed_queue=asyncio_queue_client_consumed,
                 prod_deployment=prod_deployment,
                 uat_deployment=uat_deployment,
+                skip_node_persist=_is_internal,
             )
         )
 
@@ -751,6 +770,7 @@ async def simplified_run_agent(
             api_key_user=None,  # Disabled for testing
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
+            skip_node_persist=_is_internal,
         )
         end_time = time.perf_counter()
         background_tasks.add_task(
