@@ -1100,9 +1100,14 @@ class Node(ExecutableNode):
             self._pre_run_setup()
 
     def _handle_tool_mode(self):
+        # Also check node-level tool_mode set by the UI toggle (stored in vertex.data["node"]["tool_mode"])
+        vertex_tool_mode = (
+            self._vertex is not None
+            and bool(self._vertex.data.get("node", {}).get("tool_mode", False))
+        )
         if (
             hasattr(self, "outputs") and any(getattr(_input, "tool_mode", False) for _input in self.inputs)
-        ) or self.add_tool_output:
+        ) or self.add_tool_output or vertex_tool_mode:
             self._append_tool_to_outputs_map()
 
     def _should_process_output(self, output):
